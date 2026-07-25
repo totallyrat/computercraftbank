@@ -15,6 +15,26 @@ A working, touch-first digital economy for ComputerCraft: Tweaked. It includes p
 
 All screens support touch. Physical keyboard input also works.
 
+## PUMPE phone experience
+
+PUMPE now behaves like a small phone rather than a list of bank buttons:
+
+- A three-page animated onboarding introduces PUMPE and creates or signs into a **Foxy Account**.
+- Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
+- The Home Screen uses a two-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
+- Wallet, Activity, Events, Tickets, Notifications, Tax, Subscriptions, and Settings open as individual apps.
+- After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
+
+### PUMPE Pay
+
+PUMPE Pay presents three options in this order:
+
+1. **Code Pay** accepts the kiosk's six-character payment code.
+2. **Proximity Pay** broadcasts a fresh GPS position every two seconds while enabled, allowing a nearby Service Kiosk to send a payment request.
+3. **Send Money** sends money to another Foxy Account username.
+
+For Send Money, the entered amount is what the recipient receives. The sender pays that amount plus a 10% processing fee, rounded up to the nearest cent. The review screen shows **They Receive**, **Fee**, and **You Pay** before requesting the PIN. The Bank Server independently calculates the fee and enforces a separate `$2,000` recipient-amount limit per in-game day, so modifying the PUMPE client cannot bypass either rule.
+
 ## The new customer monitor
 
 The Service Kiosk automatically finds the first attached **Advanced Monitor**. A single 1×1 monitor is enough; the kiosk sets it to text scale `0.5` and adapts to its actual resolution.
@@ -127,7 +147,7 @@ Replace `service` with `bank`, `pumpe`, `event`, or `tax`.
 - Use an Advanced Pocket Computer with a wireless modem.
 - The header clock uses ComputerCraft's in-game clock.
 - Event cards and tickets show a live countdown calculated from `event_day` and `event_time`.
-- Proximity Pay needs a normal ComputerCraft GPS network. The PUMPE refreshes its position every 30 seconds while its dashboard is open.
+- Proximity Pay needs a normal ComputerCraft GPS network. While enabled, the PUMPE refreshes its position every two seconds while the app is running.
 
 ### Service Kiosk
 
@@ -156,7 +176,7 @@ Start it once and leave it running. The touch dashboard shows account and transa
 
 ### Personal PUMPE
 
-Choose **Create Account**, set a four-digit PIN, and choose how the app should address you. New accounts receive the configured starting balance.
+Complete the animated introduction, choose **Set Up New Account**, set a four-digit PIN, and choose how PUMPE should address you. The resulting identity is called a **Foxy Account**, and new accounts receive the configured starting balance.
 
 ### Service Kiosk
 
@@ -177,6 +197,8 @@ Sign in, create the event, then add one or more ticket types. Customers immediat
 
 - Payment codes expire after five minutes and can be cancelled by the cashier.
 - Purchases above the configured PIN-free limit require the customer's PIN.
+- Send Money always requires a PIN, charges the server-calculated 10% fee, and has a separate `$2,000` daily limit.
+- PUMPE locks after 60 seconds of inactivity and begins requiring a PIN after 120 seconds.
 - Ticket purchases always require a PIN and are limited to the configured quantity per purchase.
 - A ticket code becomes invalid immediately after **Mark Used + Admit**.
 - Subscriptions charge once per in-game day. Failed charges notify the customer and retry the next day.
@@ -234,7 +256,7 @@ pumpe/
 **Proximity Pay finds nobody**
 
 - Build and name a ComputerCraft GPS network.
-- Keep the customer's PUMPE dashboard open long enough to send its position.
+- Open **PUMPE Pay → Proximity Pay** and confirm it says **Broadcasting nearby**.
 - The customer must be within the kiosk's 32-block search radius.
 
 **Events show the wrong countdown**
@@ -244,4 +266,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `5.1.0`.
+PUMPE Ecosystem `5.2.0`.
