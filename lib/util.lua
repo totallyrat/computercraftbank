@@ -87,6 +87,29 @@ function util.roundMoney(value)
     return math.floor(value * 100 + 0.5) / 100
 end
 
+function util.transferBreakdown(value, feeRate)
+    local amount = util.roundMoney(value)
+    if not amount or amount <= 0 then return nil end
+    feeRate = math.max(0, tonumber(feeRate) or 0)
+    -- Round fees up to the nearest cent so splitting one transfer into many
+    -- tiny transfers cannot avoid the configured percentage fee.
+    local fee = math.ceil(amount * feeRate * 100 - 0.000000001) / 100
+    return {
+        amount = amount,
+        fee = fee,
+        total = util.roundMoney(amount + fee),
+    }
+end
+
+function util.dailyLimitRemaining(alreadyUsed, amount, limit)
+    alreadyUsed = util.roundMoney(alreadyUsed) or 0
+    amount = util.roundMoney(amount)
+    limit = util.roundMoney(limit)
+    if not amount or amount <= 0 or not limit or limit < 0 then return false, 0 end
+    local remaining = util.roundMoney(limit - alreadyUsed - amount)
+    return remaining >= 0, math.max(0, remaining)
+end
+
 function util.money(value, symbol)
     value = tonumber(value) or 0
     symbol = symbol or "$"
