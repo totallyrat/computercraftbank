@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "notes": "PUMPE automatic internet release",
   "files": [
     {
       "path": "bank_server.lua",
       "source": "bank_server.lua",
-      "size": 80762,
-      "checksum": "ebabfc67"
+      "size": 82401,
+      "checksum": "4e733494"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 34585,
-      "checksum": "e3bbc256"
+      "size": 53297,
+      "checksum": "c40627fa"
     },
     {
       "path": "service_kiosk.lua",
@@ -49,8 +49,8 @@
     {
       "path": "config.lua",
       "source": "config.lua",
-      "size": 1064,
-      "checksum": "55beb82a"
+      "size": 1223,
+      "checksum": "935d1e9f"
     },
     {
       "path": "lib/net.lua",
@@ -61,8 +61,8 @@
     {
       "path": "lib/ui.lua",
       "source": "lib/ui.lua",
-      "size": 16797,
-      "checksum": "9eb38954"
+      "size": 20623,
+      "checksum": "f490251e"
     },
     {
       "path": "lib/update.lua",
@@ -73,8 +73,8 @@
     {
       "path": "lib/util.lua",
       "source": "lib/util.lua",
-      "size": 6520,
-      "checksum": "7ee15d76"
+      "size": 7434,
+      "checksum": "91a5a1a5"
     }
   ]
 }
