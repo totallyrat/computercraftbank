@@ -125,6 +125,52 @@ function ui.truncate(value, length)
     return value:sub(1, length - 2) .. ".."
 end
 
+function ui.wrap(value, width)
+    width = math.max(1, math.floor(tonumber(width) or 1))
+    value = tostring(value or "")
+    local lines = {}
+    for paragraph in (value .. "\n"):gmatch("(.-)\n") do
+        paragraph = util.trim(paragraph)
+        if paragraph == "" then
+            lines[#lines + 1] = ""
+        else
+            while #paragraph > width do
+                local breakAt
+                for index = width, 1, -1 do
+                    if paragraph:sub(index, index) == " " then
+                        breakAt = index
+                        break
+                    end
+                end
+                if not breakAt or breakAt < math.floor(width / 2) then
+                    breakAt = width
+                end
+                lines[#lines + 1] = util.trim(paragraph:sub(1, breakAt))
+                paragraph = util.trim(paragraph:sub(breakAt + 1))
+            end
+            if paragraph ~= "" then lines[#lines + 1] = paragraph end
+        end
+    end
+    if #lines == 0 then lines[1] = "" end
+    return lines
+end
+
+function ui.wrappedText(target, x, y, value, width, maxLines,
+    foreground, background)
+    width = math.max(1, math.floor(tonumber(width) or 1))
+    maxLines = math.max(1, math.floor(tonumber(maxLines) or 1))
+    local lines = ui.wrap(value, width)
+    if #lines > maxLines then
+        while #lines > maxLines do table.remove(lines) end
+        lines[maxLines] = ui.truncate(lines[maxLines] .. "..", width)
+    end
+    for index, line in ipairs(lines) do
+        ui.text(target, x, y + index - 1, line,
+            foreground, background, width)
+    end
+    return #lines
+end
+
 function ui.header(target, title, subtitle, clockText)
     target = surface(target)
     local width = target.getSize()
@@ -191,12 +237,14 @@ function Scene:button(id, x, y, width, height, label, options)
             1, 1, ui.theme.background)
     end
 
-    local lines = {}
-    for line in tostring(label or ""):gmatch("[^\n]+") do lines[#lines + 1] = line end
-    if #lines == 0 then lines[1] = "" end
+    local labelWidth = math.max(1, width - 2)
+    local lines = ui.wrap(label or "", labelWidth)
+    if #lines > height then
+        while #lines > height do table.remove(lines) end
+        lines[height] = ui.truncate(lines[height] .. "..", labelWidth)
+    end
     local firstY = y + math.floor((height - #lines) / 2)
     for index, line in ipairs(lines) do
-        line = ui.truncate(line, width - 2)
         local textX = x + math.max(0, math.floor((width - #line) / 2))
         ui.text(self.target, textX, firstY + index - 1, line, foreground, background)
     end
@@ -379,8 +427,33 @@ function ui.message(target, kind, title, body, duration)
         sleep(0.05)
     end
     ui.center(target, y, mark, colors.black, color)
-    ui.center(target, y + 3, ui.truncate(title, width - 2), color)
-    if body then ui.center(target, y + 5, ui.truncate(body, width - 2), ui.theme.muted) end
+    local titleLines = phoneStyle and ui.wrap(title, width - 4)
+        or { ui.truncate(title, width - 2) }
+    if #titleLines > 2 then
+        while #titleLines > 2 do table.remove(titleLines) end
+        titleLines[2] = ui.truncate(titleLines[2] .. "..", width - 4)
+    end
+    for index, line in ipairs(titleLines) do
+        ui.center(target, y + 3 + index - 1, line, color)
+    end
+    if body then
+        if phoneStyle then
+            local lines = ui.wrap(body, width - 4)
+            local maxBodyLines = math.max(1,
+                height - (y + 4 + #titleLines))
+            if #lines > maxBodyLines then
+                while #lines > maxBodyLines do table.remove(lines) end
+                lines[maxBodyLines] = ui.truncate(
+                    lines[maxBodyLines] .. "..", width - 4)
+            end
+            for index, line in ipairs(lines) do
+                ui.center(target, y + 4 + #titleLines + index - 1,
+                    line, ui.theme.muted)
+            end
+        else
+            ui.center(target, y + 5, ui.truncate(body, width - 2), ui.theme.muted)
+        end
+    end
     sleep(duration or 0.8)
 end
 
@@ -546,8 +619,22 @@ function ui.confirm(target, title, body, yesLabel, noLabel)
     local width, height = target.getSize()
     ui.clear(target)
     ui.header(target, title)
-    ui.center(target, math.max(5, math.floor(height / 2) - 2),
-        ui.truncate(body or "", width - 4), ui.theme.ink)
+    local bodyY = math.max(5, math.floor(height / 2) - 3)
+    if phoneStyle then
+        local lines = ui.wrap(body or "", width - 4)
+        local maxBodyLines = math.max(1, height - 4 - bodyY)
+        if #lines > maxBodyLines then
+            while #lines > maxBodyLines do table.remove(lines) end
+            lines[maxBodyLines] = ui.truncate(
+                lines[maxBodyLines] .. "..", width - 4)
+        end
+        for index, line in ipairs(lines) do
+            ui.center(target, bodyY + index - 1, line, ui.theme.ink)
+        end
+    else
+        ui.center(target, bodyY + 1,
+            ui.truncate(body or "", width - 4), ui.theme.ink)
+    end
     local scene = ui.scene(target)
     local buttonWidth = math.max(8, math.floor((width - 6) / 2))
     scene:button("no", 2, height - 3, buttonWidth, 2, noLabel or "NO",
