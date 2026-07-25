@@ -39,9 +39,23 @@ Run this after installing into a ComputerCraft world.
 
 - [ ] Create two accounts and confirm each starts with the configured balance.
 - [ ] Restart the Bank Server and confirm both accounts still exist.
-- [ ] Send money and confirm both balances and histories update once.
+- [ ] Send `$100` and confirm the review shows `$100` received, `$10` fee, and `$110` paid.
+- [ ] Confirm the sender history records the transfer and processing fee separately while the recipient receives exactly `$100`.
+- [ ] Send up to a total of `$2,000` in one in-game day, then confirm one additional cent is rejected by the Bank Server.
+- [ ] Advance to the next in-game day and confirm the Send Money limit resets.
 - [ ] Try a wrong PIN and an insufficient balance.
-- [ ] Open Sign In and Create Account PIN pads on a Pocket Computer and confirm both touch and physical digit entry work without an error.
+- [ ] Open Sign In and Set Up New Account PIN pads on a Pocket Computer and confirm both touch and physical digit entry work without an error.
+
+## PUMPE phone experience
+
+- [ ] On a fresh PUMPE, complete all three onboarding pages and create a Foxy Account.
+- [ ] Confirm **Setting up your Foxy Account** and **Preparing your PUMPE** animate without forcing an unnecessary reboot.
+- [ ] Confirm the Home Screen has two app pages and every icon opens the correct app.
+- [ ] Confirm PUMPE Pay lists Code Pay first, Proximity Pay second, and Send Money third.
+- [ ] Leave the PUMPE untouched for 60 seconds and confirm the Lock Screen appears with the correct in-game time and day.
+- [ ] Open it before 120 seconds and confirm no PIN is required.
+- [ ] Lock it again, wait beyond 120 seconds, and confirm a wrong PIN stays locked while the correct PIN opens PUMPE.
+- [ ] Confirm touch, keyboard, PIN-pad, and text-entry activity each reset the inactivity timer.
 
 ## Service Kiosk and monitor
 
@@ -57,7 +71,8 @@ Run this after installing into a ComputerCraft world.
 
 ## Proximity
 
-- [ ] Open a customer's PUMPE dashboard near the kiosk.
+- [ ] Enable **PUMPE Pay → Proximity Pay** near the kiosk and confirm it reports **Broadcasting nearby**.
+- [ ] Confirm the Bank Server receives a refreshed GPS position about every two seconds while enabled.
 - [ ] Start Proximity Pay and confirm the correct customer and distance.
 - [ ] Decline once, then approve a second request with a PIN.
 
