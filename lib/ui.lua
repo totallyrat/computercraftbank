@@ -2,6 +2,12 @@ local util = require("lib.util")
 
 local ui = {}
 
+local phoneStyle = false
+local idleTimeoutMs
+local idleHandler
+local lastActivityMs = util.nowMs()
+local idleHandling = false
+
 ui.theme = {
     background = colors.black,
     panel = colors.gray,
@@ -15,6 +21,29 @@ ui.theme = {
     warning = colors.orange,
     shadow = colors.gray,
 }
+
+function ui.usePhoneStyle(enabled)
+    phoneStyle = enabled == true
+end
+
+function ui.noteActivity()
+    lastActivityMs = util.nowMs()
+end
+
+function ui.idleForMs()
+    return math.max(0, util.nowMs() - lastActivityMs)
+end
+
+function ui.setIdleLock(seconds, handler)
+    seconds = tonumber(seconds)
+    if not seconds or seconds <= 0 or type(handler) ~= "function" then
+        idleTimeoutMs, idleHandler = nil, nil
+        return
+    end
+    idleTimeoutMs = seconds * 1000
+    idleHandler = handler
+    ui.noteActivity()
+end
 
 local function keyBindings(entries)
     local bindings = {}
@@ -99,6 +128,21 @@ end
 function ui.header(target, title, subtitle, clockText)
     target = surface(target)
     local width = target.getSize()
+    if phoneStyle then
+        ui.fill(target, 1, 1, width, 3, ui.theme.background)
+        ui.text(target, 2, 1, "PUMPE", ui.theme.muted, ui.theme.background)
+        local clock = clockText or util.formatClock()
+        ui.center(target, 1, clock, ui.theme.ink, ui.theme.background)
+        ui.text(target, math.max(1, width - 2), 1, "[]",
+            ui.theme.success, ui.theme.background)
+        ui.text(target, 2, 2, ui.truncate(title, width - 3),
+            ui.theme.ink, ui.theme.background)
+        if subtitle then
+            ui.text(target, 2, 3, ui.truncate(subtitle, width - 3),
+                ui.theme.muted, ui.theme.background)
+        end
+        return
+    end
     ui.fill(target, 1, 1, width, subtitle and 3 or 2, ui.theme.panel)
     ui.text(target, 2, 1, ui.truncate(title, width - 3), ui.theme.ink, ui.theme.panel)
     if clockText then
@@ -139,6 +183,13 @@ function Scene:button(id, x, y, width, height, label, options)
         ui.fill(self.target, x + 1, y + 1, width, height, ui.theme.shadow)
     end
     ui.fill(self.target, x, y, width, height, background)
+    if phoneStyle and height >= 2 and width >= 4 then
+        ui.fill(self.target, x, y, 1, 1, ui.theme.background)
+        ui.fill(self.target, x + width - 1, y, 1, 1, ui.theme.background)
+        ui.fill(self.target, x, y + height - 1, 1, 1, ui.theme.background)
+        ui.fill(self.target, x + width - 1, y + height - 1,
+            1, 1, ui.theme.background)
+    end
 
     local lines = {}
     for line in tostring(label or ""):gmatch("[^\n]+") do lines[#lines + 1] = line end
@@ -176,9 +227,48 @@ function Scene:wait(options)
     if options.tickRate then
         timer = os.startTimer(options.tickRate)
     end
+    local idleTimer
+
+    local function cancelTimer(timerId)
+        if timerId and os.cancelTimer then pcall(os.cancelTimer, timerId) end
+    end
+
+    local function scheduleIdleTimer()
+        if not idleTimeoutMs or not idleHandler or idleHandling then return nil end
+        local remaining = math.max(50, idleTimeoutMs - ui.idleForMs())
+        return os.startTimer(remaining / 1000)
+    end
+
+    local function finish(action)
+        cancelTimer(timer)
+        cancelTimer(idleTimer)
+        return action
+    end
+
+    local function recordActivity()
+        if idleHandling then return end
+        ui.noteActivity()
+        cancelTimer(idleTimer)
+        idleTimer = scheduleIdleTimer()
+    end
+
+    local function handleIdle()
+        if idleHandling or not idleTimeoutMs or not idleHandler
+            or ui.idleForMs() < idleTimeoutMs then return false end
+        idleHandling = true
+        local ok, err = pcall(idleHandler, ui.idleForMs())
+        idleHandling = false
+        ui.noteActivity()
+        if not ok then error(err, 0) end
+        return true
+    end
+
+    idleTimer = scheduleIdleTimer()
     while true do
         local event = { os.pullEvent() }
         if event[1] == "mouse_click" then
+            if handleIdle() then return finish("__idle") end
+            recordActivity()
             local action, button = self:hit(event[3], event[4])
             if action then
                 if options.flash ~= false then
@@ -187,21 +277,31 @@ function Scene:wait(options)
                         button.y2 - button.y1 + 1, ui.theme.accentDark)
                     sleep(0.04)
                 end
-                return action
+                return finish(action)
             end
         elseif event[1] == "monitor_touch" then
+            if handleIdle() then return finish("__idle") end
+            recordActivity()
             local action = self:hit(event[3], event[4])
-            if action then return action end
-        elseif event[1] == "key" and options.keys then
-            local action = options.keys[event[2]]
-            if action then return action end
-        elseif event[1] == "char" and options.onChar then
-            local action = options.onChar(event[2])
-            if action then return action end
+            if action then return finish(action) end
+        elseif event[1] == "key" then
+            if handleIdle() then return finish("__idle") end
+            recordActivity()
+            local action = options.keys and options.keys[event[2]]
+            if action then return finish(action) end
+        elseif event[1] == "char" then
+            if handleIdle() then return finish("__idle") end
+            recordActivity()
+            local action = options.onChar and options.onChar(event[2])
+            if action then return finish(action) end
+        elseif idleTimer and event[1] == "timer" and event[2] == idleTimer then
+            if handleIdle() then return finish("__idle") end
+            idleTimer = scheduleIdleTimer()
         elseif timer and event[1] == "timer" and event[2] == timer then
-            return "__tick"
+            if handleIdle() then return finish("__idle") end
+            return finish("__tick")
         elseif event[1] == "terminate" then
-            return "__terminate"
+            return finish("__terminate")
         end
     end
 end
@@ -217,6 +317,13 @@ end
 function ui.card(target, x, y, width, height, accent)
     ui.fill(target, x, y, width, height, ui.theme.panel)
     ui.fill(target, x, y, 1, height, accent or ui.theme.accent)
+    if phoneStyle and width >= 4 and height >= 2 then
+        ui.fill(target, x, y, 1, 1, ui.theme.background)
+        ui.fill(target, x + width - 1, y, 1, 1, ui.theme.background)
+        ui.fill(target, x, y + height - 1, 1, 1, ui.theme.background)
+        ui.fill(target, x + width - 1, y + height - 1,
+            1, 1, ui.theme.background)
+    end
 end
 
 function ui.wipe(target, title)
