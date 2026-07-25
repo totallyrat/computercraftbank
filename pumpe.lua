@@ -189,7 +189,7 @@ end
 
 local function pageFooter(scene, page, pages)
     local width, height = scene.width, scene.height
-    scene:button("back", 1, height, 8, 1, "<  Home",
+    scene:button("back", 1, height, 8, 1, "< Home",
         { background = ui.theme.panel })
     if pages and pages > 1 then
         scene:button("prev", width - 15, height, 4, 1, "<",
@@ -230,7 +230,7 @@ local function chooseGender()
     local width, height = target.getSize()
     while true do
         ui.clear(target)
-        ui.header(target, "Foxy Account", "How should we address you?")
+        ui.header(target, "Foxy Account", "Choose your pronouns")
         local scene = ui.scene(target)
         local labels = { "She / her", "He / him", "They / them", "Prefer not to say" }
         local startY = 6
@@ -240,7 +240,7 @@ local function chooseGender()
                     background = index == 3 and ui.theme.accentDark or ui.theme.panel,
                 })
         end
-        scene:button("back", 2, height, 7, 1, "< BACK",
+        scene:button("back", 2, height, 7, 1, "<Back",
             { background = ui.theme.panel })
         local action = scene:wait()
         if action == "back" or action == "__terminate" then return nil end
@@ -251,7 +251,7 @@ end
 
 local function createAccount()
     local name = ui.input(target, "Create Foxy Account", {
-        hint = "Choose your account name",
+        hint = "Choose an account name",
         maxLength = 20,
         allowSpace = true,
     })
@@ -295,7 +295,7 @@ local function onboardingIntro()
                 or "Your Foxy Account",
             page == 1 and "Welcome to PUMPE"
                 or page == 2 and "One pocket. Every app."
-                or "One account across PUMPE",
+                or "One account, every app",
             util.formatClock(blink))
         local scene = ui.scene(target)
         if page == 1 then
@@ -306,36 +306,34 @@ local function onboardingIntro()
                 { background = ui.theme.accentDark, shadow = true })
         elseif page == 2 then
             local features = {
-                { "PUMPE Pay", "Code, proximity and transfers", colors.blue },
-                { "Live Events", "Tickets and countdowns", colors.purple },
-                { "Private by default", "Protected by your PIN", colors.green },
+                { "PUMPE Pay", "Pay by code, nearby or send", colors.blue },
+                { "Live Events", "Tickets, countdowns and entry codes", colors.purple },
+                { "Private by default", "Protected by your Foxy Account PIN", colors.green },
             }
             for index, feature in ipairs(features) do
-                local y = 5 + (index - 1) * 4
-                ui.card(target, 2, y, width - 2, 3, feature[3])
+                local y = 4 + (index - 1) * 5
+                ui.card(target, 2, y, width - 2, 4, feature[3])
                 ui.text(target, 4, y, feature[1], ui.theme.ink, ui.theme.panel)
-                ui.text(target, 4, y + 1,
-                    ui.truncate(feature[2], width - 6),
-                    ui.theme.muted, ui.theme.panel)
+                ui.wrappedText(target, 4, y + 1, feature[2],
+                    width - 6, 2, ui.theme.muted, ui.theme.panel)
             end
             scene:button("next", width - 9, height, 9, 1, "Next  >",
                 { background = ui.theme.accentDark })
-            scene:button("back", 1, height, 8, 1, "<  Back",
+            scene:button("back", 1, height, 8, 1, "< Back",
                 { background = ui.theme.panel })
         else
-            ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
+            ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
             ui.text(target, 4, 6, "Foxy Account", ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, 8, "Your identity, balance",
-                ui.theme.muted, ui.theme.panel)
-            ui.text(target, 4, 9, "and purchases in one place.",
-                ui.theme.muted, ui.theme.panel)
+            ui.wrappedText(target, 4, 8,
+                "Balance, identity and purchases stay together.",
+                width - 6, 3, ui.theme.muted, ui.theme.panel)
             scene:button("create", 3, 12, width - 5, 3,
                 "Set Up New Account",
                 { background = ui.theme.accentDark, shadow = true })
             scene:button("login", 3, 16, width - 5, 2,
                 "Sign In",
                 { background = ui.theme.panel })
-            scene:button("back", 1, height, 8, 1, "<  Back",
+            scene:button("back", 1, height, 8, 1, "< Back",
                 { background = ui.theme.panel })
         end
         if page == 1 then
@@ -365,7 +363,7 @@ local function accountLanding()
     local width, height = target.getSize()
     while running and not sessionToken do
         ui.clear(target)
-        ui.header(target, "PUMPE", "Your phone for the economy",
+        ui.header(target, "PUMPE", "Your pocket economy",
             util.formatClock())
         ui.center(target, 6, "Welcome back.", ui.theme.ink)
         if device.last_name ~= "" then
@@ -416,15 +414,18 @@ local function balanceScreen()
         ui.text(target, 4, 6, "AVAILABLE", ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 7, money(account.balance), ui.theme.ink, ui.theme.panel)
         ui.text(target, 2, 10, "RECENT", ui.theme.muted)
-        local pageItems, actualPage, pages = util.page(history, page,
-            math.max(1, height - 12))
+        local pageItems, actualPage, pages = util.page(history, page, 1)
         page = actualPage
         for index, tx in ipairs(pageItems) do
-            local y = 10 + index
+            local y = 11 + (index - 1) * 8
             local color = tx.amount >= 0 and ui.theme.success or ui.theme.ink
-            ui.text(target, 2, y, ui.truncate(tx.description, width - 11), color)
+            ui.card(target, 2, y, width - 2, 8, color)
+            ui.wrappedText(target, 4, y, tx.description,
+                width - 6, 5, ui.theme.ink, ui.theme.panel)
             local amountText = (tx.amount >= 0 and "+" or "") .. money(tx.amount)
-            ui.text(target, width - #amountText, y, amountText, color)
+            ui.text(target, 4, y + 5, "Day " .. tx.day .. " " .. tx.time,
+                ui.theme.muted)
+            ui.text(target, 4, y + 6, amountText, color)
         end
         local scene = ui.scene(target)
         pageFooter(scene, page, pages)
@@ -461,8 +462,7 @@ local function reviewTransfer(quote)
         local totalText = money(quote.total)
         ui.text(target, width - #totalText - 2, 12, totalText,
             ui.theme.ink, ui.theme.panel)
-        ui.center(target, 15,
-            money(quote.daily_remaining) .. " send limit left today",
+        ui.center(target, 15, "Daily left: " .. money(quote.daily_remaining),
             ui.theme.muted)
 
         local scene = ui.scene(target)
@@ -490,8 +490,9 @@ local function sendingAnimation(recipient)
         for frame = 1, 3 do
             ui.clear(target)
             ui.center(target, 6, "PUMPE Pay", ui.theme.ink)
-            ui.center(target, 9, ui.truncate(label, width - 4), ui.theme.muted)
-            ui.center(target, 11, string.rep(".", frame), ui.theme.accent)
+            ui.wrappedText(target, 2, 9, label, width - 4, 2,
+                ui.theme.muted)
+            ui.center(target, 12, string.rep(".", frame), ui.theme.accent)
             ui.progress(target, 3, height - 4, width - 5,
                 (index - 1) * 3 + frame, #stages * 3,
                 ui.theme.accent, ui.theme.panel)
@@ -546,7 +547,7 @@ end
 
 local function payCode()
     local code = ui.input(target, "PAY A CODE", {
-        hint = "Six characters from the kiosk",
+        hint = "6-character kiosk code",
         mode = "code", maxLength = 6, minLength = 6,
     })
     if not code then return end
@@ -586,16 +587,18 @@ local function historyScreen()
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "Activity", #items .. " transactions", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(items, page,
-            math.max(1, math.floor((height - 5) / 3)))
+        local pageItems, actualPage, pages = util.page(items, page, 1)
         page = actualPage
         for index, tx in ipairs(pageItems) do
-            local y = 4 + (index - 1) * 3
+            local y = 4 + (index - 1) * 14
             local color = tx.amount >= 0 and ui.theme.success or ui.theme.danger
-            ui.text(target, 2, y, ui.truncate(tx.description, width - 3), ui.theme.ink)
-            ui.text(target, 2, y + 1, "Day " .. tx.day .. " " .. tx.time, ui.theme.muted)
+            ui.card(target, 2, y, width - 2, 14, color)
+            ui.wrappedText(target, 4, y, tx.description,
+                width - 6, 11, ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, y + 11, "Day " .. tx.day .. " " .. tx.time,
+                ui.theme.muted, ui.theme.panel)
             local amountText = (tx.amount >= 0 and "+" or "") .. money(tx.amount)
-            ui.text(target, width - #amountText, y + 1, amountText, color)
+            ui.text(target, 4, y + 12, amountText, color, ui.theme.panel)
         end
         local scene = ui.scene(target)
         pageFooter(scene, page, pages)
@@ -614,26 +617,33 @@ local function ticketTypeScreen(event, ticketTypes)
         local width, height = target.getSize()
         ui.clear(target)
         local countdown = util.eventCountdown(event.event_day, event.event_time)
-        ui.header(target, ui.truncate(event.title, width - 9),
-            "In " .. countdown, util.formatClock(blink))
-        ui.text(target, 2, 4, "Day " .. event.event_day .. "  " .. event.event_time,
+        ui.header(target, "Event Tickets", "In " .. countdown,
+            util.formatClock(blink))
+        ui.wrappedText(target, 2, 4, event.title,
+            width - 4, 3, ui.theme.ink)
+        ui.text(target, 2, 7, "Day " .. event.event_day .. "  " .. event.event_time,
             ui.theme.muted)
-        ui.text(target, 2, 5, ui.truncate(event.location, width - 3), ui.theme.ink)
-        local pageItems, actualPage, pages = util.page(ticketTypes, page, 3)
+        ui.wrappedText(target, 2, 8, event.location,
+            width - 4, 3, ui.theme.muted)
+        local pageItems, actualPage, pages = util.page(ticketTypes, page, 1)
         page = actualPage
         local scene = ui.scene(target)
         for index, ticketType in ipairs(pageItems) do
-            local y = 7 + (index - 1) * 4
+            local y = 11 + (index - 1) * 7
             local left = ticketType.total_quantity - ticketType.sold_quantity
             local soldOut = left <= 0
-            ui.card(target, 2, y, width - 2, 3,
+            ui.card(target, 2, y, width - 2, 6,
                 soldOut and ui.theme.danger or ui.theme.accent)
-            ui.text(target, 4, y, ui.truncate(ticketType.name, width - 12),
-                ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 1, money(ticketType.price) .. "  " .. left .. " left",
-                soldOut and ui.theme.danger or ui.theme.muted, ui.theme.panel)
+            ui.wrappedText(target, 4, y, ticketType.name,
+                width - 12, 3, ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, y + 3, money(ticketType.price),
+                soldOut and ui.theme.danger or ui.theme.muted,
+                ui.theme.panel, width - 12)
+            ui.text(target, 4, y + 4, left .. " left",
+                soldOut and ui.theme.danger or ui.theme.muted,
+                ui.theme.panel, width - 12)
             scene:button("buy:" .. ticketType.ticket_type_id,
-                width - 8, y, 7, 3, soldOut and "SOLD" or "BUY",
+                width - 8, y, 7, 6, soldOut and "SOLD" or "BUY",
                 { background = soldOut and colors.gray or ui.theme.accentDark,
                     disabled = soldOut })
         end
@@ -697,36 +707,40 @@ local function eventsScreen()
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "Events", "Live schedule", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(events, page, 3)
+        local pageItems, actualPage, pages = util.page(events, page, 2)
         page = actualPage
         local scene = ui.scene(target)
         if #events == 0 then
             ui.center(target, 9, "No upcoming events", ui.theme.muted)
         end
         for index, event in ipairs(pageItems) do
-            local y = 4 + (index - 1) * 5
+            local y = 4 + (index - 1) * 7
             local countdown = util.eventCountdown(event.event_day, event.event_time)
-            ui.card(target, 2, y, width - 2, 4,
+            ui.card(target, 2, y, width - 2, 6,
                 index == 1 and ui.theme.accent or colors.magenta)
-            ui.text(target, 4, y, ui.truncate(event.title, width - 6),
-                ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 1, "IN " .. string.upper(countdown),
+            ui.wrappedText(target, 4, y, event.title,
+                width - 6, 2, ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, y + 2, "IN " .. string.upper(countdown),
                 ui.theme.accent, ui.theme.panel)
             local price = event.from_price and ("From " .. money(event.from_price)) or "Details"
-            ui.text(target, 4, y + 2, ui.truncate(price .. "  " .. event.location, width - 6),
+            ui.text(target, 4, y + 3, ui.truncate(price, width - 6),
                 ui.theme.muted, ui.theme.panel)
-            scene:button("event:" .. event.event_id, 2, y, width - 2, 4, "", {
+            ui.wrappedText(target, 4, y + 4, event.location,
+                width - 6, 2, ui.theme.muted, ui.theme.panel)
+            scene:button("event:" .. event.event_id, 2, y, width - 2, 6, "", {
                 background = ui.theme.panel,
             })
             -- Redraw content because the invisible hit area paints its background.
-            ui.fill(target, 2, y, 1, 4,
+            ui.fill(target, 2, y, 1, 6,
                 index == 1 and ui.theme.accent or colors.magenta)
-            ui.text(target, 4, y, ui.truncate(event.title, width - 6),
-                ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 1, "IN " .. string.upper(countdown),
+            ui.wrappedText(target, 4, y, event.title,
+                width - 6, 2, ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, y + 2, "IN " .. string.upper(countdown),
                 ui.theme.accent, ui.theme.panel)
-            ui.text(target, 4, y + 2, ui.truncate(price .. "  " .. event.location, width - 6),
+            ui.text(target, 4, y + 3, ui.truncate(price, width - 6),
                 ui.theme.muted, ui.theme.panel)
+            ui.wrappedText(target, 4, y + 4, event.location,
+                width - 6, 2, ui.theme.muted, ui.theme.panel)
         end
         pageFooter(scene, page, pages)
         local action = scene:wait({ tickRate = 0.5, flash = false })
@@ -752,20 +766,30 @@ end
 local function drawTicket(ticket, blink)
     local width, height = target.getSize()
     ui.clear(target)
-    ui.header(target, "My Ticket", ticket.ticket_type_name, util.formatClock(blink))
+    ui.header(target, "My Ticket", "Entry pass", util.formatClock(blink))
     local countdown = util.eventCountdown(ticket.event_day, ticket.event_time)
-    ui.center(target, 4, ui.truncate(ticket.event_title, width - 2), ui.theme.ink)
-    ui.center(target, 5, "IN " .. string.upper(countdown), ui.theme.accent)
-    ui.fill(target, 2, 7, width - 2, 6, colors.white)
-    ui.center(target, 8, "ENTRY CODE", colors.gray, colors.white)
+    local titleLines = ui.wrap(ticket.event_title, width - 4)
+    for index = 1, math.min(3, #titleLines) do
+        ui.center(target, 3 + index,
+            ui.truncate(titleLines[index], width - 4), ui.theme.ink)
+    end
+    ui.center(target, 7, "IN " .. string.upper(countdown), ui.theme.accent)
+    ui.wrappedText(target, 2, 8, ticket.ticket_type_name,
+        width - 4, 2, ui.theme.muted)
+    ui.fill(target, 2, 10, width - 2, 6, colors.white)
+    ui.center(target, 11, "ENTRY CODE", colors.gray, colors.white)
     local code = ticket.qr_code
     local spaced = table.concat({ code:sub(1, 4), code:sub(5, 8) }, " ")
-    ui.center(target, 10, spaced, colors.black, colors.white)
-    ui.center(target, 12, ticket.used and "ALREADY USED" or "READY TO SCAN",
+    ui.center(target, 13, spaced, colors.black, colors.white)
+    ui.center(target, 15, ticket.used and "ALREADY USED" or "READY TO SCAN",
         ticket.used and colors.red or colors.green, colors.white)
-    ui.center(target, 15, "Day " .. ticket.event_day .. "  " .. ticket.event_time,
+    ui.center(target, 16, "Day " .. ticket.event_day .. "  " .. ticket.event_time,
         ui.theme.muted)
-    ui.center(target, 16, ui.truncate(ticket.location, width - 3), ui.theme.muted)
+    local locationLines = ui.wrap(ticket.location, width - 4)
+    for index = 1, math.min(3, #locationLines) do
+        ui.center(target, 16 + index,
+            ui.truncate(locationLines[index], width - 4), ui.theme.muted)
+    end
 end
 
 local function myTicketsScreen()
@@ -782,7 +806,7 @@ local function myTicketsScreen()
         drawTicket(ticket, blink)
         local width, height = target.getSize()
         local scene = ui.scene(target)
-        scene:button("back", 1, height, 7, 1, "< BACK",
+        scene:button("back", 1, height, 7, 1, "<Back",
             { background = ui.theme.panel })
         scene:button("prev", width - 12, height, 4, 1, "<",
             { background = ui.theme.panel, disabled = index <= 1 })
@@ -806,18 +830,19 @@ local function notificationsScreen()
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "Notifications", #items .. " total", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(items, page, 3)
+        local pageItems, actualPage, pages = util.page(items, page, 1)
         page = actualPage
         if #items == 0 then ui.center(target, 9, "All quiet here", ui.theme.muted) end
         for index, item in ipairs(pageItems) do
-            local y = 4 + (index - 1) * 5
-            ui.card(target, 2, y, width - 2, 4,
+            local y = 4 + (index - 1) * 14
+            ui.card(target, 2, y, width - 2, 14,
                 item.kind == "warning" and ui.theme.warning or ui.theme.accent)
-            ui.text(target, 4, y, ui.truncate(item.title, width - 6),
-                ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 1, ui.truncate(item.body, width - 6),
-                ui.theme.muted, ui.theme.panel)
-            ui.text(target, 4, y + 2, "Day " .. item.created_day .. " " .. item.created_time,
+            ui.wrappedText(target, 4, y, item.title,
+                width - 6, 2, ui.theme.ink, ui.theme.panel)
+            ui.wrappedText(target, 4, y + 3, item.body,
+                width - 6, 8, ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, y + 12,
+                "Day " .. item.created_day .. " " .. item.created_time,
                 ui.theme.muted, ui.theme.panel)
         end
         local scene = ui.scene(target)
@@ -838,25 +863,27 @@ local function subscriptionsScreen()
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "Subscriptions", "Daily billing", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(items, page, 3)
+        local pageItems, actualPage, pages = util.page(items, page, 1)
         page = actualPage
         local scene = ui.scene(target)
         if #items == 0 then ui.center(target, 9, "No subscriptions", ui.theme.muted) end
         for index, item in ipairs(pageItems) do
-            local y = 4 + (index - 1) * 5
-            ui.card(target, 2, y, width - 2, 4,
+            local y = 4 + (index - 1) * 12
+            ui.card(target, 2, y, width - 2, 12,
                 item.active and ui.theme.accent or colors.gray)
-            ui.text(target, 4, y, ui.truncate(item.description, width - 6),
-                ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 1, money(item.amount)
-                .. "/day  Next " .. item.next_charge_day,
+            ui.wrappedText(target, 4, y, item.description,
+                width - 6, 6, ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, y + 6, money(item.amount) .. " per day",
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, y + 7, "Next: day " .. item.next_charge_day,
                 ui.theme.muted, ui.theme.panel)
             if item.active then
                 scene:button("cancel:" .. item.subscription_id,
-                    width - 9, y + 2, 8, 1, "CANCEL",
+                    4, y + 9, width - 7, 2, "Cancel Subscription",
                     { background = ui.theme.danger })
             else
-                ui.text(target, 4, y + 2, "CANCELLED", ui.theme.muted, ui.theme.panel)
+                ui.text(target, 4, y + 9, "CANCELLED",
+                    ui.theme.muted, ui.theme.panel)
             end
         end
         pageFooter(scene, page, pages)
@@ -934,12 +961,12 @@ local function taxScreen()
         result.smart_lifetime and "SMART DECLARE - INCLUDED"
             or "SMART DECLARE - " .. money(config.smart_declare_fee),
         { background = ui.theme.accentDark })
-    scene:button("back", 1, height, 7, 1, "< BACK",
+    scene:button("back", 1, height, 7, 1, "<Back",
         { background = ui.theme.panel })
     local action = scene:wait()
     if action == "declare" then
         local amountText = ui.input(target, "DECLARE TAX", {
-            hint = "Amount you believe you owe",
+            hint = "Enter the amount due",
             mode = "number", maxLength = 12,
         })
         if not amountText then return end
@@ -1029,7 +1056,7 @@ local function proximityScreen()
         local active = device.proximity_enabled
         local pulseColor = active and (blink and ui.theme.success or ui.theme.accent)
             or colors.gray
-        ui.card(target, 2, 5, width - 2, 8, pulseColor)
+        ui.card(target, 2, 5, width - 2, 9, pulseColor)
         ui.center(target, 6, active and "((  P  ))" or "(  PAUSED  )",
             pulseColor, ui.theme.panel)
         ui.center(target, 8,
@@ -1037,10 +1064,13 @@ local function proximityScreen()
                 or "Location sharing is off",
             ui.theme.ink, ui.theme.panel)
         ui.center(target, 10,
-            active and "Kiosks can request payment" or "Kiosks cannot find you",
+            active and "Nearby kiosks can send" or "Nearby kiosks cannot",
+            ui.theme.muted, ui.theme.panel)
+        ui.center(target, 11,
+            active and "payment requests" or "find your PUMPE",
             ui.theme.muted, ui.theme.panel)
         if active and located then
-            ui.center(target, 11, locationText, ui.theme.muted, ui.theme.panel)
+            ui.center(target, 12, locationText, ui.theme.muted, ui.theme.panel)
         end
 
         local scene = ui.scene(target)
@@ -1048,7 +1078,7 @@ local function proximityScreen()
             active and "Turn Off Proximity Pay" or "Turn On Proximity Pay", {
                 background = active and ui.theme.panel or ui.theme.accentDark,
             })
-        scene:button("back", 1, height, 8, 1, "<  Pay",
+        scene:button("back", 1, height, 8, 1, "< Pay",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
         if action == "__tick" or action == "__idle" then
@@ -1080,24 +1110,24 @@ payMenu = function()
             util.formatClock(blink))
         local scene = ui.scene(target)
         scene:button("code", 2, 5, width - 2, 3,
-            "Code Pay\nEnter a 6-character code", {
+            "Code Pay\nEnter a six-character\nkiosk code", {
                 background = colors.blue,
                 shadow = true,
             })
         scene:button("proximity", 2, 9, width - 2, 3,
             "Proximity Pay\n"
-                .. (device.proximity_enabled and "On - broadcasting nearby"
+                .. (device.proximity_enabled and "On and broadcasting\nnearby"
                     or "Off - tap to enable"), {
                 background = device.proximity_enabled and colors.green or colors.gray,
                 shadow = true,
             })
         scene:button("send", 2, 13, width - 2, 3,
-            "Send Money\n10% fee - " .. money(config.send_money_daily_limit)
-                .. " daily limit", {
+            "Send Money\n10% processing fee\n"
+                .. money(config.send_money_daily_limit) .. " daily limit", {
                 background = colors.purple,
                 shadow = true,
             })
-        scene:button("back", 1, height, 8, 1, "<  Home",
+        scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
         if action == "__tick" or action == "__idle" then
@@ -1137,7 +1167,7 @@ local function settingsScreen()
     local scene = ui.scene(target)
     scene:button("logout", 2, 15, width - 2, 2, "Sign Out",
         { background = ui.theme.danger })
-    scene:button("back", 1, height, 8, 1, "<  Home",
+    scene:button("back", 1, height, 8, 1, "< Home",
         { background = ui.theme.panel })
     local action = scene:wait()
     if action == "logout" and ui.confirm(target, "Sign Out",
@@ -1156,15 +1186,17 @@ local function mainMenu()
         {
             { "pay", "P\nPay", colors.blue },
             { "balance", "$\nWallet", colors.green },
-            { "history", "=\nHistory", colors.lightBlue },
+            { "history", "=\nActivity", colors.lightBlue },
             { "events", "*\nEvents", colors.purple },
-            { "tickets", "#\nTickets", colors.orange },
-            { "notifications", "!\nAlerts", colors.red },
         },
         {
+            { "tickets", "#\nTickets", colors.orange },
+            { "notifications", "!\nAlerts", colors.red },
             { "tax", "%\nTax", colors.orange },
             { "subscriptions", "S\nSubs", colors.magenta },
-            { "settings", "o\nSetup", colors.gray },
+        },
+        {
+            { "settings", "o\nSettings", colors.gray },
             { "lock", "L\nLock", colors.blue },
             { "exit", "X\nClose", colors.red },
         },
@@ -1184,14 +1216,11 @@ local function mainMenu()
         end
 
         local scene = ui.scene(target)
-        local gap = 2
-        local iconWidth = math.max(5, math.floor((width - 4 - gap * 2) / 3))
-        local gridWidth = iconWidth * 3 + gap * 2
-        local startX = math.floor((width - gridWidth) / 2) + 1
+        local iconWidth = math.max(8, math.floor((width - 4) / 2))
         for index, entry in ipairs(pages[page]) do
-            local column = (index - 1) % 3
-            local row = math.floor((index - 1) / 3)
-            local x = startX + column * (iconWidth + gap)
+            local column = (index - 1) % 2
+            local row = math.floor((index - 1) / 2)
+            local x = column == 0 and 2 or width - iconWidth
             local y = 8 + row * 4
             local label = entry[2]
             if entry[1] == "notifications" and alertCount > 0 then
@@ -1202,7 +1231,10 @@ local function mainMenu()
                 shadow = true,
             })
         end
-        ui.center(target, 16, page == 1 and "o  ." or ".  o",
+        ui.center(target, 16,
+            page == 1 and "o  .  ."
+                or page == 2 and ".  o  ."
+                or ".  .  o",
             ui.theme.muted)
         scene:button("prev", 1, 18, 7, 1, "<",
             { background = ui.theme.panel, disabled = page == 1 })
@@ -1263,7 +1295,7 @@ local function mainMenu()
     end
 end
 
-ui.boot(target, "PUMPE", "YOUR PHONE FOR THE ECONOMY v" .. config.version)
+ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
 local online = client:discover()
 if not online then
     ui.message(target, "error", "BANK OFFLINE", "Check your wireless modem", 1.5)
