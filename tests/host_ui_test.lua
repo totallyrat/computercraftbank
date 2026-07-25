@@ -87,6 +87,49 @@ assert(pinWithEvents({
     { "mouse_click", 1, 4, 13 },
 }) == "1234")
 
+-- The PUMPE can opt into phone styling without changing the kiosk UI.
+ui.usePhoneStyle(true)
+local phoneDisplay = mockTerminal(26, 20)
+ui.header(phoneDisplay, "Foxy Account", "Adam", "12:00")
+local phoneScene = ui.scene(phoneDisplay)
+phoneScene:button("pay", 3, 8, 6, 3, "P\nPay", {
+    background = colors.blue,
+})
+assert(phoneScene:hit(4, 9) == "pay")
+ui.usePhoneStyle(false)
+
+-- The shared wait loop triggers the opt-in lock callback after true global
+-- inactivity, even when screens redraw on their own tick timers.
+local nowMs, lastTimer, lockCount = 1000, 0, 0
+os.epoch = function() return nowMs end
+os.startTimer = function()
+    lastTimer = lastTimer + 1
+    return lastTimer
+end
+ui.setIdleLock(1, function(elapsed)
+    assert(elapsed >= 1000)
+    lockCount = lockCount + 1
+end)
+os.pullEvent = function()
+    nowMs = 2001
+    return "timer", lastTimer
+end
+assert(ui.scene(mockTerminal(26, 20)):wait() == "__idle")
+assert(lockCount == 1)
+ui.setIdleLock(nil)
+
+nowMs, lockCount = 3000, 0
+ui.setIdleLock(1, function() lockCount = lockCount + 1 end)
+local overdueScene = ui.scene(mockTerminal(26, 20))
+overdueScene:button("open", 2, 5, 10, 2, "OPEN")
+os.pullEvent = function()
+    nowMs = 4001
+    return "mouse_click", 1, 3, 5
+end
+assert(overdueScene:wait() == "__idle")
+assert(lockCount == 1)
+ui.setIdleLock(nil)
+
 -- Static pages must wait for a real choice. Previously Scene:wait started an
 -- implicit 0.5 second timer, causing confirmations and read-only pages to
 -- disappear before their buttons could be read.
