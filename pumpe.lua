@@ -13,8 +13,18 @@ local client = net.client(config)
 local sessionToken
 local account
 local running = true
+local updateGps
+local payMenu
 local deviceFile = fs.combine(ROOT, "pumpe_device.dat")
-local device = util.loadTable(deviceFile, { last_name = "" })
+local device = util.loadTable(deviceFile, {
+    last_name = "",
+    onboarding_complete = false,
+    proximity_enabled = true,
+})
+if device.onboarding_complete == nil then device.onboarding_complete = false end
+if device.proximity_enabled == nil then device.proximity_enabled = true end
+
+ui.usePhoneStyle(true)
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -25,6 +35,7 @@ local function request(action, payload, silent)
     if not result and not silent then
         if code == "SESSION_EXPIRED" then
             sessionToken, account = nil, nil
+            ui.setIdleLock(nil)
         end
         ui.networkError(target, err)
     end
@@ -45,9 +56,140 @@ local function refreshSummary(silent)
     return result
 end
 
+local function phoneTransition(title, color)
+    local width, height = target.getSize()
+    color = color or ui.theme.accentDark
+    for column = 1, width, 3 do
+        ui.fill(target, column, 1, math.min(3, width - column + 1),
+            height, column % 2 == 0 and ui.theme.background or color)
+        sleep(0.015)
+    end
+    ui.clear(target)
+    ui.center(target, math.floor(height / 2), title or "PUMPE", ui.theme.ink)
+    sleep(0.08)
+end
+
+local function preparationAnimation(newAccount)
+    local width, height = target.getSize()
+    local stages = {
+        {
+            title = "Setting up your",
+            detail = "Foxy Account",
+            work = function() saveDevice() end,
+        },
+        {
+            title = "Securing your details",
+            detail = "Encrypted by your PIN",
+            work = function() refreshSummary(true) end,
+        },
+        {
+            title = "Preparing your PUMPE",
+            detail = "Installing your apps",
+            work = function() client:discover() end,
+        },
+    }
+    if not newAccount then
+        stages[1].title = "Opening your"
+        stages[1].detail = "Foxy Account"
+    end
+    for index, stage in ipairs(stages) do
+        if stage.work then pcall(stage.work) end
+        for frame = 1, 4 do
+            ui.clear(target)
+            ui.center(target, 5, "PUMPE", ui.theme.ink)
+            ui.center(target, 8, stage.title, ui.theme.ink)
+            ui.center(target, 9, stage.detail, ui.theme.muted)
+            local dots = string.rep(".", (frame - 1) % 4)
+            ui.center(target, 11, dots, ui.theme.accent)
+            ui.progress(target, 3, height - 4, width - 5,
+                (index - 1) * 4 + frame, #stages * 4,
+                ui.theme.accent, ui.theme.panel)
+            sleep(0.07)
+        end
+    end
+    phoneTransition("Ready.", ui.theme.success)
+end
+
+local function unlockAnimation()
+    local width, height = target.getSize()
+    for row = height, 1, -2 do
+        ui.fill(target, 1, row, width, math.min(2, height - row + 1),
+            ui.theme.background)
+        sleep(0.015)
+    end
+end
+
+local function lockScreen(forcePin)
+    if not sessionToken or not account then return end
+    local blink = true
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target, colors.blue)
+        for row = 1, height do
+            if row % 4 == 0 then
+                ui.fill(target, 1, row, width, 1, colors.black, ".")
+            end
+        end
+        ui.text(target, 2, 1, "PUMPE", colors.lightGray, colors.blue)
+        ui.text(target, width - 2, 1, "[]", colors.lime, colors.blue)
+        ui.center(target, 5, util.formatClock(blink), colors.white, colors.blue)
+        ui.center(target, 7, "Day " .. util.ingameDay(), colors.lightGray, colors.blue)
+        ui.center(target, 11, account.name, colors.white, colors.blue)
+        local pinRequired = forcePin
+            or ui.idleForMs() >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000
+        ui.center(target, height - 4,
+            pinRequired and "PIN required" or "Tap to open",
+            pinRequired and colors.orange or colors.white, colors.blue)
+        ui.center(target, height - 2, "Foxy Account",
+            colors.lightGray, colors.blue)
+
+        local timer = os.startTimer(0.5)
+        local event = { os.pullEvent() }
+        if event[1] == "timer" then
+            blink = not blink
+        elseif event[1] == "terminate" then
+            running = false
+            return
+        elseif event[1] == "mouse_click" or event[1] == "monitor_touch"
+            or event[1] == "key" or event[1] == "char" then
+            local mustUsePin = forcePin
+                or ui.idleForMs()
+                    >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000
+            if mustUsePin then
+                local pin = ui.pin(target, "Unlock PUMPE", true)
+                if pin then
+                    local result, err = client:request("LOGIN", {
+                        name = account.name,
+                        pin = pin,
+                    })
+                    if result then
+                        sessionToken = result.session_token
+                        account = result.account
+                        ui.noteActivity()
+                        unlockAnimation()
+                        return
+                    end
+                    ui.message(target, "error", "PUMPE Locked",
+                        err or "Incorrect PIN", 0.8)
+                end
+            else
+                ui.noteActivity()
+                unlockAnimation()
+                return
+            end
+        end
+    end
+end
+
+local function enableDeviceLock()
+    ui.setIdleLock(tonumber(config.pumpe_lock_seconds) or 60, function()
+        lockScreen(false)
+    end)
+end
+
 local function pageFooter(scene, page, pages)
     local width, height = scene.width, scene.height
-    scene:button("back", 1, height, 7, 1, "< BACK",
+    scene:button("back", 1, height, 8, 1, "<  Home",
         { background = ui.theme.panel })
     if pages and pages > 1 then
         scene:button("prev", width - 15, height, 4, 1, "<",
@@ -60,25 +202,27 @@ local function pageFooter(scene, page, pages)
 end
 
 local function login()
-    local name = ui.input(target, "SIGN IN", {
-        hint = "PUMPE account name",
+    local name = ui.input(target, "Foxy Account", {
+        hint = "Enter your account name",
         initial = device.last_name,
         maxLength = 20,
         allowSpace = true,
     })
     if not name then return false end
-    local pin = ui.pin(target, "ACCOUNT PIN", true)
+    local pin = ui.pin(target, "Foxy Account PIN", true)
     if not pin then return false end
     local result, err = client:request("LOGIN", { name = name, pin = pin })
     if not result then
-        ui.message(target, "error", "SIGN IN FAILED", err, 1.1)
+        ui.message(target, "error", "Could Not Sign In", err, 1.1)
         return false
     end
     sessionToken = result.session_token
     account = result.account
     device.last_name = account.name
+    device.onboarding_complete = true
     saveDevice()
-    ui.message(target, "success", "WELCOME BACK", account.name, 0.65)
+    preparationAnimation(false)
+    enableDeviceLock()
     return true
 end
 
@@ -86,7 +230,7 @@ local function chooseGender()
     local width, height = target.getSize()
     while true do
         ui.clear(target)
-        ui.header(target, "CREATE ACCOUNT", "How should PUMPE address you?")
+        ui.header(target, "Foxy Account", "How should we address you?")
         local scene = ui.scene(target)
         local labels = { "She / her", "He / him", "They / them", "Prefer not to say" }
         local startY = 6
@@ -106,18 +250,18 @@ local function chooseGender()
 end
 
 local function createAccount()
-    local name = ui.input(target, "NEW PUMPE", {
-        hint = "Choose an account name",
+    local name = ui.input(target, "Create Foxy Account", {
+        hint = "Choose your account name",
         maxLength = 20,
         allowSpace = true,
     })
     if not name then return false end
-    local pin = ui.pin(target, "CREATE A PIN", true)
+    local pin = ui.pin(target, "Create a PIN", true)
     if not pin then return false end
-    local confirmPin = ui.pin(target, "REPEAT YOUR PIN", true)
+    local confirmPin = ui.pin(target, "Repeat Your PIN", true)
     if not confirmPin then return false end
     if pin ~= confirmPin then
-        ui.message(target, "error", "PINS DO NOT MATCH", "Please try again", 1)
+        ui.message(target, "error", "PINs Do Not Match", "Please try again", 1)
         return false
     end
     local gender = chooseGender()
@@ -128,36 +272,130 @@ local function createAccount()
         gender = gender,
     })
     if not result then
-        ui.message(target, "error", "COULD NOT CREATE", err, 1.1)
+        ui.message(target, "error", "Account Not Created", err, 1.1)
         return false
     end
     sessionToken = result.session_token
     account = result.account
     device.last_name = account.name
+    device.onboarding_complete = true
     saveDevice()
-    ui.message(target, "success", "ACCOUNT READY",
-        money(account.balance) .. " starting balance", 0.9)
+    preparationAnimation(true)
+    enableDeviceLock()
     return true
 end
 
-local function welcome()
+local function onboardingIntro()
+    local width, height = target.getSize()
+    local page, blink = 1, true
+    while running do
+        ui.clear(target)
+        ui.header(target, page == 1 and "Hello."
+                or page == 2 and "Built for real life"
+                or "Your Foxy Account",
+            page == 1 and "Welcome to PUMPE"
+                or page == 2 and "One pocket. Every app."
+                or "One account across PUMPE",
+            util.formatClock(blink))
+        local scene = ui.scene(target)
+        if page == 1 then
+            ui.center(target, 6, "Money. Pay. Events.", ui.theme.ink)
+            ui.center(target, 8, "Made to feel like", ui.theme.muted)
+            ui.center(target, 9, "an actual phone.", ui.theme.accent)
+            scene:button("next", 3, 13, width - 5, 3, "Continue",
+                { background = ui.theme.accentDark, shadow = true })
+        elseif page == 2 then
+            local features = {
+                { "PUMPE Pay", "Code, proximity and transfers", colors.blue },
+                { "Live Events", "Tickets and countdowns", colors.purple },
+                { "Private by default", "Protected by your PIN", colors.green },
+            }
+            for index, feature in ipairs(features) do
+                local y = 5 + (index - 1) * 4
+                ui.card(target, 2, y, width - 2, 3, feature[3])
+                ui.text(target, 4, y, feature[1], ui.theme.ink, ui.theme.panel)
+                ui.text(target, 4, y + 1,
+                    ui.truncate(feature[2], width - 6),
+                    ui.theme.muted, ui.theme.panel)
+            end
+            scene:button("next", width - 9, height, 9, 1, "Next  >",
+                { background = ui.theme.accentDark })
+            scene:button("back", 1, height, 8, 1, "<  Back",
+                { background = ui.theme.panel })
+        else
+            ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
+            ui.text(target, 4, 6, "Foxy Account", ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 8, "Your identity, balance",
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, 9, "and purchases in one place.",
+                ui.theme.muted, ui.theme.panel)
+            scene:button("create", 3, 12, width - 5, 3,
+                "Set Up New Account",
+                { background = ui.theme.accentDark, shadow = true })
+            scene:button("login", 3, 16, width - 5, 2,
+                "Sign In",
+                { background = ui.theme.panel })
+            scene:button("back", 1, height, 8, 1, "<  Back",
+                { background = ui.theme.panel })
+        end
+        if page == 1 then
+            scene:button("exit", 1, height, 6, 1, "Exit",
+                { background = ui.theme.panel })
+        end
+        ui.center(target, height - 1,
+            page == 1 and "o . ." or page == 2 and ". o ." or ". . o",
+            ui.theme.muted)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "__tick" or action == "__idle" then
+            blink = not blink
+        elseif action == "next" then
+            page = math.min(3, page + 1)
+            phoneTransition(page == 2 and "Discover" or "Foxy Account")
+        elseif action == "back" then
+            page = math.max(1, page - 1)
+        elseif action == "login" or action == "create" then
+            return action
+        elseif action == "exit" or action == "__terminate" then
+            return "exit"
+        end
+    end
+end
+
+local function accountLanding()
     local width, height = target.getSize()
     while running and not sessionToken do
         ui.clear(target)
-        ui.header(target, "PUMPE", "Banking, tickets, life", util.formatClock())
-        ui.center(target, 6, "YOUR MONEY.", ui.theme.ink)
-        ui.center(target, 7, "IN YOUR POCKET.", ui.theme.accent)
+        ui.header(target, "PUMPE", "Your phone for the economy",
+            util.formatClock())
+        ui.center(target, 6, "Welcome back.", ui.theme.ink)
+        if device.last_name ~= "" then
+            ui.center(target, 8, device.last_name, ui.theme.accent)
+        else
+            ui.center(target, 8, "Foxy Account", ui.theme.accent)
+        end
         local scene = ui.scene(target)
-        scene:button("login", 3, 10, width - 5, 3, "SIGN IN",
+        scene:button("login", 3, 11, width - 5, 3, "Sign In",
             { background = ui.theme.accentDark, shadow = true })
-        scene:button("create", 3, 14, width - 5, 3, "CREATE ACCOUNT",
-            { background = ui.theme.panel, shadow = true })
-        scene:button("exit", 1, height, 6, 1, "EXIT",
+        scene:button("create", 3, 15, width - 5, 2, "Create Foxy Account",
             { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        if action == "login" then login()
-        elseif action == "create" then createAccount()
-        elseif action == "exit" or action == "__terminate" then
+        scene:button("exit", 1, height, 6, 1, "Exit",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "login" or action == "create" then return action end
+        if action == "exit" or action == "__terminate" then return "exit" end
+    end
+end
+
+local function welcome()
+    while running and not sessionToken do
+        ui.setIdleLock(nil)
+        local action = device.onboarding_complete
+            and accountLanding() or onboardingIntro()
+        if action == "login" then
+            login()
+        elseif action == "create" then
+            createAccount()
+        elseif action == "exit" then
             running = false
         end
     end
@@ -173,7 +411,7 @@ local function balanceScreen()
         refreshSummary(true)
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "BALANCE", account.name, util.formatClock(blink))
+        ui.header(target, "Wallet", account.name, util.formatClock(blink))
         ui.card(target, 2, 5, width - 2, 4, ui.theme.success)
         ui.text(target, 4, 6, "AVAILABLE", ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 7, money(account.balance), ui.theme.ink, ui.theme.panel)
@@ -198,38 +436,111 @@ local function balanceScreen()
     end
 end
 
+local function reviewTransfer(quote)
+    local blink = true
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Send Money", "Review transfer",
+            util.formatClock(blink))
+        ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
+        ui.text(target, 4, 5, "TO", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, ui.truncate(quote.recipient, width - 6),
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 8, "THEY RECEIVE", ui.theme.muted, ui.theme.panel)
+        local receiveText = money(quote.amount)
+        ui.text(target, width - #receiveText - 2, 8, receiveText,
+            ui.theme.success, ui.theme.panel)
+        local rate = math.floor((tonumber(config.send_money_fee_rate) or 0.10)
+            * 100 + 0.5)
+        ui.text(target, 4, 10, "FEE " .. rate .. "%", ui.theme.muted, ui.theme.panel)
+        local feeText = money(quote.fee)
+        ui.text(target, width - #feeText - 2, 10, feeText,
+            ui.theme.warning, ui.theme.panel)
+        ui.text(target, 4, 12, "YOU PAY", ui.theme.ink, ui.theme.panel)
+        local totalText = money(quote.total)
+        ui.text(target, width - #totalText - 2, 12, totalText,
+            ui.theme.ink, ui.theme.panel)
+        ui.center(target, 15,
+            money(quote.daily_remaining) .. " send limit left today",
+            ui.theme.muted)
+
+        local scene = ui.scene(target)
+        local buttonWidth = math.floor((width - 5) / 2)
+        scene:button("back", 2, height - 3, buttonWidth, 2, "Back",
+            { background = ui.theme.panel })
+        scene:button("send", width - buttonWidth, height - 3,
+            buttonWidth, 2, "Send",
+            { background = ui.theme.accentDark })
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "send" then return true end
+        if action == "back" or action == "__terminate" then return false end
+        blink = not blink
+    end
+end
+
+local function sendingAnimation(recipient)
+    local width, height = target.getSize()
+    local stages = {
+        "Securing transfer",
+        "Contacting PUMPE Bank",
+        "Sending to " .. recipient,
+    }
+    for index, label in ipairs(stages) do
+        for frame = 1, 3 do
+            ui.clear(target)
+            ui.center(target, 6, "PUMPE Pay", ui.theme.ink)
+            ui.center(target, 9, ui.truncate(label, width - 4), ui.theme.muted)
+            ui.center(target, 11, string.rep(".", frame), ui.theme.accent)
+            ui.progress(target, 3, height - 4, width - 5,
+                (index - 1) * 3 + frame, #stages * 3,
+                ui.theme.accent, ui.theme.panel)
+            sleep(0.06)
+        end
+    end
+end
+
 local function sendMoney()
-    local recipient = ui.input(target, "SEND MONEY", {
-        hint = "Recipient account name",
+    local recipient = ui.input(target, "Send Money", {
+        hint = "Foxy Account username",
         maxLength = 20,
         allowSpace = true,
     })
     if not recipient then return end
-    local amountText = ui.input(target, "AMOUNT", {
-        hint = "Available " .. money(account.balance),
+    local amountText = ui.input(target, "They Receive", {
+        hint = "Up to " .. money(config.send_money_daily_limit) .. " per day",
         mode = "number", maxLength = 12,
     })
     if not amountText then return end
     local amount = tonumber(amountText)
     if not amount or amount <= 0 then
-        ui.message(target, "error", "INVALID AMOUNT", "Enter a number above zero")
+        ui.message(target, "error", "Invalid Amount", "Enter a number above zero")
         return
     end
-    if not ui.confirm(target, "CONFIRM TRANSFER",
-        money(amount) .. " to " .. recipient, "SEND", "BACK") then return end
-    local pin = ui.pin(target, "CONFIRM WITH PIN", true)
-    if not pin then return end
-    local result, err = request("SEND_MONEY", {
+    local quote, quoteErr = request("SEND_MONEY_QUOTE", {
         recipient = recipient,
         amount = amount,
+    }, true)
+    if not quote then
+        ui.message(target, "error", "Cannot Send Money", quoteErr, 1.1)
+        return
+    end
+    if not reviewTransfer(quote) then return end
+    local pin = ui.pin(target, "Confirm with PIN", true)
+    if not pin then return end
+    sendingAnimation(quote.recipient)
+    local result, err = request("SEND_MONEY", {
+        recipient = quote.recipient,
+        amount = quote.amount,
         pin = pin,
     }, true)
     if result then
         account.balance = result.balance
-        ui.message(target, "success", "MONEY SENT",
-            money(amount) .. " to " .. result.recipient, 1)
+        account.daily_sent = result.daily_limit - result.daily_remaining
+        ui.message(target, "success", "Money Sent",
+            result.recipient .. " received " .. money(result.amount), 1.1)
     else
-        ui.message(target, "error", "TRANSFER FAILED", err, 1.1)
+        ui.message(target, "error", "Transfer Failed", err, 1.1)
     end
 end
 
@@ -274,7 +585,7 @@ local function historyScreen()
     while true do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "HISTORY", #items .. " transactions", util.formatClock(blink))
+        ui.header(target, "Activity", #items .. " transactions", util.formatClock(blink))
         local pageItems, actualPage, pages = util.page(items, page,
             math.max(1, math.floor((height - 5) / 3)))
         page = actualPage
@@ -385,7 +696,7 @@ local function eventsScreen()
     while true do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "EVENTS", "Live schedule", util.formatClock(blink))
+        ui.header(target, "Events", "Live schedule", util.formatClock(blink))
         local pageItems, actualPage, pages = util.page(events, page, 3)
         page = actualPage
         local scene = ui.scene(target)
@@ -441,7 +752,7 @@ end
 local function drawTicket(ticket, blink)
     local width, height = target.getSize()
     ui.clear(target)
-    ui.header(target, "MY TICKET", ticket.ticket_type_name, util.formatClock(blink))
+    ui.header(target, "My Ticket", ticket.ticket_type_name, util.formatClock(blink))
     local countdown = util.eventCountdown(ticket.event_day, ticket.event_time)
     ui.center(target, 4, ui.truncate(ticket.event_title, width - 2), ui.theme.ink)
     ui.center(target, 5, "IN " .. string.upper(countdown), ui.theme.accent)
@@ -494,7 +805,7 @@ local function notificationsScreen()
     while true do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "NOTIFICATIONS", #items .. " total", util.formatClock(blink))
+        ui.header(target, "Notifications", #items .. " total", util.formatClock(blink))
         local pageItems, actualPage, pages = util.page(items, page, 3)
         page = actualPage
         if #items == 0 then ui.center(target, 9, "All quiet here", ui.theme.muted) end
@@ -526,7 +837,7 @@ local function subscriptionsScreen()
     while true do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "SUBSCRIPTIONS", "Daily billing", util.formatClock(blink))
+        ui.header(target, "Subscriptions", "Daily billing", util.formatClock(blink))
         local pageItems, actualPage, pages = util.page(items, page, 3)
         page = actualPage
         local scene = ui.scene(target)
@@ -607,7 +918,7 @@ local function taxScreen()
     end
     local width, height = target.getSize()
     ui.clear(target)
-    ui.header(target, "TAX DECLARATION", "Period " .. result.period.period_id,
+    ui.header(target, "Tax Declaration", "Period " .. result.period.period_id,
         util.formatClock())
     ui.card(target, 2, 5, width - 2, 5, ui.theme.warning)
     ui.text(target, 4, 6, "DUE BY DAY " .. result.period.end_day,
@@ -694,100 +1005,255 @@ local function pendingRequestPopup()
     return true
 end
 
-local function updateGps()
-    if not gps or not gps.locate then return end
+updateGps = function()
+    if not device.proximity_enabled then return false, "Paused" end
+    if not gps or not gps.locate then return false, "GPS unavailable" end
     local x, y, z = gps.locate(0.25, false)
     if x then
-        request("GPS_UPDATE", { x = x, y = y, z = z }, true)
+        local result = request("GPS_UPDATE", { x = x, y = y, z = z }, true)
+        if result then
+            return true, string.format("%.0f, %.0f, %.0f", x, y, z)
+        end
+    end
+    return false, "Finding location"
+end
+
+local function proximityScreen()
+    local blink, tick = true, 0
+    local located, locationText = updateGps()
+    while sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Proximity Pay", "PUMPE Pay",
+            util.formatClock(blink))
+        local active = device.proximity_enabled
+        local pulseColor = active and (blink and ui.theme.success or ui.theme.accent)
+            or colors.gray
+        ui.card(target, 2, 5, width - 2, 8, pulseColor)
+        ui.center(target, 6, active and "((  P  ))" or "(  PAUSED  )",
+            pulseColor, ui.theme.panel)
+        ui.center(target, 8,
+            active and (located and "Broadcasting nearby" or locationText)
+                or "Location sharing is off",
+            ui.theme.ink, ui.theme.panel)
+        ui.center(target, 10,
+            active and "Kiosks can request payment" or "Kiosks cannot find you",
+            ui.theme.muted, ui.theme.panel)
+        if active and located then
+            ui.center(target, 11, locationText, ui.theme.muted, ui.theme.panel)
+        end
+
+        local scene = ui.scene(target)
+        scene:button("toggle", 3, 15, width - 5, 2,
+            active and "Turn Off Proximity Pay" or "Turn On Proximity Pay", {
+                background = active and ui.theme.panel or ui.theme.accentDark,
+            })
+        scene:button("back", 1, height, 8, 1, "<  Pay",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "__tick" or action == "__idle" then
+            blink = not blink
+            tick = tick + 1
+            if active and tick % math.max(1,
+                math.floor((tonumber(config.proximity_update_seconds) or 2) / 0.5))
+                == 0 then
+                located, locationText = updateGps()
+                local pending = request("PENDING_REQUESTS", {}, true)
+                if pending and #pending.requests > 0 then pendingRequestPopup() end
+            end
+        elseif action == "toggle" then
+            device.proximity_enabled = not device.proximity_enabled
+            saveDevice()
+            located, locationText = updateGps()
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+payMenu = function()
+    local blink, tick = true, 0
+    while sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PUMPE Pay", "Choose how to pay",
+            util.formatClock(blink))
+        local scene = ui.scene(target)
+        scene:button("code", 2, 5, width - 2, 3,
+            "Code Pay\nEnter a 6-character code", {
+                background = colors.blue,
+                shadow = true,
+            })
+        scene:button("proximity", 2, 9, width - 2, 3,
+            "Proximity Pay\n"
+                .. (device.proximity_enabled and "On - broadcasting nearby"
+                    or "Off - tap to enable"), {
+                background = device.proximity_enabled and colors.green or colors.gray,
+                shadow = true,
+            })
+        scene:button("send", 2, 13, width - 2, 3,
+            "Send Money\n10% fee - " .. money(config.send_money_daily_limit)
+                .. " daily limit", {
+                background = colors.purple,
+                shadow = true,
+            })
+        scene:button("back", 1, height, 8, 1, "<  Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "__tick" or action == "__idle" then
+            blink = not blink
+            tick = tick + 1
+            if device.proximity_enabled and tick % math.max(1,
+                math.floor((tonumber(config.proximity_update_seconds) or 2) / 0.5))
+                == 0 then
+                updateGps()
+            end
+        elseif action == "code" then
+            phoneTransition("Code Pay", colors.blue)
+            payCode()
+        elseif action == "proximity" then
+            phoneTransition("Proximity Pay", colors.green)
+            proximityScreen()
+        elseif action == "send" then
+            phoneTransition("Send Money", colors.purple)
+            sendMoney()
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
     end
 end
 
 local function settingsScreen()
     local width, height = target.getSize()
     ui.clear(target)
-    ui.header(target, "SETTINGS", account.name, util.formatClock())
-    ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
-    ui.text(target, 4, 6, "ACCOUNT ID", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 7, account.account_id, ui.theme.ink, ui.theme.panel)
-    ui.text(target, 4, 9, "PERSONAL NUMBER", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 10, account.personal_number, ui.theme.ink, ui.theme.panel)
+    ui.header(target, "Settings", "Foxy Account", util.formatClock())
+    ui.card(target, 2, 5, width - 2, 8, ui.theme.accent)
+    ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 6, account.name, ui.theme.ink, ui.theme.panel)
+    ui.text(target, 4, 8, "ACCOUNT ID", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 9, account.account_id, ui.theme.ink, ui.theme.panel)
+    ui.text(target, 4, 11, "PERSONAL NUMBER", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 12, account.personal_number, ui.theme.ink, ui.theme.panel)
     local scene = ui.scene(target)
-    scene:button("logout", 2, 14, width - 2, 2, "SIGN OUT",
+    scene:button("logout", 2, 15, width - 2, 2, "Sign Out",
         { background = ui.theme.danger })
-    scene:button("back", 1, height, 7, 1, "< BACK",
+    scene:button("back", 1, height, 8, 1, "<  Home",
         { background = ui.theme.panel })
     local action = scene:wait()
-    if action == "logout" and ui.confirm(target, "SIGN OUT", "Leave this PUMPE session?",
-        "SIGN OUT", "BACK") then
+    if action == "logout" and ui.confirm(target, "Sign Out",
+        "Leave this PUMPE session?", "Sign Out", "Back") then
         sessionToken, account = nil, nil
+        ui.setIdleLock(nil)
     end
 end
 
 local function mainMenu()
-    local blink, tick = true, 0
+    local blink, tick, page = true, 0, 1
     local summary = refreshSummary() or {}
-    updateGps()
+    enableDeviceLock()
+    if device.proximity_enabled then updateGps() end
+    local pages = {
+        {
+            { "pay", "P\nPay", colors.blue },
+            { "balance", "$\nWallet", colors.green },
+            { "history", "=\nHistory", colors.lightBlue },
+            { "events", "*\nEvents", colors.purple },
+            { "tickets", "#\nTickets", colors.orange },
+            { "notifications", "!\nAlerts", colors.red },
+        },
+        {
+            { "tax", "%\nTax", colors.orange },
+            { "subscriptions", "S\nSubs", colors.magenta },
+            { "settings", "o\nSetup", colors.gray },
+            { "lock", "L\nLock", colors.blue },
+            { "exit", "X\nClose", colors.red },
+        },
+    }
     while running and sessionToken do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "PUMPE", account.name, util.formatClock(blink))
-        ui.card(target, 2, 5, width - 2, 3, ui.theme.success)
-        ui.text(target, 4, 5, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 6, money(account.balance), ui.theme.ink, ui.theme.panel)
+        ui.header(target, "Foxy Account", account.name, util.formatClock(blink))
+        ui.card(target, 2, 4, width - 2, 3, ui.theme.success)
+        ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 5, money(account.balance), ui.theme.ink, ui.theme.panel)
         local alertCount = (summary.unread_notifications or 0)
             + (summary.pending_requests or 0)
         if alertCount > 0 then
-            ui.text(target, width - 5, 6, tostring(alertCount), colors.black,
+            ui.text(target, width - 5, 5, tostring(alertCount), colors.black,
                 ui.theme.warning)
         end
 
         local scene = ui.scene(target)
-        local gap = 1
-        local buttonWidth = math.floor((width - 3) / 2)
-        local right = 2 + buttonWidth + gap
-        local labels = {
-            { "balance", "BALANCE" }, { "pay", "PAY" },
-            { "send", "SEND" }, { "history", "HISTORY" },
-            { "events", "EVENTS" }, { "tickets", "MY TIX" },
-            { "notifications", alertCount > 0 and ("NOTIF " .. alertCount) or "NOTIF" },
-            { "tax", "TAX" },
-            { "subscriptions", "SUBS" }, { "settings", "SETTINGS" },
-        }
-        for index, entry in ipairs(labels) do
-            local column = (index - 1) % 2
-            local row = math.floor((index - 1) / 2)
-            local x = column == 0 and 2 or right
-            local y = 9 + row * 2
-            scene:button(entry[1], x, y, buttonWidth, 2, entry[2], {
-                background = (entry[1] == "pay" or entry[1] == "events")
-                    and ui.theme.accentDark or ui.theme.panel,
+        local gap = 2
+        local iconWidth = math.max(5, math.floor((width - 4 - gap * 2) / 3))
+        local gridWidth = iconWidth * 3 + gap * 2
+        local startX = math.floor((width - gridWidth) / 2) + 1
+        for index, entry in ipairs(pages[page]) do
+            local column = (index - 1) % 3
+            local row = math.floor((index - 1) / 3)
+            local x = startX + column * (iconWidth + gap)
+            local y = 8 + row * 4
+            local label = entry[2]
+            if entry[1] == "notifications" and alertCount > 0 then
+                label = "!" .. alertCount .. "\nAlerts"
+            end
+            scene:button(entry[1], x, y, iconWidth, 3, label, {
+                background = entry[3],
+                shadow = true,
             })
         end
-        scene:button("exit", 1, height, 6, 1, "EXIT",
+        ui.center(target, 16, page == 1 and "o  ." or ".  o",
+            ui.theme.muted)
+        scene:button("prev", 1, 18, 7, 1, "<",
+            { background = ui.theme.panel, disabled = page == 1 })
+        scene:button("next", width - 6, 18, 7, 1, ">",
+            { background = ui.theme.panel, disabled = page == #pages })
+        scene:button("home", math.floor(width / 2) - 3, height, 7, 1, "",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
-        if action == "__tick" then
+        if action == "__tick" or action == "__idle" then
             blink = not blink
             tick = tick + 1
             net.autoUpdate(config, "pumpe", ROOT)
+            local proximityTicks = math.max(1,
+                math.floor((tonumber(config.proximity_update_seconds) or 2) / 0.5))
+            if device.proximity_enabled and tick % proximityTicks == 0 then
+                updateGps()
+                local pending = request("PENDING_REQUESTS", {}, true)
+                if pending and #pending.requests > 0 then
+                    pendingRequestPopup()
+                end
+            end
             if tick % 10 == 0 then
                 summary = refreshSummary(true) or summary
                 if not sessionToken then return end
-                if (summary.pending_requests or 0) > 0 and pendingRequestPopup() then
-                    summary = refreshSummary(true) or summary
-                end
             end
-            if tick % 60 == 0 then updateGps() end
-        elseif action == "balance" then ui.wipe(target); balanceScreen()
-        elseif action == "pay" then payCode()
-        elseif action == "send" then sendMoney()
-        elseif action == "history" then ui.wipe(target); historyScreen()
-        elseif action == "events" then ui.wipe(target, "LIVE EVENTS"); eventsScreen()
-        elseif action == "tickets" then ui.wipe(target); myTicketsScreen()
-        elseif action == "notifications" then ui.wipe(target); notificationsScreen()
-        elseif action == "tax" then taxScreen()
-        elseif action == "subscriptions" then subscriptionsScreen()
-        elseif action == "settings" then settingsScreen()
+        elseif action == "prev" then
+            page = math.max(1, page - 1)
+        elseif action == "next" then
+            page = math.min(#pages, page + 1)
+        elseif action == "home" then
+            page = 1
+        elseif action == "balance" then
+            phoneTransition("Wallet", colors.green); balanceScreen()
+        elseif action == "pay" then
+            phoneTransition("PUMPE Pay", colors.blue); payMenu()
+        elseif action == "history" then
+            phoneTransition("Activity", colors.lightBlue); historyScreen()
+        elseif action == "events" then
+            phoneTransition("Events", colors.purple); eventsScreen()
+        elseif action == "tickets" then
+            phoneTransition("Tickets", colors.orange); myTicketsScreen()
+        elseif action == "notifications" then
+            phoneTransition("Alerts", colors.red); notificationsScreen()
+        elseif action == "tax" then
+            phoneTransition("Tax", colors.orange); taxScreen()
+        elseif action == "subscriptions" then
+            phoneTransition("Subscriptions", colors.magenta); subscriptionsScreen()
+        elseif action == "settings" then
+            phoneTransition("Settings", colors.gray); settingsScreen()
+        elseif action == "lock" then
+            lockScreen(true)
         elseif action == "exit" or action == "__terminate" then
             running = false
         end
@@ -797,7 +1263,7 @@ local function mainMenu()
     end
 end
 
-ui.boot(target, "PUMPE", "POCKET BANKING v" .. config.version)
+ui.boot(target, "PUMPE", "YOUR PHONE FOR THE ECONOMY v" .. config.version)
 local online = client:discover()
 if not online then
     ui.message(target, "error", "BANK OFFLINE", "Check your wireless modem", 1.5)
