@@ -232,6 +232,7 @@ local function blankState()
         payment_requests = {},
         gps_devices = {},
         tax_revenue = 0,
+        processing_fee_revenue = 0,
         last_subscription_day = -1,
     }
 end
@@ -251,6 +252,7 @@ local function ensureState()
         account.notifications = account.notifications or {}
         account.subscriptions = account.subscriptions or {}
         account.daily_spent = account.daily_spent or 0
+        account.daily_sent = account.daily_sent or 0
         account.last_spent_day = account.last_spent_day or util.ingameDay()
         if account.name then
             state.account_names[util.normalName(account.name)] = account.account_id
@@ -332,6 +334,7 @@ local function publicAccount(account)
         frozen = account.frozen,
         smart_declaration_lifetime = account.smart_declaration_lifetime,
         daily_spent = account.daily_spent,
+        daily_sent = account.daily_sent,
     }
 end
 
@@ -340,6 +343,7 @@ local function resetDailySpend(account)
     if account.last_spent_day ~= day then
         account.last_spent_day = day
         account.daily_spent = 0
+        account.daily_sent = 0
     end
 end
 
@@ -547,13 +551,14 @@ function actions.REGISTER(payload)
         subscriptions = {},
         notifications = {},
         daily_spent = 0,
+        daily_sent = 0,
         last_spent_day = util.ingameDay(),
         created_day = util.ingameDay(),
     }
     state.accounts[accountId] = account
     state.account_names[util.normalName(name)] = accountId
-    notification(account, "Welcome to PUMPE",
-        "Your account starts with " .. util.money(config.starting_balance, config.currency),
+    notification(account, "Welcome to your Foxy Account",
+        "Your PUMPE starts with " .. util.money(config.starting_balance, config.currency),
         "success")
     transaction(account, "opening_credit", config.starting_balance,
         "PUMPE Bank", "Starting balance")
@@ -591,28 +596,66 @@ function actions.ACCOUNT_SUMMARY(payload)
     }
 end
 
-function actions.SEND_MONEY(payload)
-    local sender = requireSession(payload)
+local function buildSendMoneyQuote(sender, payload)
     local recipient = accountByName(payload.recipient)
     checkAccountActive(recipient)
     need(recipient.account_id ~= sender.account_id,
         "INVALID_RECIPIENT", "You cannot send money to yourself")
-    need(verifyAccount(sender, payload.pin), "BAD_PIN", "Incorrect PIN")
     local amount = validateAmount(payload.amount)
-    need(sender.balance >= amount, "INSUFFICIENT_FUNDS", "Not enough money")
-    sender.balance = util.roundMoney(sender.balance - amount)
-    recipient.balance = util.roundMoney(recipient.balance + amount)
-    sender.daily_spent = util.roundMoney(sender.daily_spent + amount)
-    transaction(sender, "transfer_out", -amount, recipient.name,
+    local breakdown = util.transferBreakdown(amount, config.send_money_fee_rate)
+    local dailyLimit = tonumber(config.send_money_daily_limit) or 2000
+    local withinLimit, dailyRemaining = util.dailyLimitRemaining(
+        sender.daily_sent, breakdown.amount, dailyLimit)
+    need(withinLimit,
+        "SEND_LIMIT_REACHED", "Your daily Send Money limit is "
+            .. util.money(dailyLimit, config.currency))
+    need(sender.balance >= breakdown.total,
+        "INSUFFICIENT_FUNDS", "Not enough money including the processing fee")
+    return {
+        recipient_account = recipient,
+        recipient = recipient.name,
+        amount = breakdown.amount,
+        fee = breakdown.fee,
+        total = breakdown.total,
+        daily_limit = dailyLimit,
+        daily_remaining = dailyRemaining,
+    }
+end
+
+function actions.SEND_MONEY_QUOTE(payload)
+    local sender = requireSession(payload)
+    local quote = buildSendMoneyQuote(sender, payload)
+    quote.recipient_account = nil
+    return quote
+end
+
+function actions.SEND_MONEY(payload)
+    local sender = requireSession(payload)
+    need(verifyAccount(sender, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local quote = buildSendMoneyQuote(sender, payload)
+    local recipient = quote.recipient_account
+    sender.balance = util.roundMoney(sender.balance - quote.total)
+    recipient.balance = util.roundMoney(recipient.balance + quote.amount)
+    sender.daily_spent = util.roundMoney(sender.daily_spent + quote.total)
+    sender.daily_sent = util.roundMoney(sender.daily_sent + quote.amount)
+    state.processing_fee_revenue = util.roundMoney(
+        state.processing_fee_revenue + quote.fee)
+    transaction(sender, "transfer_out", -quote.amount, recipient.name,
         payload.description or "Money sent")
-    transaction(recipient, "transfer_in", amount, sender.name,
+    if quote.fee > 0 then
+        transaction(sender, "processing_fee", -quote.fee, "PUMPE",
+            "Send Money processing fee")
+    end
+    transaction(recipient, "transfer_in", quote.amount, sender.name,
         payload.description or "Money received")
     notification(recipient, "Money received",
-        sender.name .. " sent you " .. util.money(amount, config.currency), "money")
+        sender.name .. " sent you " .. util.money(quote.amount, config.currency), "money")
     save()
-    logActivity("Transfer " .. util.money(amount, config.currency)
+    logActivity("Transfer " .. util.money(quote.amount, config.currency)
         .. " " .. sender.name .. " > " .. recipient.name, colors.lime)
-    return { balance = sender.balance, recipient = recipient.name, amount = amount }
+    quote.recipient_account = nil
+    quote.balance = sender.balance
+    return quote
 end
 
 function actions.HISTORY(payload)
