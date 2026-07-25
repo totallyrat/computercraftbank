@@ -21,7 +21,8 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 
 - A three-page animated onboarding introduces PUMPE and creates or signs into a **Foxy Account**.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
-- The Home Screen uses a two-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
+- The Home Screen uses a roomy two-column, three-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
+- Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - Wallet, Activity, Events, Tickets, Notifications, Tax, Subscriptions, and Settings open as individual apps.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 
@@ -266,4 +267,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `5.2.0`.
+PUMPE Ecosystem `5.2.1`.
