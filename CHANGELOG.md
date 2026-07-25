@@ -1,5 +1,14 @@
 # Changelog
 
+## 5.2.1
+
+- Reflowed PUMPE for the Advanced Pocket Computer's exact 26×20 character display.
+- Replaced the cramped three-column Home Screen with a two-column, three-page app grid so every app name remains legible.
+- Added pocket-safe word wrapping to phone buttons, messages, confirmations, onboarding cards, and dense app content.
+- Reworked PUMPE Pay and Proximity Pay cards so their labels, status, daily limit, and processing fee are visible without clipping.
+- Gave Wallet, Activity, Events, event ticket selection, owned tickets, Notifications, and Subscriptions roomier paged layouts with multi-line content.
+- Added a full PUMPE host flow that checks every major app at 26×20 and fails if text or controls leave the screen or a button label needs truncation.
+
 ## 5.2.0
 
 - Rebuilt PUMPE around a phone-style, touch-first Home Screen with app icons, two app pages, a status bar, home indicator, rounded cards, animated transitions, and phone styling across every PUMPE app.
