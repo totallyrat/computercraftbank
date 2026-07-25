@@ -39,6 +39,13 @@ term = { current = function() return mockTerminal(51, 19) end }
 
 local ui = require("lib.ui")
 
+local wrapped = ui.wrap(
+    "Processing fees and payment totals stay readable on pocket screens", 22)
+assert(#wrapped == 4)
+for _, line in ipairs(wrapped) do
+    assert(#line <= 22, "wrapped copy exceeds the pocket content width")
+end
+
 for _, dimensions in ipairs({ { 26, 20 }, { 51, 19 }, { 29, 12 } }) do
     local display = mockTerminal(dimensions[1], dimensions[2])
     ui.clear(display)
@@ -96,6 +103,13 @@ phoneScene:button("pay", 3, 8, 6, 3, "P\nPay", {
     background = colors.blue,
 })
 assert(phoneScene:hit(4, 9) == "pay")
+phoneScene:button("code", 2, 12, 24, 3,
+    "Code Pay\nEnter a six-character\nkiosk code", {
+        background = colors.blue,
+    })
+assert(phoneScene:hit(12, 13) == "code")
+ui.message(phoneDisplay, "success", "Transfer completed safely",
+    "The recipient received the payment and your daily limit was updated.")
 ui.usePhoneStyle(false)
 
 -- The shared wait loop triggers the opt-in lock callback after true global
@@ -139,6 +153,12 @@ end
 os.pullEvent = function()
     return "mouse_click", 1, 16, 17
 end
+ui.usePhoneStyle(true)
+assert(ui.confirm(mockTerminal(26, 20), "REVIEW PAYMENT",
+    "Corner Service Kiosk requests a payment with a detailed description"
+        .. " that must remain readable before approval.",
+    "PAY", "BACK") == true)
+ui.usePhoneStyle(false)
 assert(ui.confirm(mockTerminal(26, 20), "CONFIRM", "Keep this page open?",
     "YES", "NO") == true)
 
