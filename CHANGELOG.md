@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.2.0
+
+- Rebuilt PUMPE around a phone-style, touch-first Home Screen with app icons, two app pages, a status bar, home indicator, rounded cards, animated transitions, and phone styling across every PUMPE app.
+- Renamed the customer identity throughout onboarding and settings to **Foxy Account**.
+- Added a full three-page onboarding and animated **Setting up your Foxy Account**, **Securing your details**, and **Preparing your PUMPE** stages backed by real device-save, account-refresh, and server-discovery work.
+- Reorganized PUMPE Pay into Code Pay, Proximity Pay, and Send Money.
+- Increased active Proximity Pay GPS broadcasts to every two seconds and added an animated broadcast/paused screen.
+- Added server-quoted Send Money reviews showing the recipient amount, 10% processing fee, total debit, and remaining daily limit.
+- Added authoritative Bank Server enforcement of a separate `$2,000` daily Send Money limit, fee rounding that cannot be bypassed with tiny transfers, processing-fee accounting, and legacy-account migration.
+- Added a global inactivity Lock Screen after one minute, with time/day display and Bank Server PIN verification after two minutes.
+- Added host tests for phone rendering, global inactivity callbacks, transfer fee rounding, and daily-limit boundaries.
+
 ## 5.1.0
 
 - Added automatic HTTPS release checks to the Bank Server.
