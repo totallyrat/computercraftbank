@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "5.2.0",
+  "version": "5.2.1",
   "notes": "PUMPE automatic internet release",
   "files": [
     {
@@ -13,8 +13,8 @@
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 53297,
-      "checksum": "c40627fa"
+      "size": 54457,
+      "checksum": "729a37ff"
     },
     {
       "path": "service_kiosk.lua",
@@ -50,7 +50,7 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 1223,
-      "checksum": "935d1e9f"
+      "checksum": "a10c2d40"
     },
     {
       "path": "lib/net.lua",
@@ -61,8 +61,8 @@
     {
       "path": "lib/ui.lua",
       "source": "lib/ui.lua",
-      "size": 20623,
-      "checksum": "f490251e"
+      "size": 23801,
+      "checksum": "ae7b9903"
     },
     {
       "path": "lib/update.lua",
