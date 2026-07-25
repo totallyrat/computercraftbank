@@ -50,8 +50,12 @@ Run this after installing into a ComputerCraft world.
 
 - [ ] On a fresh PUMPE, complete all three onboarding pages and create a Foxy Account.
 - [ ] Confirm **Setting up your Foxy Account** and **Preparing your PUMPE** animate without forcing an unnecessary reboot.
-- [ ] Confirm the Home Screen has two app pages and every icon opens the correct app.
+- [ ] On an Advanced Pocket Computer at its native 26×20 size, confirm every onboarding line, header, button label, and footer is fully visible.
+- [ ] Confirm the Home Screen has three two-column app pages and every full app name is readable and opens the correct app.
 - [ ] Confirm PUMPE Pay lists Code Pay first, Proximity Pay second, and Send Money third.
+- [ ] Confirm all three PUMPE Pay cards show their complete subtitle, including the 10% processing fee and `$2,000` daily limit.
+- [ ] Open Wallet, Activity, Events, Tickets, Notifications, and Subscriptions with long sample names and confirm content wraps without overlapping controls or the footer.
+- [ ] Trigger a long payment confirmation and error message and confirm every line remains readable until the user responds or the message completes.
 - [ ] Leave the PUMPE untouched for 60 seconds and confirm the Lock Screen appears with the correct in-game time and day.
 - [ ] Open it before 120 seconds and confirm no PIN is required.
 - [ ] Lock it again, wait beyond 120 seconds, and confirm a wrong PIN stays locked while the correct PIN opens PUMPE.
