@@ -1,4 +1,4 @@
--- Full host-side 26x20 layout flow for the PUMPE 5.2.1 experience.
+-- Full host-side 26x20 layout flow for the PUMPE 5.3.0 experience.
 
 local actions = {
     "next",
@@ -25,13 +25,28 @@ local actions = {
     "back",
     "notifications",
     "back",
+    "visas",
+    "documents",
+    "back",
+    "applications",
+    "back",
+    "back",
+    "customs",
+    "territory:TER000001",
+    "citizens",
+    "back",
+    "applications",
+    "back",
+    "roam",
+    "back",
+    "back",
+    "back",
+    "next",
     "tax",
     "subscriptions",
     "back",
-    "next",
     "settings",
-    "back",
-    "exit",
+    "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
 local savedDevice
@@ -73,7 +88,7 @@ local account = {
 }
 
 package.loaded.config = {
-    version = "5.2.1",
+    version = "5.3.0",
     currency = "$",
     send_money_daily_limit = 2000,
     send_money_fee_rate = 0.10,
@@ -81,6 +96,9 @@ package.loaded.config = {
     pumpe_pin_seconds = 120,
     proximity_update_seconds = 2,
     max_ticket_quantity = 5,
+    max_territories_per_account = 3,
+    visa_min_days = 1,
+    visa_max_days = 30,
 }
 
 package.loaded["lib.util"] = {
@@ -189,6 +207,104 @@ local client = {
                         kind = "info",
                         created_day = 42,
                         created_time = "12:00",
+                    },
+                },
+            }
+        elseif action == "VISA_OVERVIEW" then
+            return {
+                documents = {
+                    {
+                        visa_id = "VISA00000001",
+                        code = "ABCD2345",
+                        kind = "citizenship",
+                        territory_id = "TER000001",
+                        territory_name = "Foxy Republic",
+                        permanent = true,
+                        status = "active",
+                        issued_day = 42,
+                        free_roam = {
+                            {
+                                territory_id = "TER000002",
+                                territory_name = "River State",
+                            },
+                        },
+                        visits = {},
+                    },
+                },
+                applications = {
+                    {
+                        application_id = "VAPP00000001",
+                        territory_id = "TER000002",
+                        territory_name = "River State",
+                        applicant_name = "FoxyUser",
+                        requested_days = 7,
+                        status = "pending",
+                        created_day = 42,
+                    },
+                },
+                territories = {
+                    {
+                        territory_id = "TER000001",
+                        name = "Foxy Republic",
+                        access = "citizenship",
+                        can_apply = false,
+                    },
+                    {
+                        territory_id = "TER000002",
+                        name = "River State",
+                        pending = true,
+                        can_apply = false,
+                    },
+                },
+                visa_min_days = 1,
+                visa_max_days = 30,
+            }
+        elseif action == "CUSTOMS_OVERVIEW" then
+            return {
+                territories = {
+                    {
+                        territory_id = "TER000001",
+                        name = "Foxy Republic",
+                        citizen_count = 1,
+                        free_roam_count = 1,
+                        pending_count = 1,
+                        created_day = 42,
+                    },
+                },
+                maximum_territories = 3,
+            }
+        elseif action == "CUSTOMS_DETAIL" then
+            return {
+                territory = {
+                    territory_id = "TER000001",
+                    name = "Foxy Republic",
+                    citizen_count = 1,
+                    free_roam_count = 1,
+                },
+                citizens = {
+                    {
+                        account_id = "ACC000001",
+                        name = "FoxyUser",
+                        code = "ABCD2345",
+                        issued_day = 42,
+                    },
+                },
+                applications = {
+                    {
+                        application_id = "VAPP00000002",
+                        territory_id = "TER000001",
+                        territory_name = "Foxy Republic",
+                        applicant_name = "VisitingFriend",
+                        requested_days = 5,
+                        status = "pending",
+                        created_day = 42,
+                    },
+                },
+                other_territories = {
+                    {
+                        territory_id = "TER000002",
+                        name = "River State",
+                        free_roam = true,
                     },
                 },
             }
@@ -417,7 +533,11 @@ local sendIndex = assert(find(buttonLabels,
 assert(codeIndex < proximityIndex and proximityIndex < sendIndex)
 assert(find(buttonLabels, "=\nActivity"))
 assert(find(buttonLabels, "o\nSettings"))
+assert(find(buttonLabels, "V\nVisas"))
+assert(find(buttonLabels, "C\nCustoms"))
 assert(find(requests, "REGISTER"))
 assert(find(requests, "ACCOUNT_SUMMARY"))
+assert(find(requests, "VISA_OVERVIEW"))
+assert(find(requests, "CUSTOMS_DETAIL"))
 
 print("host_pumpe_flow_test: OK")
