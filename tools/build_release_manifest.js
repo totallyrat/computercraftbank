@@ -32,6 +32,22 @@ const configSource = fs.readFileSync(
 const versionMatch = configSource.match(/\bversion\s*=\s*"(\d+\.\d+\.\d+)"/);
 if (!versionMatch) throw new Error("Could not read version from config.lua");
 
+const borderSource = fs.readFileSync(
+  path.join(projectRoot, "border_controller.lua"),
+);
+const borderChecksum = checksum(borderSource);
+const bankPath = path.join(projectRoot, "bank_server.lua");
+const originalBankSource = fs.readFileSync(bankPath, "utf8");
+const updatedBankSource = originalBankSource.replace(
+  /local BORDER_CONTROLLER_CHECKSUM = "[0-9a-f]{8}"/,
+  `local BORDER_CONTROLLER_CHECKSUM = "${borderChecksum}"`,
+);
+if (updatedBankSource === originalBankSource &&
+    !originalBankSource.includes(`BORDER_CONTROLLER_CHECKSUM = "${borderChecksum}"`)) {
+  throw new Error("Could not update the Border Controller checksum");
+}
+fs.writeFileSync(bankPath, updatedBankSource);
+
 const manifest = {
   schema: 1,
   channel: "stable",
