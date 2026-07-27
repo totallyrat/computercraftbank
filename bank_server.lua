@@ -8,14 +8,39 @@ local util = require("lib.util")
 local net = require("lib.net")
 local ui = require("lib.ui")
 local onlineUpdate = require("lib.update")
+local TEST_MODE = rawget(_G, "PUMPE_TEST_MODE") == true
 
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local DEPLOY_CODE = "4040"
 local DEPLOY_CHUNK_SIZE = 6000
 local UPDATES_DIR = "/updates"
+local BANK_RESTART_MARKER = fs.combine(ROOT, ".bank_auto_restart")
+local CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
+local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
+local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
+local BORDER_CONTROLLER_CHECKSUM = "c9695abe"
 
 local LOCAL_UPDATE_FILES = {
+    "bank_server.lua",
+    "pumpe.lua",
+    "service_kiosk.lua",
+    "event_kiosk.lua",
+    "tax_controller.lua",
+    "border_controller.lua",
+    "startup.lua",
+    "launcher.lua",
+    "config.lua",
+    "lib/net.lua",
+    "lib/ui.lua",
+    "lib/update.lua",
+    "lib/util.lua",
+}
+
+-- Keep this list compatible with v5.2.1. Its updater rejects additional
+-- manifest paths, so the verified Border Controller is fetched separately
+-- after the new Bank Server starts.
+local ONLINE_UPDATE_FILES = {
     "bank_server.lua",
     "pumpe.lua",
     "service_kiosk.lua",
@@ -36,6 +61,7 @@ local ROLE_MAIN_FILES = {
     service = "service_kiosk.lua",
     event = "event_kiosk.lua",
     tax = "tax_controller.lua",
+    border = "border_controller.lua",
 }
 
 local COMMON_UPDATE_FILES = {
@@ -86,12 +112,98 @@ local function writePublicDeployConfig()
         .. textutils.serialize(publicConfig, { compact = false }) .. "\n")
 end
 
+local function fetchBorderController()
+    if type(http) ~= "table" or type(http.get) ~= "function" then return nil end
+    local manifestUrl = tostring(config.update_manifest_url or "")
+    manifestUrl = manifestUrl:gsub("[?#].*$", "")
+    local base = manifestUrl:match("^(https://.*/)[^/]+$")
+    if not base then return nil end
+    local url = base .. "border_controller.lua?pumpe="
+        .. tostring(config.version or util.nowMs())
+    local ok, response = pcall(http.get, {
+        url = url,
+        headers = {
+            ["Accept"] = "text/plain",
+            ["Cache-Control"] = "no-cache",
+        },
+        binary = false,
+        redirect = false,
+        timeout = 10,
+    })
+    if not ok or not response then return nil end
+    local chunks, length = {}, 0
+    while true do
+        local chunk = response.read(8192)
+        if not chunk then break end
+        length = length + #chunk
+        if length > 256 * 1024 then
+            pcall(response.close)
+            return nil
+        end
+        chunks[#chunks + 1] = chunk
+    end
+    pcall(response.close)
+    local body = table.concat(chunks)
+    if util.checksum(body) ~= BORDER_CONTROLLER_CHECKSUM then return nil end
+    pcall(util.writeFile, fs.combine(ROOT, "border_controller.lua"), body)
+    return body
+end
+
+local function localUpdateBody(path)
+    local body = util.readFile(fs.combine(ROOT, path))
+    if path == "border_controller.lua" then
+        if body and util.checksum(body) == BORDER_CONTROLLER_CHECKSUM then
+            return body
+        end
+        return fetchBorderController()
+    end
+    if path == "startup.lua"
+        and (not body
+            or not body:find("This file is intentionally standalone", 1, true)) then
+        body = util.readFile(CACHED_INSTALLER) or body
+    end
+    return body
+end
+
+local function cacheInstaller(body)
+    body = body or localUpdateBody("startup.lua")
+    if body and body:find("This file is intentionally standalone", 1, true) then
+        util.writeFile(CACHED_INSTALLER, body)
+        return body
+    end
+    return nil
+end
+
+local function absoluteRootFile(path)
+    local combined = fs.combine(ROOT, path)
+    combined = combined:gsub("^%./", "")
+    if combined:sub(1, 1) ~= "/" then combined = "/" .. combined end
+    return combined
+end
+
+local function ensureBankStartup(installerBody)
+    cacheInstaller(installerBody)
+    local startupPath = "/startup.lua"
+    local existing = util.readFile(startupPath)
+    local owned = not existing
+        or existing:find(EASY_DEPLOYMENT_MARKER, 1, true)
+        or existing:find(ROLE_STARTUP_MARKER, 1, true)
+        or existing:find("This file is intentionally standalone", 1, true)
+    if not owned then
+        return false, "Existing non-PUMPE /startup.lua was preserved"
+    end
+    local body = ROLE_STARTUP_MARKER .. "\n"
+        .. "shell.run(" .. string.format("%q", absoluteRootFile("launcher.lua"))
+        .. ", \"bank\")\n"
+    util.writeFile(startupPath, body)
+    return true
+end
+
 local function updateDepotMissingFiles()
     local missing = {}
     for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        local source = fs.combine(ROOT, path)
         local destination = fs.combine(UPDATES_DIR, path)
-        local sourceBody = util.readFile(source)
+        local sourceBody = localUpdateBody(path)
         if not sourceBody then
             missing[#missing + 1] = path .. " (local source)"
         elseif util.readFile(destination) ~= sourceBody then
@@ -108,9 +220,8 @@ end
 local function stageLocalUpdateFiles()
     local staged = 0
     for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        local source = fs.combine(ROOT, path)
         local destination = fs.combine(UPDATES_DIR, path)
-        local body = util.readFile(source)
+        local body = localUpdateBody(path)
         if body then
             local ok = pcall(util.writeFile, destination, body)
             if ok and util.readFile(destination) == body then
@@ -119,6 +230,23 @@ local function stageLocalUpdateFiles()
         end
     end
     return staged
+end
+
+local function onlyDeferredBorderMissing(missing)
+    return #missing == 1
+        and missing[1]:find("border_controller.lua", 1, true) == 1
+end
+
+local function repairBorderDepot()
+    local destination = fs.combine(UPDATES_DIR, "border_controller.lua")
+    local deployed = util.readFile(destination)
+    if deployed and util.checksum(deployed) == BORDER_CONTROLLER_CHECKSUM then
+        return true
+    end
+    local body = localUpdateBody("border_controller.lua")
+    if not body then return false end
+    local ok = pcall(util.writeFile, destination, body)
+    return ok and util.readFile(destination) == body
 end
 
 local function renderUpdateBootstrap(created, staged, missing)
@@ -169,6 +297,7 @@ local function bootstrapUpdateDepot()
         error("/updates must be a directory")
     end
 
+    local automaticRestart = fs.exists(BANK_RESTART_MARKER)
     local created = not fs.exists(UPDATES_DIR)
     if created then
         fs.makeDir(UPDATES_DIR)
@@ -177,7 +306,15 @@ local function bootstrapUpdateDepot()
     local staged = stageLocalUpdateFiles()
     writePublicDeployConfig()
     local missing = updateDepotMissingFiles()
-    if not created and #missing == 0 then return end
+    if automaticRestart then
+        fs.delete(BANK_RESTART_MARKER)
+        ensureBankStartup()
+        return
+    end
+    if not created
+        and (#missing == 0 or onlyDeferredBorderMissing(missing)) then
+        return
+    end
 
     while true do
         local scene = renderUpdateBootstrap(created, staged, missing)
@@ -189,6 +326,7 @@ local function bootstrapUpdateDepot()
             keys = bootstrapKeys,
         })
         if action == "restart" and #missing == 0 then
+            ensureBankStartup()
             os.reboot()
         elseif action == "rescan" then
             staged = stageLocalUpdateFiles()
@@ -200,7 +338,7 @@ local function bootstrapUpdateDepot()
     end
 end
 
-bootstrapUpdateDepot()
+if not TEST_MODE then bootstrapUpdateDepot() end
 
 local DATA_FILE = fs.combine(ROOT, config.data_file)
 local sessions = {}
@@ -210,13 +348,14 @@ local running = true
 
 local function blankState()
     return {
-        schema = 5,
+        schema = 6,
         created_at = util.nowMs(),
         sequence = {
             account = 0, company = 0, terminal = 0, event = 0,
             ticket_type = 0, ticket = 0, transaction = 0,
             period = 0, notification = 0, subscription = 0,
-            request = 0,
+            request = 0, territory = 0, visa = 0,
+            visa_application = 0, visit = 0, border = 0,
         },
         accounts = {},
         account_names = {},
@@ -231,6 +370,13 @@ local function blankState()
         active_pay_codes = {},
         payment_requests = {},
         gps_devices = {},
+        territories = {},
+        territory_names = {},
+        visas = {},
+        visa_codes = {},
+        visa_applications = {},
+        visits = {},
+        border_controllers = {},
         tax_revenue = 0,
         processing_fee_revenue = 0,
         last_subscription_day = -1,
@@ -273,6 +419,42 @@ local function ensureState()
         event.ticket_type_ids = event.ticket_type_ids or {}
         event.status = event.status or "active"
     end
+    state.schema = 6
+    state.territory_names = {}
+    for territoryId, territory in pairs(state.territories) do
+        territory.territory_id = territory.territory_id or territoryId
+        territory.citizen_account_ids = territory.citizen_account_ids or {}
+        territory.free_roam_territory_ids =
+            territory.free_roam_territory_ids or {}
+        territory.status = territory.status or "active"
+        if territory.name then
+            state.territory_names[util.normalName(territory.name)] =
+                territory.territory_id
+        end
+    end
+    state.visa_codes = {}
+    for visaId, document in pairs(state.visas) do
+        document.visa_id = document.visa_id or visaId
+        document.status = document.status or
+            (document.kind == "citizenship" and "active" or "issued")
+        if document.code then
+            document.code = string.upper(util.trim(document.code))
+            state.visa_codes[document.code] = document.visa_id
+        end
+    end
+    for applicationId, application in pairs(state.visa_applications) do
+        application.application_id =
+            application.application_id or applicationId
+        application.status = application.status or "pending"
+    end
+    for visitId, visit in pairs(state.visits) do
+        visit.visit_id = visit.visit_id or visitId
+        visit.status = visit.status or "visiting"
+    end
+    for controllerId, controller in pairs(state.border_controllers) do
+        controller.controller_id = controller.controller_id or controllerId
+        controller.status = controller.status or "active"
+    end
 end
 
 ensureState()
@@ -310,6 +492,11 @@ local prefixes = {
     notification = { "NOT", 8 },
     subscription = { "SUB", 8 },
     request = { "REQ", 8 },
+    territory = { "TER", 6 },
+    visa = { "VISA", 8 },
+    visa_application = { "VAPP", 8 },
+    visit = { "VISIT", 8 },
+    border = { "BORDER", 6 },
 }
 
 local function nextId(kind)
@@ -385,6 +572,17 @@ local function requireTerminal(payload)
     return terminal
 end
 
+local function requireBorderController(payload)
+    local controller =
+        state.border_controllers[payload and payload.controller_id]
+    need(controller and controller.auth_token == payload.controller_token,
+        "BORDER_AUTH", "Border Controller is not registered")
+    need(controller.status == "active",
+        "BORDER_INACTIVE", "Border Controller is inactive")
+    controller.last_seen = util.nowMs()
+    return controller
+end
+
 local function requireGovernment(payload)
     local session = governmentSessions[payload and payload.government_token]
     need(session and session.expires_at > util.nowMs(),
@@ -406,6 +604,202 @@ local function notification(account, title, body, kind)
     table.insert(account.notifications, 1, item)
     while #account.notifications > 50 do table.remove(account.notifications) end
     return item
+end
+
+local function mapCount(map)
+    local count = 0
+    for _ in pairs(map or {}) do count = count + 1 end
+    return count
+end
+
+local function territoryOwner(account, territoryId)
+    local territory = state.territories[territoryId]
+    need(territory and territory.status == "active",
+        "TERRITORY_NOT_FOUND", "Territory not found")
+    need(territory.owner_account_id == account.account_id,
+        "NOT_TERRITORY_OWNER", "You do not control that territory")
+    return territory
+end
+
+local function newVisaCode()
+    local code
+    repeat
+        code = util.randomString(8, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+    until not state.visa_codes[code]
+    return code
+end
+
+local function matchingDocument(accountId, territoryId, kind)
+    for _, document in pairs(state.visas) do
+        if document.account_id == accountId
+            and document.territory_id == territoryId
+            and (not kind or document.kind == kind)
+            and document.status ~= "revoked"
+            and document.status ~= "expired" then
+            return document
+        end
+    end
+    return nil
+end
+
+local function issueDocument(account, territory, kind, options)
+    options = options or {}
+    local existing = matchingDocument(
+        account.account_id, territory.territory_id, kind)
+    if existing then return nil, existing end
+    local visaId = nextId("visa")
+    local document = {
+        visa_id = visaId,
+        code = newVisaCode(),
+        account_id = account.account_id,
+        territory_id = territory.territory_id,
+        kind = kind,
+        duration_days = kind == "visa"
+            and math.floor(tonumber(options.duration_days) or 1) or nil,
+        status = kind == "citizenship" and "active" or "issued",
+        issued_day = util.ingameDay(),
+        issued_by_account_id = options.issued_by_account_id,
+        application_id = options.application_id,
+    }
+    state.visas[visaId] = document
+    state.visa_codes[document.code] = visaId
+    if kind == "citizenship" then
+        territory.citizen_account_ids[account.account_id] = true
+    end
+    return document
+end
+
+local function activeVisit(accountId, territoryId, visaId)
+    local today = util.ingameDay()
+    local newest
+    for _, visit in pairs(state.visits) do
+        if visit.account_id == accountId
+            and visit.territory_id == territoryId
+            and (not visaId or visit.visa_id == visaId)
+            and visit.status == "visiting"
+            and (not visit.due_day or visit.due_day >= today)
+            and (not newest
+                or (visit.entered_day or 0) > (newest.entered_day or 0)) then
+            newest = visit
+        end
+    end
+    return newest
+end
+
+local function publicVisit(visit)
+    if not visit then return nil end
+    local remaining
+    if visit.due_day then
+        remaining = math.max(0, visit.due_day - util.ingameDay() + 1)
+    end
+    return {
+        visit_id = visit.visit_id,
+        territory_id = visit.territory_id,
+        territory_name = state.territories[visit.territory_id]
+            and state.territories[visit.territory_id].name or "Unknown",
+        authorization = visit.authorization,
+        entered_day = visit.entered_day,
+        due_day = visit.due_day,
+        remaining_days = remaining,
+        permanent = visit.due_day == nil,
+        status = visit.status,
+    }
+end
+
+local function publicDocument(document)
+    local territory = state.territories[document.territory_id]
+    local freeRoam = {}
+    if document.kind == "citizenship" then
+        for _, destination in pairs(state.territories) do
+            if destination.status == "active"
+                and destination.territory_id ~= document.territory_id
+                and destination.free_roam_territory_ids[
+                    document.territory_id] then
+                freeRoam[#freeRoam + 1] = {
+                    territory_id = destination.territory_id,
+                    territory_name = destination.name,
+                }
+            end
+        end
+        table.sort(freeRoam, function(a, b)
+            return a.territory_name < b.territory_name
+        end)
+    end
+    local visits = {}
+    for _, visit in pairs(state.visits) do
+        if visit.account_id == document.account_id
+            and visit.visa_id == document.visa_id
+            and visit.status == "visiting"
+            and (not visit.due_day or visit.due_day >= util.ingameDay()) then
+            visits[#visits + 1] = publicVisit(visit)
+        end
+    end
+    table.sort(visits, function(a, b)
+        return (a.entered_day or 0) > (b.entered_day or 0)
+    end)
+    return {
+        visa_id = document.visa_id,
+        code = document.code,
+        kind = document.kind,
+        territory_id = document.territory_id,
+        territory_name = territory and territory.name or "Unknown",
+        duration_days = document.duration_days,
+        permanent = document.kind == "citizenship",
+        status = document.status,
+        issued_day = document.issued_day,
+        free_roam = freeRoam,
+        visits = visits,
+    }
+end
+
+local function publicApplication(application)
+    local territory = state.territories[application.territory_id]
+    local applicant = state.accounts[application.account_id]
+    return {
+        application_id = application.application_id,
+        territory_id = application.territory_id,
+        territory_name = territory and territory.name or "Unknown",
+        applicant_name = applicant and applicant.name or "Unknown",
+        requested_days = application.requested_days,
+        status = application.status,
+        created_day = application.created_day,
+        reviewed_day = application.reviewed_day,
+        visa_id = application.visa_id,
+    }
+end
+
+local function accessForAccount(accountId, destination)
+    local temporary
+    for _, document in pairs(state.visas) do
+        if document.account_id == accountId
+            and document.status ~= "revoked"
+            and document.status ~= "expired" then
+            if document.kind == "citizenship"
+                and document.territory_id == destination.territory_id then
+                return "citizenship", document
+            elseif document.kind == "citizenship"
+                and destination.free_roam_territory_ids[
+                    document.territory_id] then
+                return "free_roam", document
+            elseif document.kind == "visa"
+                and document.territory_id == destination.territory_id then
+                temporary = document
+            end
+        end
+    end
+    if temporary then return "visa", temporary end
+    return nil
+end
+
+local function pendingApplication(accountId, territoryId)
+    for _, application in pairs(state.visa_applications) do
+        if application.account_id == accountId
+            and application.territory_id == territoryId
+            and application.status == "pending" then
+            return application
+        end
+    end
+    return nil
 end
 
 local function transaction(account, kind, amount, counterparty, description, extra)
@@ -481,6 +875,7 @@ end
 
 local function cleanupEphemeral()
     local now = util.nowMs()
+    local travelChanged = false
     for code, payment in pairs(state.active_pay_codes) do
         if payment.expires_at <= now and payment.status == "pending" then
             payment.status = "expired"
@@ -501,6 +896,19 @@ local function cleanupEphemeral()
     for token, session in pairs(governmentSessions) do
         if session.expires_at <= now then governmentSessions[token] = nil end
     end
+    local today = util.ingameDay()
+    for _, visit in pairs(state.visits) do
+        if visit.status == "visiting" and visit.due_day
+            and visit.due_day < today then
+            visit.status = "overdue"
+            local document = state.visas[visit.visa_id]
+            if document and document.kind == "visa" then
+                document.status = "expired"
+            end
+            travelChanged = true
+        end
+    end
+    if travelChanged then save() end
 end
 
 local function validateAmount(value, maximum)
@@ -700,6 +1108,464 @@ function actions.CANCEL_SUBSCRIPTION(payload)
     subscription.cancelled_day = util.ingameDay()
     save()
     return { subscription = util.copy(subscription) }
+end
+
+-- Customs, citizenship, and visa routes -------------------------------------
+
+function actions.CUSTOMS_OVERVIEW(payload)
+    local account = requireSession(payload)
+    cleanupEphemeral()
+    local territories = util.sortedValues(state.territories, function(territory)
+        return territory.owner_account_id == account.account_id
+            and territory.status == "active"
+    end, function(a, b) return a.name < b.name end)
+    local output = {}
+    for _, territory in ipairs(territories) do
+        local pending = 0
+        for _, application in pairs(state.visa_applications) do
+            if application.territory_id == territory.territory_id
+                and application.status == "pending" then
+                pending = pending + 1
+            end
+        end
+        output[#output + 1] = {
+            territory_id = territory.territory_id,
+            name = territory.name,
+            citizen_count = mapCount(territory.citizen_account_ids),
+            free_roam_count = mapCount(territory.free_roam_territory_ids),
+            pending_count = pending,
+            created_day = territory.created_day,
+        }
+    end
+    return {
+        territories = output,
+        maximum_territories =
+            math.max(1, math.floor(tonumber(config.max_territories_per_account)
+                or 3)),
+    }
+end
+
+function actions.CUSTOMS_DETAIL(payload)
+    local account = requireSession(payload)
+    local territory = territoryOwner(account, payload.territory_id)
+    cleanupEphemeral()
+    local citizens = {}
+    for accountId in pairs(territory.citizen_account_ids) do
+        local citizen = state.accounts[accountId]
+        local document = matchingDocument(
+            accountId, territory.territory_id, "citizenship")
+        if citizen and document then
+            citizens[#citizens + 1] = {
+                account_id = accountId,
+                name = citizen.name,
+                code = document.code,
+                issued_day = document.issued_day,
+            }
+        end
+    end
+    table.sort(citizens, function(a, b) return a.name < b.name end)
+
+    local applications = {}
+    for _, application in pairs(state.visa_applications) do
+        if application.territory_id == territory.territory_id then
+            applications[#applications + 1] =
+                publicApplication(application)
+        end
+    end
+    table.sort(applications, function(a, b)
+        if a.status ~= b.status then return a.status == "pending" end
+        return (a.created_day or 0) > (b.created_day or 0)
+    end)
+
+    local otherTerritories = {}
+    for _, other in pairs(state.territories) do
+        if other.status == "active"
+            and other.territory_id ~= territory.territory_id then
+            otherTerritories[#otherTerritories + 1] = {
+                territory_id = other.territory_id,
+                name = other.name,
+                free_roam =
+                    territory.free_roam_territory_ids[other.territory_id]
+                        == true,
+            }
+        end
+    end
+    table.sort(otherTerritories, function(a, b) return a.name < b.name end)
+    return {
+        territory = {
+            territory_id = territory.territory_id,
+            name = territory.name,
+            citizen_count = #citizens,
+            free_roam_count = mapCount(territory.free_roam_territory_ids),
+        },
+        citizens = citizens,
+        applications = applications,
+        other_territories = otherTerritories,
+    }
+end
+
+function actions.CUSTOMS_CREATE_TERRITORY(payload)
+    local account = requireSession(payload)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local name = util.safeText(util.trim(payload.name), 24)
+    need(#name >= 3 and name:match("^[%w _%-]+$"),
+        "INVALID_TERRITORY",
+        "Use 3-24 letters, numbers, spaces, _ or -")
+    need(not state.territory_names[util.normalName(name)],
+        "TERRITORY_TAKEN", "That territory name is already registered")
+    local owned = 0
+    for _, territory in pairs(state.territories) do
+        if territory.owner_account_id == account.account_id
+            and territory.status == "active" then
+            owned = owned + 1
+        end
+    end
+    local maximum = math.max(1,
+        math.floor(tonumber(config.max_territories_per_account) or 3))
+    need(owned < maximum, "TERRITORY_LIMIT",
+        "A Foxy Account can control up to " .. maximum .. " territories")
+
+    local territoryId = nextId("territory")
+    local territory = {
+        territory_id = territoryId,
+        name = name,
+        owner_account_id = account.account_id,
+        citizen_account_ids = {},
+        free_roam_territory_ids = {},
+        status = "active",
+        created_day = util.ingameDay(),
+    }
+    state.territories[territoryId] = territory
+    state.territory_names[util.normalName(name)] = territoryId
+    local citizenship = assert(issueDocument(
+        account, territory, "citizenship", {
+            issued_by_account_id = account.account_id,
+        }))
+    notification(account, "Territory created",
+        name .. " citizenship code: " .. citizenship.code, "travel")
+    save()
+    logActivity("Territory created: " .. name, colors.lightBlue)
+    return {
+        territory = {
+            territory_id = territoryId,
+            name = name,
+        },
+        citizenship = publicDocument(citizenship),
+    }
+end
+
+function actions.CUSTOMS_ISSUE_CITIZENSHIP(payload)
+    local owner = requireSession(payload)
+    local territory = territoryOwner(owner, payload.territory_id)
+    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local citizen = accountByName(payload.username)
+    checkAccountActive(citizen)
+    local document, existing = issueDocument(
+        citizen, territory, "citizenship", {
+            issued_by_account_id = owner.account_id,
+        })
+    need(document, "ALREADY_CITIZEN",
+        existing and "That Foxy Account is already a citizen"
+            or "Citizenship could not be created")
+    notification(citizen, "Citizenship granted",
+        territory.name .. " permanent code: " .. document.code, "travel")
+    save()
+    logActivity("Citizenship: " .. citizen.name .. " / " .. territory.name,
+        colors.cyan)
+    return {
+        citizen_name = citizen.name,
+        document = publicDocument(document),
+    }
+end
+
+function actions.CUSTOMS_SET_FREE_ROAM(payload)
+    local owner = requireSession(payload)
+    local territory = territoryOwner(owner, payload.territory_id)
+    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local source = state.territories[payload.source_territory_id]
+    need(source and source.status == "active",
+        "TERRITORY_NOT_FOUND", "Partner territory not found")
+    need(source.territory_id ~= territory.territory_id,
+        "INVALID_TERRITORY", "A territory already accepts its own citizens")
+    local enabled = payload.enabled == true
+    territory.free_roam_territory_ids[source.territory_id] =
+        enabled and true or nil
+    save()
+    logActivity((enabled and "Free Roam enabled: " or "Free Roam ended: ")
+        .. source.name .. " > " .. territory.name,
+        enabled and colors.lime or colors.orange)
+    return {
+        territory_id = territory.territory_id,
+        source_territory_id = source.territory_id,
+        enabled = enabled,
+    }
+end
+
+function actions.CUSTOMS_REVIEW_APPLICATION(payload)
+    local owner = requireSession(payload)
+    local application = state.visa_applications[payload.application_id]
+    need(application and application.status == "pending",
+        "APPLICATION_NOT_FOUND", "Pending visa application not found")
+    local territory = territoryOwner(owner, application.territory_id)
+    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local applicant = state.accounts[application.account_id]
+    checkAccountActive(applicant)
+
+    local document
+    if payload.approved == true then
+        local access = accessForAccount(applicant.account_id, territory)
+        need(not access, "ACCESS_EXISTS",
+            "This traveler already has entry rights")
+        document = assert(issueDocument(
+            applicant, territory, "visa", {
+                duration_days = application.requested_days,
+                issued_by_account_id = owner.account_id,
+                application_id = application.application_id,
+            }))
+        application.status = "approved"
+        application.visa_id = document.visa_id
+        notification(applicant, "Visa approved",
+            territory.name .. " for " .. application.requested_days
+                .. " day(s). Code: " .. document.code, "travel")
+    else
+        application.status = "denied"
+        notification(applicant, "Visa declined",
+            territory.name .. " declined your application", "travel")
+    end
+    application.reviewed_day = util.ingameDay()
+    application.reviewed_by_account_id = owner.account_id
+    save()
+    logActivity("Visa " .. application.status .. ": "
+        .. applicant.name .. " / " .. territory.name,
+        document and colors.lime or colors.orange)
+    return {
+        application = publicApplication(application),
+        document = document and publicDocument(document) or nil,
+    }
+end
+
+function actions.VISA_OVERVIEW(payload)
+    local account = requireSession(payload)
+    cleanupEphemeral()
+    local documents = {}
+    for _, document in pairs(state.visas) do
+        if document.account_id == account.account_id then
+            documents[#documents + 1] = publicDocument(document)
+        end
+    end
+    table.sort(documents, function(a, b)
+        if a.kind ~= b.kind then return a.kind == "citizenship" end
+        return a.territory_name < b.territory_name
+    end)
+
+    local applications = {}
+    for _, application in pairs(state.visa_applications) do
+        if application.account_id == account.account_id then
+            applications[#applications + 1] =
+                publicApplication(application)
+        end
+    end
+    table.sort(applications, function(a, b)
+        return (a.created_day or 0) > (b.created_day or 0)
+    end)
+
+    local territories = {}
+    for _, territory in pairs(state.territories) do
+        if territory.status == "active" then
+            local accessKind = accessForAccount(account.account_id, territory)
+            local pending = pendingApplication(
+                account.account_id, territory.territory_id) ~= nil
+            territories[#territories + 1] = {
+                territory_id = territory.territory_id,
+                name = territory.name,
+                access = accessKind,
+                pending = pending,
+                can_apply = not accessKind and not pending,
+            }
+        end
+    end
+    table.sort(territories, function(a, b) return a.name < b.name end)
+    return {
+        documents = documents,
+        applications = applications,
+        territories = territories,
+        visa_min_days =
+            math.max(1, math.floor(tonumber(config.visa_min_days) or 1)),
+        visa_max_days =
+            math.max(1, math.floor(tonumber(config.visa_max_days) or 30)),
+    }
+end
+
+function actions.VISA_APPLY(payload)
+    local account = requireSession(payload)
+    local territory = state.territories[payload.territory_id]
+    need(territory and territory.status == "active",
+        "TERRITORY_NOT_FOUND", "Territory not found")
+    local minimum =
+        math.max(1, math.floor(tonumber(config.visa_min_days) or 1))
+    local maximum =
+        math.max(minimum, math.floor(tonumber(config.visa_max_days) or 30))
+    local requestedDays = math.floor(tonumber(payload.requested_days) or 0)
+    need(requestedDays >= minimum and requestedDays <= maximum,
+        "INVALID_STAY", "Choose a stay from " .. minimum
+            .. " to " .. maximum .. " days")
+    local access = accessForAccount(account.account_id, territory)
+    need(not access, "ACCESS_EXISTS",
+        "You already have entry rights for this territory")
+    need(not pendingApplication(account.account_id, territory.territory_id),
+        "APPLICATION_PENDING", "You already have an application pending")
+
+    local applicationId = nextId("visa_application")
+    local application = {
+        application_id = applicationId,
+        account_id = account.account_id,
+        territory_id = territory.territory_id,
+        requested_days = requestedDays,
+        status = "pending",
+        created_day = util.ingameDay(),
+    }
+    state.visa_applications[applicationId] = application
+    local owner = state.accounts[territory.owner_account_id]
+    if owner then
+        notification(owner, "New visa request",
+            account.name .. " requests " .. requestedDays
+                .. " day(s) in " .. territory.name, "travel")
+    end
+    save()
+    logActivity("Visa applied: " .. account.name .. " / " .. territory.name,
+        colors.lightBlue)
+    return { application = publicApplication(application) }
+end
+
+-- Border Controller routes --------------------------------------------------
+
+function actions.BORDER_REGISTER(payload)
+    local owner = requireSession(payload)
+    local territory = territoryOwner(owner, payload.territory_id)
+    local controllerId = nextId("border")
+    local controller = {
+        controller_id = controllerId,
+        auth_token = util.token("BORDER"),
+        territory_id = territory.territory_id,
+        owner_account_id = owner.account_id,
+        label = util.safeText(
+            util.trim(payload.label or ("Border " .. controllerId)), 24),
+        status = "active",
+        created_day = util.ingameDay(),
+        last_seen = util.nowMs(),
+    }
+    state.border_controllers[controllerId] = controller
+    save()
+    logActivity("Border online: " .. territory.name, colors.purple)
+    return {
+        controller_id = controller.controller_id,
+        controller_token = controller.auth_token,
+        territory_id = territory.territory_id,
+        territory_name = territory.name,
+        label = controller.label,
+    }
+end
+
+function actions.BORDER_STATUS(payload)
+    local controller = requireBorderController(payload)
+    local territory = state.territories[controller.territory_id]
+    need(territory and territory.status == "active",
+        "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
+    return {
+        controller_id = controller.controller_id,
+        territory_id = territory.territory_id,
+        territory_name = territory.name,
+        label = controller.label,
+        day = util.ingameDay(),
+        time = util.formatClock(),
+    }
+end
+
+function actions.BORDER_CHECK(payload)
+    local controller = requireBorderController(payload)
+    cleanupEphemeral()
+    local territory = state.territories[controller.territory_id]
+    need(territory and territory.status == "active",
+        "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
+    local code = string.upper(util.trim(payload.code))
+    need(code:match("^[A-Z2-9]+$") and #code == 8,
+        "VISA_CODE_INVALID", "Enter the eight-character travel code")
+    local documentId = state.visa_codes[code]
+    local document = documentId and state.visas[documentId]
+    need(document and document.status ~= "revoked",
+        "VISA_NOT_FOUND", "Travel code was not found")
+    need(document.status ~= "expired",
+        "VISA_EXPIRED", "This visa has expired")
+    local traveler = state.accounts[document.account_id]
+    checkAccountActive(traveler)
+
+    local authorization
+    if document.kind == "citizenship"
+        and document.territory_id == territory.territory_id then
+        authorization = "citizenship"
+    elseif document.kind == "citizenship"
+        and territory.free_roam_territory_ids[document.territory_id] then
+        authorization = "free_roam"
+    elseif document.kind == "visa"
+        and document.territory_id == territory.territory_id then
+        authorization = "visa"
+    end
+    need(authorization, "VISA_WRONG_TERRITORY",
+        "This document does not allow entry here")
+
+    local visit = activeVisit(
+        traveler.account_id, territory.territory_id, document.visa_id)
+    local created = false
+    if not visit then
+        if authorization == "visa" then
+            need(document.status == "issued",
+                "VISA_ALREADY_USED", "This visa has already been used")
+        end
+        local visitId = nextId("visit")
+        local dueDay
+        if authorization == "visa" then
+            dueDay = util.ingameDay()
+                + math.max(1, document.duration_days or 1) - 1
+            document.status = "visiting"
+            document.entered_day = util.ingameDay()
+            document.due_day = dueDay
+        end
+        visit = {
+            visit_id = visitId,
+            account_id = traveler.account_id,
+            territory_id = territory.territory_id,
+            visa_id = document.visa_id,
+            authorization = authorization,
+            entered_day = util.ingameDay(),
+            due_day = dueDay,
+            status = "visiting",
+            controller_id = controller.controller_id,
+        }
+        state.visits[visitId] = visit
+        created = true
+        notification(traveler, "Border entry recorded",
+            territory.name .. (dueDay and
+                (" - leave by day " .. dueDay) or " - permanent stay"),
+            "travel")
+    end
+    save()
+    if created then
+        logActivity("Border entry: " .. traveler.name .. " > "
+            .. territory.name, colors.lime)
+    end
+    local remaining = visit.due_day
+        and math.max(0, visit.due_day - util.ingameDay() + 1) or nil
+    return {
+        approved = true,
+        traveler_name = traveler.name,
+        territory_name = territory.name,
+        authorization = authorization,
+        permanent = visit.due_day == nil,
+        stay_days = remaining,
+        due_day = visit.due_day,
+        entered_day = visit.entered_day,
+        visiting = true,
+    }
 end
 
 function actions.PAY_CODE_PREVIEW(payload)
@@ -1994,7 +2860,7 @@ local function checkForOnlineUpdate()
     onlineUpdateStatus = "CHECKING INTERNET"
     onlineUpdateColor = colors.orange
     local manifest, err = onlineUpdate.fetchManifest(
-        manifestUrl, LOCAL_UPDATE_FILES, config.update_channel or "stable")
+        manifestUrl, ONLINE_UPDATE_FILES, config.update_channel or "stable")
     if not manifest then
         onlineUpdateStatus = "CHECK FAILED"
         onlineUpdateColor = colors.red
@@ -2038,6 +2904,8 @@ local function checkForOnlineUpdate()
 
     onlineUpdateStatus = "INSTALLING v" .. manifest.version
     onlineUpdateColor = colors.orange
+    local downloadedInstaller =
+        util.readFile(fs.combine(ONLINE_UPDATE_STAGE, "startup.lua"))
     local committed, commitError = onlineUpdate.commitRelease(
         manifest, ONLINE_UPDATE_STAGE, ROOT, ONLINE_UPDATE_BACKUP)
     if not committed then
@@ -2047,11 +2915,16 @@ local function checkForOnlineUpdate()
         return false
     end
 
+    local startupReady, startupWarning = ensureBankStartup(downloadedInstaller)
+    if not startupReady then
+        logActivity(startupWarning, colors.orange)
+    end
+    util.writeFile(BANK_RESTART_MARKER, tostring(manifest.version))
     pcall(save)
     onlineUpdateStatus = "RESTARTING v" .. manifest.version
     onlineUpdateColor = colors.lime
     logActivity("Online update installed; restarting", colors.lime)
-    sleep(0.8)
+    sleep(0.1)
     os.reboot()
     return true
 end
@@ -2080,9 +2953,14 @@ local function deploymentLoop()
 end
 
 local function schedulerLoop()
+    local nextBorderRepair = 0
     while running do
         cleanupEphemeral()
         processSubscriptions()
+        if util.nowMs() >= nextBorderRepair then
+            repairBorderDepot()
+            nextBorderRepair = util.nowMs() + 30 * 1000
+        end
         sleep(10)
     end
 end
@@ -2152,6 +3030,16 @@ local function dashboardLoop()
             return
         end
     end
+end
+
+if TEST_MODE then
+    return {
+        actions = actions,
+        state = state,
+        cleanup = cleanupEphemeral,
+        ensure_bank_startup = ensureBankStartup,
+        local_update_body = localUpdateBody,
+    }
 end
 
 ui.boot(term.current(), "PUMPE BANK", "SECURE ECONOMY CORE")
