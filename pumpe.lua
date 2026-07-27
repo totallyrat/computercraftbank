@@ -1153,6 +1153,596 @@ payMenu = function()
     end
 end
 
+local function travelDocumentScreen(documents)
+    local page = 1
+    while sessionToken do
+        local width, height = target.getSize()
+        local document = documents[page]
+        ui.clear(target)
+        ui.header(target, "Travel Documents",
+            #documents == 0 and "No documents"
+                or (page .. " of " .. #documents), util.formatClock())
+        local scene = ui.scene(target)
+        if not document then
+            ui.card(target, 2, 6, width - 2, 7, ui.theme.warning)
+            ui.center(target, 8, "NO VISAS YET", ui.theme.ink)
+            ui.center(target, 10, "Apply from the Visas app",
+                ui.theme.muted)
+        else
+            local kind = document.kind == "citizenship"
+                and "CITIZENSHIP" or "TEMPORARY VISA"
+            ui.card(target, 2, 5, width - 2, 11,
+                document.permanent and ui.theme.success or colors.purple)
+            ui.text(target, 4, 6, kind,
+                document.permanent and ui.theme.success or colors.purple,
+                ui.theme.panel, width - 6)
+            ui.text(target, 4, 8,
+                ui.truncate(document.territory_name, width - 6),
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 10, "CODE", ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, 11, document.code,
+                ui.theme.ink, ui.theme.panel)
+            local stay = document.permanent and "Permanent stay"
+                or tostring(document.duration_days) .. " day stay"
+            ui.text(target, 4, 13, stay,
+                ui.theme.muted, ui.theme.panel, width - 6)
+            local visit = document.visits and document.visits[1]
+            if visit then
+                ui.text(target, 4, 14,
+                    visit.permanent and "Visiting - permanent"
+                        or ("Leave by day " .. visit.due_day),
+                    visit.permanent and ui.theme.success or ui.theme.warning,
+                    ui.theme.panel, width - 6)
+            elseif document.free_roam and #document.free_roam > 0 then
+                ui.text(target, 4, 14,
+                    "Free Roam: " .. ui.truncate(
+                        document.free_roam[1].territory_name, width - 17),
+                    ui.theme.success, ui.theme.panel, width - 6)
+            else
+                ui.text(target, 4, 14, string.upper(document.status),
+                    ui.theme.muted, ui.theme.panel, width - 6)
+            end
+        end
+        scene:button("back", 1, height, 8, 1, "< Visa",
+            { background = ui.theme.panel })
+        scene:button("prev", width - 12, height, 4, 1, "<", {
+            background = ui.theme.panel,
+            disabled = page <= 1,
+        })
+        scene:button("next", width - 3, height, 3, 1, ">", {
+            background = ui.theme.panel,
+            disabled = page >= #documents,
+        })
+        local action = scene:wait()
+        if action == "prev" then
+            page = math.max(1, page - 1)
+        elseif action == "next" then
+            page = math.min(#documents, page + 1)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function visaApplicationsScreen(applications)
+    local page = 1
+    while sessionToken do
+        local width, height = target.getSize()
+        local application = applications[page]
+        ui.clear(target)
+        ui.header(target, "Visa Applications",
+            #applications == 0 and "Nothing submitted"
+                or (page .. " of " .. #applications), util.formatClock())
+        local scene = ui.scene(target)
+        if not application then
+            ui.card(target, 2, 6, width - 2, 7, ui.theme.accent)
+            ui.center(target, 8, "NO APPLICATIONS", ui.theme.ink)
+            ui.center(target, 10, "Choose Apply for Visa",
+                ui.theme.muted)
+        else
+            local statusColor = application.status == "approved"
+                    and ui.theme.success
+                or application.status == "denied" and ui.theme.danger
+                or ui.theme.warning
+            ui.card(target, 2, 5, width - 2, 10, statusColor)
+            ui.text(target, 4, 6,
+                ui.truncate(application.territory_name, width - 6),
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 8,
+                application.requested_days .. " day stay",
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, 10, string.upper(application.status),
+                statusColor, ui.theme.panel)
+            ui.text(target, 4, 12,
+                "Applied day " .. application.created_day,
+                ui.theme.muted, ui.theme.panel)
+        end
+        scene:button("back", 1, height, 8, 1, "< Visa",
+            { background = ui.theme.panel })
+        scene:button("prev", width - 12, height, 4, 1, "<", {
+            background = ui.theme.panel,
+            disabled = page <= 1,
+        })
+        scene:button("next", width - 3, height, 3, 1, ">", {
+            background = ui.theme.panel,
+            disabled = page >= #applications,
+        })
+        local action = scene:wait()
+        if action == "prev" then
+            page = math.max(1, page - 1)
+        elseif action == "next" then
+            page = math.min(#applications, page + 1)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function visaApplyScreen(overview)
+    local available = {}
+    for _, territory in ipairs(overview.territories or {}) do
+        if territory.can_apply then available[#available + 1] = territory end
+    end
+    local page = 1
+    while sessionToken do
+        local width, height = target.getSize()
+        local visible, current, pages = util.page(available, page, 3)
+        page = current
+        ui.clear(target)
+        ui.header(target, "Apply for Visa",
+            #available .. " available", util.formatClock())
+        local scene = ui.scene(target)
+        if #available == 0 then
+            ui.card(target, 2, 6, width - 2, 7, ui.theme.success)
+            ui.center(target, 8, "NO VISA NEEDED", ui.theme.ink)
+            ui.center(target, 10, "No open destinations",
+                ui.theme.muted)
+        else
+            for index, territory in ipairs(visible) do
+                local y = 5 + (index - 1) * 4
+                scene:button("apply:" .. territory.territory_id,
+                    2, y, width - 2, 3,
+                    ui.truncate(territory.name, width - 4)
+                        .. "\nRequest a stay", {
+                        background = index == 1
+                            and colors.purple or ui.theme.panel,
+                        shadow = true,
+                    })
+            end
+        end
+        scene:button("back", 1, height, 8, 1, "< Visa",
+            { background = ui.theme.panel })
+        if pages > 1 then
+            scene:button("prev", width - 12, height, 4, 1, "<", {
+                background = ui.theme.panel,
+                disabled = page == 1,
+            })
+            scene:button("next", width - 3, height, 3, 1, ">", {
+                background = ui.theme.panel,
+                disabled = page == pages,
+            })
+        end
+        local action = scene:wait()
+        local territoryId = action and action:match("^apply:(.+)$")
+        if territoryId then
+            local territory
+            for _, candidate in ipairs(available) do
+                if candidate.territory_id == territoryId then
+                    territory = candidate
+                    break
+                end
+            end
+            if territory then
+                local days = ui.input(target, "Length of Stay", {
+                    hint = overview.visa_min_days .. "-"
+                        .. overview.visa_max_days .. " in-game days",
+                    mode = "number",
+                    maxLength = 2,
+                    minLength = 1,
+                })
+                if days and ui.confirm(target, "Apply for Visa",
+                    territory.name .. " for " .. days .. " day(s)?",
+                    "APPLY", "BACK") then
+                    local result = request("VISA_APPLY", {
+                        territory_id = territory.territory_id,
+                        requested_days = days,
+                    })
+                    if result then
+                        phoneTransition("Application Sent", colors.purple)
+                        ui.message(target, "success", "APPLICATION SENT",
+                            "Customs will review it", 1.1)
+                        return
+                    end
+                end
+            end
+        elseif action == "prev" then
+            page = math.max(1, page - 1)
+        elseif action == "next" then
+            page = math.min(pages, page + 1)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function visasScreen()
+    while sessionToken do
+        local overview = request("VISA_OVERVIEW")
+        if not overview then return end
+        local width, height = target.getSize()
+        local pending = 0
+        for _, application in ipairs(overview.applications or {}) do
+            if application.status == "pending" then pending = pending + 1 end
+        end
+        ui.clear(target)
+        ui.header(target, "Visas", "Your travel wallet", util.formatClock())
+        ui.card(target, 2, 5, width - 2, 4, colors.purple)
+        ui.text(target, 4, 6,
+            #overview.documents .. " document(s)",
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 7, pending .. " awaiting review",
+            ui.theme.muted, ui.theme.panel)
+        local scene = ui.scene(target)
+        scene:button("documents", 2, 10, width - 2, 2,
+            "My Documents", { background = colors.purple })
+        scene:button("apply", 2, 13, width - 2, 2,
+            "Apply for Visa", { background = ui.theme.accentDark })
+        scene:button("applications", 2, 16, width - 2, 2,
+            "Applications", { background = ui.theme.panel })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "documents" then
+            travelDocumentScreen(overview.documents)
+        elseif action == "apply" then
+            visaApplyScreen(overview)
+        elseif action == "applications" then
+            visaApplicationsScreen(overview.applications)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function customsCitizensScreen(territoryId)
+    local page = 1
+    while sessionToken do
+        local detail = request("CUSTOMS_DETAIL", {
+            territory_id = territoryId,
+        })
+        if not detail then return end
+        local citizens = detail.citizens or {}
+        page = math.max(1, math.min(page, math.max(1, #citizens)))
+        local citizen = citizens[page]
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Citizens",
+            #citizens .. " in " .. ui.truncate(detail.territory.name, 12),
+            util.formatClock())
+        if citizen then
+            ui.card(target, 2, 5, width - 2, 8, ui.theme.success)
+            ui.text(target, 4, 6, ui.truncate(citizen.name, width - 6),
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 8, "PERMANENT CODE",
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, 9, citizen.code,
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 11, "Since day " .. citizen.issued_day,
+                ui.theme.muted, ui.theme.panel)
+        end
+        local scene = ui.scene(target)
+        scene:button("issue", 2, 14, width - 2, 3,
+            "Grant Citizenship\nPermanent VISA", {
+                background = ui.theme.accentDark,
+                shadow = true,
+            })
+        scene:button("back", 1, height, 8, 1, "< Cust",
+            { background = ui.theme.panel })
+        scene:button("prev", width - 12, height, 4, 1, "<", {
+            background = ui.theme.panel,
+            disabled = page <= 1,
+        })
+        scene:button("next", width - 3, height, 3, 1, ">", {
+            background = ui.theme.panel,
+            disabled = page >= #citizens,
+        })
+        local action = scene:wait()
+        if action == "issue" then
+            local username = ui.input(target, "Grant Citizenship", {
+                hint = "Foxy Account username",
+                maxLength = 20,
+                minLength = 2,
+                allowSpace = true,
+            })
+            if username then
+                local pin = ui.pin(target, "Confirm with PIN", true)
+                if pin then
+                    local result = request("CUSTOMS_ISSUE_CITIZENSHIP", {
+                        territory_id = territoryId,
+                        username = username,
+                        pin = pin,
+                    })
+                    if result then
+                        phoneTransition("Citizenship Ready", ui.theme.success)
+                        ui.message(target, "success", "CITIZENSHIP GRANTED",
+                            result.citizen_name, 1.1)
+                    end
+                end
+            end
+        elseif action == "prev" then
+            page = math.max(1, page - 1)
+        elseif action == "next" then
+            page = math.min(#citizens, page + 1)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function customsApplicationsScreen(territoryId)
+    local page = 1
+    while sessionToken do
+        local detail = request("CUSTOMS_DETAIL", {
+            territory_id = territoryId,
+        })
+        if not detail then return end
+        local pending = {}
+        for _, application in ipairs(detail.applications or {}) do
+            if application.status == "pending" then
+                pending[#pending + 1] = application
+            end
+        end
+        page = math.max(1, math.min(page, math.max(1, #pending)))
+        local application = pending[page]
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Visa Requests",
+            #pending .. " pending", util.formatClock())
+        local scene = ui.scene(target)
+        if not application then
+            ui.card(target, 2, 6, width - 2, 7, ui.theme.success)
+            ui.center(target, 8, "ALL CAUGHT UP", ui.theme.ink)
+            ui.center(target, 10, "No visa requests", ui.theme.muted)
+        else
+            ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
+            ui.text(target, 4, 6,
+                ui.truncate(application.applicant_name, width - 6),
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 8,
+                application.requested_days .. " day stay",
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, 10,
+                "Applied day " .. application.created_day,
+                ui.theme.muted, ui.theme.panel)
+            scene:button("approve", 2, 13, width - 2, 2,
+                "Approve VISA", { background = ui.theme.success,
+                    foreground = colors.black })
+            scene:button("deny", 2, 16, width - 2, 2,
+                "Decline", { background = ui.theme.danger })
+        end
+        scene:button("back", 1, height, 8, 1, "< Cust",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "approve" or action == "deny" then
+            local pin = ui.pin(target, "Review with PIN", true)
+            if pin then
+                local result = request("CUSTOMS_REVIEW_APPLICATION", {
+                    application_id = application.application_id,
+                    approved = action == "approve",
+                    pin = pin,
+                })
+                if result then
+                    ui.message(target,
+                        action == "approve" and "success" or "warning",
+                        action == "approve" and "VISA APPROVED"
+                            or "VISA DECLINED",
+                        application.applicant_name, 1.1)
+                end
+            end
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function customsFreeRoamScreen(territoryId)
+    local page = 1
+    while sessionToken do
+        local detail = request("CUSTOMS_DETAIL", {
+            territory_id = territoryId,
+        })
+        if not detail then return end
+        local territories = detail.other_territories or {}
+        page = math.max(1, math.min(page, math.max(1, #territories)))
+        local partner = territories[page]
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Free Roam",
+            #territories == 0 and "No partner territories"
+                or (page .. " of " .. #territories), util.formatClock())
+        local scene = ui.scene(target)
+        if not partner then
+            ui.card(target, 2, 6, width - 2, 7, ui.theme.accent)
+            ui.center(target, 8, "NO OTHER TERRITORIES", ui.theme.ink)
+            ui.center(target, 10, "A partner must register",
+                ui.theme.muted)
+        else
+            ui.card(target, 2, 5, width - 2, 8,
+                partner.free_roam and ui.theme.success or ui.theme.warning)
+            ui.text(target, 4, 6,
+                ui.truncate(partner.name, width - 6),
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 9,
+                partner.free_roam and "PERMANENT ENTRY ON"
+                    or "ENTRY NOT ALLOWED",
+                partner.free_roam and ui.theme.success or ui.theme.warning,
+                ui.theme.panel, width - 6)
+            scene:button("toggle", 2, 14, width - 2, 3,
+                partner.free_roam and "Remove Free Roam"
+                    or "Allow Permanent Entry", {
+                    background = partner.free_roam
+                        and ui.theme.danger or ui.theme.success,
+                    foreground = partner.free_roam
+                        and colors.white or colors.black,
+                    shadow = true,
+                })
+        end
+        scene:button("back", 1, height, 8, 1, "< Cust",
+            { background = ui.theme.panel })
+        scene:button("prev", width - 12, height, 4, 1, "<", {
+            background = ui.theme.panel,
+            disabled = page <= 1,
+        })
+        scene:button("next", width - 3, height, 3, 1, ">", {
+            background = ui.theme.panel,
+            disabled = page >= #territories,
+        })
+        local action = scene:wait()
+        if action == "toggle" then
+            local pin = ui.pin(target, "Confirm with PIN", true)
+            if pin then
+                local result = request("CUSTOMS_SET_FREE_ROAM", {
+                    territory_id = territoryId,
+                    source_territory_id = partner.territory_id,
+                    enabled = not partner.free_roam,
+                    pin = pin,
+                })
+                if result then
+                    ui.message(target, "success", "FREE ROAM UPDATED",
+                        partner.name, 1.0)
+                end
+            end
+        elseif action == "prev" then
+            page = math.max(1, page - 1)
+        elseif action == "next" then
+            page = math.min(#territories, page + 1)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function customsTerritoryScreen(territoryId)
+    while sessionToken do
+        local detail = request("CUSTOMS_DETAIL", {
+            territory_id = territoryId,
+        })
+        if not detail then return end
+        local territory = detail.territory
+        local pending = 0
+        for _, application in ipairs(detail.applications or {}) do
+            if application.status == "pending" then pending = pending + 1 end
+        end
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, ui.truncate(territory.name, width - 3),
+            territory.citizen_count .. " citizens  " .. pending .. " requests",
+            util.formatClock())
+        local scene = ui.scene(target)
+        scene:button("citizens", 2, 5, width - 2, 3,
+            "Citizenships\nPermanent VISAs", {
+                background = ui.theme.success,
+                foreground = colors.black,
+                shadow = true,
+            })
+        scene:button("applications", 2, 9, width - 2, 3,
+            "Visa Requests\n" .. pending .. " awaiting review", {
+                background = colors.purple,
+                shadow = true,
+            })
+        scene:button("roam", 2, 13, width - 2, 3,
+            "Free Roam\n" .. territory.free_roam_count .. " partners", {
+                background = ui.theme.accentDark,
+                shadow = true,
+            })
+        scene:button("back", 1, height, 8, 1, "< Cust",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "citizens" then
+            customsCitizensScreen(territoryId)
+        elseif action == "applications" then
+            customsApplicationsScreen(territoryId)
+        elseif action == "roam" then
+            customsFreeRoamScreen(territoryId)
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function createTerritory()
+    local name = ui.input(target, "Create Territory", {
+        hint = "3-24 letters or numbers",
+        maxLength = 24,
+        minLength = 3,
+        allowSpace = true,
+    })
+    if not name then return end
+    local pin = ui.pin(target, "Confirm with PIN", true)
+    if not pin then return end
+    local result = request("CUSTOMS_CREATE_TERRITORY", {
+        name = name,
+        pin = pin,
+    })
+    if result then
+        phoneTransition("Territory Ready", colors.lightBlue)
+        ui.message(target, "success", "TERRITORY CREATED",
+            result.territory.name, 1.2)
+    end
+end
+
+local function customsScreen()
+    while sessionToken do
+        local overview = request("CUSTOMS_OVERVIEW")
+        if not overview then return end
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Customs", "Territory control", util.formatClock())
+        local scene = ui.scene(target)
+        if #overview.territories == 0 then
+            ui.card(target, 2, 5, width - 2, 7, colors.lightBlue)
+            ui.center(target, 7, "CREATE A TERRITORY", ui.theme.ink)
+            ui.center(target, 9, "Manage borders and VISAs",
+                ui.theme.muted)
+            scene:button("create", 2, 14, width - 2, 3,
+                "Create Territory", {
+                    background = ui.theme.accentDark,
+                    shadow = true,
+                })
+        else
+            for index, territory in ipairs(overview.territories) do
+                local y = 5 + (index - 1) * 4
+                scene:button("territory:" .. territory.territory_id,
+                    2, y, width - 2, 3,
+                    ui.truncate(territory.name, width - 4)
+                        .. "\n" .. territory.citizen_count
+                        .. " citizens  " .. territory.pending_count
+                        .. " requests", {
+                        background = index == 1
+                            and colors.lightBlue or ui.theme.panel,
+                        shadow = true,
+                    })
+            end
+            if #overview.territories < overview.maximum_territories then
+                scene:button("create", 2, 17, width - 2, 2,
+                    "+ New Territory", { background = ui.theme.panel })
+            end
+        end
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        local territoryId = action
+            and action:match("^territory:(.+)$")
+        if territoryId then
+            customsTerritoryScreen(territoryId)
+        elseif action == "create" then
+            createTerritory()
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
 local function settingsScreen()
     local width, height = target.getSize()
     ui.clear(target)
@@ -1165,8 +1755,10 @@ local function settingsScreen()
     ui.text(target, 4, 11, "PERSONAL NUMBER", ui.theme.muted, ui.theme.panel)
     ui.text(target, 4, 12, account.personal_number, ui.theme.ink, ui.theme.panel)
     local scene = ui.scene(target)
-    scene:button("logout", 2, 15, width - 2, 2, "Sign Out",
+    scene:button("logout", 2, 14, width - 2, 2, "Sign Out",
         { background = ui.theme.danger })
+    scene:button("close", 2, 17, width - 2, 2, "Close PUMPE",
+        { background = ui.theme.panel })
     scene:button("back", 1, height, 8, 1, "< Home",
         { background = ui.theme.panel })
     local action = scene:wait()
@@ -1174,6 +1766,9 @@ local function settingsScreen()
         "Leave this PUMPE session?", "Sign Out", "Back") then
         sessionToken, account = nil, nil
         ui.setIdleLock(nil)
+    elseif action == "close" and ui.confirm(target, "Close PUMPE",
+        "Shut down the PUMPE app?", "CLOSE", "BACK") then
+        running = false
     end
 end
 
@@ -1192,13 +1787,14 @@ local function mainMenu()
         {
             { "tickets", "#\nTickets", colors.orange },
             { "notifications", "!\nAlerts", colors.red },
-            { "tax", "%\nTax", colors.orange },
-            { "subscriptions", "S\nSubs", colors.magenta },
+            { "visas", "V\nVisas", colors.purple },
+            { "customs", "C\nCustoms", colors.lightBlue },
         },
         {
+            { "tax", "%\nTax", colors.orange },
+            { "subscriptions", "S\nSubs", colors.magenta },
             { "settings", "o\nSettings", colors.gray },
             { "lock", "L\nLock", colors.blue },
-            { "exit", "X\nClose", colors.red },
         },
     }
     while running and sessionToken do
@@ -1278,6 +1874,10 @@ local function mainMenu()
             phoneTransition("Tickets", colors.orange); myTicketsScreen()
         elseif action == "notifications" then
             phoneTransition("Alerts", colors.red); notificationsScreen()
+        elseif action == "visas" then
+            phoneTransition("Visas", colors.purple); visasScreen()
+        elseif action == "customs" then
+            phoneTransition("Customs", colors.lightBlue); customsScreen()
         elseif action == "tax" then
             phoneTransition("Tax", colors.orange); taxScreen()
         elseif action == "subscriptions" then
@@ -1286,7 +1886,7 @@ local function mainMenu()
             phoneTransition("Settings", colors.gray); settingsScreen()
         elseif action == "lock" then
             lockScreen(true)
-        elseif action == "exit" or action == "__terminate" then
+        elseif action == "__terminate" then
             running = false
         end
         if sessionToken then
