@@ -1,16 +1,17 @@
 # PUMPE Ecosystem v5
 
-A working, touch-first digital economy for ComputerCraft: Tweaked. It includes personal banking, merchant checkout, an optional customer-facing order display, proximity payments, subscriptions, event tickets, door validation, taxes, and a persistent central bank.
+A working, touch-first digital economy for ComputerCraft: Tweaked. It includes personal banking, merchant checkout, an optional customer-facing order display, proximity payments, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
 ## What is included
 
 | Program | Hardware | Purpose |
 | --- | --- | --- |
-| `bank_server.lua` | Advanced Computer + wireless/Ender modem | Persistent database, request API, settlement, subscriptions, events, tax, live server dashboard |
-| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal bank app, payments, live event clock/countdowns, tickets, tax, subscriptions |
+| `bank_server.lua` | Advanced Computer + wireless/Ender modem | Persistent database, request API, settlement, customs, visits, subscriptions, events, tax, live server dashboard |
+| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, Customs and Visas apps, events, tickets, tax, subscriptions |
 | `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Touch POS, Quick Pay cart, codes, proximity requests, withdrawals, subscriptions |
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
 | `tax_controller.lua` | Advanced Computer + wireless/Ender modem | Government-only periods, rates, revenue, deposits, audits, bank statistics |
+| `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.
@@ -23,7 +24,7 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
 - The Home Screen uses a roomy two-column, three-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
-- Wallet, Activity, Events, Tickets, Notifications, Tax, Subscriptions, and Settings open as individual apps.
+- Wallet, Activity, Events, Tickets, Notifications, Visas, Customs, Tax, Subscriptions, and Settings open as individual apps.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 
 ### PUMPE Pay
@@ -69,7 +70,7 @@ If a required source file is missing, the first-boot screen lists it and lets yo
 1. Copy only the supplied `startup.lua` to the new computer as `/startup.lua`.
 2. Attach a wireless or Ender modem, then restart the computer. You can also run `startup` immediately.
 3. Tap the desired role.
-4. Bank Server and Tax Controller downloads require code `4040`.
+4. Bank Server and Tax Controller downloads require code `4040`. Border Controller is available as an ordinary role.
 5. The installer downloads and verifies the main program, `config.lua`, `launcher.lua`, `installer.lua`, and every required file under `lib/`.
 6. After installation, it replaces its own marked `/startup.lua` with the selected role launcher. Tap **Reboot Now** and that role starts automatically.
 
@@ -86,10 +87,12 @@ The Bank Server can now watch an HTTPS release folder for new PUMPE versions. It
 3. Verifies every byte count and checksum.
 4. Preserves the existing government key, release URL, and all other local configuration.
 5. Atomically replaces the program files, rolling back if any move fails.
-6. Saves the bank database and restarts.
-7. Rebuilds `/updates/` after restart so every device receives that release.
+6. Replaces only its PUMPE-owned `/startup.lua` with the Bank Server role launcher, saves the database, and restarts immediately.
+7. Detects the restart marker, bypasses Easy Deployment, and rebuilds `/updates/` while launching the Bank Server normally.
 
-Installed PUMPEs, Service Kiosks, Event Kiosks, and Tax Controllers quietly compare versions with the Bank Server whenever they start and continue checking from their live dashboards. If a newer version exists, they download, verify, install, and reboot automatically. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
+Installed PUMPEs, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers quietly compare versions with the Bank Server whenever they start and continue checking from their live dashboards. If a newer version exists, they download, verify, install, and reboot automatically. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
+
+The v5.3 release keeps the online manifest compatible with existing v5.2.1 Bank Servers. After the core update, the new server retrieves `border_controller.lua` from the same HTTPS release folder, verifies its release checksum, and places it in `/updates/`. A temporary download failure never sends an automatically restarting Bank Server back into Easy Deployment; it keeps serving and retries the Border Controller depot repair.
 
 ### Release source
 
@@ -124,6 +127,7 @@ You can still start any installed role manually:
 /pumpe/launcher service
 /pumpe/launcher event
 /pumpe/launcher tax
+/pumpe/launcher border
 ```
 
 To start a role automatically, create `/startup.lua` on that device:
@@ -132,7 +136,7 @@ To start a role automatically, create `/startup.lua` on that device:
 shell.run("/pumpe/launcher.lua", "service")
 ```
 
-Replace `service` with `bank`, `pumpe`, `event`, or `tax`.
+Replace `service` with `bank`, `pumpe`, `event`, `tax`, or `border`.
 
 ## Hardware notes
 
@@ -169,6 +173,14 @@ Replace `service` with `bank`, `pumpe`, `event`, or `tax`.
 - Government sessions expire automatically.
 - Every deposit and tax movement is written to the bank transaction log.
 
+### Border Controller
+
+- Use an Advanced Computer with a wireless or Ender modem.
+- During setup, sign into the Foxy Account that owns the destination territory and choose that territory.
+- Travelers enter the eight-character code shown in their Visas app.
+- Approved entry records the traveler as **Visiting**, shows the remaining stay and departure day, and powers the back redstone side for exactly five seconds.
+- Citizenship and Free Roam are permanent. A temporary visa starts its approved stay on first entry and cannot be reused after that stay expires.
+
 ## First-run flow
 
 ### Bank
@@ -178,6 +190,12 @@ Start it once and leave it running. The touch dashboard shows account and transa
 ### Personal PUMPE
 
 Complete the animated introduction, choose **Set Up New Account**, set a four-digit PIN, and choose how PUMPE should address you. The resulting identity is called a **Foxy Account**, and new accounts receive the configured starting balance.
+
+### Customs and Visas
+
+Open **Customs** to create a territory. Its owner automatically receives citizenship and can grant permanent citizenship to other Foxy Accounts, review visa applications, and allow citizens of selected territories permanent Free Roam into the destination.
+
+Open **Visas** to see citizenship and visa codes, active visits and departure days, Free Roam access, application history, or request a 1–30 in-game-day visa. The destination territory owner approves or declines each request in Customs.
 
 ### Service Kiosk
 
@@ -205,6 +223,8 @@ Sign in, create the event, then add one or more ticket types. Customers immediat
 - Subscriptions charge once per in-game day. Failed charges notify the customer and retry the next day.
 - Sessions are kept in memory and expire after 12 hours by default. Restarting the Bank Server signs clients out without changing their data.
 - The PUMPE stores only the last account name locally, never the PIN.
+- Citizenship codes grant permanent entry to their own territory. They also grant permanent entry wherever that citizenship has active Free Roam.
+- Temporary visa departure days are calculated by the Bank Server when the visa is first accepted at a Border Controller.
 
 ## Security reality check
 
@@ -226,6 +246,7 @@ pumpe/
 ├── service_kiosk.lua
 ├── event_kiosk.lua
 ├── tax_controller.lua
+├── border_controller.lua
 ├── startup.lua
 ├── installer.lua
 ├── launcher.lua
@@ -267,4 +288,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `5.2.1`.
+PUMPE Ecosystem `5.3.0`.
