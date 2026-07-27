@@ -30,4 +30,12 @@ launcher("bank")
 assert(#calls == 1)
 assert(calls[1][1] == "/pumpe/bank_server.lua")
 
+calls = {}
+launcher("border")
+assert(#calls == 2)
+assert(calls[1][1] == "/pumpe/installer.lua")
+assert(calls[1][2] == "--auto")
+assert(calls[1][3] == "border")
+assert(calls[2][1] == "/pumpe/border_controller.lua")
+
 print("host_launcher_update_test: OK")
