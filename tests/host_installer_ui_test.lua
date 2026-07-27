@@ -43,7 +43,7 @@ sleep = function() end
 os.getComputerID = function() return 7 end
 os.epoch = function() return 123456789 end
 local events = {
-    { "mouse_click", 1, 5, 13 }, -- Bank Server role
+    { "mouse_click", 1, 5, 12 }, -- Bank Server role
     { "mouse_click", 1, 4, 13 }, -- 4
     { "mouse_click", 1, 11, 17 }, -- 0
     { "mouse_click", 1, 4, 13 }, -- 4
