@@ -33,6 +33,7 @@ local roles = {
     { id = "pumpe", label = "PERSONAL PUMPE", detail = "Pocket banking" },
     { id = "service", label = "SERVICE KIOSK", detail = "Shop checkout" },
     { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
+    { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
     { id = "bank", label = "BANK SERVER", detail = "Protected download", protected = true },
     { id = "tax", label = "TAX CONTROLLER", detail = "Protected download", protected = true },
 }
@@ -504,8 +505,9 @@ end
 
 local function writeStartup(role)
     local startupPath = "/startup.lua"
-    local marker = "-- PUMPE EASY DEPLOYMENT"
-    local body = marker .. "\n"
+    local installerMarker = "-- PUMPE EASY DEPLOYMENT"
+    local roleMarker = "-- PUMPE ROLE STARTUP"
+    local body = roleMarker .. "\n"
         .. "shell.run(\"/pumpe/launcher.lua\", \"" .. role.id .. "\")\n"
     if not fs.exists(startupPath) then
         local handle = fs.open(startupPath, "w")
@@ -515,7 +517,8 @@ local function writeStartup(role)
         return true, "Startup created"
     end
     local existing = readFile(startupPath) or ""
-    if existing:find(marker, 1, true) then
+    if existing:find(installerMarker, 1, true)
+        or existing:find(roleMarker, 1, true) then
         local handle = fs.open(startupPath, "w")
         if not handle then return false, "Could not update /startup.lua" end
         handle.write(body)
