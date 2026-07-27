@@ -4,6 +4,7 @@
 --   launcher service
 --   launcher event
 --   launcher tax
+--   launcher border
 
 local args = { ... }
 local role = string.lower(args[1] or "")
@@ -13,13 +14,14 @@ local programs = {
     service = "service_kiosk.lua",
     event = "event_kiosk.lua",
     tax = "tax_controller.lua",
+    border = "border_controller.lua",
 }
 
 if not programs[role] then
     print("PUMPE Ecosystem launcher")
     print("")
     print("Usage: launcher <role>")
-    print("Roles: bank, pumpe, service, event, tax")
+    print("Roles: bank, pumpe, service, event, tax, border")
     return
 end
 
