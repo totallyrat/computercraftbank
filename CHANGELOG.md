@@ -1,5 +1,16 @@
 # Changelog
 
+## 5.3.0
+
+- Added persistent territories, citizenships, one-way Free Roam policies, temporary visa applications, customs review, travel codes, and visitor records to the Bank Server.
+- Added 26×20-native **Customs** and **Visas** apps to PUMPE, including permanent citizenship documents, application history, departure days, citizen management, visa review, and Free Roam controls.
+- Added the Easy Deployment **Border Controller** role for Advanced Computers, with authenticated territory binding, eight-character travel-code checks, permanent and temporary stay results, and an exact five-second back redstone gate signal.
+- Added automatic owner citizenship whenever a territory is created and permanent entry through a citizenship code whenever the destination accepts its source territory for Free Roam.
+- Made temporary visas single-stay documents. Their approved day count begins at first border entry, expired documents are rejected, and active travelers remain marked **Visiting**.
+- Fixed Bank Server online restarts so a downloaded standalone installer can never take over `/startup.lua`; the server writes a role launcher, marks the update restart, skips Easy Deployment, and relaunches immediately.
+- Kept the release manifest compatible with v5.2.1 while adding a checksum-verified Border Controller depot fetch and background retry.
+- Added host coverage for the complete territory/visa/border state flow, the five-second gate pulse, the new launcher role, and the expanded PUMPE screen flow.
+
 ## 5.2.1
 
 - Reflowed PUMPE for the Advanced Pocket Computer's exact 26×20 character display.
