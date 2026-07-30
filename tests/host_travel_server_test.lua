@@ -105,12 +105,34 @@ local freeEntry = actions.BORDER_CHECK({
     controller_id = border.controller_id,
     controller_token = border.controller_token,
     code = betaCitizenship.document.code,
+    direction = "enter",
 })
 assert(freeEntry.approved)
 assert(freeEntry.authorization == "free_roam")
 assert(freeEntry.permanent)
 assert(freeEntry.due_day == nil)
 assert(freeEntry.visiting)
+
+assert(actions.BORDER_OWNER_PIN({
+    controller_id = border.controller_id,
+    controller_token = border.controller_token,
+    pin = "1234",
+}).authorized)
+
+local freeExit = actions.BORDER_CHECK({
+    controller_id = border.controller_id,
+    controller_token = border.controller_token,
+    code = betaCitizenship.document.code,
+    direction = "exit",
+})
+assert(freeExit.approved and not freeExit.visiting)
+local freeCooldownOk, freeCooldown = pcall(actions.BORDER_CHECK, {
+    controller_id = border.controller_id,
+    controller_token = border.controller_token,
+    code = betaCitizenship.document.code,
+    direction = "enter",
+})
+assert(not freeCooldownOk and freeCooldown.code == "VISA_COOLDOWN")
 
 local application = actions.VISA_APPLY({
     session_token = applicant.session_token,
@@ -133,6 +155,7 @@ local temporaryEntry = actions.BORDER_CHECK({
     controller_id = border.controller_id,
     controller_token = border.controller_token,
     code = reviewed.document.code,
+    direction = "enter",
 })
 assert(temporaryEntry.approved)
 assert(temporaryEntry.authorization == "visa")
@@ -140,23 +163,35 @@ assert(not temporaryEntry.permanent)
 assert(temporaryEntry.stay_days == 5)
 assert(temporaryEntry.due_day == 104)
 
-local repeatedEntry = actions.BORDER_CHECK({
+local repeatedOk, repeatedEntry = pcall(actions.BORDER_CHECK, {
     controller_id = border.controller_id,
     controller_token = border.controller_token,
     code = reviewed.document.code,
+    direction = "enter",
 })
-assert(repeatedEntry.due_day == 104)
-assert(repeatedEntry.stay_days == 5)
+assert(not repeatedOk)
+assert(repeatedEntry.code == "ALREADY_VISITING")
 
 currentDay = 105
 bank.cleanup()
+local temporaryExit = actions.BORDER_CHECK({
+    controller_id = border.controller_id,
+    controller_token = border.controller_token,
+    code = reviewed.document.code,
+    direction = "exit",
+})
+assert(temporaryExit.approved)
+assert(not temporaryExit.visiting)
+assert(temporaryExit.exited_day == 105)
+
 local ok, rejection = pcall(actions.BORDER_CHECK, {
     controller_id = border.controller_id,
     controller_token = border.controller_token,
     code = reviewed.document.code,
+    direction = "enter",
 })
 assert(not ok)
 assert(type(rejection) == "table")
-assert(rejection.code == "VISA_EXPIRED")
+assert(rejection.code == "VISA_ALREADY_USED")
 
 print("host_travel_server_test: OK")
