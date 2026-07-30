@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.4.0
+
+- Removed Proximity Pay completely from PUMPE, Service Kiosk, Bank routes, GPS state, and active configuration.
+- Rebuilt Service Kiosk as a Square-style touch POS with a permanent left receipt, **Favorited**, **All Products**, and **Subscriptions** tabs, `F` favorite controls, side paging, top-corner `+` product creation, and `S` settings.
+- Added one-time and subscription product types. Empty-cart **PAY** now opens the touch amount keypad and asks which purchase type to create.
+- Moved subscription consent to PUMPE: subscription codes show the per-day price, always require the customer's PIN, settle the first charge immediately, and schedule later daily charges.
+- Made Easy Deployment update its own one-file installer directly from the public HTTPS manifest before showing its menu or booting a role.
+- Made first-Bank installation entirely local. Easy Deployment verifies the complete release beside `startup.lua`, installs it to `/pumpe`, writes an installer-based boot entry, creates the update depot, and launches the Bank without discovering a nonexistent server or stopping for a second restart.
+- Removed `launcher.lua` from all v5.4 runtime and deployment paths. A tiny manifest-compatible copy remains only to migrate Bank Servers whose v5.3 `/startup.lua` still points at it.
+- Split Border Controller into explicit **Enter Territory** and **Exit Territory** actions. Temporary visas allow one entry plus its matching exit and then lock permanently, including early exits.
+- Added a permanent-document cooldown to reduce citizenship and Free Roam code sharing, while allowing overdue temporary visitors to record their exit.
+- Protected Border Controller territory changes and shutdown with server-verified owner PIN entry.
+- Added host coverage for local Bank bootstrap, installer self-update, direct Bank restart, POS bounds, compact customer display, product favorites, subscription settlement, border enter/exit, temporary-visa locking, and permanent-code cooldowns.
+
 ## 5.3.0
 
 - Added persistent territories, citizenships, one-way Free Roam policies, temporary visa applications, customs review, travel codes, and visitor records to the Bank Server.
