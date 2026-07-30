@@ -19,7 +19,7 @@ local BANK_RESTART_MARKER = fs.combine(ROOT, ".bank_auto_restart")
 local CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
 local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
 local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
-local BORDER_CONTROLLER_CHECKSUM = "c9695abe"
+local BORDER_CONTROLLER_CHECKSUM = "4fed221f"
 
 local LOCAL_UPDATE_FILES = {
     "bank_server.lua",
@@ -29,7 +29,6 @@ local LOCAL_UPDATE_FILES = {
     "tax_controller.lua",
     "border_controller.lua",
     "startup.lua",
-    "launcher.lua",
     "config.lua",
     "lib/net.lua",
     "lib/ui.lua",
@@ -65,7 +64,6 @@ local ROLE_MAIN_FILES = {
 }
 
 local COMMON_UPDATE_FILES = {
-    { path = "launcher.lua", source = "launcher.lua" },
     { path = "installer.lua", source = "startup.lua" },
     { path = "lib/net.lua", source = "lib/net.lua" },
     { path = "lib/ui.lua", source = "lib/ui.lua" },
@@ -182,7 +180,10 @@ local function absoluteRootFile(path)
 end
 
 local function ensureBankStartup(installerBody)
-    cacheInstaller(installerBody)
+    installerBody = cacheInstaller(installerBody)
+    if installerBody then
+        util.writeFile(absoluteRootFile("installer.lua"), installerBody)
+    end
     local startupPath = "/startup.lua"
     local existing = util.readFile(startupPath)
     local owned = not existing
@@ -193,8 +194,8 @@ local function ensureBankStartup(installerBody)
         return false, "Existing non-PUMPE /startup.lua was preserved"
     end
     local body = ROLE_STARTUP_MARKER .. "\n"
-        .. "shell.run(" .. string.format("%q", absoluteRootFile("launcher.lua"))
-        .. ", \"bank\")\n"
+        .. "shell.run(" .. string.format("%q", absoluteRootFile("installer.lua"))
+        .. ", \"--boot\", \"bank\")\n"
     util.writeFile(startupPath, body)
     return true
 end
@@ -311,8 +312,8 @@ local function bootstrapUpdateDepot()
         ensureBankStartup()
         return
     end
-    if not created
-        and (#missing == 0 or onlyDeferredBorderMissing(missing)) then
+    if #missing == 0 or onlyDeferredBorderMissing(missing) then
+        ensureBankStartup()
         return
     end
 
@@ -348,13 +349,13 @@ local running = true
 
 local function blankState()
     return {
-        schema = 6,
+        schema = 7,
         created_at = util.nowMs(),
         sequence = {
             account = 0, company = 0, terminal = 0, event = 0,
             ticket_type = 0, ticket = 0, transaction = 0,
             period = 0, notification = 0, subscription = 0,
-            request = 0, territory = 0, visa = 0,
+            territory = 0, visa = 0,
             visa_application = 0, visit = 0, border = 0,
         },
         accounts = {},
@@ -368,8 +369,6 @@ local function blankState()
         declaration_periods = {},
         declarations = {},
         active_pay_codes = {},
-        payment_requests = {},
-        gps_devices = {},
         territories = {},
         territory_names = {},
         visas = {},
@@ -393,6 +392,10 @@ local function ensureState()
     for key, value in pairs(defaults.sequence) do
         if state.sequence[key] == nil then state.sequence[key] = value end
     end
+    -- Proximity Pay was removed in v5.4; erase its legacy transient state.
+    state.payment_requests = nil
+    state.gps_devices = nil
+    state.sequence.request = nil
     state.account_names = state.account_names or {}
     for _, account in pairs(state.accounts) do
         account.notifications = account.notifications or {}
@@ -408,10 +411,20 @@ local function ensureState()
         terminal.balance = terminal.balance or 0
         terminal.sales_total = terminal.sales_total or 0
         terminal.quick_items = terminal.quick_items or {}
+        for _, item in ipairs(terminal.quick_items) do
+            item.kind = item.kind == "subscription"
+                and "subscription" or "one_time"
+            item.favorite = item.favorite == true
+        end
         terminal.status = terminal.status or "active"
     end
     for _, company in pairs(state.companies) do
         company.quick_items = company.quick_items or {}
+        for _, item in ipairs(company.quick_items) do
+            item.kind = item.kind == "subscription"
+                and "subscription" or "one_time"
+            item.favorite = item.favorite == true
+        end
         company.linked_terminal_ids = company.linked_terminal_ids or {}
         company.status = company.status or "active"
     end
@@ -419,7 +432,7 @@ local function ensureState()
         event.ticket_type_ids = event.ticket_type_ids or {}
         event.status = event.status or "active"
     end
-    state.schema = 6
+    state.schema = 7
     state.territory_names = {}
     for territoryId, territory in pairs(state.territories) do
         territory.territory_id = territory.territory_id or territoryId
@@ -450,6 +463,11 @@ local function ensureState()
     for visitId, visit in pairs(state.visits) do
         visit.visit_id = visit.visit_id or visitId
         visit.status = visit.status or "visiting"
+        local document = visit.visa_id and state.visas[visit.visa_id]
+        if document and document.kind == "visa"
+            and (visit.status == "visiting" or visit.status == "overdue") then
+            document.status = visit.status
+        end
     end
     for controllerId, controller in pairs(state.border_controllers) do
         controller.controller_id = controller.controller_id or controllerId
@@ -635,7 +653,8 @@ local function matchingDocument(accountId, territoryId, kind)
             and document.territory_id == territoryId
             and (not kind or document.kind == kind)
             and document.status ~= "revoked"
-            and document.status ~= "expired" then
+            and document.status ~= "expired"
+            and document.status ~= "used" then
             return document
         end
     end
@@ -669,17 +688,15 @@ local function issueDocument(account, territory, kind, options)
     return document
 end
 
-local function activeVisit(accountId, territoryId, visaId)
-    local today = util.ingameDay()
+local function openVisit(accountId, territoryId, visaId)
     local newest
     for _, visit in pairs(state.visits) do
         if visit.account_id == accountId
             and visit.territory_id == territoryId
             and (not visaId or visit.visa_id == visaId)
-            and visit.status == "visiting"
-            and (not visit.due_day or visit.due_day >= today)
+            and (visit.status == "visiting" or visit.status == "overdue")
             and (not newest
-                or (visit.entered_day or 0) > (newest.entered_day or 0)) then
+                or (visit.entered_at or 0) > (newest.entered_at or 0)) then
             newest = visit
         end
     end
@@ -729,8 +746,7 @@ local function publicDocument(document)
     for _, visit in pairs(state.visits) do
         if visit.account_id == document.account_id
             and visit.visa_id == document.visa_id
-            and visit.status == "visiting"
-            and (not visit.due_day or visit.due_day >= util.ingameDay()) then
+            and (visit.status == "visiting" or visit.status == "overdue") then
             visits[#visits + 1] = publicVisit(visit)
         end
     end
@@ -773,7 +789,8 @@ local function accessForAccount(accountId, destination)
     for _, document in pairs(state.visas) do
         if document.account_id == accountId
             and document.status ~= "revoked"
-            and document.status ~= "expired" then
+            and document.status ~= "expired"
+            and document.status ~= "used" then
             if document.kind == "citizenship"
                 and document.territory_id == destination.territory_id then
                 return "citizenship", document
@@ -883,13 +900,6 @@ local function cleanupEphemeral()
             state.active_pay_codes[code] = nil
         end
     end
-    for id, request in pairs(state.payment_requests) do
-        if request.expires_at <= now and request.status == "pending" then
-            request.status = "expired"
-        elseif request.expires_at + 10 * 60 * 1000 < now then
-            state.payment_requests[id] = nil
-        end
-    end
     for token, session in pairs(sessions) do
         if session.expires_at <= now then sessions[token] = nil end
     end
@@ -903,7 +913,7 @@ local function cleanupEphemeral()
             visit.status = "overdue"
             local document = state.visas[visit.visa_id]
             if document and document.kind == "visa" then
-                document.status = "expired"
+                document.status = "overdue"
             end
             travelChanged = true
         end
@@ -990,15 +1000,9 @@ function actions.ACCOUNT_SUMMARY(payload)
     for _, item in ipairs(account.notifications) do
         if not item.read then unread = unread + 1 end
     end
-    local pending = 0
-    for _, request in pairs(state.payment_requests) do
-        if request.account_id == account.account_id and request.status == "pending"
-            and request.expires_at > util.nowMs() then pending = pending + 1 end
-    end
     return {
         account = publicAccount(account),
         unread_notifications = unread,
-        pending_requests = pending,
         day = util.ingameDay(),
         time = util.formatClock(),
     }
@@ -1481,6 +1485,14 @@ function actions.BORDER_STATUS(payload)
     }
 end
 
+function actions.BORDER_OWNER_PIN(payload)
+    local controller = requireBorderController(payload)
+    local owner = state.accounts[controller.owner_account_id]
+    need(owner and verifyAccount(owner, payload.pin),
+        "BAD_PIN", "Owner PIN is incorrect")
+    return { authorized = true }
+end
+
 function actions.BORDER_CHECK(payload)
     local controller = requireBorderController(payload)
     cleanupEphemeral()
@@ -1488,6 +1500,9 @@ function actions.BORDER_CHECK(payload)
     need(territory and territory.status == "active",
         "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
     local code = string.upper(util.trim(payload.code))
+    local direction = string.lower(util.trim(payload.direction))
+    need(direction == "enter" or direction == "exit",
+        "BORDER_DIRECTION", "Choose Enter Territory or Exit Territory")
     need(code:match("^[A-Z2-9]+$") and #code == 8,
         "VISA_CODE_INVALID", "Enter the eight-character travel code")
     local documentId = state.visa_codes[code]
@@ -1513,22 +1528,39 @@ function actions.BORDER_CHECK(payload)
     need(authorization, "VISA_WRONG_TERRITORY",
         "This document does not allow entry here")
 
-    local visit = activeVisit(
+    local visit = openVisit(
         traveler.account_id, territory.territory_id, document.visa_id)
-    local created = false
-    if not visit then
-        if authorization == "visa" then
+    local now = util.nowMs()
+    local today = util.ingameDay()
+    local permanent = authorization ~= "visa"
+    local actionLabel
+
+    if direction == "enter" then
+        need(not visit, "ALREADY_VISITING",
+            "This traveler is already inside; choose Exit Territory")
+        if not permanent then
             need(document.status == "issued",
-                "VISA_ALREADY_USED", "This visa has already been used")
+                "VISA_ALREADY_USED", "This temporary visa has already been used")
+        else
+            local nextEntry = tonumber(document.next_border_entry_at) or 0
+            local remaining = math.ceil(math.max(0, nextEntry - now) / 1000)
+            need(remaining <= 0, "VISA_COOLDOWN",
+                "This permanent travel code is cooling down for "
+                    .. remaining .. " second(s)")
         end
         local visitId = nextId("visit")
         local dueDay
         if authorization == "visa" then
-            dueDay = util.ingameDay()
+            dueDay = today
                 + math.max(1, document.duration_days or 1) - 1
             document.status = "visiting"
-            document.entered_day = util.ingameDay()
+            document.entered_day = today
             document.due_day = dueDay
+        else
+            local cooldown = math.max(1,
+                math.floor(tonumber(config.permanent_visa_cooldown_seconds)
+                    or 30))
+            document.next_border_entry_at = now + cooldown * 1000
         end
         visit = {
             visit_id = visitId,
@@ -1536,35 +1568,60 @@ function actions.BORDER_CHECK(payload)
             territory_id = territory.territory_id,
             visa_id = document.visa_id,
             authorization = authorization,
-            entered_day = util.ingameDay(),
+            entered_day = today,
+            entered_at = now,
             due_day = dueDay,
             status = "visiting",
             controller_id = controller.controller_id,
         }
         state.visits[visitId] = visit
-        created = true
         notification(traveler, "Border entry recorded",
             territory.name .. (dueDay and
                 (" - leave by day " .. dueDay) or " - permanent stay"),
             "travel")
-    end
-    save()
-    if created then
         logActivity("Border entry: " .. traveler.name .. " > "
             .. territory.name, colors.lime)
+        actionLabel = "entered"
+    else
+        need(visit, "NOT_VISITING",
+            "No active visit was found for this travel code")
+        visit.status = "exited"
+        visit.exited_day = today
+        visit.exited_at = now
+        visit.exit_controller_id = controller.controller_id
+        if permanent then
+            local cooldown = math.max(1,
+                math.floor(tonumber(config.permanent_visa_cooldown_seconds)
+                    or 30))
+            document.next_border_entry_at = now + cooldown * 1000
+            document.last_exit_day = today
+        else
+            document.status = "used"
+            document.exited_day = today
+        end
+        notification(traveler, "Border exit recorded",
+            "You left " .. territory.name
+                .. (permanent and "" or "; temporary visa locked"), "travel")
+        logActivity("Border exit: " .. traveler.name .. " < "
+            .. territory.name, colors.orange)
+        actionLabel = "exited"
     end
+    save()
     local remaining = visit.due_day
-        and math.max(0, visit.due_day - util.ingameDay() + 1) or nil
+        and math.max(0, visit.due_day - today + 1) or nil
     return {
         approved = true,
+        direction = direction,
+        action = actionLabel,
         traveler_name = traveler.name,
         territory_name = territory.name,
         authorization = authorization,
-        permanent = visit.due_day == nil,
+        permanent = permanent,
         stay_days = remaining,
         due_day = visit.due_day,
         entered_day = visit.entered_day,
-        visiting = true,
+        exited_day = visit.exited_day,
+        visiting = direction == "enter",
     }
 end
 
@@ -1579,9 +1636,11 @@ function actions.PAY_CODE_PREVIEW(payload)
     local terminal = state.terminals[payment.terminal_id]
     need(terminal, "TERMINAL_NOT_FOUND", "Kiosk no longer exists")
     resetDailySpend(account)
-    local pinRequired = payment.kind ~= "withdrawal"
+    local pinRequired = payment.kind == "subscription"
+        or (payment.kind ~= "withdrawal"
         and (payment.amount > config.pin_free_limit
             or account.daily_spent + payment.amount > config.daily_spend_limit)
+        )
     return {
         code = code,
         kind = payment.kind,
@@ -1598,6 +1657,7 @@ local function settleCode(account, payment, pin)
     local terminal = state.terminals[payment.terminal_id]
     need(terminal, "TERMINAL_NOT_FOUND", "Kiosk no longer exists")
     resetDailySpend(account)
+    local subscriptionId
     if payment.kind == "withdrawal" then
         debitMerchant(terminal, payment.amount,
             "Withdrawal code " .. payment.code, account)
@@ -1610,6 +1670,37 @@ local function settleCode(account, payment, pin)
         notification(account, "Withdrawal received",
             util.money(payment.amount, config.currency) .. " from " .. terminal.name,
             "money")
+    elseif payment.kind == "subscription" then
+        need(verifyAccount(account, pin), "BAD_PIN", "Incorrect PIN")
+        need(account.balance >= payment.amount,
+            "INSUFFICIENT_FUNDS", "Not enough money for the first charge")
+        account.balance = util.roundMoney(account.balance - payment.amount)
+        account.daily_spent = util.roundMoney(
+            account.daily_spent + payment.amount)
+        creditMerchant(terminal, payment.amount,
+            payment.description or "Subscription", account)
+        transaction(account, "subscription_start", -payment.amount,
+            terminal.name, payment.description or "Subscription", {
+                company_id = terminal.company_id,
+                terminal_id = terminal.terminal_id,
+            })
+        subscriptionId = nextId("subscription")
+        account.subscriptions[subscriptionId] = {
+            subscription_id = subscriptionId,
+            amount = payment.amount,
+            description = util.safeText(
+                payment.description or "Kiosk subscription", 60),
+            kiosk_id = terminal.terminal_id,
+            company_id = terminal.company_id,
+            next_charge_day = util.ingameDay() + 1,
+            active = true,
+            created_day = util.ingameDay(),
+            source_code = payment.code,
+        }
+        notification(account, "Subscription started",
+            util.safeText(payment.description or terminal.name, 40)
+                .. " - " .. util.money(payment.amount, config.currency)
+                .. "/day", "subscription")
     else
         local pinRequired = payment.amount > config.pin_free_limit
             or account.daily_spent + payment.amount > config.daily_spend_limit
@@ -1641,6 +1732,7 @@ local function settleCode(account, payment, pin)
         kind = payment.kind,
         merchant = terminal.name,
         balance = account.balance,
+        subscription_id = subscriptionId,
     }
 end
 
@@ -1653,71 +1745,6 @@ function actions.PAY_CODE_CONFIRM(payload)
         and payment.expires_at > util.nowMs(),
         "BAD_CODE", "Code is invalid or expired")
     return settleCode(account, payment, payload.pin)
-end
-
-function actions.GPS_UPDATE(payload)
-    local account = requireSession(payload)
-    need(type(payload.x) == "number" and type(payload.y) == "number"
-        and type(payload.z) == "number", "GPS_FAILED", "No GPS position")
-    state.gps_devices[account.account_id] = {
-        account_id = account.account_id,
-        x = payload.x, y = payload.y, z = payload.z,
-        updated_at = util.nowMs(),
-    }
-    return { ok = true }
-end
-
-function actions.PENDING_REQUESTS(payload)
-    local account = requireSession(payload)
-    cleanupEphemeral()
-    local output = {}
-    for _, request in pairs(state.payment_requests) do
-        if request.account_id == account.account_id and request.status == "pending"
-            and request.expires_at > util.nowMs() then
-            local terminal = state.terminals[request.terminal_id]
-            output[#output + 1] = {
-                request_id = request.request_id,
-                amount = request.amount,
-                description = request.description,
-                merchant = terminal and terminal.name or "Kiosk",
-                expires_in_ms = request.expires_at - util.nowMs(),
-            }
-        end
-    end
-    table.sort(output, function(a, b) return a.expires_in_ms < b.expires_in_ms end)
-    return { requests = output }
-end
-
-function actions.RESPOND_PAYMENT_REQUEST(payload)
-    local account = requireSession(payload)
-    local request = state.payment_requests[payload.request_id]
-    need(request and request.account_id == account.account_id
-        and request.status == "pending" and request.expires_at > util.nowMs(),
-        "REQUEST_EXPIRED", "Payment request expired")
-    if not payload.approve then
-        request.status = "declined"
-        save()
-        return { status = "declined" }
-    end
-    local terminal = state.terminals[request.terminal_id]
-    need(terminal, "TERMINAL_NOT_FOUND", "Kiosk no longer exists")
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    need(account.balance >= request.amount, "INSUFFICIENT_FUNDS", "Not enough money")
-    account.balance = util.roundMoney(account.balance - request.amount)
-    account.daily_spent = util.roundMoney(account.daily_spent + request.amount)
-    creditMerchant(terminal, request.amount, request.description, account)
-    transaction(account, "proximity_purchase", -request.amount, terminal.name,
-        request.description, {
-            company_id = terminal.company_id,
-            terminal_id = terminal.terminal_id,
-        })
-    request.status = "paid"
-    request.paid_at = util.nowMs()
-    notification(account, "Payment accepted",
-        util.money(request.amount, config.currency) .. " at " .. terminal.name,
-        "success")
-    save()
-    return { status = "paid", balance = account.balance }
 end
 
 function actions.LIST_EVENTS(payload)
@@ -2083,6 +2110,16 @@ function actions.LINK_TERMINAL(payload)
     local company = state.companies[payload.company_id]
     need(company and company.owner_account_id == owner.account_id,
         "NOT_OWNER", "You do not own that company")
+    if terminal.company_id and terminal.company_id ~= company.company_id then
+        local previous = state.companies[terminal.company_id]
+        if previous then
+            for index = #previous.linked_terminal_ids, 1, -1 do
+                if previous.linked_terminal_ids[index] == terminal.terminal_id then
+                    table.remove(previous.linked_terminal_ids, index)
+                end
+            end
+        end
+    end
     terminal.company_id = company.company_id
     local found = false
     for _, id in ipairs(company.linked_terminal_ids) do
@@ -2113,38 +2150,72 @@ function actions.KIOSK_STATE(payload)
             tax_id = company.tax_id,
             owner_name = owner and owner.name,
         } or nil,
+        products = util.copy(quickItems(terminal)),
+        -- Kept for one release so an older kiosk can update cleanly.
         quick_items = util.copy(quickItems(terminal)),
     }
 end
 
-function actions.ADD_QUICK_ITEM(payload)
+function actions.ADD_PRODUCT(payload)
     local terminal = requireTerminal(payload)
     local items = quickItems(terminal)
-    need(#items < 40, "ITEM_LIMIT", "Maximum 40 quick items")
+    need(#items < 80, "ITEM_LIMIT", "Maximum 80 products")
     local name = util.safeText(util.trim(payload.name), 20)
-    need(#name >= 1, "INVALID_NAME", "Item needs a name")
+    need(#name >= 1, "INVALID_NAME", "Product needs a name")
     local price = validateAmount(payload.price, 1000000)
+    local kind = string.lower(util.trim(payload.kind))
+    need(kind == "one_time" or kind == "subscription",
+        "INVALID_PRODUCT_KIND", "Choose One Time or Subscription")
     local item = {
         item_id = util.token("ITEM"):sub(1, 13),
         name = name,
         price = price,
+        kind = kind,
+        favorite = payload.favorite == true,
     }
     items[#items + 1] = item
     save()
-    return { item = util.copy(item), quick_items = util.copy(items) }
+    return { item = util.copy(item), products = util.copy(items) }
 end
 
-function actions.REMOVE_QUICK_ITEM(payload)
+function actions.SET_PRODUCT_FAVORITE(payload)
+    local terminal = requireTerminal(payload)
+    local items = quickItems(terminal)
+    for _, item in ipairs(items) do
+        if item.item_id == payload.item_id then
+            item.favorite = payload.favorite == true
+            save()
+            return { item = util.copy(item), products = util.copy(items) }
+        end
+    end
+    reject("NOT_FOUND", "Product not found")
+end
+
+function actions.REMOVE_PRODUCT(payload)
     local terminal = requireTerminal(payload)
     local items = quickItems(terminal)
     for index, item in ipairs(items) do
         if item.item_id == payload.item_id then
             table.remove(items, index)
             save()
-            return { quick_items = util.copy(items) }
+            return { products = util.copy(items) }
         end
     end
     reject("NOT_FOUND", "Item not found")
+end
+
+-- Compatibility aliases for kiosks updating from v5.3.
+function actions.ADD_QUICK_ITEM(payload)
+    payload.kind = payload.kind or "one_time"
+    local result = actions.ADD_PRODUCT(payload)
+    result.quick_items = result.products
+    return result
+end
+
+function actions.REMOVE_QUICK_ITEM(payload)
+    local result = actions.REMOVE_PRODUCT(payload)
+    result.quick_items = result.products
+    return result
 end
 
 local function uniqueCode(length)
@@ -2156,6 +2227,10 @@ end
 function actions.CREATE_PAY_CODE(payload)
     local terminal = requireTerminal(payload)
     local amount = validateAmount(payload.amount, 1000000)
+    local purchaseType = string.lower(util.trim(
+        payload.purchase_type or "one_time"))
+    need(purchaseType == "one_time" or purchaseType == "subscription",
+        "INVALID_PURCHASE_TYPE", "Choose One Time or Subscription")
     local code = uniqueCode(6)
     local items = {}
     for index, item in ipairs(payload.items or {}) do
@@ -2168,7 +2243,7 @@ function actions.CREATE_PAY_CODE(payload)
     end
     state.active_pay_codes[code] = {
         code = code,
-        kind = "sale",
+        kind = purchaseType == "subscription" and "subscription" or "sale",
         amount = amount,
         items = items,
         description = util.safeText(payload.description or "Purchase", 80),
@@ -2182,6 +2257,7 @@ function actions.CREATE_PAY_CODE(payload)
     return {
         code = code,
         amount = amount,
+        kind = state.active_pay_codes[code].kind,
         expires_at = state.active_pay_codes[code].expires_at,
     }
 end
@@ -2219,6 +2295,7 @@ function actions.CODE_STATUS(payload)
     return {
         status = payment.status,
         amount = payment.amount,
+        kind = payment.kind,
         payer = payer and payer.name,
         expires_in_ms = math.max(0, payment.expires_at - util.nowMs()),
     }
@@ -2236,82 +2313,6 @@ function actions.CANCEL_CODE(payload)
     payment.cancelled_at = util.nowMs()
     save()
     return { status = "cancelled" }
-end
-
-function actions.CREATE_SUBSCRIPTION(payload)
-    local terminal = requireTerminal(payload)
-    local customer = accountByName(payload.customer_name)
-    checkAccountActive(customer)
-    need(verifyAccount(customer, payload.customer_pin), "BAD_PIN", "Customer PIN is wrong")
-    local amount = validateAmount(payload.amount, 1000000)
-    local id = nextId("subscription")
-    customer.subscriptions[id] = {
-        subscription_id = id,
-        amount = amount,
-        description = util.safeText(payload.description, 60),
-        kiosk_id = terminal.terminal_id,
-        company_id = terminal.company_id,
-        next_charge_day = util.ingameDay() + 1,
-        active = true,
-        created_day = util.ingameDay(),
-    }
-    notification(customer, "Subscription started",
-        util.safeText(payload.description, 40) .. " - "
-            .. util.money(amount, config.currency) .. "/day", "subscription")
-    save()
-    return { subscription = util.copy(customer.subscriptions[id]) }
-end
-
-function actions.PROXIMITY_FIND(payload)
-    requireTerminal(payload)
-    need(type(payload.x) == "number" and type(payload.y) == "number"
-        and type(payload.z) == "number", "GPS_FAILED", "Kiosk has no GPS fix")
-    local best, bestDistance
-    for accountId, position in pairs(state.gps_devices) do
-        if position.updated_at + config.gps_ttl_ms > util.nowMs() then
-            local distance = math.sqrt((position.x - payload.x) ^ 2
-                + (position.y - payload.y) ^ 2
-                + (position.z - payload.z) ^ 2)
-            if distance <= (payload.radius or 32)
-                and (not bestDistance or distance < bestDistance) then
-                best = state.accounts[accountId]
-                bestDistance = distance
-            end
-        end
-    end
-    need(best, "NO_NEARBY_DEVICE", "No nearby PUMPE found")
-    return { customer = best.name, distance = bestDistance }
-end
-
-function actions.PROXIMITY_REQUEST(payload)
-    local terminal = requireTerminal(payload)
-    local customer = accountByName(payload.customer_name)
-    checkAccountActive(customer)
-    local amount = validateAmount(payload.amount, 1000000)
-    local id = nextId("request")
-    state.payment_requests[id] = {
-        request_id = id,
-        terminal_id = terminal.terminal_id,
-        account_id = customer.account_id,
-        amount = amount,
-        description = util.safeText(payload.description or "Proximity payment", 80),
-        status = "pending",
-        created_at = util.nowMs(),
-        expires_at = util.nowMs() + 90 * 1000,
-    }
-    notification(customer, "Payment request",
-        terminal.name .. " requests " .. util.money(amount, config.currency),
-        "request")
-    save()
-    return { request_id = id, status = "pending" }
-end
-
-function actions.REQUEST_STATUS(payload)
-    local terminal = requireTerminal(payload)
-    local request = state.payment_requests[payload.request_id]
-    need(request and request.terminal_id == terminal.terminal_id,
-        "NOT_FOUND", "Request not found")
-    return { status = request.status }
 end
 
 -- Event organizer routes ----------------------------------------------------
