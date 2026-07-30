@@ -1,4 +1,4 @@
--- The role launcher checks clients for a newer Bank Server release first.
+-- The legacy launcher only bridges v5.3 startup files into Easy Deployment.
 
 local calls = {}
 fs = {
@@ -19,23 +19,23 @@ shell = {
 
 local launcher = assert(loadfile("../launcher.lua"))
 launcher("service")
-assert(#calls == 2)
+assert(#calls == 1)
 assert(calls[1][1] == "/pumpe/installer.lua")
-assert(calls[1][2] == "--auto")
+assert(calls[1][2] == "--boot")
 assert(calls[1][3] == "service")
-assert(calls[2][1] == "/pumpe/service_kiosk.lua")
 
 calls = {}
 launcher("bank")
 assert(#calls == 1)
-assert(calls[1][1] == "/pumpe/bank_server.lua")
+assert(calls[1][1] == "/pumpe/startup.lua")
+assert(calls[1][2] == "--boot")
+assert(calls[1][3] == "bank")
 
 calls = {}
 launcher("border")
-assert(#calls == 2)
+assert(#calls == 1)
 assert(calls[1][1] == "/pumpe/installer.lua")
-assert(calls[1][2] == "--auto")
+assert(calls[1][2] == "--boot")
 assert(calls[1][3] == "border")
-assert(calls[2][1] == "/pumpe/border_controller.lua")
 
 print("host_launcher_update_test: OK")
