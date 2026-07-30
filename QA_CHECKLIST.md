@@ -7,16 +7,15 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] Every client resolves the `PUMPE_BANK_V5` Rednet host.
 - [ ] Service Kiosk uses an Advanced Computer.
-- [ ] Optional customer display is an Advanced Monitor and reports as connected under **System**.
-- [ ] GPS hosts exist if Proximity Pay will be tested.
+- [ ] Optional customer display is an Advanced Monitor and reports as connected under **S → Rescan Display**.
 
 ## Easy Deployment
 
-- [ ] Start the first Bank Server without `/updates/` and confirm it creates and stages the depot.
-- [ ] Restart and confirm the server activity feed says **Easy Deployment online**.
+- [ ] Keep the full release beside `startup.lua`, choose **Bank Server**, enter `4040`, and confirm it installs locally without trying to find a running Bank Server.
+- [ ] Confirm the Bank launches immediately, creates `/updates/`, and reports **Easy Deployment online** without stopping at another menu.
 - [ ] Replace a local distributable script, restart the Bank Server, and confirm its `/updates/` copy is refreshed.
 - [ ] Copy only `startup.lua` to the root of a clean Advanced Computer, restart, and confirm the touch installer opens automatically.
-- [ ] Install PUMPE and confirm the main script, config, launcher, installer, and all three `lib/` files arrive under `/pumpe`.
+- [ ] Install PUMPE and confirm the main script, config, installer, and all required `lib/` files arrive under `/pumpe`.
 - [ ] Restart after installation and confirm the selected role starts automatically.
 - [ ] Enter a wrong protected code and confirm Bank Server and Tax Controller downloads are denied.
 - [ ] Enter `4040` and confirm a protected role downloads successfully.
@@ -34,6 +33,8 @@ Run this after installing into a ComputerCraft world.
 - [ ] Remove one manifest file and confirm the whole release is rejected.
 - [ ] Start an older client and confirm it updates from the Bank Server and reboots before opening its role.
 - [ ] Leave an older client dashboard open, publish a newer release, and confirm its live check installs and reboots without manual input.
+- [ ] Leave an unassigned Easy Deployment file on a clean computer, publish a newer release, restart it, and confirm the installer updates itself before showing the role list.
+- [ ] Confirm a Bank update reboots directly back into the Bank without displaying Easy Deployment or depending on an active deployment server.
 
 ## Core banking
 
@@ -52,8 +53,8 @@ Run this after installing into a ComputerCraft world.
 - [ ] Confirm **Setting up your Foxy Account** and **Preparing your PUMPE** animate without forcing an unnecessary reboot.
 - [ ] On an Advanced Pocket Computer at its native 26×20 size, confirm every onboarding line, header, button label, and footer is fully visible.
 - [ ] Confirm the Home Screen has three two-column app pages and every full app name is readable and opens the correct app.
-- [ ] Confirm PUMPE Pay lists Code Pay first, Proximity Pay second, and Send Money third.
-- [ ] Confirm all three PUMPE Pay cards show their complete subtitle, including the 10% processing fee and `$2,000` daily limit.
+- [ ] Confirm PUMPE Pay contains only Code Pay and Send Money.
+- [ ] Confirm both cards are fully readable and Send Money shows the 10% processing fee and `$2,000` daily limit.
 - [ ] Open Wallet, Activity, Events, Tickets, Notifications, and Subscriptions with long sample names and confirm content wraps without overlapping controls or the footer.
 - [ ] Trigger a long payment confirmation and error message and confirm every line remains readable until the user responds or the message completes.
 - [ ] Leave the PUMPE untouched for 60 seconds and confirm the Lock Screen appears with the correct in-game time and day.
@@ -64,21 +65,28 @@ Run this after installing into a ComputerCraft world.
 ## Service Kiosk and monitor
 
 - [ ] Register and link a company.
-- [ ] Add at least three Quick Items.
+- [ ] Add at least three one-time products and one subscription product.
+- [ ] Confirm the top tabs are **Favorited**, **All Products**, and **Subscriptions**.
+- [ ] Toggle `F` beside products and confirm the Favorited tab updates.
+- [ ] Add enough products to require the right-side page buttons and confirm every product remains reachable.
+- [ ] Confirm the receipt stays on the left and **PAY** stays at its bottom.
 - [ ] On a 1×1 Advanced Monitor at text scale `0.5`, confirm names, quantities, prices, and the total fit without overlap.
 - [ ] Tap the same item twice and confirm the monitor shows `2x`.
 - [ ] Clear the cart and confirm the monitor resets.
 - [ ] Create a payment code, cancel it, and confirm the PUMPE cannot redeem it.
 - [ ] Create another code, pay it, and confirm the paid animation and merchant balance.
+- [ ] Press **PAY** with an empty receipt, enter a custom amount on the keypad, and complete both One Time and Subscription flows.
+- [ ] Create a subscription code, enter it in PUMPE, confirm the amount per day, and verify PIN confirmation creates the subscription.
 - [ ] Detach the monitor and confirm the kiosk continues working.
-- [ ] Reattach it, tap **Rescan Monitor**, and confirm the idle screen returns.
+- [ ] Reattach it, tap **S → Rescan Display**, and confirm the idle screen returns.
 
-## Proximity
+## Border Controller
 
-- [ ] Enable **PUMPE Pay → Proximity Pay** near the kiosk and confirm it reports **Broadcasting nearby**.
-- [ ] Confirm the Bank Server receives a refreshed GPS position about every two seconds while enabled.
-- [ ] Start Proximity Pay and confirm the correct customer and distance.
-- [ ] Decline once, then approve a second request with a PIN.
+- [ ] Enter a temporary visa, confirm a second entry is denied, then use **Exit Territory** and confirm the visa locks even with days remaining.
+- [ ] Confirm an overdue temporary visitor can still exit and close the visit.
+- [ ] Enter and exit with citizenship, then confirm immediate reuse is blocked by the permanent-code cooldown.
+- [ ] Confirm **Change Territory**, **Close**, and caught terminate attempts remain locked until the correct territory-owner PIN is entered.
+- [ ] Confirm every approved enter or exit action powers back redstone for exactly five seconds.
 
 ## Events
 
