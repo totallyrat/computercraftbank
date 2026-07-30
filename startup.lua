@@ -5,11 +5,16 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
+local INSTALLER_VERSION = "5.4.0"
+local PUBLIC_MANIFEST_URL =
+    "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
 local STAGING_ROOT = fs.combine(INSTALL_ROOT, ".deploy_tmp")
 local BACKUP_ROOT = fs.combine(INSTALL_ROOT, ".deploy_backup")
 local arguments = { ... }
 local automaticRoleId = arguments[1] == "--auto"
+    and string.lower(tostring(arguments[2] or "")) or nil
+local bootRoleId = arguments[1] == "--boot"
     and string.lower(tostring(arguments[2] or "")) or nil
 
 local target = term.current()
@@ -36,6 +41,15 @@ local roles = {
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
     { id = "bank", label = "BANK SERVER", detail = "Protected download", protected = true },
     { id = "tax", label = "TAX CONTROLLER", detail = "Protected download", protected = true },
+}
+
+local rolePrograms = {
+    bank = "bank_server.lua",
+    pumpe = "pumpe.lua",
+    service = "service_kiosk.lua",
+    event = "event_kiosk.lua",
+    tax = "tax_controller.lua",
+    border = "border_controller.lua",
 }
 
 local function roleById(id)
@@ -297,10 +311,14 @@ local function roleMenu()
         local rowHeight = math.max(2, math.floor((height - 4) / #roles))
         for index, role in ipairs(roles) do
             local y = startY + (index - 1) * rowHeight
+            local roleHeight = math.max(1,
+                math.min(rowHeight, height - y))
             local label = role.label
-            if width >= 38 then label = label .. "\n" .. role.detail end
+            if width >= 38 and roleHeight >= 2 then
+                label = label .. "\n" .. role.detail
+            end
             button(buttons, "role:" .. role.id, 2, y, width - 2,
-                math.max(1, rowHeight - 1), label,
+                roleHeight, label,
                 role.protected and theme.warning
                     or index == 1 and theme.accentDark or theme.panel,
                 role.protected and colors.black or colors.white)
@@ -386,6 +404,128 @@ end
 local function ensureParent(path)
     local directory = fs.getDir(path)
     if directory ~= "" and not fs.exists(directory) then fs.makeDir(directory) end
+end
+
+local function writeFile(path, body)
+    ensureParent(path)
+    local handle = fs.open(path, "w")
+    if not handle then return nil, "Could not write " .. path end
+    handle.write(body)
+    handle.close()
+    return true
+end
+
+local function closeResponse(response)
+    if response and type(response.close) == "function" then
+        pcall(response.close)
+    end
+end
+
+local function fetchHttps(url, maximumBytes)
+    if type(http) ~= "table" or type(http.get) ~= "function" then
+        return nil, "ComputerCraft HTTP is disabled"
+    end
+    if type(url) ~= "string" or not url:match("^https://") then
+        return nil, "Online updates require HTTPS"
+    end
+    local separator = url:find("?", 1, true) and "&" or "?"
+    local ok, response, err, errorResponse = pcall(http.get, {
+        url = url .. separator .. "pumpe=" .. tostring(nowMs()),
+        headers = {
+            ["Accept"] = "application/json, text/plain",
+            ["Cache-Control"] = "no-cache",
+        },
+        binary = false,
+        redirect = false,
+        timeout = 10,
+    })
+    if not ok then return nil, tostring(response) end
+    if not response then
+        closeResponse(errorResponse)
+        return nil, tostring(err or "HTTP request failed")
+    end
+    local chunks, length = {}, 0
+    while true do
+        local chunk = response.read(8192)
+        if not chunk then break end
+        length = length + #chunk
+        if length > maximumBytes then
+            closeResponse(response)
+            return nil, "Online update was too large"
+        end
+        chunks[#chunks + 1] = chunk
+    end
+    closeResponse(response)
+    return table.concat(chunks)
+end
+
+local function installerEntry(manifest)
+    if type(manifest) ~= "table" or manifest.schema ~= 1
+        or manifest.channel ~= "stable"
+        or type(manifest.version) ~= "string"
+        or type(manifest.files) ~= "table" then
+        return nil
+    end
+    for _, file in ipairs(manifest.files) do
+        if type(file) == "table" and file.path == "startup.lua"
+            and safeRelativePath(file.source or file.path)
+            and type(file.size) == "number" and file.size >= 1
+            and file.size <= 256 * 1024
+            and type(file.checksum) == "string"
+            and file.checksum:match("^[0-9a-fA-F]+$")
+            and #file.checksum == 8 then
+            return {
+                source = file.source or file.path,
+                size = file.size,
+                checksum = string.lower(file.checksum),
+                version = manifest.version,
+            }
+        end
+    end
+end
+
+local function selfUpdateInstaller()
+    local manifestBody = fetchHttps(PUBLIC_MANIFEST_URL, 256 * 1024)
+    if not manifestBody then return false end
+    local ok, manifest = pcall(textutils.unserializeJSON, manifestBody)
+    if not ok then return false end
+    local entry = installerEntry(manifest)
+    if not entry or not newerVersion(entry.version, INSTALLER_VERSION) then
+        return false
+    end
+    local base = PUBLIC_MANIFEST_URL:gsub("[?#].*$", "")
+        :match("^(https://.*/)[^/]+$")
+    if not base then return false end
+    local body = fetchHttps(base .. entry.source, entry.size + 1)
+    if not body or #body ~= entry.size
+        or checksum(body) ~= entry.checksum
+        or not body:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
+        return false
+    end
+
+    local runningPath = shell.getRunningProgram()
+    if not runningPath or runningPath == "" then return false end
+    local temporary = runningPath .. ".update"
+    local backup = runningPath .. ".previous"
+    if fs.exists(temporary) then fs.delete(temporary) end
+    if fs.exists(backup) then fs.delete(backup) end
+    local written = writeFile(temporary, body)
+    if not written then return false end
+    local moved, moveError = pcall(function()
+        if fs.exists(runningPath) then fs.move(runningPath, backup) end
+        fs.move(temporary, runningPath)
+    end)
+    if not moved then
+        if fs.exists(runningPath) then fs.delete(runningPath) end
+        if fs.exists(backup) then fs.move(backup, runningPath) end
+        if fs.exists(temporary) then fs.delete(temporary) end
+        return false, tostring(moveError)
+    end
+    if fs.exists(backup) then fs.delete(backup) end
+    message("success", "EASY DEPLOYMENT UPDATED",
+        "Installed v" .. entry.version, 0.6)
+    os.reboot()
+    return true
 end
 
 local function formatBytes(value)
@@ -503,12 +643,108 @@ local function commitInstallation(manifest)
     return true
 end
 
-local function writeStartup(role)
+local writeStartup
+
+local BANK_LOCAL_FILES = {
+    { path = "bank_server.lua", source = "bank_server.lua" },
+    { path = "pumpe.lua", source = "pumpe.lua" },
+    { path = "service_kiosk.lua", source = "service_kiosk.lua" },
+    { path = "event_kiosk.lua", source = "event_kiosk.lua" },
+    { path = "tax_controller.lua", source = "tax_controller.lua" },
+    { path = "border_controller.lua", source = "border_controller.lua" },
+    { path = "startup.lua", source = "startup.lua" },
+    { path = "installer.lua", source = "startup.lua" },
+    { path = "config.lua", source = "config.lua" },
+    { path = "lib/net.lua", source = "lib/net.lua" },
+    { path = "lib/ui.lua", source = "lib/ui.lua" },
+    { path = "lib/update.lua", source = "lib/update.lua" },
+    { path = "lib/util.lua", source = "lib/util.lua" },
+}
+
+local function localBankSourceRoot()
+    local runningPath = shell.getRunningProgram() or ""
+    local runningRoot = fs.getDir(runningPath)
+    if runningRoot == "" then runningRoot = "." end
+    local candidates = {
+        runningRoot, ".", "/", "/disk", "/disk/pumpe", INSTALL_ROOT,
+    }
+    local seen = {}
+    for _, candidate in ipairs(candidates) do
+        if not seen[candidate] then
+            seen[candidate] = true
+            local complete = true
+            for _, file in ipairs(BANK_LOCAL_FILES) do
+                local source = fs.combine(candidate, file.source)
+                if not fs.exists(source) or fs.isDir(source) then
+                    complete = false
+                    break
+                end
+            end
+            if complete then return candidate end
+        end
+    end
+    return nil
+end
+
+local function installLocalBank(role)
+    local sourceRoot = localBankSourceRoot()
+    if not sourceRoot then
+        message("error", "LOCAL BANK FILES MISSING",
+            "Keep the complete release beside installer.lua", 2.2)
+        return false
+    end
+    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
+    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
+    fs.makeDir(STAGING_ROOT)
+
+    local manifest = { version = INSTALLER_VERSION, files = {} }
+    local totalBytes = 0
+    for _, file in ipairs(BANK_LOCAL_FILES) do
+        local body = readFile(fs.combine(sourceRoot, file.source))
+        if not body then
+            fs.delete(STAGING_ROOT)
+            message("error", "LOCAL INSTALL FAILED",
+                "Could not read " .. file.source, 1.8)
+            return false
+        end
+        local item = {
+            path = file.path,
+            size = #body,
+            checksum = checksum(body),
+        }
+        manifest.files[#manifest.files + 1] = item
+        totalBytes = totalBytes + #body
+        local stagedPath = fs.combine(STAGING_ROOT, file.path)
+        local written, writeError = writeFile(stagedPath, body)
+        if not written then
+            fs.delete(STAGING_ROOT)
+            message("error", "LOCAL INSTALL FAILED", writeError, 1.8)
+            return false
+        end
+    end
+    local configBody = readFile(fs.combine(sourceRoot, "config.lua")) or ""
+    manifest.version = configBody:match('version%s*=%s*"([^"]+)"')
+        or INSTALLER_VERSION
+    renderProgress(role, { path = "Local release verified" },
+        totalBytes, totalBytes, #manifest.files, #manifest.files)
+    local committed, commitError = commitInstallation(manifest)
+    if not committed then
+        message("error", "LOCAL INSTALL ROLLED BACK", commitError, 2)
+        return false
+    end
+    local _, startupMessage = writeStartup(role)
+    message("success", "BANK SERVER READY",
+        startupMessage .. " - starting now", 0.8)
+    return true
+end
+
+writeStartup = function(role)
     local startupPath = "/startup.lua"
     local installerMarker = "-- PUMPE EASY DEPLOYMENT"
     local roleMarker = "-- PUMPE ROLE STARTUP"
     local body = roleMarker .. "\n"
-        .. "shell.run(\"/pumpe/launcher.lua\", \"" .. role.id .. "\")\n"
+        .. "shell.run(\"/pumpe/installer.lua\", \"--boot\", \""
+        .. role.id .. "\")\n"
     if not fs.exists(startupPath) then
         local handle = fs.open(startupPath, "w")
         if not handle then return false, "Could not create /startup.lua" end
@@ -565,6 +801,16 @@ local function installRole(role, automatic)
         end
     end
 
+    if role.id == "bank" then
+        if automatic then return false end
+        if installLocalBank(role) then
+            running = false
+            shell.run(fs.combine(INSTALL_ROOT, rolePrograms.bank))
+            return true
+        end
+        return false
+    end
+
     if not automatic then
         clear()
         header("FINDING BANK SERVER", role.label)
@@ -572,10 +818,8 @@ local function installRole(role, automatic)
     end
     if not discoverBank() then
         if automatic then return false end
-        local detail = role.id == "bank"
-            and "First Bank Server must be copied locally"
-            or "Start the Bank Server and check the modem"
-        message("error", "BANK SERVER NOT FOUND", detail, 1.8)
+        message("error", "BANK SERVER NOT FOUND",
+            "Start the Bank Server and check the modem", 1.8)
         return
     end
 
@@ -633,6 +877,32 @@ local function installRole(role, automatic)
 end
 
 math.randomseed((nowMs() + os.getComputerID() * 7919) % 2147483647)
+selfUpdateInstaller()
+
+if bootRoleId then
+    local role = roleById(bootRoleId)
+    if not role then
+        message("error", "UNKNOWN ROLE", bootRoleId, 1.4)
+        return
+    end
+    local runningBody = readFile(shell.getRunningProgram())
+    if runningBody
+        and runningBody:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
+        writeFile(fs.combine(INSTALL_ROOT, "installer.lua"), runningBody)
+    end
+    openModems()
+    if role.id ~= "bank" then installRole(role, true) end
+    writeStartup(role)
+    local program = fs.combine(INSTALL_ROOT, rolePrograms[role.id])
+    if not fs.exists(program) then
+        message("error", "ROLE FILE MISSING",
+            "Run Easy Deployment again", 2)
+        return
+    end
+    shell.run(program)
+    return
+end
+
 if automaticRoleId then
     if openModems() then
         local role = roleById(automaticRoleId)
@@ -642,11 +912,7 @@ if automaticRoleId then
 end
 
 boot()
-if not openModems() then
-    message("error", "NO MODEM", "Attach a wireless or Ender modem", 2)
-    clear()
-    return
-end
+openModems()
 
 while running do
     local role = roleMenu()
