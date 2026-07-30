@@ -13,16 +13,13 @@ local client = net.client(config)
 local sessionToken
 local account
 local running = true
-local updateGps
 local payMenu
 local deviceFile = fs.combine(ROOT, "pumpe_device.dat")
 local device = util.loadTable(deviceFile, {
     last_name = "",
     onboarding_complete = false,
-    proximity_enabled = true,
 })
 if device.onboarding_complete == nil then device.onboarding_complete = false end
-if device.proximity_enabled == nil then device.proximity_enabled = true end
 
 ui.usePhoneStyle(true)
 
@@ -306,7 +303,7 @@ local function onboardingIntro()
                 { background = ui.theme.accentDark, shadow = true })
         elseif page == 2 then
             local features = {
-                { "PUMPE Pay", "Pay by code, nearby or send", colors.blue },
+                { "PUMPE Pay", "Pay by code or send money", colors.blue },
                 { "Live Events", "Tickets, countdowns and entry codes", colors.purple },
                 { "Private by default", "Protected by your Foxy Account PIN", colors.green },
             }
@@ -557,8 +554,11 @@ local function payCode()
         return
     end
 
-    local verb = preview.kind == "withdrawal" and "RECEIVE" or "PAY"
-    local body = money(preview.amount) .. "  " .. preview.merchant
+    local verb = preview.kind == "withdrawal" and "RECEIVE"
+        or preview.kind == "subscription" and "SUBSCRIBE" or "PAY"
+    local body = money(preview.amount)
+        .. (preview.kind == "subscription" and "/day  " or "  ")
+        .. preview.merchant
     if not ui.confirm(target, verb .. "?", body, verb, "CANCEL") then return end
     local pin
     if preview.pin_required then
@@ -571,9 +571,13 @@ local function payCode()
     }, true)
     if result then
         account.balance = result.balance
-        local title = result.kind == "withdrawal" and "MONEY RECEIVED" or "PAYMENT ACCEPTED"
+        local title = result.kind == "withdrawal" and "MONEY RECEIVED"
+            or result.kind == "subscription" and "SUBSCRIPTION ACTIVE"
+            or "PAYMENT ACCEPTED"
         ui.message(target, "success", title,
-            money(result.amount) .. " - " .. result.merchant, 1.1)
+            money(result.amount)
+                .. (result.kind == "subscription" and "/day - " or " - ")
+                .. result.merchant, 1.1)
     else
         ui.message(target, "error", "PAYMENT FAILED", payErr, 1.2)
     end
@@ -1004,124 +1008,20 @@ local function taxScreen()
     end
 end
 
-local function pendingRequestPopup()
-    local result = request("PENDING_REQUESTS", {}, true)
-    if not result or #result.requests == 0 then return false end
-    local item = result.requests[1]
-    local approve = ui.confirm(target, "PAYMENT REQUEST",
-        item.merchant .. "  " .. money(item.amount), "REVIEW", "DECLINE")
-    if not approve then
-        request("RESPOND_PAYMENT_REQUEST", {
-            request_id = item.request_id,
-            approve = false,
-        }, true)
-        ui.message(target, "info", "REQUEST DECLINED", item.merchant, 0.7)
-        return true
-    end
-    local pin = ui.pin(target, "APPROVE WITH PIN", true)
-    if not pin then return true end
-    local paid, err = request("RESPOND_PAYMENT_REQUEST", {
-        request_id = item.request_id,
-        approve = true,
-        pin = pin,
-    }, true)
-    if paid then
-        account.balance = paid.balance
-        ui.message(target, "success", "PAYMENT ACCEPTED", item.merchant, 0.9)
-    else ui.message(target, "error", "PAYMENT FAILED", err, 1) end
-    return true
-end
-
-updateGps = function()
-    if not device.proximity_enabled then return false, "Paused" end
-    if not gps or not gps.locate then return false, "GPS unavailable" end
-    local x, y, z = gps.locate(0.25, false)
-    if x then
-        local result = request("GPS_UPDATE", { x = x, y = y, z = z }, true)
-        if result then
-            return true, string.format("%.0f, %.0f, %.0f", x, y, z)
-        end
-    end
-    return false, "Finding location"
-end
-
-local function proximityScreen()
-    local blink, tick = true, 0
-    local located, locationText = updateGps()
-    while sessionToken do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Proximity Pay", "PUMPE Pay",
-            util.formatClock(blink))
-        local active = device.proximity_enabled
-        local pulseColor = active and (blink and ui.theme.success or ui.theme.accent)
-            or colors.gray
-        ui.card(target, 2, 5, width - 2, 9, pulseColor)
-        ui.center(target, 6, active and "((  P  ))" or "(  PAUSED  )",
-            pulseColor, ui.theme.panel)
-        ui.center(target, 8,
-            active and (located and "Broadcasting nearby" or locationText)
-                or "Location sharing is off",
-            ui.theme.ink, ui.theme.panel)
-        ui.center(target, 10,
-            active and "Nearby kiosks can send" or "Nearby kiosks cannot",
-            ui.theme.muted, ui.theme.panel)
-        ui.center(target, 11,
-            active and "payment requests" or "find your PUMPE",
-            ui.theme.muted, ui.theme.panel)
-        if active and located then
-            ui.center(target, 12, locationText, ui.theme.muted, ui.theme.panel)
-        end
-
-        local scene = ui.scene(target)
-        scene:button("toggle", 3, 15, width - 5, 2,
-            active and "Turn Off Proximity Pay" or "Turn On Proximity Pay", {
-                background = active and ui.theme.panel or ui.theme.accentDark,
-            })
-        scene:button("back", 1, height, 8, 1, "< Pay",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        if action == "__tick" or action == "__idle" then
-            blink = not blink
-            tick = tick + 1
-            if active and tick % math.max(1,
-                math.floor((tonumber(config.proximity_update_seconds) or 2) / 0.5))
-                == 0 then
-                located, locationText = updateGps()
-                local pending = request("PENDING_REQUESTS", {}, true)
-                if pending and #pending.requests > 0 then pendingRequestPopup() end
-            end
-        elseif action == "toggle" then
-            device.proximity_enabled = not device.proximity_enabled
-            saveDevice()
-            located, locationText = updateGps()
-        elseif action == "back" or action == "__terminate" then
-            return
-        end
-    end
-end
-
 payMenu = function()
-    local blink, tick = true, 0
+    local blink = true
     while sessionToken do
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "PUMPE Pay", "Choose how to pay",
             util.formatClock(blink))
         local scene = ui.scene(target)
-        scene:button("code", 2, 5, width - 2, 3,
+        scene:button("code", 2, 5, width - 2, 5,
             "Code Pay\nEnter a six-character\nkiosk code", {
                 background = colors.blue,
                 shadow = true,
             })
-        scene:button("proximity", 2, 9, width - 2, 3,
-            "Proximity Pay\n"
-                .. (device.proximity_enabled and "On and broadcasting\nnearby"
-                    or "Off - tap to enable"), {
-                background = device.proximity_enabled and colors.green or colors.gray,
-                shadow = true,
-            })
-        scene:button("send", 2, 13, width - 2, 3,
+        scene:button("send", 2, 11, width - 2, 5,
             "Send Money\n10% processing fee\n"
                 .. money(config.send_money_daily_limit) .. " daily limit", {
                 background = colors.purple,
@@ -1132,18 +1032,9 @@ payMenu = function()
         local action = scene:wait({ tickRate = 0.5 })
         if action == "__tick" or action == "__idle" then
             blink = not blink
-            tick = tick + 1
-            if device.proximity_enabled and tick % math.max(1,
-                math.floor((tonumber(config.proximity_update_seconds) or 2) / 0.5))
-                == 0 then
-                updateGps()
-            end
         elseif action == "code" then
             phoneTransition("Code Pay", colors.blue)
             payCode()
-        elseif action == "proximity" then
-            phoneTransition("Proximity Pay", colors.green)
-            proximityScreen()
         elseif action == "send" then
             phoneTransition("Send Money", colors.purple)
             sendMoney()
@@ -1776,7 +1667,6 @@ local function mainMenu()
     local blink, tick, page = true, 0, 1
     local summary = refreshSummary() or {}
     enableDeviceLock()
-    if device.proximity_enabled then updateGps() end
     local pages = {
         {
             { "pay", "P\nPay", colors.blue },
@@ -1804,8 +1694,7 @@ local function mainMenu()
         ui.card(target, 2, 4, width - 2, 3, ui.theme.success)
         ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 5, money(account.balance), ui.theme.ink, ui.theme.panel)
-        local alertCount = (summary.unread_notifications or 0)
-            + (summary.pending_requests or 0)
+        local alertCount = summary.unread_notifications or 0
         if alertCount > 0 then
             ui.text(target, width - 5, 5, tostring(alertCount), colors.black,
                 ui.theme.warning)
@@ -1843,15 +1732,6 @@ local function mainMenu()
             blink = not blink
             tick = tick + 1
             net.autoUpdate(config, "pumpe", ROOT)
-            local proximityTicks = math.max(1,
-                math.floor((tonumber(config.proximity_update_seconds) or 2) / 0.5))
-            if device.proximity_enabled and tick % proximityTicks == 0 then
-                updateGps()
-                local pending = request("PENDING_REQUESTS", {}, true)
-                if pending and #pending.requests > 0 then
-                    pendingRequestPopup()
-                end
-            end
             if tick % 10 == 0 then
                 summary = refreshSummary(true) or summary
                 if not sessionToken then return end
