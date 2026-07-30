@@ -1,7 +1,7 @@
 -- Advanced Computer flow for a configured Border Controller.
 
 local WIDTH, HEIGHT = 51, 19
-local actions = { "check", "done", "stop" }
+local actions = { "enter", "done", "exit", "done", "stop" }
 local requests, drawnText, redstoneStates = {}, {}, {}
 local oneSecondSleeps = 0
 
@@ -39,7 +39,7 @@ redstone = {
 }
 
 package.loaded.config = {
-    version = "5.3.0",
+    version = "5.4.0",
     auto_update = true,
     update_check_seconds = 10,
 }
@@ -82,8 +82,10 @@ local client = {
             }
         elseif action == "BORDER_CHECK" then
             assert(payload.code == "ABCD2345")
+            assert(payload.direction == "enter" or payload.direction == "exit")
             return {
                 approved = true,
+                direction = payload.direction,
                 traveler_name = "VisitingFriend",
                 territory_name = "Foxy Republic",
                 authorization = "visa",
@@ -91,8 +93,12 @@ local client = {
                 stay_days = 6,
                 due_day = 47,
                 entered_day = 42,
-                visiting = true,
+                exited_day = payload.direction == "exit" and 42 or nil,
+                visiting = payload.direction == "enter",
             }
+        elseif action == "BORDER_OWNER_PIN" then
+            assert(payload.pin == "1234")
+            return { authorized = true }
         end
         error("Unexpected request: " .. tostring(action))
     end,
@@ -153,7 +159,7 @@ function ui.progress(_, x, y, width)
     assertBox("progress", x, y, width, 1)
 end
 function ui.input(_, title)
-    assert(title == "VISA CODE")
+    assert(title == "ENTER TERRITORY" or title == "EXIT TERRITORY")
     return "ABCD2345"
 end
 function ui.pin() return "1234" end
@@ -181,7 +187,7 @@ package.loaded["lib.ui"] = ui
 
 assert(loadfile("../border_controller.lua"))()
 assert(#actions == 0)
-assert(oneSecondSleeps == 5)
+assert(oneSecondSleeps == 10)
 assert(redstoneStates[1] == false)
 assert(redstoneStates[2] == true)
 assert(redstoneStates[3] == false)
@@ -196,6 +202,8 @@ end
 
 assert(contains(requests, "BORDER_STATUS"))
 assert(contains(requests, "BORDER_CHECK"))
+assert(contains(requests, "BORDER_OWNER_PIN"))
 assert(contains(drawnText, "LEAVE BY DAY  47"))
+assert(contains(drawnText, "TEMPORARY VISA NOW LOCKED"))
 
 print("host_border_controller_test: OK")
