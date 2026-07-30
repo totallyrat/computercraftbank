@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "5.3.0",
+    version = "5.4.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -11,12 +11,11 @@ return {
     starting_balance = 500,
     payment_code_ttl_ms = 5 * 60 * 1000,
     session_ttl_ms = 12 * 60 * 60 * 1000,
-    gps_ttl_ms = 90 * 1000,
-    proximity_update_seconds = 2,
     max_ticket_quantity = 5,
     max_territories_per_account = 3,
     visa_min_days = 1,
     visa_max_days = 30,
+    permanent_visa_cooldown_seconds = 30,
 
     pin_free_limit = 50,
     daily_spend_limit = 5000,
@@ -37,5 +36,5 @@ return {
     auto_update = true,
     update_manifest_url = "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json",
     update_channel = "stable",
-    update_check_seconds = 10,
+    update_check_seconds = 5,
 }
