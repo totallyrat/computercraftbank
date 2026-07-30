@@ -32,6 +32,13 @@ const configSource = fs.readFileSync(
 const versionMatch = configSource.match(/\bversion\s*=\s*"(\d+\.\d+\.\d+)"/);
 if (!versionMatch) throw new Error("Could not read version from config.lua");
 
+// Keep both public one-file entry points identical. startup.lua starts
+// automatically at the computer root; installer.lua is the manual filename.
+fs.copyFileSync(
+  path.join(projectRoot, "startup.lua"),
+  path.join(projectRoot, "installer.lua"),
+);
+
 const borderSource = fs.readFileSync(
   path.join(projectRoot, "border_controller.lua"),
 );
