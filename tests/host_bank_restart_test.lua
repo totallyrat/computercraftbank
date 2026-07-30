@@ -1,5 +1,5 @@
 -- Root-installed Bank Servers must cache the standalone installer, replace
--- /startup.lua with the Bank role launcher, and still serve the installer.
+-- /startup.lua with a direct Easy Deployment boot, and still serve it.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 
@@ -54,7 +54,8 @@ PUMPE_TEST_MODE = nil
 assert(bank.ensure_bank_startup(standalone))
 assert(files["/startup.lua"]:find("-- PUMPE ROLE STARTUP", 1, true))
 assert(files["/startup.lua"]:find(
-    'shell.run("/launcher.lua", "bank")', 1, true))
+    'shell.run("/installer.lua", "--boot", "bank")', 1, true))
+assert(files["/installer.lua"] == standalone)
 assert(files["/.easy_deployment_source.lua"] == standalone)
 assert(bank.local_update_body("startup.lua") == standalone)
 
