@@ -26,9 +26,16 @@ local display = {
 
 term = { current = function() return display end }
 fs = {
+    getDir = function() return "" end,
     combine = function(left, right)
         return tostring(left):gsub("/+$", "") .. "/" .. tostring(right):gsub("^/+", "")
     end,
+    exists = function() return false end,
+    isDir = function() return false end,
+}
+shell = {
+    getRunningProgram = function() return "../startup.lua" end,
+    run = function() error("Missing local Bank files must not start a role") end,
 }
 peripheral = {
     getNames = function() return { "back" } end,
@@ -61,7 +68,7 @@ local installer = assert(loadfile("../startup.lua"))
 installer()
 
 -- Automatic checks stay quiet when the Bank Server is offline and return to
--- the launcher instead of opening the role picker.
+-- the direct role boot instead of opening the role picker.
 installer("--auto", "service")
 
 print("host_installer_ui_test: OK")
