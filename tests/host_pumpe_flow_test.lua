@@ -1,4 +1,4 @@
--- Full host-side 26x20 layout flow for the PUMPE 5.3.0 experience.
+-- Full host-side 26x20 layout flow for the PUMPE 5.4.0 experience.
 
 local actions = {
     "next",
@@ -7,8 +7,6 @@ local actions = {
     "gender:They / them",
     "pay",
     "code",
-    "proximity",
-    "back",
     "send",
     "back",
     "back",
@@ -88,13 +86,12 @@ local account = {
 }
 
 package.loaded.config = {
-    version = "5.3.0",
+    version = "5.4.0",
     currency = "$",
     send_money_daily_limit = 2000,
     send_money_fee_rate = 0.10,
     pumpe_lock_seconds = 60,
     pumpe_pin_seconds = 120,
-    proximity_update_seconds = 2,
     max_ticket_quantity = 5,
     max_territories_per_account = 3,
     visa_min_days = 1,
@@ -137,7 +134,6 @@ local client = {
             return {
                 account = account,
                 unread_notifications = 0,
-                pending_requests = 0,
             }
         elseif action == "HISTORY" then
             return {
@@ -324,7 +320,7 @@ local client = {
             }
         elseif action == "PAY_CODE_PREVIEW" then
             return {
-                kind = "purchase",
+                kind = "subscription",
                 amount = 12,
                 merchant = "Corner Service Kiosk",
                 pin_required = true,
@@ -332,7 +328,7 @@ local client = {
         elseif action == "PAY_CODE_CONFIRM" then
             return {
                 balance = 488,
-                kind = "purchase",
+                kind = "subscription",
                 amount = 12,
                 merchant = "Corner Service Kiosk",
             }
@@ -526,11 +522,11 @@ assert(find(drawnText, "Preparing your PUMPE"))
 
 local codeIndex = assert(find(buttonLabels,
     "Code Pay\nEnter a six-character\nkiosk code"))
-local proximityIndex = assert(find(buttonLabels,
-    "Proximity Pay\nOn and broadcasting\nnearby"))
 local sendIndex = assert(find(buttonLabels,
     "Send Money\n10% processing fee\n$2000 daily limit"))
-assert(codeIndex < proximityIndex and proximityIndex < sendIndex)
+assert(codeIndex < sendIndex)
+assert(not find(buttonLabels, "Proximity Pay"))
+assert(find(drawnText, "SUBSCRIPTION ACTIVE"))
 assert(find(buttonLabels, "=\nActivity"))
 assert(find(buttonLabels, "o\nSettings"))
 assert(find(buttonLabels, "V\nVisas"))
