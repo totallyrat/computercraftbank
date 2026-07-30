@@ -164,11 +164,12 @@ local function refreshStatus(silent)
     return nil
 end
 
-local function checkingAnimation()
+local function checkingAnimation(direction)
     local width, height = target.getSize()
     for frame = 1, 4 do
         ui.clear(target)
-        ui.header(target, "CHECKING VISA", device.territory_name)
+        ui.header(target, direction == "exit" and "CHECKING EXIT"
+            or "CHECKING ENTRY", device.territory_name)
         ui.center(target, math.floor(height / 2) - 1,
             "Contacting the border system", ui.theme.ink)
         ui.center(target, math.floor(height / 2) + 1,
@@ -189,14 +190,23 @@ local function approvedScreen(result)
     local width, height = target.getSize()
     local function render(signalSeconds)
         ui.clear(target)
-        ui.header(target, "ENTRY APPROVED", result.territory_name,
+        local leaving = result.direction == "exit"
+        ui.header(target, leaving and "EXIT APPROVED" or "ENTRY APPROVED",
+            result.territory_name,
             util.formatClock())
         ui.card(target, 2, 5, width - 2, height - 8, ui.theme.success)
         ui.text(target, 4, 6, ui.truncate(result.traveler_name, width - 7),
             ui.theme.ink, ui.theme.panel)
         ui.text(target, 4, 8, authorizationLabel(result.authorization),
             ui.theme.success, ui.theme.panel)
-        if result.permanent then
+        if leaving then
+            ui.text(target, 4, 10, "VISIT CLOSED",
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 11, result.permanent
+                and "PERMANENT CODE COOLDOWN ACTIVE"
+                or "TEMPORARY VISA NOW LOCKED",
+                ui.theme.muted, ui.theme.panel)
+        elseif result.permanent then
             ui.text(target, 4, 10, "STAY  Permanent",
                 ui.theme.ink, ui.theme.panel)
             ui.text(target, 4, 11, "NO DEPARTURE DATE",
@@ -225,7 +235,8 @@ local function approvedScreen(result)
     end)
     pcall(redstone.setOutput, "back", false)
     if not signalOk then
-        ui.message(target, "warning", "ENTRY RECORDED",
+        ui.message(target, "warning",
+            result.direction == "exit" and "EXIT RECORDED" or "ENTRY RECORDED",
             "Back redstone failed: " .. tostring(signalError), 1.6)
     end
 
@@ -239,25 +250,40 @@ local function approvedScreen(result)
     end
 end
 
-local function checkVisa()
-    local code = ui.input(target, "VISA CODE", {
+local function checkVisa(direction)
+    local entering = direction == "enter"
+    local code = ui.input(target, entering and "ENTER TERRITORY"
+        or "EXIT TERRITORY", {
         hint = "Eight characters",
         mode = "code",
         maxLength = 8,
         minLength = 8,
     })
     if not code then return end
-    checkingAnimation()
+    checkingAnimation(direction)
     local payload = controllerPayload()
     payload.code = code
+    payload.direction = direction
     local result, err = request("BORDER_CHECK", payload, true)
     if not result then
         pcall(redstone.setOutput, "back", false)
-        ui.message(target, "error", "ENTRY DENIED",
+        ui.message(target, "error", entering and "ENTRY DENIED" or "EXIT DENIED",
             err or "Travel document was rejected", 1.8)
         return
     end
     approvedScreen(result)
+end
+
+local function ownerUnlock(reason)
+    local pin = ui.pin(target, reason or "OWNER PIN", true)
+    if not pin then return false end
+    local payload = controllerPayload()
+    payload.pin = pin
+    local result, err = request("BORDER_OWNER_PIN", payload, true)
+    if result then return true end
+    ui.message(target, "error", "LOCKED",
+        err or "Owner PIN is incorrect", 1.2)
+    return false
 end
 
 local function dashboard()
@@ -267,27 +293,36 @@ local function dashboard()
         ui.clear(target)
         ui.header(target, "BORDER CONTROLLER",
             device.territory_name or "Territory", util.formatClock(blink))
-        ui.center(target, 5, "DAY " .. util.ingameDay(), ui.theme.muted)
+        ui.center(target, 4, "DAY " .. util.ingameDay(), ui.theme.muted)
         local scene = ui.scene(target)
-        scene:button("check", 3, 7, width - 5, 6,
-            "CHECK ENTRY\nEnter VISA or Citizenship Code", {
+        scene:button("enter", 3, 6, width - 5, 4,
+            "ENTER TERRITORY\nScan VISA or Citizenship Code", {
                 background = ui.theme.accentDark,
                 shadow = true,
             })
-        scene:button("setup", 3, 15,
+        scene:button("exit", 3, 11, width - 5, 4,
+            "EXIT TERRITORY\nClose the active visit", {
+                background = ui.theme.success,
+                foreground = colors.black,
+                shadow = true,
+            })
+        scene:button("setup", 2, height - 1,
             math.max(12, math.floor((width - 6) / 2)), 2,
             "CHANGE TERRITORY", { background = ui.theme.panel })
-        scene:button("stop", width - 11, 15, 9, 2,
+        scene:button("stop", width - 11, height - 1, 10, 2,
             "CLOSE", { background = ui.theme.danger })
         local action = scene:wait({ tickRate = 1 })
         if action == "__tick" or action == "__idle" then
             blink = not blink
             net.autoUpdate(config, "border", ROOT)
             refreshStatus(true)
-        elseif action == "check" then
-            checkVisa()
+        elseif action == "enter" then
+            checkVisa("enter")
+        elseif action == "exit" then
+            checkVisa("exit")
         elseif action == "setup" then
-            if ui.confirm(target, "CHANGE TERRITORY",
+            if ownerUnlock("OWNER PIN TO CHANGE")
+                and ui.confirm(target, "CHANGE TERRITORY",
                 "Register this computer to a different territory?",
                 "CHANGE", "BACK") then
                 device = {}
@@ -295,7 +330,7 @@ local function dashboard()
                 return
             end
         elseif action == "stop" or action == "__terminate" then
-            running = false
+            if ownerUnlock("OWNER PIN TO CLOSE") then running = false end
         end
     end
 end
