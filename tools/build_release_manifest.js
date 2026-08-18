@@ -55,11 +55,25 @@ if (updatedBankSource === originalBankSource &&
 }
 fs.writeFileSync(bankPath, updatedBankSource);
 
+const ccgSource = fs.readFileSync(
+  path.join(projectRoot, "ccg.lua"),
+);
+const ccgChecksum = checksum(ccgSource);
+const bankWithCcgChecksum = fs.readFileSync(bankPath, "utf8").replace(
+  /local CCG_CHECKSUM = "[0-9a-f]{8}"/,
+  `local CCG_CHECKSUM = "${ccgChecksum}"`,
+);
+if (bankWithCcgChecksum === fs.readFileSync(bankPath, "utf8") &&
+    !bankWithCcgChecksum.includes(`CCG_CHECKSUM = "${ccgChecksum}"`)) {
+  throw new Error("Could not update the CCG checksum");
+}
+fs.writeFileSync(bankPath, bankWithCcgChecksum);
+
 const manifest = {
   schema: 1,
   channel: "stable",
   version: versionMatch[1],
-  notes: "PUMPE automatic internet release",
+  notes: "PUMPE + ComputerCraftGaming automatic internet release",
   files: releaseFiles.map((relativePath) => {
     const body = fs.readFileSync(path.join(projectRoot, relativePath));
     return {

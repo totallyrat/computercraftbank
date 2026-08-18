@@ -1,8 +1,8 @@
--- PUMPE Ecosystem v5 configuration.
+-- PUMPE Ecosystem v6 configuration.
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "5.4.0",
+    version = "6.0.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -16,6 +16,16 @@ return {
     visa_min_days = 1,
     visa_max_days = 30,
     permanent_visa_cooldown_seconds = 30,
+
+    -- ComputerCraftGaming uses PUMPE game currency only. Winnings stay in a
+    -- separate Bet Wallet and unlock after one complete in-game day.
+    bet_access_ttl_ms = 15 * 60 * 1000,
+    bet_hold_ingame_hours = 24,
+    bet_minimum = 1,
+    bet_maximum = 10000,
+    ccg_lobby_ttl_ms = 5 * 60 * 1000,
+    ccg_result_delay_ms = 6 * 1000,
+    ccg_survivor_max_seconds = 75,
 
     pin_free_limit = 50,
     daily_spend_limit = 5000,

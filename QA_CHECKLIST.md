@@ -8,6 +8,7 @@ Run this after installing into a ComputerCraft world.
 - [ ] Every client resolves the `PUMPE_BANK_V5` Rednet host.
 - [ ] Service Kiosk uses an Advanced Computer.
 - [ ] Optional customer display is an Advanced Monitor and reports as connected under **S → Rescan Display**.
+- [ ] CCG uses an Advanced Computer, an Ender/wireless modem, and an Advanced Monitor; test both a 1×1 monitor at scale `0.5` and the intended larger wall.
 
 ## Easy Deployment
 
@@ -16,6 +17,7 @@ Run this after installing into a ComputerCraft world.
 - [ ] Replace a local distributable script, restart the Bank Server, and confirm its `/updates/` copy is refreshed.
 - [ ] Copy only `startup.lua` to the root of a clean Advanced Computer, restart, and confirm the touch installer opens automatically.
 - [ ] Install PUMPE and confirm the main script, config, installer, and all required `lib/` files arrive under `/pumpe`.
+- [ ] Install **CCG Bet Console** and confirm `ccg.lua`, config, installer, and all required `lib/` files arrive under `/pumpe` and CCG starts after reboot.
 - [ ] Restart after installation and confirm the selected role starts automatically.
 - [ ] Enter a wrong protected code and confirm Bank Server and Tax Controller downloads are denied.
 - [ ] Enter `4040` and confirm a protected role downloads successfully.
@@ -52,7 +54,7 @@ Run this after installing into a ComputerCraft world.
 - [ ] On a fresh PUMPE, complete all three onboarding pages and create a Foxy Account.
 - [ ] Confirm **Setting up your Foxy Account** and **Preparing your PUMPE** animate without forcing an unnecessary reboot.
 - [ ] On an Advanced Pocket Computer at its native 26×20 size, confirm every onboarding line, header, button label, and footer is fully visible.
-- [ ] Confirm the Home Screen has three two-column app pages and every full app name is readable and opens the correct app.
+- [ ] Confirm the Home Screen has four two-column app pages and every full app name is readable and opens the correct app.
 - [ ] Confirm PUMPE Pay contains only Code Pay and Send Money.
 - [ ] Confirm both cards are fully readable and Send Money shows the 10% processing fee and `$2,000` daily limit.
 - [ ] Open Wallet, Activity, Events, Tickets, Notifications, and Subscriptions with long sample names and confirm content wraps without overlapping controls or the footer.
@@ -61,6 +63,22 @@ Run this after installing into a ComputerCraft world.
 - [ ] Open it before 120 seconds and confirm no PIN is required.
 - [ ] Lock it again, wait beyond 120 seconds, and confirm a wrong PIN stays locked while the correct PIN opens PUMPE.
 - [ ] Confirm touch, keyboard, PIN-pad, and text-entry activity each reset the inactivity timer.
+
+## ComputerCraftGaming
+
+- [ ] Open **Bet** and confirm it asks for the Foxy Account PIN before showing the lobby-code screen; a wrong PIN must not open the app.
+- [ ] Open **Bet Wallet**, transfer money in with the PIN, and confirm the normal Foxy Account and Bet Wallet balances change by exactly the same amount in opposite directions.
+- [ ] Transfer a partial Bet Wallet balance back to the Foxy Account with the PIN and confirm held winnings cannot be withdrawn early.
+- [ ] Create a Heads or Tails lobby, join from two PUMPEs with different display names/picks, place wagers, and confirm the screen lists both as **READY**.
+- [ ] Start Heads or Tails and confirm the big-screen flip, PUMPE waiting animation, server-selected result, exactly `2×` winning payout, and losing wager settlement.
+- [ ] Create a Race lobby, place wagers across all six colors, and confirm all six animated lanes remain visible on a 1×1 monitor and the winning color receives exactly `3×`.
+- [ ] Create a Survivor lobby and confirm **Start** stays disabled with fewer than two ready players.
+- [ ] In Survivor, use each joystick direction and **PUSH** from multiple PUMPEs. Confirm the screen tracks movement, rapid Push taps respect cooldown, the ring shrinks, eliminated players switch to spectating, and the last player receives exactly `3×`.
+- [ ] Win a round near the end of an in-game day. Confirm the payout remains in **Holding** through the day rollover and releases only after a complete 24 in-game hours at the shown day/time.
+- [ ] Leave a waiting lobby and let another waiting lobby expire. Confirm each reserved wager is refunded exactly once.
+- [ ] Restart the CCG computer during a lobby and confirm it resumes that lobby. Restart the Bank during Survivor and confirm every wager is refunded instead of selecting an arbitrary winner.
+- [ ] Attempt to alter the CCG/PUMPE payload with a preferred outcome, payout, or winner and confirm the Bank ignores it and settles only its own result.
+- [ ] Confirm Home Play is not shown in this release; only Bet Play is installed.
 
 ## Service Kiosk and monitor
 
@@ -108,3 +126,4 @@ Run this after installing into a ComputerCraft world.
 - [ ] Stop the Bank Server during a client request and confirm a timeout message appears.
 - [ ] Restart the Bank Server and sign in again without data loss.
 - [ ] Let a payment code expire and confirm no money moves.
+- [ ] Disconnect the CCG console during a waiting lobby and confirm the five-minute expiry returns all wagers.

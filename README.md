@@ -1,13 +1,14 @@
-# PUMPE Ecosystem v5
+# PUMPE Ecosystem v6
 
-A working, touch-first digital economy for ComputerCraft: Tweaked. It includes personal banking, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
+A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. It includes personal banking, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
 ## What is included
 
 | Program | Hardware | Purpose |
 | --- | --- | --- |
-| `bank_server.lua` | Advanced Computer + wireless/Ender modem | Persistent database, request API, settlement, customs, visits, subscriptions, events, tax, live server dashboard |
-| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, Customs and Visas apps, events, tickets, tax, subscriptions |
+| `bank_server.lua` | Advanced Computer + wireless/Ender modem | Persistent database, request API, banking, CCG settlement/physics, customs, subscriptions, events, tax, live dashboard |
+| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, Bet and Bet Wallet apps, Customs and Visas, events, tickets, tax, subscriptions |
+| `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track, and Survivor arena |
 | `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Square-style touch POS, favorites, products, receipts, payment codes, withdrawals, subscriptions |
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
 | `tax_controller.lua` | Advanced Computer + wireless/Ender modem | Government-only periods, rates, revenue, deposits, audits, bank statistics |
@@ -22,9 +23,10 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 
 - A three-page animated onboarding introduces PUMPE and creates or signs into a **Foxy Account**.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
-- The Home Screen uses a roomy two-column, three-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
+- The Home Screen uses a roomy two-column, four-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - Wallet, Activity, Events, Tickets, Notifications, Visas, Customs, Tax, Subscriptions, and Settings open as individual apps.
+- **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 
 ### PUMPE Pay
@@ -35,6 +37,22 @@ PUMPE Pay presents two options:
 2. **Send Money** sends money to another Foxy Account username.
 
 For Send Money, the entered amount is what the recipient receives. The sender pays that amount plus a 10% processing fee, rounded up to the nearest cent. The review screen shows **They Receive**, **Fee**, and **You Pay** before requesting the PIN. The Bank Server independently calculates the fee and enforces a separate `$2,000` recipient-amount limit per in-game day, so modifying the PUMPE client cannot bypass either rule.
+
+## ComputerCraftGaming Bet Play
+
+CCG is a shared big-screen gaming system. Create a lobby on `ccg.lua`, then players open **Bet** on their PUMPE, verify their PIN, enter the six-character screen code, choose a display name, make their pick, and set a wager from their Bet Wallet.
+
+Three games are included:
+
+1. **Heads or Tails** — pick a side. A correct pick pays `2×` the wager.
+2. **Race** — pick one of six red, orange, yellow, green, blue, or purple cars. The six-lane animated race has a server-random winner and pays `3×`.
+3. **Survivor** — use the PUMPE touch joystick to move and **PUSH** nearby players from a shrinking circular platform. The last player standing receives `3×` their wager.
+
+The Bank Server is authoritative. It generates chance-game outcomes, reserves wagers, simulates Survivor positions and pushes, decides the winner, and settles each lobby once. A modified PUMPE or CCG console cannot submit its preferred result. Waiting lobbies expire after five minutes and return every reserved wager; a Bank restart during an active Survivor round also refunds everyone rather than guessing a winner.
+
+Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
+
+Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.0 contains the complete Bet Play mode.
 
 ## The new customer monitor
 
@@ -68,7 +86,7 @@ If a required source file is missing, the first-boot screen lists it and lets yo
 1. Copy only the supplied `startup.lua` to the new computer as `/startup.lua`.
 2. Attach a wireless or Ender modem, then restart the computer. You can also run `startup` immediately.
 3. Tap the desired role.
-4. Bank Server and Tax Controller downloads require code `4040`. Border Controller is available as an ordinary role.
+4. Bank Server and Tax Controller downloads require code `4040`. Border Controller and **CCG Bet Console** are available as ordinary roles.
 5. The installer downloads and verifies the main program, `config.lua`, `installer.lua`, and every required file under `lib/`.
 6. After installation, it replaces its own marked `/startup.lua` with a direct `installer.lua --boot <role>` entry. Tap **Reboot Now** and that role starts automatically.
 
@@ -90,9 +108,9 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 6. Refreshes `/pumpe/installer.lua`, writes a direct Bank boot entry, saves the database, and restarts immediately.
 7. Detects the restart marker, bypasses every menu, rebuilds `/updates/`, and launches the Bank Server normally.
 
-Installed PUMPEs, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers quietly compare versions with the Bank Server whenever they start and continue checking from their live dashboards. If a newer version exists, they download, verify, install, and reboot automatically. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
+Installed PUMPEs, CCG consoles, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers quietly compare versions with the Bank Server whenever they start and continue checking from their live dashboards. If a newer version exists, they download, verify, install, and reboot automatically. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
 
-The release manifest remains compatible with existing v5.2.1 Bank Servers. `launcher.lua` is retained only as a one-release migration bridge for older startup entries; v5.4 installations and normal boots do not use it. A temporary Border Controller download failure never sends an automatically restarting Bank Server into Easy Deployment; the server keeps serving and retries the depot repair.
+The release manifest remains compatible with existing v5.2.1 Bank Servers. `launcher.lua` is retained only as a migration bridge for older startup entries; v6 installations and normal boots do not use it. Border Controller and CCG are checksum-pinned deferred files so the legacy-compatible manifest does not reject them. A temporary deferred-file download failure never sends an automatically restarting Bank Server into Easy Deployment; the server keeps serving and retries the depot repair.
 
 ### Release source
 
@@ -128,6 +146,7 @@ You can start any installed role manually through Easy Deployment:
 /pumpe/installer.lua --boot event
 /pumpe/installer.lua --boot tax
 /pumpe/installer.lua --boot border
+/pumpe/installer.lua --boot ccg
 ```
 
 To start a role automatically, create `/startup.lua` on that device:
@@ -136,7 +155,7 @@ To start a role automatically, create `/startup.lua` on that device:
 shell.run("/pumpe/installer.lua", "--boot", "service")
 ```
 
-Replace `service` with `bank`, `pumpe`, `event`, `tax`, or `border`.
+Replace `service` with `bank`, `pumpe`, `event`, `tax`, `border`, or `ccg`.
 
 ## Hardware notes
 
@@ -152,6 +171,14 @@ Replace `service` with `bank`, `pumpe`, `event`, `tax`, or `border`.
 - Use an Advanced Pocket Computer with a wireless modem.
 - The header clock uses ComputerCraft's in-game clock.
 - Event cards and tickets show a live countdown calculated from `event_day` and `event_time`.
+
+### CCG Bet Console
+
+- Use an Advanced Computer with an Ender modem and an Advanced Monitor.
+- The console sets the monitor to text scale `0.5` and responsively supports a 1×1 monitor or a larger wall.
+- Lobby codes, ready states, coin flips, six race lanes, the shrinking Survivor ring, players, and results all render on the monitor.
+- Touch **Start** only after every displayed player is ready. Heads or Tails and Race support one or more players; Survivor requires at least two.
+- The console stores only its server-issued ID/token. It never stores PUMPE PINs or decides payouts.
 
 ### Service Kiosk
 
@@ -214,6 +241,10 @@ Skipping company setup is safe. You can link later under **S → Link Company**.
 
 Sign in, create the event, then add one or more ticket types. Customers immediately see active future events in their PUMPE.
 
+### CCG
+
+Install **CCG Bet Console**, attach the monitor and modem, and select a game. Players fund **Bet Wallet** from their PUMPE, open the PIN-gated **Bet** app, enter the lobby code and a player name, then choose their wager. The big-screen operator starts the round when everyone shows **READY**.
+
 ## Important behavior
 
 - Payment codes expire after five minutes and can be cancelled by the cashier.
@@ -227,6 +258,9 @@ Sign in, create the event, then add one or more ticket types. Customers immediat
 - The PUMPE stores only the last account name locally, never the PIN.
 - Citizenship codes grant permanent entry to their own territory. They also grant permanent entry wherever that citizenship has active Free Roam.
 - Temporary visa departure days are calculated by the Bank Server on entry, and the document locks permanently after its recorded exit.
+- CCG wagers leave Bet Wallet when they are marked ready. Leaving or expiring before a round starts returns the full wager.
+- CCG payouts are `2×` for Heads or Tails and `3×` for Race or Survivor. Winning payouts remain held for one complete in-game day before entering the available Bet Wallet balance.
+- Bet Wallet funds are separate from the normal Foxy Account until the player explicitly transfers them. Both transfer directions require the PIN.
 
 ## Security reality check
 
@@ -249,6 +283,7 @@ pumpe/
 ├── event_kiosk.lua
 ├── tax_controller.lua
 ├── border_controller.lua
+├── ccg.lua
 ├── startup.lua
 ├── installer.lua
 ├── launcher.lua
@@ -282,6 +317,12 @@ pumpe/
 - Event scheduling intentionally uses the Minecraft in-game day and time, not real-world time.
 - Check the current day shown in the event creation flow.
 
+**CCG lobby will not start**
+
+- Every listed player must show **READY** after selecting a pick and reserving a wager.
+- Survivor requires at least two ready players.
+- Confirm the PUMPE has available Bet Wallet funds, not only funds still in Holding.
+
 ## Version
 
-PUMPE Ecosystem `5.4.0`.
+PUMPE Ecosystem `6.0.0`.

@@ -11,6 +11,7 @@ local ui = require("lib.ui")
 local target = term.current()
 local client = net.client(config)
 local sessionToken
+local betAccessToken
 local account
 local running = true
 local payMenu
@@ -31,7 +32,7 @@ local function request(action, payload, silent)
     local result, err, code = client:request(action, payload)
     if not result and not silent then
         if code == "SESSION_EXPIRED" then
-            sessionToken, account = nil, nil
+            sessionToken, betAccessToken, account = nil, nil, nil
             ui.setIdleLock(nil)
         end
         ui.networkError(target, err)
@@ -1634,6 +1635,456 @@ local function customsScreen()
     end
 end
 
+-- ComputerCraftGaming apps --------------------------------------------------
+
+local betColors = {
+    red = colors.red,
+    orange = colors.orange,
+    yellow = colors.yellow,
+    green = colors.lime,
+    blue = colors.lightBlue,
+    purple = colors.purple,
+}
+
+local function betRequest(action, payload, silent)
+    payload = payload or {}
+    payload.bet_token = betAccessToken
+    return request(action, payload, silent)
+end
+
+local function heldReleaseText(hold)
+    if hold.status ~= "holding" then return "Released" end
+    return "Day " .. tostring(hold.release_day or "?")
+        .. " " .. tostring(hold.release_time or "")
+end
+
+local function betHoldingScreen(holds)
+    local pending = {}
+    for _, hold in ipairs(holds or {}) do
+        if hold.status == "holding" then pending[#pending + 1] = hold end
+    end
+    local page = 1
+    while true do
+        local width, height = target.getSize()
+        local visible, current, pages = util.page(pending, page, 2)
+        page = current
+        ui.clear(target)
+        ui.header(target, "Holding", #pending .. " CCG payouts",
+            util.formatClock())
+        if #visible == 0 then
+            ui.center(target, 8, "Nothing is holding", ui.theme.ink)
+            ui.center(target, 10, "Wins appear here for one day",
+                ui.theme.muted)
+        end
+        for index, hold in ipairs(visible) do
+            local y = 5 + (index - 1) * 6
+            ui.card(target, 2, y, width - 2, 5, colors.purple)
+            ui.text(target, 4, y, ui.truncate(
+                hold.game_name or "CCG WIN", width - 6),
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, y + 1, money(hold.amount),
+                ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, y + 3, "UNLOCKS " .. heldReleaseText(hold),
+                ui.theme.warning, ui.theme.panel)
+        end
+        local scene = ui.scene(target)
+        scene:button("prev", 2, height - 2, 6, 1, "<",
+            { background = ui.theme.panel, disabled = page <= 1 })
+        scene:button("next", width - 7, height - 2, 6, 1, ">",
+            { background = ui.theme.panel, disabled = page >= pages })
+        scene:button("back", 1, height, 10, 1, "< Wallet",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "prev" then page = math.max(1, page - 1)
+        elseif action == "next" then page = math.min(pages, page + 1)
+        elseif action == "back" or action == "__terminate" then return end
+    end
+end
+
+local function betActivityScreen(items)
+    local page = 1
+    while true do
+        local width, height = target.getSize()
+        local visible, current, pages = util.page(items or {}, page, 3)
+        page = current
+        ui.clear(target)
+        ui.header(target, "Bet Activity", #items .. " entries",
+            util.formatClock())
+        if #visible == 0 then
+            ui.center(target, 9, "No Bet Wallet activity", ui.theme.muted)
+        end
+        for index, item in ipairs(visible) do
+            local y = 5 + (index - 1) * 4
+            ui.text(target, 3, y, ui.truncate(item.description, width - 5),
+                ui.theme.ink)
+            local amountText = money(math.abs(item.amount or 0))
+            if (item.amount or 0) < 0 then amountText = "-" .. amountText end
+            ui.text(target, 3, y + 1, amountText,
+                (item.amount or 0) >= 0 and ui.theme.success
+                    or ui.theme.warning)
+            ui.text(target, width - 8, y + 1,
+                "D" .. tostring(item.day or "?"), ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        scene:button("prev", 2, height - 2, 6, 1, "<",
+            { background = ui.theme.panel, disabled = page <= 1 })
+        scene:button("next", width - 7, height - 2, 6, 1, ">",
+            { background = ui.theme.panel, disabled = page >= pages })
+        scene:button("back", 1, height, 10, 1, "< Wallet",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "prev" then page = math.max(1, page - 1)
+        elseif action == "next" then page = math.min(pages, page + 1)
+        elseif action == "back" or action == "__terminate" then return end
+    end
+end
+
+local function betWalletMove(action, available)
+    local adding = action == "BET_WALLET_DEPOSIT"
+    local amountText = ui.input(target,
+        adding and "Add to Bet Wallet" or "Send to Foxy Account", {
+            hint = "Available " .. money(available),
+            mode = "number",
+            maxLength = 12,
+        })
+    if not amountText then return nil end
+    local amount = tonumber(amountText)
+    if not amount or amount <= 0 then
+        ui.message(target, "error", "Invalid Amount", "Enter a number above zero")
+        return nil
+    end
+    local pin = ui.pin(target, "Confirm with PIN", true)
+    if not pin then return nil end
+    local result, err = request(action, { amount = amount, pin = pin }, true)
+    if result then
+        account.balance = result.account_balance
+        ui.message(target, "success",
+            adding and "MONEY ADDED" or "MONEY TRANSFERRED",
+            money(amount), 0.9)
+        return result.wallet
+    end
+    ui.message(target, "error", "TRANSFER FAILED", err, 1.1)
+    return nil
+end
+
+local function betWalletScreen()
+    local result = request("BET_WALLET_SUMMARY")
+    if not result then return end
+    local wallet = result.wallet
+    while sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Bet Wallet", "CCG game balance", util.formatClock())
+        ui.card(target, 2, 4, width - 2, 4, colors.magenta)
+        ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, money(wallet.available),
+            ui.theme.ink, ui.theme.panel)
+        ui.card(target, 2, 9, width - 2, 3, colors.purple)
+        ui.text(target, 4, 9, "HOLDING FOR 1 DAY", ui.theme.muted,
+            ui.theme.panel)
+        ui.text(target, 4, 10, money(wallet.held),
+            ui.theme.warning, ui.theme.panel)
+        local scene = ui.scene(target)
+        scene:button("add", 2, 13, 11, 2, "+ ADD",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("withdraw", width - 12, 13, 11, 2, "CASH OUT",
+            { background = ui.theme.accentDark })
+        scene:button("holding", 2, 16, 11, 2,
+            "HOLDING " .. tostring(wallet.hold_count or 0),
+            { background = colors.purple })
+        scene:button("activity", width - 12, 16, 11, 2, "ACTIVITY",
+            { background = ui.theme.panel })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "add" then
+            wallet = betWalletMove("BET_WALLET_DEPOSIT", account.balance)
+                or wallet
+        elseif action == "withdraw" then
+            wallet = betWalletMove("BET_WALLET_WITHDRAW", wallet.available)
+                or wallet
+        elseif action == "holding" then
+            betHoldingScreen(wallet.holds)
+        elseif action == "activity" then
+            betActivityScreen(wallet.activity)
+        elseif action == "__tick" then
+            local refreshed = request("BET_WALLET_SUMMARY", {}, true)
+            if refreshed then wallet = refreshed.wallet end
+        elseif action == "back" or action == "__terminate" then
+            return
+        end
+    end
+end
+
+local function chooseBetSelection(lobby)
+    local width, height = target.getSize()
+    if lobby.game == "survivor" then
+        ui.clear(target)
+        ui.header(target, "Survivor", "Interactive // 3X", util.formatClock())
+        ui.card(target, 2, 5, width - 2, 8, colors.purple)
+        ui.center(target, 7, "LAST ONE STANDING", ui.theme.ink)
+        ui.wrappedText(target, 4, 9,
+            "Use the touch joystick. Get close and PUSH opponents off the ring.",
+            width - 6, 3, ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("continue", 2, 15, width - 2, 3,
+            "SET WAGER", { background = colors.purple })
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        return scene:wait() == "continue" and "survivor" or nil
+    end
+    while true do
+        ui.clear(target)
+        ui.header(target, lobby.game_name,
+            "Choose your pick // " .. lobby.multiplier .. "X",
+            util.formatClock())
+        local scene = ui.scene(target)
+        if lobby.game == "heads_tails" then
+            scene:button("pick:heads", 2, 6, width - 2, 5,
+                "H\nHEADS", { background = colors.orange,
+                    foreground = colors.black })
+            scene:button("pick:tails", 2, 12, width - 2, 5,
+                "T\nTAILS", { background = colors.blue })
+        else
+            local choices = {
+                "red", "orange", "yellow", "green", "blue", "purple",
+            }
+            local buttonWidth = math.floor((width - 5) / 2)
+            for index, name in ipairs(choices) do
+                local column = (index - 1) % 2
+                local row = math.floor((index - 1) / 2)
+                local x = column == 0 and 2 or width - buttonWidth
+                local y = 5 + row * 4
+                scene:button("pick:" .. name, x, y, buttonWidth, 3,
+                    string.upper(name), {
+                        background = betColors[name],
+                        foreground = (name == "yellow" or name == "orange"
+                            or name == "green") and colors.black or colors.white,
+                    })
+            end
+        end
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        local selection = action and action:match("^pick:(.+)$")
+        if selection then return selection end
+        if action == "back" or action == "__terminate" then return nil end
+    end
+end
+
+local function betResultScreen(result)
+    local lobby, player, wallet = result.lobby, result.player, result.wallet
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, player.won and "YOU WON" or "ROUND COMPLETE",
+        lobby.game_name, util.formatClock())
+    ui.card(target, 2, 5, width - 2, 8,
+        player.won and ui.theme.success or ui.theme.warning)
+    if player.won then
+        ui.center(target, 7, money(player.payout), ui.theme.ink)
+        ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
+        local release = "One full in-game day"
+        for _, hold in ipairs(wallet.holds or {}) do
+            if hold.hold_id == player.hold_id then
+                release = "Day " .. hold.release_day .. " " .. hold.release_time
+                break
+            end
+        end
+        ui.center(target, 11, release, ui.theme.muted)
+    else
+        ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
+        ui.center(target, 9,
+            lobby.game == "survivor" and (lobby.winner_name .. " survived")
+                or "Result: " .. string.upper(lobby.outcome or "?"),
+            ui.theme.muted)
+        ui.center(target, 11, "BET WALLET " .. money(wallet.available),
+            ui.theme.muted)
+    end
+    local scene = ui.scene(target)
+    scene:button("done", 2, height - 3, width - 2, 2, "DONE",
+        { background = ui.theme.accentDark })
+    scene:wait()
+end
+
+local function survivorController(code, initial)
+    local status, pulse = initial, false
+    while status and status.lobby.status == "running" do
+        local lobby, player = status.lobby, status.player
+        local width, height = target.getSize()
+        ui.clear(target, colors.black)
+        ui.header(target, "Survivor", player.alive and "YOU ARE IN" or "SPECTATING",
+            util.formatClock())
+        ui.center(target, 5,
+            player.alive and "MOVE + PUSH" or "YOU WERE PUSHED OUT",
+            player.alive and colors.lime or colors.red)
+        local scene = ui.scene(target)
+        if player.alive then
+            scene:button("move:0:-1", 10, 7, 7, 2, "UP",
+                { background = colors.gray })
+            scene:button("move:-1:0", 2, 10, 7, 3, "LEFT",
+                { background = colors.gray })
+            scene:button("move:0:1", 10, 10, 7, 3, "DOWN",
+                { background = colors.gray })
+            scene:button("move:1:0", 18, 10, width - 18, 3, "RIGHT",
+                { background = colors.gray })
+            scene:button("push", 4, 15, width - 7, 3,
+                pulse and "PUSH // LOCKED" or "PUSH!", {
+                    background = pulse and colors.gray or colors.magenta,
+                })
+        else
+            ui.center(target, 10, "Waiting for a winner...", ui.theme.muted)
+        end
+        local action = scene:wait({ tickRate = 0.25, flash = false })
+        local dx, dy = action and action:match("^move:([%-0-9]+):([%-0-9]+)$")
+        if dx then
+            betRequest("BET_CONTROL", {
+                code = code, dx = tonumber(dx), dy = tonumber(dy),
+            }, true)
+        elseif action == "push" then
+            local pushed = betRequest("BET_CONTROL", {
+                code = code, dx = 0, dy = 0, push = true,
+            }, true)
+            pulse = pushed and pushed.pushed == true
+        elseif action == "__terminate" then
+            running = false
+            return nil
+        end
+        status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+        if not status then return nil end
+        if pulse and action == "__tick" then pulse = false end
+    end
+    return status
+end
+
+local function waitForBetResult(code, initial)
+    local status, frame = initial, 0
+    while status and status.lobby.status == "lobby" do
+        local lobby, player = status.lobby, status.player
+        local width, height = target.getSize()
+        ui.clear(target, colors.black)
+        ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
+        ui.center(target, 6, lobby.code, colors.cyan, colors.black)
+        ui.center(target, 8, player.display_name, colors.white, colors.black)
+        ui.center(target, 10,
+            string.upper(player.selection) .. " // " .. money(player.wager),
+            betColors[player.selection] or colors.magenta, colors.black)
+        ui.center(target, 13,
+            "WAITING FOR START" .. string.rep(".", frame % 4),
+            colors.lightGray, colors.black)
+        local scene = ui.scene(target)
+        scene:button("leave", 2, height - 3, width - 2, 2,
+            "LEAVE + REFUND", { background = colors.red })
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "leave" then
+            if ui.confirm(target, "Leave Lobby?",
+                "Your wager returns to Bet Wallet", "LEAVE", "STAY") then
+                betRequest("BET_LEAVE", { code = code }, true)
+                return nil
+            end
+        elseif action == "__terminate" then
+            betRequest("BET_LEAVE", { code = code }, true)
+            running = false
+            return nil
+        end
+        frame = frame + 1
+        status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+        if not status then return nil end
+    end
+    if status and status.lobby.status == "running"
+        and status.lobby.game == "survivor" then
+        return survivorController(code, status)
+    end
+    while status and status.lobby.status == "running" do
+        local width, height = target.getSize()
+        ui.clear(target, colors.black)
+        ui.header(target, status.lobby.game_name, "BET LOCKED",
+            util.formatClock())
+        local symbols = status.lobby.game == "race"
+            and { ">--", "->-", "-->", ">>-" }
+            or { "H", "T", "H", "T" }
+        ui.center(target, 8, symbols[frame % #symbols + 1], colors.magenta,
+            colors.black)
+        ui.center(target, 11, "GAME IN PROGRESS" .. string.rep(".", frame % 4),
+            colors.lightGray, colors.black)
+        ui.progress(target, 3, 15, width - 5, frame % 12, 12,
+            colors.cyan, colors.gray)
+        sleep(0.35)
+        frame = frame + 1
+        status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+    end
+    return status
+end
+
+local function betApp()
+    local pin = ui.pin(target, "Unlock Bet", true)
+    if not pin then return end
+    local unlocked, unlockError = request("BET_UNLOCK", { pin = pin }, true)
+    if not unlocked then
+        ui.message(target, "error", "BET LOCKED", unlockError, 1.1)
+        return
+    end
+    betAccessToken = unlocked.bet_token
+    if (unlocked.wallet.available or 0) <= 0 then
+        ui.message(target, "warning", "BET WALLET EMPTY",
+            "Add money in the Bet Wallet app", 1.2)
+    end
+    local code = ui.input(target, "Join CCG", {
+        hint = "6-character screen code",
+        mode = "code",
+        maxLength = 6,
+        minLength = 6,
+    })
+    if not code then return end
+    local name = ui.input(target, "Player Name", {
+        hint = "Shown on the big screen",
+        maxLength = 14,
+        minLength = 2,
+        allowSpace = true,
+        initial = account.name,
+    })
+    if not name then return end
+    local joined, joinError = betRequest("BET_JOIN", {
+        code = code,
+        display_name = name,
+    }, true)
+    if not joined then
+        ui.message(target, "error", "CANNOT JOIN", joinError, 1.1)
+        return
+    end
+    local selection = chooseBetSelection(joined.lobby)
+    if not selection then
+        betRequest("BET_LEAVE", { code = code }, true)
+        return
+    end
+    local amountText = ui.input(target, "Set Wager", {
+        hint = joined.lobby.multiplier .. "X if you win // Wallet "
+            .. money(unlocked.wallet.available),
+        mode = "number",
+        maxLength = 12,
+    })
+    if not amountText then
+        betRequest("BET_LEAVE", { code = code }, true)
+        return
+    end
+    local placed, placeError = betRequest("BET_PLACE_WAGER", {
+        code = code,
+        selection = selection,
+        amount = tonumber(amountText),
+    }, true)
+    if not placed then
+        ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
+        betRequest("BET_LEAVE", { code = code }, true)
+        return
+    end
+    local final = waitForBetResult(code, placed)
+    if final and final.lobby.status == "finished" then
+        betResultScreen(final)
+    elseif final and final.lobby.status == "cancelled" then
+        ui.message(target, "warning", "LOBBY CANCELLED",
+            "Your wager returned to Bet Wallet", 1.1)
+    end
+end
+
 local function settingsScreen()
     local width, height = target.getSize()
     ui.clear(target)
@@ -1655,7 +2106,7 @@ local function settingsScreen()
     local action = scene:wait()
     if action == "logout" and ui.confirm(target, "Sign Out",
         "Leave this PUMPE session?", "Sign Out", "Back") then
-        sessionToken, account = nil, nil
+        sessionToken, betAccessToken, account = nil, nil, nil
         ui.setIdleLock(nil)
     elseif action == "close" and ui.confirm(target, "Close PUMPE",
         "Shut down the PUMPE app?", "CLOSE", "BACK") then
@@ -1681,8 +2132,12 @@ local function mainMenu()
             { "customs", "C\nCustoms", colors.lightBlue },
         },
         {
+            { "bet", "B\nBet", colors.magenta },
+            { "bet_wallet", "$\nBet Wallet", colors.purple },
             { "tax", "%\nTax", colors.orange },
             { "subscriptions", "S\nSubs", colors.magenta },
+        },
+        {
             { "settings", "o\nSettings", colors.gray },
             { "lock", "L\nLock", colors.blue },
         },
@@ -1716,11 +2171,9 @@ local function mainMenu()
                 shadow = true,
             })
         end
-        ui.center(target, 16,
-            page == 1 and "o  .  ."
-                or page == 2 and ".  o  ."
-                or ".  .  o",
-            ui.theme.muted)
+        local dots = {}
+        for dot = 1, #pages do dots[dot] = dot == page and "o" or "." end
+        ui.center(target, 16, table.concat(dots, "  "), ui.theme.muted)
         scene:button("prev", 1, 18, 7, 1, "<",
             { background = ui.theme.panel, disabled = page == 1 })
         scene:button("next", width - 6, 18, 7, 1, ">",
@@ -1758,6 +2211,10 @@ local function mainMenu()
             phoneTransition("Visas", colors.purple); visasScreen()
         elseif action == "customs" then
             phoneTransition("Customs", colors.lightBlue); customsScreen()
+        elseif action == "bet" then
+            phoneTransition("CCG Bet", colors.magenta); betApp()
+        elseif action == "bet_wallet" then
+            phoneTransition("Bet Wallet", colors.purple); betWalletScreen()
         elseif action == "tax" then
             phoneTransition("Tax", colors.orange); taxScreen()
         elseif action == "subscriptions" then

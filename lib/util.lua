@@ -36,6 +36,30 @@ function util.ingameTime()
     return os.time()
 end
 
+-- A monotonic-enough in-game hour value that survives Bank Server restarts.
+-- Unlike checking only os.day(), adding 24 here always means one full
+-- Minecraft/ComputerCraft day, even when a bet is won near midnight.
+function util.ingameMoment()
+    return util.ingameDay() * 24 + util.ingameTime()
+end
+
+function util.formatIngameMoment(moment)
+    moment = tonumber(moment) or util.ingameMoment()
+    local day = math.floor(moment / 24)
+    local rawTime = moment - day * 24
+    local hour = math.floor(rawTime) % 24
+    local minute = math.floor((rawTime - math.floor(rawTime)) * 60 + 0.5)
+    if minute >= 60 then
+        minute = 0
+        hour = hour + 1
+        if hour >= 24 then
+            hour = 0
+            day = day + 1
+        end
+    end
+    return day, string.format("%02d:%02d", hour, minute)
+end
+
 function util.clockParts()
     local raw = util.ingameTime()
     local hour = math.floor(raw) % 24

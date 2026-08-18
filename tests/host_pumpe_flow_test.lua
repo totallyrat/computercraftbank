@@ -1,4 +1,4 @@
--- Full host-side 26x20 layout flow for the PUMPE 5.4.0 experience.
+-- Full host-side 26x20 layout flow for the PUMPE 6.0.0 experience.
 
 local actions = {
     "next",
@@ -40,15 +40,29 @@ local actions = {
     "back",
     "back",
     "next",
+    "bet",
+    "pick:heads",
+    "__tick",
+    "done",
+    "bet_wallet",
+    "holding",
+    "back",
+    "activity",
+    "back",
+    "add",
+    "withdraw",
+    "back",
     "tax",
     "subscriptions",
     "back",
+    "next",
     "settings",
     "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
 local savedDevice
 local lockSeconds
+local betStatusCalls = 0
 local WIDTH, HEIGHT = 26, 20
 
 colors = {
@@ -86,7 +100,7 @@ local account = {
 }
 
 package.loaded.config = {
-    version = "5.4.0",
+    version = "6.0.0",
     currency = "$",
     send_money_daily_limit = 2000,
     send_money_fee_rate = 0.10,
@@ -96,6 +110,7 @@ package.loaded.config = {
     max_territories_per_account = 3,
     visa_min_days = 1,
     visa_max_days = 30,
+    bet_maximum = 10000,
 }
 
 package.loaded["lib.util"] = {
@@ -340,6 +355,142 @@ local client = {
                 total = 110,
                 daily_remaining = 1900,
             }
+        elseif action == "BET_UNLOCK" then
+            assert(payload.pin == "1234")
+            return {
+                bet_token = "BET_TOKEN",
+                wallet = {
+                    available = 100,
+                    held = 20,
+                    hold_count = 1,
+                    holds = {
+                        {
+                            hold_id = "HOLD0000000001",
+                            amount = 20,
+                            status = "holding",
+                            game_name = "Heads or Tails",
+                            release_day = 43,
+                            release_time = "12:00",
+                        },
+                    },
+                    activity = {
+                        {
+                            description = "Heads or Tails winnings - holding",
+                            amount = 20,
+                            day = 42,
+                        },
+                    },
+                },
+            }
+        elseif action == "BET_JOIN" then
+            assert(payload.bet_token == "BET_TOKEN")
+            assert(payload.code == "CCG234")
+            assert(payload.display_name == "FoxyPlayer")
+            return {
+                lobby = {
+                    code = "CCG234",
+                    game = "heads_tails",
+                    game_name = "Heads or Tails",
+                    multiplier = 2,
+                    status = "lobby",
+                },
+            }
+        elseif action == "BET_PLACE_WAGER" then
+            assert(payload.selection == "heads")
+            assert(payload.amount == 10)
+            return {
+                lobby = {
+                    code = "CCG234",
+                    game = "heads_tails",
+                    game_name = "Heads or Tails",
+                    multiplier = 2,
+                    status = "lobby",
+                },
+                player = {
+                    display_name = "FoxyPlayer",
+                    selection = "heads",
+                    wager = 10,
+                },
+                wallet = { available = 90, held = 0, holds = {} },
+            }
+        elseif action == "BET_LOBBY_STATUS" then
+            betStatusCalls = betStatusCalls + 1
+            local finished = betStatusCalls >= 2
+            return {
+                lobby = {
+                    code = "CCG234",
+                    game = "heads_tails",
+                    game_name = "Heads or Tails",
+                    multiplier = 2,
+                    status = finished and "finished" or "running",
+                    outcome = finished and "heads" or nil,
+                },
+                player = {
+                    display_name = "FoxyPlayer",
+                    selection = "heads",
+                    wager = 10,
+                    won = finished,
+                    payout = finished and 20 or nil,
+                    hold_id = finished and "HOLD0000000001" or nil,
+                },
+                wallet = {
+                    available = 90,
+                    held = finished and 20 or 0,
+                    hold_count = finished and 1 or 0,
+                    holds = finished and {
+                        {
+                            hold_id = "HOLD0000000001",
+                            amount = 20,
+                            status = "holding",
+                            release_day = 43,
+                            release_time = "12:00",
+                        },
+                    } or {},
+                },
+            }
+        elseif action == "BET_WALLET_SUMMARY" then
+            return {
+                wallet = {
+                    available = 90,
+                    held = 20,
+                    hold_count = 1,
+                    holds = {
+                        {
+                            hold_id = "HOLD0000000001",
+                            amount = 20,
+                            status = "holding",
+                            game_name = "Heads or Tails",
+                            release_day = 43,
+                            release_time = "12:00",
+                        },
+                    },
+                    activity = {
+                        {
+                            description = "Heads or Tails winnings - holding",
+                            amount = 20,
+                            day = 42,
+                        },
+                    },
+                },
+            }
+        elseif action == "BET_WALLET_DEPOSIT" then
+            assert(payload.amount == 25 and payload.pin == "1234")
+            return {
+                account_balance = 463,
+                wallet = {
+                    available = 115, held = 20, hold_count = 1,
+                    holds = {}, activity = {},
+                },
+            }
+        elseif action == "BET_WALLET_WITHDRAW" then
+            assert(payload.amount == 10 and payload.pin == "1234")
+            return {
+                account_balance = 473,
+                wallet = {
+                    available = 105, held = 20, hold_count = 1,
+                    holds = {}, activity = {},
+                },
+            }
         end
         return { ok = true }
     end,
@@ -475,6 +626,11 @@ function ui.input(_, title)
     if title == "PAY A CODE" then return "ABC123" end
     if title == "Send Money" then return "FoxyFriend" end
     if title == "They Receive" then return "100" end
+    if title == "Join CCG" then return "CCG234" end
+    if title == "Player Name" then return "FoxyPlayer" end
+    if title == "Set Wager" then return "10" end
+    if title == "Add to Bet Wallet" then return "25" end
+    if title == "Send to Foxy Account" then return "10" end
     error("Unexpected input screen: " .. tostring(title))
 end
 function ui.pin() return "1234" end
@@ -531,9 +687,16 @@ assert(find(buttonLabels, "=\nActivity"))
 assert(find(buttonLabels, "o\nSettings"))
 assert(find(buttonLabels, "V\nVisas"))
 assert(find(buttonLabels, "C\nCustoms"))
+assert(find(buttonLabels, "B\nBet"))
+assert(find(buttonLabels, "$\nBet Wallet"))
 assert(find(requests, "REGISTER"))
 assert(find(requests, "ACCOUNT_SUMMARY"))
 assert(find(requests, "VISA_OVERVIEW"))
 assert(find(requests, "CUSTOMS_DETAIL"))
+assert(find(requests, "BET_UNLOCK"))
+assert(find(requests, "BET_JOIN"))
+assert(find(requests, "BET_PLACE_WAGER"))
+assert(find(requests, "BET_WALLET_DEPOSIT"))
+assert(find(requests, "BET_WALLET_WITHDRAW"))
 
 print("host_pumpe_flow_test: OK")

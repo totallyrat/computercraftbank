@@ -1,5 +1,19 @@
 # Changelog
 
+## 6.0.0
+
+- Added **ComputerCraftGaming (CCG) Bet Play** as a new Easy Deployment role for an Advanced Computer, Ender/wireless modem, and any-size Advanced Monitor.
+- Added the PIN-gated **Bet** app to PUMPE. Players enter the big-screen lobby code, choose a unique display name, select their pick, reserve a wager, and wait for the console to start the game.
+- Added the separate **Bet Wallet** app with PIN-confirmed transfers to and from the Foxy Account, available balance, held balance, release times, and CCG activity history.
+- Added exact 24-in-game-hour payout holds. Winning funds survive Bank restarts and release once into Bet Wallet; they never become spendable early merely because the day number rolled over.
+- Added Bank-authoritative **Heads or Tails** with `2×` payouts and **Race** with six colored cars, a server-random finish order, a responsive animated track, and `3×` payouts.
+- Added interactive **Survivor** with a PUMPE touch joystick, push action/cooldown, server-simulated movement and collisions, a shrinking circular platform, live big-screen positions, and a `3×` last-player-standing payout.
+- Added wager escrow, pre-start leave/expiry refunds, single-settlement guards, short-lived PIN-unlocked Bet sessions, server-side wager bounds, and automatic Survivor refunds if a Bank restart interrupts the live simulation.
+- Added CCG console restart recovery. A restored console resumes its active lobby or animation instead of getting trapped behind an already-active game.
+- Kept the public release manifest compatible with older v5 Bank updaters. The new `ccg.lua` is downloaded into `/updates/` as a checksum-pinned deferred file and is then served normally through Easy Deployment.
+- Expanded the PUMPE Home Screen to four readable 26×20 app pages and added complete 1×1-monitor, PUMPE Bet flow, CCG settlement, hold timing, odds, Survivor control, refund, deployment, and syntax coverage.
+- Deferred Home Play and its standalone Pocket Computer controller to a future release, as requested.
+
 ## 5.4.0
 
 - Removed Proximity Pay completely from PUMPE, Service Kiosk, Bank routes, GPS state, and active configuration.

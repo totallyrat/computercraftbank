@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "5.4.0"
+local INSTALLER_VERSION = "6.0.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -41,6 +41,7 @@ local roles = {
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
     { id = "bank", label = "BANK SERVER", detail = "Protected download", protected = true },
     { id = "tax", label = "TAX CONTROLLER", detail = "Protected download", protected = true },
+    { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
 }
 
 local rolePrograms = {
@@ -50,6 +51,7 @@ local rolePrograms = {
     event = "event_kiosk.lua",
     tax = "tax_controller.lua",
     border = "border_controller.lua",
+    ccg = "ccg.lua",
 }
 
 local function roleById(id)
@@ -652,6 +654,7 @@ local BANK_LOCAL_FILES = {
     { path = "event_kiosk.lua", source = "event_kiosk.lua" },
     { path = "tax_controller.lua", source = "tax_controller.lua" },
     { path = "border_controller.lua", source = "border_controller.lua" },
+    { path = "ccg.lua", source = "ccg.lua" },
     { path = "startup.lua", source = "startup.lua" },
     { path = "installer.lua", source = "startup.lua" },
     { path = "config.lua", source = "config.lua" },

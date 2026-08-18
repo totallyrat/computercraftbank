@@ -18,12 +18,13 @@ end
 local sources = {
     "bank_server.lua", "pumpe.lua", "service_kiosk.lua",
     "event_kiosk.lua", "tax_controller.lua", "border_controller.lua",
+    "ccg.lua",
     "startup.lua", "config.lua", "lib/net.lua", "lib/ui.lua",
     "lib/update.lua", "lib/util.lua",
 }
 for _, path in ipairs(sources) do
     files[canonical("/bundle/" .. path)] = path == "config.lua"
-        and 'return { version = "5.4.0" }\n'
+        and 'return { version = "6.0.0" }\n'
         or ("-- source " .. path .. "\n")
 end
 
@@ -119,6 +120,7 @@ assert(loadfile("../startup.lua"))()
 assert(#events == 0)
 assert(launched == "/pumpe/bank_server.lua")
 assert(files["/pumpe/bank_server.lua"] == files["/bundle/bank_server.lua"])
+assert(files["/pumpe/ccg.lua"] == files["/bundle/ccg.lua"])
 assert(files["/pumpe/installer.lua"] == files["/bundle/startup.lua"])
 assert(files["/pumpe/startup.lua"] == files["/bundle/startup.lua"])
 assert(files["/pumpe/launcher.lua"] == nil)

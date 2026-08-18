@@ -20,6 +20,12 @@ local CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
 local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
 local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
 local BORDER_CONTROLLER_CHECKSUM = "4fed221f"
+local CCG_CHECKSUM = "8a18d309"
+
+local DEFERRED_PUBLIC_FILES = {
+    ["border_controller.lua"] = BORDER_CONTROLLER_CHECKSUM,
+    ["ccg.lua"] = CCG_CHECKSUM,
+}
 
 local LOCAL_UPDATE_FILES = {
     "bank_server.lua",
@@ -28,6 +34,7 @@ local LOCAL_UPDATE_FILES = {
     "event_kiosk.lua",
     "tax_controller.lua",
     "border_controller.lua",
+    "ccg.lua",
     "startup.lua",
     "config.lua",
     "lib/net.lua",
@@ -61,6 +68,7 @@ local ROLE_MAIN_FILES = {
     event = "event_kiosk.lua",
     tax = "tax_controller.lua",
     border = "border_controller.lua",
+    ccg = "ccg.lua",
 }
 
 local COMMON_UPDATE_FILES = {
@@ -110,13 +118,15 @@ local function writePublicDeployConfig()
         .. textutils.serialize(publicConfig, { compact = false }) .. "\n")
 end
 
-local function fetchBorderController()
+local function fetchDeferredPublicFile(path)
     if type(http) ~= "table" or type(http.get) ~= "function" then return nil end
+    local expectedChecksum = DEFERRED_PUBLIC_FILES[path]
+    if not expectedChecksum then return nil end
     local manifestUrl = tostring(config.update_manifest_url or "")
     manifestUrl = manifestUrl:gsub("[?#].*$", "")
     local base = manifestUrl:match("^(https://.*/)[^/]+$")
     if not base then return nil end
-    local url = base .. "border_controller.lua?pumpe="
+    local url = base .. path .. "?pumpe="
         .. tostring(config.version or util.nowMs())
     local ok, response = pcall(http.get, {
         url = url,
@@ -142,18 +152,19 @@ local function fetchBorderController()
     end
     pcall(response.close)
     local body = table.concat(chunks)
-    if util.checksum(body) ~= BORDER_CONTROLLER_CHECKSUM then return nil end
-    pcall(util.writeFile, fs.combine(ROOT, "border_controller.lua"), body)
+    if util.checksum(body) ~= expectedChecksum then return nil end
+    pcall(util.writeFile, fs.combine(ROOT, path), body)
     return body
 end
 
 local function localUpdateBody(path)
     local body = util.readFile(fs.combine(ROOT, path))
-    if path == "border_controller.lua" then
-        if body and util.checksum(body) == BORDER_CONTROLLER_CHECKSUM then
+    local deferredChecksum = DEFERRED_PUBLIC_FILES[path]
+    if deferredChecksum then
+        if body and util.checksum(body) == deferredChecksum then
             return body
         end
-        return fetchBorderController()
+        return fetchDeferredPublicFile(path)
     end
     if path == "startup.lua"
         and (not body
@@ -233,21 +244,33 @@ local function stageLocalUpdateFiles()
     return staged
 end
 
-local function onlyDeferredBorderMissing(missing)
-    return #missing == 1
-        and missing[1]:find("border_controller.lua", 1, true) == 1
+local function onlyDeferredFilesMissing(missing)
+    if #missing == 0 then return false end
+    for _, item in ipairs(missing) do
+        local path = item:match("^([^ ]+)") or item
+        if not DEFERRED_PUBLIC_FILES[path] then return false end
+    end
+    return true
 end
 
-local function repairBorderDepot()
-    local destination = fs.combine(UPDATES_DIR, "border_controller.lua")
-    local deployed = util.readFile(destination)
-    if deployed and util.checksum(deployed) == BORDER_CONTROLLER_CHECKSUM then
-        return true
+local function repairDeferredDepot()
+    local allReady = true
+    for path, expectedChecksum in pairs(DEFERRED_PUBLIC_FILES) do
+        local destination = fs.combine(UPDATES_DIR, path)
+        local deployed = util.readFile(destination)
+        if not deployed or util.checksum(deployed) ~= expectedChecksum then
+            local body = localUpdateBody(path)
+            if body then
+                local ok = pcall(util.writeFile, destination, body)
+                if not ok or util.readFile(destination) ~= body then
+                    allReady = false
+                end
+            else
+                allReady = false
+            end
+        end
     end
-    local body = localUpdateBody("border_controller.lua")
-    if not body then return false end
-    local ok = pcall(util.writeFile, destination, body)
-    return ok and util.readFile(destination) == body
+    return allReady
 end
 
 local function renderUpdateBootstrap(created, staged, missing)
@@ -312,7 +335,7 @@ local function bootstrapUpdateDepot()
         ensureBankStartup()
         return
     end
-    if #missing == 0 or onlyDeferredBorderMissing(missing) then
+    if #missing == 0 or onlyDeferredFilesMissing(missing) then
         ensureBankStartup()
         return
     end
@@ -344,12 +367,14 @@ if not TEST_MODE then bootstrapUpdateDepot() end
 local DATA_FILE = fs.combine(ROOT, config.data_file)
 local sessions = {}
 local governmentSessions = {}
+local betSessions = {}
 local activity = {}
 local running = true
+local BANK_BOOT_ID = util.token("BANK_BOOT")
 
 local function blankState()
     return {
-        schema = 7,
+        schema = 8,
         created_at = util.nowMs(),
         sequence = {
             account = 0, company = 0, terminal = 0, event = 0,
@@ -357,6 +382,8 @@ local function blankState()
             period = 0, notification = 0, subscription = 0,
             territory = 0, visa = 0,
             visa_application = 0, visit = 0, border = 0,
+            bet_hold = 0, bet_activity = 0,
+            ccg_console = 0, ccg_lobby = 0,
         },
         accounts = {},
         account_names = {},
@@ -376,6 +403,10 @@ local function blankState()
         visa_applications = {},
         visits = {},
         border_controllers = {},
+        ccg_consoles = {},
+        ccg_lobbies = {},
+        ccg_codes = {},
+        ccg_house_profit = 0,
         tax_revenue = 0,
         processing_fee_revenue = 0,
         last_subscription_day = -1,
@@ -403,6 +434,15 @@ local function ensureState()
         account.daily_spent = account.daily_spent or 0
         account.daily_sent = account.daily_sent or 0
         account.last_spent_day = account.last_spent_day or util.ingameDay()
+        account.bet_wallet = account.bet_wallet or {
+            balance = 0,
+            holds = {},
+            activity = {},
+        }
+        account.bet_wallet.balance = util.roundMoney(
+            account.bet_wallet.balance or 0) or 0
+        account.bet_wallet.holds = account.bet_wallet.holds or {}
+        account.bet_wallet.activity = account.bet_wallet.activity or {}
         if account.name then
             state.account_names[util.normalName(account.name)] = account.account_id
         end
@@ -432,7 +472,7 @@ local function ensureState()
         event.ticket_type_ids = event.ticket_type_ids or {}
         event.status = event.status or "active"
     end
-    state.schema = 7
+    state.schema = 8
     state.territory_names = {}
     for territoryId, territory in pairs(state.territories) do
         territory.territory_id = territory.territory_id or territoryId
@@ -472,6 +512,20 @@ local function ensureState()
     for controllerId, controller in pairs(state.border_controllers) do
         controller.controller_id = controller.controller_id or controllerId
         controller.status = controller.status or "active"
+    end
+    state.ccg_codes = {}
+    for consoleId, console in pairs(state.ccg_consoles) do
+        console.console_id = console.console_id or consoleId
+        console.status = console.status or "active"
+    end
+    for lobbyId, lobby in pairs(state.ccg_lobbies) do
+        lobby.lobby_id = lobby.lobby_id or lobbyId
+        lobby.players = lobby.players or {}
+        lobby.player_order = lobby.player_order or {}
+        if lobby.code and (lobby.status == "lobby"
+            or lobby.status == "running") then
+            state.ccg_codes[string.upper(lobby.code)] = lobby.lobby_id
+        end
     end
 end
 
@@ -515,6 +569,10 @@ local prefixes = {
     visa_application = { "VAPP", 8 },
     visit = { "VISIT", 8 },
     border = { "BORDER", 6 },
+    bet_hold = { "HOLD", 10 },
+    bet_activity = { "BACT", 10 },
+    ccg_console = { "CCG", 6 },
+    ccg_lobby = { "GAME", 8 },
 }
 
 local function nextId(kind)
@@ -607,6 +665,37 @@ local function requireGovernment(payload)
         "GOVERNMENT_AUTH", "Government session expired")
     session.expires_at = util.nowMs() + config.session_ttl_ms
     return session
+end
+
+local function createBetSession(account)
+    local token = util.token("BET")
+    betSessions[token] = {
+        account_id = account.account_id,
+        expires_at = util.nowMs()
+            + (tonumber(config.bet_access_ttl_ms) or 15 * 60 * 1000),
+    }
+    return token
+end
+
+local function requireBetSession(payload)
+    local token = payload and payload.bet_token
+    local session = betSessions[token]
+    need(session and session.expires_at > util.nowMs(),
+        "BET_SESSION_EXPIRED", "Unlock the Bet app with your PIN again")
+    local account = state.accounts[session.account_id]
+    checkAccountActive(account)
+    session.expires_at = util.nowMs()
+        + (tonumber(config.bet_access_ttl_ms) or 15 * 60 * 1000)
+    return account
+end
+
+local function requireCCGConsole(payload)
+    local console = state.ccg_consoles[payload and payload.console_id]
+    need(console and console.auth_token == payload.console_token,
+        "CCG_AUTH", "CCG console is not registered")
+    need(console.status == "active", "CCG_INACTIVE", "CCG console is inactive")
+    console.last_seen = util.nowMs()
+    return console
 end
 
 local function notification(account, title, body, kind)
@@ -906,6 +995,9 @@ local function cleanupEphemeral()
     for token, session in pairs(governmentSessions) do
         if session.expires_at <= now then governmentSessions[token] = nil end
     end
+    for token, session in pairs(betSessions) do
+        if session.expires_at <= now then betSessions[token] = nil end
+    end
     local today = util.ingameDay()
     for _, visit in pairs(state.visits) do
         if visit.status == "visiting" and visit.due_day
@@ -968,6 +1060,7 @@ function actions.REGISTER(payload)
         smart_declaration_lifetime = false,
         subscriptions = {},
         notifications = {},
+        bet_wallet = { balance = 0, holds = {}, activity = {} },
         daily_spent = 0,
         daily_sent = 0,
         last_spent_day = util.ingameDay(),
@@ -1112,6 +1205,834 @@ function actions.CANCEL_SUBSCRIPTION(payload)
     subscription.cancelled_day = util.ingameDay()
     save()
     return { subscription = util.copy(subscription) }
+end
+
+-- ComputerCraftGaming / Bet Wallet routes ---------------------------------
+
+local CCG_GAMES = {
+    heads_tails = {
+        name = "Heads or Tails",
+        multiplier = 2,
+        maximum_players = 24,
+    },
+    race = {
+        name = "Race",
+        multiplier = 3,
+        maximum_players = 24,
+    },
+    survivor = {
+        name = "Survivor",
+        multiplier = 3,
+        maximum_players = 8,
+    },
+}
+
+local RACE_COLORS = {
+    "red", "orange", "yellow", "green", "blue", "purple",
+}
+
+local function walletFor(account)
+    account.bet_wallet = account.bet_wallet or {
+        balance = 0,
+        holds = {},
+        activity = {},
+    }
+    account.bet_wallet.balance = util.roundMoney(
+        account.bet_wallet.balance or 0) or 0
+    account.bet_wallet.holds = account.bet_wallet.holds or {}
+    account.bet_wallet.activity = account.bet_wallet.activity or {}
+    return account.bet_wallet
+end
+
+local function betActivity(account, kind, amount, description, extra)
+    local wallet = walletFor(account)
+    local item = {
+        activity_id = nextId("bet_activity"),
+        type = kind,
+        amount = util.roundMoney(amount) or 0,
+        description = util.safeText(description, 80),
+        game = extra and extra.game or nil,
+        lobby_code = extra and extra.lobby_code or nil,
+        day = util.ingameDay(),
+        time = util.formatClock(),
+        timestamp = util.nowMs(),
+    }
+    table.insert(wallet.activity, 1, item)
+    while #wallet.activity > 60 do table.remove(wallet.activity) end
+    return item
+end
+
+local function releaseAccountBetHolds(account)
+    local wallet = walletFor(account)
+    local released = 0
+    local nowMoment = util.ingameMoment()
+    for _, hold in pairs(wallet.holds) do
+        local releaseMoment = tonumber(hold.release_moment)
+        if not releaseMoment and hold.release_day then
+            releaseMoment = tonumber(hold.release_day) * 24
+        end
+        if hold.status == "holding" and releaseMoment
+            and nowMoment >= releaseMoment then
+            hold.status = "released"
+            hold.released_day = util.ingameDay()
+            hold.released_time = util.formatClock()
+            wallet.balance = util.roundMoney(wallet.balance + hold.amount)
+            released = released + hold.amount
+            betActivity(account, "winnings_released", hold.amount,
+                (hold.game_name or "CCG") .. " winnings released", {
+                    game = hold.game,
+                    lobby_code = hold.lobby_code,
+                })
+        end
+    end
+    if released > 0 then
+        notification(account, "Bet Wallet funds released",
+            util.money(released, config.currency)
+                .. " is now available in your Bet Wallet", "gaming")
+    end
+    return util.roundMoney(released)
+end
+
+local function processBetHolds()
+    local changed = false
+    for _, account in pairs(state.accounts) do
+        if releaseAccountBetHolds(account) > 0 then changed = true end
+    end
+    if changed then save() end
+    return changed
+end
+
+local function betWalletSnapshot(account)
+    local wallet = walletFor(account)
+    local holds = util.sortedValues(wallet.holds, nil, function(a, b)
+        return (a.created_at or 0) > (b.created_at or 0)
+    end)
+    local pending, pendingCount = 0, 0
+    for _, hold in ipairs(holds) do
+        if hold.status == "holding" then
+            pending = util.roundMoney(pending + hold.amount)
+            pendingCount = pendingCount + 1
+        end
+    end
+    return {
+        available = wallet.balance,
+        held = pending,
+        hold_count = pendingCount,
+        holds = util.copy(holds),
+        activity = util.copy(wallet.activity),
+    }
+end
+
+local function addBetHold(account, lobby, amount)
+    local wallet = walletFor(account)
+    local releaseMoment = util.ingameMoment()
+        + (tonumber(config.bet_hold_ingame_hours) or 24)
+    local releaseDay, releaseTime = util.formatIngameMoment(releaseMoment)
+    local holdId = nextId("bet_hold")
+    local hold = {
+        hold_id = holdId,
+        amount = util.roundMoney(amount),
+        status = "holding",
+        game = lobby.game,
+        game_name = CCG_GAMES[lobby.game].name,
+        lobby_code = lobby.code,
+        created_day = util.ingameDay(),
+        created_time = util.formatClock(),
+        created_at = util.nowMs(),
+        release_moment = releaseMoment,
+        release_day = releaseDay,
+        release_time = releaseTime,
+    }
+    wallet.holds[holdId] = hold
+    betActivity(account, "winnings_held", hold.amount,
+        hold.game_name .. " winnings - holding", {
+            game = lobby.game,
+            lobby_code = lobby.code,
+        })
+    return hold
+end
+
+local function uniqueCCGCode()
+    local code
+    repeat code = util.randomString(6, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+    until not state.ccg_codes[code]
+    return code
+end
+
+local function lobbyByCode(code)
+    code = string.upper(util.trim(code))
+    local lobbyId = state.ccg_codes[code]
+    return lobbyId and state.ccg_lobbies[lobbyId] or nil
+end
+
+local function publicCCGPlayer(player)
+    return {
+        player_id = player.account_id,
+        seat = player.seat,
+        display_name = player.display_name,
+        wager = player.wager or 0,
+        selection = player.selection,
+        ready = (player.wager or 0) > 0,
+        alive = player.alive,
+        x = player.x,
+        y = player.y,
+        color = player.color,
+        won = player.won,
+        payout = player.payout,
+        hold_id = player.hold_id,
+    }
+end
+
+local function publicCCGLobby(lobby, revealOutcome)
+    local players = {}
+    for _, accountId in ipairs(lobby.player_order or {}) do
+        local player = lobby.players[accountId]
+        if player then players[#players + 1] = publicCCGPlayer(player) end
+    end
+    local output = {
+        lobby_id = lobby.lobby_id,
+        code = lobby.code,
+        game = lobby.game,
+        game_name = CCG_GAMES[lobby.game] and CCG_GAMES[lobby.game].name
+            or lobby.game,
+        multiplier = CCG_GAMES[lobby.game]
+            and CCG_GAMES[lobby.game].multiplier or 0,
+        status = lobby.status,
+        player_count = #players,
+        players = players,
+        created_day = lobby.created_day,
+        expires_in_ms = math.max(0,
+            (lobby.expires_at or util.nowMs()) - util.nowMs()),
+        started_at = lobby.started_at,
+        finished_at = lobby.finished_at,
+        winner_player_id = lobby.winner_account_id,
+        winner_name = lobby.winner_name,
+        cancelled_reason = lobby.cancelled_reason,
+    }
+    if lobby.status == "finished" or revealOutcome then
+        output.outcome = lobby.outcome
+        output.race_order = util.copy(lobby.race_order)
+    end
+    if lobby.game == "survivor" and lobby.status == "running" then
+        output.platform_radius = lobby.platform_radius
+        output.elapsed_ms = math.max(0,
+            util.nowMs() - (lobby.started_at or util.nowMs()))
+        output.maximum_ms = (tonumber(config.ccg_survivor_max_seconds) or 75)
+            * 1000
+    end
+    return output
+end
+
+local function refundLobby(lobby, reason)
+    if lobby.escrow_closed then return false end
+    for accountId, player in pairs(lobby.players or {}) do
+        if (player.wager or 0) > 0 and not player.settled then
+            local account = state.accounts[accountId]
+            if account then
+                local wallet = walletFor(account)
+                wallet.balance = util.roundMoney(wallet.balance + player.wager)
+                betActivity(account, "wager_refund", player.wager,
+                    CCG_GAMES[lobby.game].name .. " wager refunded", {
+                        game = lobby.game,
+                        lobby_code = lobby.code,
+                    })
+            end
+            player.settled = true
+            player.refunded = true
+        end
+    end
+    lobby.escrow_closed = true
+    lobby.status = "cancelled"
+    lobby.cancelled_reason = reason or "Lobby cancelled"
+    lobby.finished_at = util.nowMs()
+    return true
+end
+
+local function finishLobbySettlement(lobby, winnerIds)
+    if lobby.escrow_closed then return false end
+    winnerIds = winnerIds or {}
+    local totalStakes, totalPayouts = 0, 0
+    for accountId, player in pairs(lobby.players) do
+        local wager = util.roundMoney(player.wager or 0) or 0
+        totalStakes = util.roundMoney(totalStakes + wager)
+        local account = state.accounts[accountId]
+        local won = winnerIds[accountId] == true
+        local payout = won and util.roundMoney(
+            wager * CCG_GAMES[lobby.game].multiplier) or 0
+        player.won = won
+        player.payout = payout
+        player.settled = true
+        if account then
+            if payout > 0 then
+                local hold = addBetHold(account, lobby, payout)
+                player.hold_id = hold.hold_id
+                notification(account, "CCG win - funds holding",
+                    util.money(payout, config.currency) .. " from "
+                        .. CCG_GAMES[lobby.game].name
+                        .. " releases on day " .. hold.release_day
+                        .. " at " .. hold.release_time, "gaming")
+                totalPayouts = util.roundMoney(totalPayouts + payout)
+            else
+                betActivity(account, "bet_lost", -wager,
+                    CCG_GAMES[lobby.game].name .. " result", {
+                        game = lobby.game,
+                        lobby_code = lobby.code,
+                    })
+                notification(account, "CCG result",
+                    "Your " .. CCG_GAMES[lobby.game].name
+                        .. " wager did not win", "gaming")
+            end
+        end
+    end
+    state.ccg_house_profit = util.roundMoney(
+        (state.ccg_house_profit or 0) + totalStakes - totalPayouts)
+    lobby.escrow_closed = true
+    lobby.status = "finished"
+    lobby.finished_at = util.nowMs()
+    logActivity("CCG settled " .. lobby.code .. " / "
+        .. CCG_GAMES[lobby.game].name, colors.magenta)
+    return true
+end
+
+local function settleChanceLobby(lobby)
+    local winners = {}
+    for accountId, player in pairs(lobby.players) do
+        if player.selection == lobby.outcome then winners[accountId] = true end
+    end
+    return finishLobbySettlement(lobby, winners)
+end
+
+local function settleSurvivorLobby(lobby, winnerId)
+    local winners = {}
+    if winnerId then winners[winnerId] = true end
+    lobby.winner_account_id = winnerId
+    local player = winnerId and lobby.players[winnerId]
+    lobby.winner_name = player and player.display_name or "No winner"
+    lobby.outcome = lobby.winner_name
+    return finishLobbySettlement(lobby, winners)
+end
+
+local function aliveSurvivors(lobby)
+    local alive = {}
+    for _, accountId in ipairs(lobby.player_order) do
+        local player = lobby.players[accountId]
+        if player and player.alive then alive[#alive + 1] = player end
+    end
+    return alive
+end
+
+local function advanceSurvivor(lobby, now)
+    if lobby.status ~= "running" or lobby.game ~= "survivor" then return false end
+    now = now or util.nowMs()
+    local last = lobby.last_sim_at or now
+    local remaining = math.max(0, math.min(1, (now - last) / 1000))
+    lobby.last_sim_at = now
+    local maxSeconds = tonumber(config.ccg_survivor_max_seconds) or 75
+    local elapsed = math.max(0, (now - lobby.started_at) / 1000)
+    local shrink = util.clamp((elapsed - 18) / math.max(1, maxSeconds - 18), 0, 1)
+    lobby.platform_radius = 850 - shrink * 540
+
+    while remaining > 0 do
+        local step = math.min(0.1, remaining)
+        remaining = remaining - step
+        for _, player in ipairs(aliveSurvivors(lobby)) do
+            local inputActive = (player.input_until or 0) >= now
+            local inputX = inputActive and (player.input_x or 0) or 0
+            local inputY = inputActive and (player.input_y or 0) or 0
+            player.x = player.x + inputX * 315 * step
+                + (player.vx or 0) * step
+            player.y = player.y + inputY * 315 * step
+                + (player.vy or 0) * step
+            local damping = 0.72 ^ (step * 10)
+            player.vx = (player.vx or 0) * damping
+            player.vy = (player.vy or 0) * damping
+        end
+
+        local alive = aliveSurvivors(lobby)
+        for _, player in ipairs(alive) do
+            if player.push_requested then
+                player.push_requested = false
+                local nearest, nearestDistance
+                for _, targetPlayer in ipairs(alive) do
+                    if targetPlayer.account_id ~= player.account_id then
+                        local dx = targetPlayer.x - player.x
+                        local dy = targetPlayer.y - player.y
+                        local distance = math.sqrt(dx * dx + dy * dy)
+                        if not nearestDistance or distance < nearestDistance then
+                            nearest = targetPlayer
+                            nearestDistance = distance
+                        end
+                    end
+                end
+                if nearest and nearestDistance <= 260 then
+                    local divisor = math.max(1, nearestDistance)
+                    nearest.vx = (nearest.vx or 0)
+                        + (nearest.x - player.x) / divisor * 610
+                    nearest.vy = (nearest.vy or 0)
+                        + (nearest.y - player.y) / divisor * 610
+                    player.last_push_hit = nearest.account_id
+                end
+            end
+        end
+
+        alive = aliveSurvivors(lobby)
+        for first = 1, #alive do
+            for second = first + 1, #alive do
+                local a, b = alive[first], alive[second]
+                local dx, dy = b.x - a.x, b.y - a.y
+                local distance = math.sqrt(dx * dx + dy * dy)
+                if distance < 85 then
+                    local divisor = math.max(1, distance)
+                    local separation = (85 - distance) * 0.52
+                    local nx, ny = dx / divisor, dy / divisor
+                    a.x, a.y = a.x - nx * separation, a.y - ny * separation
+                    b.x, b.y = b.x + nx * separation, b.y + ny * separation
+                end
+            end
+        end
+
+        for _, player in ipairs(aliveSurvivors(lobby)) do
+            local distance = math.sqrt(player.x * player.x + player.y * player.y)
+            if distance > lobby.platform_radius + 24 then
+                player.alive = false
+                player.eliminated_at = now
+                lobby.last_eliminated = player.account_id
+            end
+        end
+    end
+
+    local alive = aliveSurvivors(lobby)
+    if #alive <= 1 then
+        local winnerId = alive[1] and alive[1].account_id
+            or lobby.last_eliminated
+        return settleSurvivorLobby(lobby, winnerId)
+    end
+    if elapsed >= maxSeconds then
+        local winner, nearest
+        for _, player in ipairs(alive) do
+            local distance = player.x * player.x + player.y * player.y
+            if not nearest or distance < nearest then
+                winner, nearest = player, distance
+            end
+        end
+        for _, player in ipairs(alive) do
+            if player ~= winner then player.alive = false end
+        end
+        return settleSurvivorLobby(lobby, winner and winner.account_id)
+    end
+    return false
+end
+
+local function processCCGGames()
+    local now, changed = util.nowMs(), false
+    for lobbyId, lobby in pairs(state.ccg_lobbies) do
+        if lobby.status == "lobby" and lobby.expires_at <= now then
+            changed = refundLobby(lobby, "Lobby expired") or changed
+        elseif lobby.status == "running" then
+            if lobby.game == "survivor" then
+                if lobby.bank_boot_id ~= BANK_BOOT_ID then
+                    changed = refundLobby(lobby,
+                        "Bank restarted during Survivor") or changed
+                else
+                    changed = advanceSurvivor(lobby, now) or changed
+                end
+            elseif lobby.reveal_at and now >= lobby.reveal_at then
+                changed = settleChanceLobby(lobby) or changed
+            end
+        elseif (lobby.status == "finished" or lobby.status == "cancelled")
+            and lobby.finished_at and lobby.finished_at + 30 * 60 * 1000 < now then
+            if state.ccg_codes[lobby.code] == lobbyId then
+                state.ccg_codes[lobby.code] = nil
+            end
+            state.ccg_lobbies[lobbyId] = nil
+            changed = true
+        end
+    end
+    if changed then save() end
+    return changed
+end
+
+function actions.BET_UNLOCK(payload)
+    local account = requireSession(payload)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    releaseAccountBetHolds(account)
+    save()
+    return {
+        bet_token = createBetSession(account),
+        wallet = betWalletSnapshot(account),
+    }
+end
+
+function actions.BET_WALLET_SUMMARY(payload)
+    local account = requireSession(payload)
+    if releaseAccountBetHolds(account) > 0 then save() end
+    return { wallet = betWalletSnapshot(account) }
+end
+
+function actions.BET_WALLET_DEPOSIT(payload)
+    local account = requireSession(payload)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local amount = validateAmount(payload.amount, account.balance)
+    local wallet = walletFor(account)
+    account.balance = util.roundMoney(account.balance - amount)
+    wallet.balance = util.roundMoney(wallet.balance + amount)
+    transaction(account, "bet_wallet_deposit", -amount,
+        "CCG Bet Wallet", "Moved to Bet Wallet")
+    betActivity(account, "wallet_deposit", amount,
+        "Added from Foxy Account")
+    save()
+    return {
+        account_balance = account.balance,
+        wallet = betWalletSnapshot(account),
+    }
+end
+
+function actions.BET_WALLET_WITHDRAW(payload)
+    local account = requireSession(payload)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    releaseAccountBetHolds(account)
+    local wallet = walletFor(account)
+    local amount = validateAmount(payload.amount, wallet.balance)
+    wallet.balance = util.roundMoney(wallet.balance - amount)
+    account.balance = util.roundMoney(account.balance + amount)
+    transaction(account, "bet_wallet_withdrawal", amount,
+        "CCG Bet Wallet", "Moved from Bet Wallet")
+    betActivity(account, "wallet_withdrawal", -amount,
+        "Sent to Foxy Account")
+    save()
+    return {
+        account_balance = account.balance,
+        wallet = betWalletSnapshot(account),
+    }
+end
+
+function actions.CCG_REGISTER(payload)
+    if payload.console_id and payload.console_token then
+        local existing = state.ccg_consoles[payload.console_id]
+        if existing and existing.auth_token == payload.console_token then
+            existing.last_seen = util.nowMs()
+            return {
+                console_id = existing.console_id,
+                console_token = existing.auth_token,
+                name = existing.name,
+            }
+        end
+    end
+    local consoleId = nextId("ccg_console")
+    local console = {
+        console_id = consoleId,
+        auth_token = util.token("CCG_CONSOLE"),
+        name = util.safeText(payload.name or ("CCG " .. consoleId), 24),
+        status = "active",
+        created_day = util.ingameDay(),
+        last_seen = util.nowMs(),
+    }
+    state.ccg_consoles[consoleId] = console
+    save()
+    logActivity("Registered " .. console.name, colors.magenta)
+    return {
+        console_id = console.console_id,
+        console_token = console.auth_token,
+        name = console.name,
+    }
+end
+
+function actions.CCG_CREATE_LOBBY(payload)
+    local console = requireCCGConsole(payload)
+    processCCGGames()
+    local game = string.lower(util.trim(payload.game))
+    need(CCG_GAMES[game], "INVALID_GAME", "Choose a supported CCG game")
+    for _, lobby in pairs(state.ccg_lobbies) do
+        need(lobby.console_id ~= console.console_id
+            or (lobby.status ~= "lobby" and lobby.status ~= "running"),
+            "LOBBY_ACTIVE", "Finish or cancel the current lobby first")
+    end
+    local lobbyId = nextId("ccg_lobby")
+    local code = uniqueCCGCode()
+    local lobby = {
+        lobby_id = lobbyId,
+        code = code,
+        console_id = console.console_id,
+        game = game,
+        status = "lobby",
+        players = {},
+        player_order = {},
+        created_day = util.ingameDay(),
+        created_at = util.nowMs(),
+        expires_at = util.nowMs()
+            + (tonumber(config.ccg_lobby_ttl_ms) or 5 * 60 * 1000),
+    }
+    state.ccg_lobbies[lobbyId] = lobby
+    state.ccg_codes[code] = lobbyId
+    console.active_lobby_id = lobbyId
+    save()
+    return { lobby = publicCCGLobby(lobby, false) }
+end
+
+function actions.CCG_CONSOLE_STATUS(payload)
+    local console = requireCCGConsole(payload)
+    processCCGGames()
+    local lobby = payload.code and lobbyByCode(payload.code)
+        or (console.active_lobby_id
+            and state.ccg_lobbies[console.active_lobby_id])
+    need(lobby and lobby.console_id == console.console_id,
+        "LOBBY_NOT_FOUND", "CCG lobby not found")
+    return { lobby = publicCCGLobby(lobby, true) }
+end
+
+function actions.CCG_CANCEL_LOBBY(payload)
+    local console = requireCCGConsole(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.console_id == console.console_id,
+        "LOBBY_NOT_FOUND", "CCG lobby not found")
+    need(lobby.status == "lobby", "GAME_STARTED",
+        "A running game cannot be cancelled")
+    refundLobby(lobby, "Cancelled by console")
+    save()
+    return { lobby = publicCCGLobby(lobby, false) }
+end
+
+function actions.BET_JOIN(payload)
+    local account = requireBetSession(payload)
+    processCCGGames()
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.status == "lobby"
+        and lobby.expires_at > util.nowMs(),
+        "LOBBY_NOT_FOUND", "Lobby code is invalid or closed")
+    local displayName = util.safeText(util.trim(payload.display_name), 14)
+    need(#displayName >= 2 and displayName:match("^[%w_ %-]+$"),
+        "INVALID_NAME", "Use 2-14 letters, numbers, spaces, _ or -")
+    for otherId, other in pairs(lobby.players) do
+        need(otherId == account.account_id
+            or util.normalName(other.display_name) ~= util.normalName(displayName),
+            "NAME_TAKEN", "That player name is already in this lobby")
+    end
+    local player = lobby.players[account.account_id]
+    if not player then
+        need(#lobby.player_order < CCG_GAMES[lobby.game].maximum_players,
+            "LOBBY_FULL", "This lobby is full")
+        player = {
+            account_id = account.account_id,
+            seat = #lobby.player_order + 1,
+            display_name = displayName,
+            wager = 0,
+            joined_at = util.nowMs(),
+        }
+        lobby.players[account.account_id] = player
+        lobby.player_order[#lobby.player_order + 1] = account.account_id
+    elseif (player.wager or 0) == 0 then
+        player.display_name = displayName
+    end
+    save()
+    return {
+        lobby = publicCCGLobby(lobby, false),
+        player = publicCCGPlayer(player),
+    }
+end
+
+local function validRaceSelection(selection)
+    for _, value in ipairs(RACE_COLORS) do
+        if selection == value then return true end
+    end
+    return false
+end
+
+function actions.BET_PLACE_WAGER(payload)
+    local account = requireBetSession(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.status == "lobby",
+        "LOBBY_CLOSED", "Betting is closed for this lobby")
+    local player = lobby.players[account.account_id]
+    need(player, "NOT_JOINED", "Join the lobby before placing a wager")
+    local selection = string.lower(util.trim(payload.selection))
+    if lobby.game == "heads_tails" then
+        need(selection == "heads" or selection == "tails",
+            "INVALID_SELECTION", "Choose Heads or Tails")
+    elseif lobby.game == "race" then
+        need(validRaceSelection(selection), "INVALID_SELECTION",
+            "Choose one of the six race cars")
+    else
+        selection = "survivor"
+    end
+    local amount = validateAmount(payload.amount,
+        tonumber(config.bet_maximum) or 10000)
+    need(amount >= (tonumber(config.bet_minimum) or 1),
+        "INVALID_AMOUNT", "Wager is below the minimum")
+    local wallet = walletFor(account)
+    local previous = util.roundMoney(player.wager or 0) or 0
+    need(wallet.balance + previous >= amount,
+        "INSUFFICIENT_BET_FUNDS", "Not enough available in your Bet Wallet")
+    if previous > 0 then
+        wallet.balance = util.roundMoney(wallet.balance + previous)
+        betActivity(account, "wager_changed", previous,
+            "Previous wager returned", {
+                game = lobby.game,
+                lobby_code = lobby.code,
+            })
+    end
+    wallet.balance = util.roundMoney(wallet.balance - amount)
+    player.wager = amount
+    player.selection = selection
+    player.ready_at = util.nowMs()
+    betActivity(account, "wager_reserved", -amount,
+        CCG_GAMES[lobby.game].name .. " wager reserved", {
+            game = lobby.game,
+            lobby_code = lobby.code,
+        })
+    save()
+    return {
+        lobby = publicCCGLobby(lobby, false),
+        player = publicCCGPlayer(player),
+        wallet = betWalletSnapshot(account),
+    }
+end
+
+function actions.BET_LEAVE(payload)
+    local account = requireBetSession(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.status == "lobby",
+        "GAME_STARTED", "You cannot leave after the game starts")
+    local player = lobby.players[account.account_id]
+    need(player, "NOT_JOINED", "You are not in this lobby")
+    if (player.wager or 0) > 0 then
+        local wallet = walletFor(account)
+        wallet.balance = util.roundMoney(wallet.balance + player.wager)
+        betActivity(account, "wager_refund", player.wager,
+            CCG_GAMES[lobby.game].name .. " lobby left", {
+                game = lobby.game,
+                lobby_code = lobby.code,
+            })
+    end
+    lobby.players[account.account_id] = nil
+    for index, accountId in ipairs(lobby.player_order) do
+        if accountId == account.account_id then
+            table.remove(lobby.player_order, index)
+            break
+        end
+    end
+    for index, accountId in ipairs(lobby.player_order) do
+        lobby.players[accountId].seat = index
+    end
+    save()
+    return { wallet = betWalletSnapshot(account), left = true }
+end
+
+function actions.BET_LOBBY_STATUS(payload)
+    local account = requireBetSession(payload)
+    processCCGGames()
+    local lobby = lobbyByCode(payload.code)
+    need(lobby, "LOBBY_NOT_FOUND", "CCG lobby not found")
+    local player = lobby.players[account.account_id]
+    need(player, "NOT_JOINED", "You are not in this lobby")
+    return {
+        lobby = publicCCGLobby(lobby, false),
+        player = publicCCGPlayer(player),
+        wallet = betWalletSnapshot(account),
+    }
+end
+
+function actions.BET_CONTROL(payload)
+    local account = requireBetSession(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.status == "running" and lobby.game == "survivor",
+        "NOT_INTERACTIVE", "Survivor is not running")
+    local player = lobby.players[account.account_id]
+    need(player and player.alive, "ELIMINATED", "You are out of this round")
+    local dx = util.clamp(tonumber(payload.dx) or 0, -1, 1)
+    local dy = util.clamp(tonumber(payload.dy) or 0, -1, 1)
+    local length = math.sqrt(dx * dx + dy * dy)
+    if length > 1 then dx, dy = dx / length, dy / length end
+    player.input_x, player.input_y = dx, dy
+    player.input_until = util.nowMs() + 650
+    local pushed = false
+    if payload.push == true
+        and util.nowMs() >= (player.push_cooldown_until or 0) then
+        player.push_requested = true
+        player.push_cooldown_until = util.nowMs() + 1200
+        pushed = true
+    end
+    return {
+        accepted = true,
+        pushed = pushed,
+        push_cooldown_ms = math.max(0,
+            (player.push_cooldown_until or 0) - util.nowMs()),
+    }
+end
+
+local function shuffledRaceOrder()
+    local output = util.copy(RACE_COLORS)
+    for index = #output, 2, -1 do
+        local other = math.random(1, index)
+        output[index], output[other] = output[other], output[index]
+    end
+    return output
+end
+
+function actions.CCG_START(payload)
+    local console = requireCCGConsole(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.console_id == console.console_id,
+        "LOBBY_NOT_FOUND", "CCG lobby not found")
+    need(lobby.status == "lobby", "GAME_STARTED", "Game has already started")
+    local minimumPlayers = lobby.game == "survivor" and 2 or 1
+    need(#lobby.player_order >= minimumPlayers, "NOT_ENOUGH_PLAYERS",
+        lobby.game == "survivor" and "Survivor needs at least two players"
+            or "At least one player must join")
+    for _, accountId in ipairs(lobby.player_order) do
+        need((lobby.players[accountId].wager or 0) > 0,
+            "PLAYER_NOT_READY", "Every player must place a wager")
+    end
+    -- Seed the server RNG even when this is a restored console and no new
+    -- account/token has been created since the Bank Server restarted.
+    util.randomString(1)
+    lobby.status = "running"
+    lobby.started_at = util.nowMs()
+    lobby.bank_boot_id = BANK_BOOT_ID
+    lobby.expires_at = lobby.started_at + 30 * 60 * 1000
+    if lobby.game == "heads_tails" then
+        lobby.outcome = math.random(1, 2) == 1 and "heads" or "tails"
+        lobby.reveal_at = lobby.started_at
+            + (tonumber(config.ccg_result_delay_ms) or 6000)
+    elseif lobby.game == "race" then
+        lobby.race_order = shuffledRaceOrder()
+        lobby.outcome = lobby.race_order[1]
+        lobby.reveal_at = lobby.started_at
+            + (tonumber(config.ccg_result_delay_ms) or 6000)
+    else
+        local count = #lobby.player_order
+        for index, accountId in ipairs(lobby.player_order) do
+            local player = lobby.players[accountId]
+            local angle = (index - 1) / count * math.pi * 2
+            player.x = math.cos(angle) * 360
+            player.y = math.sin(angle) * 360
+            player.vx, player.vy = 0, 0
+            player.input_x, player.input_y = 0, 0
+            player.alive = true
+            player.color = RACE_COLORS[(index - 1) % #RACE_COLORS + 1]
+        end
+        lobby.platform_radius = 850
+        lobby.last_sim_at = lobby.started_at
+    end
+    save()
+    logActivity("CCG started " .. lobby.code .. " / "
+        .. CCG_GAMES[lobby.game].name, colors.cyan)
+    return { lobby = publicCCGLobby(lobby, true) }
+end
+
+function actions.CCG_TICK(payload)
+    local console = requireCCGConsole(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.console_id == console.console_id,
+        "LOBBY_NOT_FOUND", "CCG lobby not found")
+    local settled = false
+    if lobby.game == "survivor" then
+        settled = advanceSurvivor(lobby, util.nowMs())
+    elseif lobby.status == "running" and lobby.reveal_at
+        and util.nowMs() >= lobby.reveal_at then
+        settled = settleChanceLobby(lobby)
+    end
+    if settled then save() end
+    return { lobby = publicCCGLobby(lobby, true) }
 end
 
 -- Customs, citizenship, and visa routes -------------------------------------
@@ -2954,15 +3875,23 @@ local function deploymentLoop()
 end
 
 local function schedulerLoop()
-    local nextBorderRepair = 0
+    local nextDeferredRepair = 0
     while running do
         cleanupEphemeral()
         processSubscriptions()
-        if util.nowMs() >= nextBorderRepair then
-            repairBorderDepot()
-            nextBorderRepair = util.nowMs() + 30 * 1000
+        processBetHolds()
+        if util.nowMs() >= nextDeferredRepair then
+            repairDeferredDepot()
+            nextDeferredRepair = util.nowMs() + 30 * 1000
         end
         sleep(10)
+    end
+end
+
+local function ccgGameLoop()
+    while running do
+        processCCGGames()
+        sleep(0.15)
     end
 end
 
@@ -3038,6 +3967,10 @@ if TEST_MODE then
         actions = actions,
         state = state,
         cleanup = cleanupEphemeral,
+        process_bet_holds = processBetHolds,
+        process_ccg_games = processCCGGames,
+        advance_survivor = advanceSurvivor,
+        deployment_files = deploymentFilesForRole,
         ensure_bank_startup = ensureBankStartup,
         local_update_body = localUpdateBody,
     }
@@ -3056,7 +3989,7 @@ end
 save()
 
 parallel.waitForAny(serverLoop, deploymentLoop, schedulerLoop,
-    onlineUpdateLoop, dashboardLoop)
+    ccgGameLoop, onlineUpdateLoop, dashboardLoop)
 pcall(rednet.unhost, config.protocol)
 pcall(rednet.unhost, DEPLOY_PROTOCOL)
 ui.clear(term.current())

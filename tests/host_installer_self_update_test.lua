@@ -69,7 +69,7 @@ os.reboot = function() error("__REBOOT__") end
 
 local newInstaller = "-- PUMPE EASY DEPLOYMENT\n"
     .. "-- This file is intentionally standalone.\n"
-    .. "-- v5.5.0\n"
+    .. "-- v6.1.0\n"
 local function checksum(body)
     local hash = 5381
     for index = 1, #body do
@@ -86,7 +86,7 @@ end
 local manifest = {
     schema = 1,
     channel = "stable",
-    version = "5.5.0",
+    version = "6.1.0",
     files = {
         {
             path = "startup.lua",
