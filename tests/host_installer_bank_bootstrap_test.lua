@@ -42,6 +42,7 @@ fs = {
         return files[path] ~= nil or directories[path] == true
     end,
     isDir = function(path) return directories[canonical(path)] == true end,
+    getDrive = function() return "hdd" end,
     makeDir = function(path) directories[canonical(path)] = true end,
     delete = function(path)
         path = canonical(path)
@@ -119,18 +120,26 @@ end
 assert(loadfile("../startup.lua"))()
 assert(#events == 0)
 assert(launched == "/pumpe/bank_server.lua")
-assert(files["/pumpe/bank_server.lua"] == files["/bundle/bank_server.lua"])
-assert(files["/pumpe/ccg.lua"] == files["/bundle/ccg.lua"])
-assert(files["/pumpe/installer.lua"] == files["/bundle/startup.lua"])
-assert(files["/pumpe/startup.lua"] == files["/bundle/startup.lua"])
+assert(files["/pumpe/bank_server.lua"] == "-- source bank_server.lua\n")
+assert(files["/updates/ccg.lua"] == "-- source ccg.lua\n")
+assert(files["/updates/pumpe.lua"] == "-- source pumpe.lua\n")
+assert(files["/pumpe/ccg.lua"] == nil)
+assert(files["/pumpe/pumpe.lua"] == nil)
+assert(files["/pumpe/startup.lua"] == nil)
+assert(files["/pumpe/installer.lua"] == "-- source startup.lua\n")
 assert(files["/pumpe/launcher.lua"] == nil)
 assert(files["/startup.lua"]:find(
     'shell.run("/pumpe/installer.lua", "--boot", "bank")', 1, true))
+for _, path in ipairs(sources) do
+    assert(files[canonical("/bundle/" .. path)] == nil,
+        "same-drive Bank source was not moved: " .. path)
+end
 
 -- After Easy Deployment self-updates, it repairs the small shared utility
 -- before booting an older Bank. That lets the Bank checksum and install the
 -- rest of the internet release without hitting the watchdog first.
 local repairedUtil = "-- cooperative Bank checksum utility\n"
+local repairedBank = "-- compact Bank Server v6.0.2\n"
 local function checksum(body)
     local hash = 5381
     for index = 1, #body do
@@ -147,8 +156,14 @@ end
 local repairManifest = {
     schema = 1,
     channel = "stable",
-    version = "6.0.1",
+    version = "6.0.2",
     files = {
+        {
+            path = "bank_server.lua",
+            source = "bank_server.lua",
+            size = #repairedBank,
+            checksum = checksum(repairedBank),
+        },
         {
             path = "lib/util.lua",
             source = "lib/util.lua",
@@ -160,8 +175,17 @@ local repairManifest = {
 textutils = { unserializeJSON = function() return repairManifest end }
 http = {
     get = function(request)
+        if request.url:find("bank_server.lua", 1, true) then
+            assert(files["/updates/bank_server.lua"] == nil,
+                "legacy duplicate was not freed before Bank download")
+            assert(files["/updates/lib/util.lua"] == nil,
+                "legacy library duplicate was not freed before Bank download")
+        end
         local body = request.url:find("lib/util.lua", 1, true)
-            and repairedUtil or "{}"
+            and repairedUtil
+            or request.url:find("bank_server.lua", 1, true)
+                and repairedBank
+                or "{}"
         local sent = false
         return {
             read = function()
@@ -173,9 +197,15 @@ http = {
         }
     end,
 }
+files["/updates/bank_server.lua"] = "-- redundant Bank copy\n"
+files["/updates/lib/util.lua"] = "-- redundant util copy\n"
 launched = nil
 assert(loadfile("../startup.lua"))("--boot", "bank")
 assert(files["/pumpe/lib/util.lua"] == repairedUtil)
+assert(files["/pumpe/bank_server.lua"] == repairedBank)
+assert(files["/pumpe/config.lua"]:find('version = "6.0.2"', 1, true))
+assert(files["/updates/bank_server.lua"] == nil)
+assert(files["/updates/lib/util.lua"] == nil)
 assert(launched == "/pumpe/bank_server.lua")
 
 print("host_installer_bank_bootstrap_test: OK")

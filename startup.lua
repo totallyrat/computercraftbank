@@ -5,10 +5,11 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "6.0.1"
+local INSTALLER_VERSION = "6.0.2"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
+local UPDATES_ROOT = "/updates"
 local STAGING_ROOT = fs.combine(INSTALL_ROOT, ".deploy_tmp")
 local BACKUP_ROOT = fs.combine(INSTALL_ROOT, ".deploy_backup")
 local arguments = { ... }
@@ -534,8 +535,11 @@ local function selfUpdateInstaller()
     local backup = runningPath .. ".previous"
     if fs.exists(temporary) then fs.delete(temporary) end
     if fs.exists(backup) then fs.delete(backup) end
-    local written = writeFile(temporary, body)
-    if not written then return false end
+    local wrote, written = pcall(writeFile, temporary, body)
+    if not wrote or not written then
+        if fs.exists(temporary) then pcall(fs.delete, temporary) end
+        return false
+    end
     local moved, moveError = pcall(function()
         if fs.exists(runningPath) then fs.move(runningPath, backup) end
         fs.move(temporary, runningPath)
@@ -553,17 +557,8 @@ local function selfUpdateInstaller()
     return true
 end
 
--- A v6.0.0 Bank can encounter the watchdog while verifying the larger v6
--- release, before it has a chance to install the new shared utility itself.
--- Once Easy Deployment has updated, repair just that utility atomically before
--- launching the Bank; the Bank's normal updater then completes the release.
-local function repairInstalledBankUtility()
-    if bootRoleId ~= "bank" or not publicManifest then return false end
-    if newerVersion(installedVersion(), publicManifest.version) then return false end
-    local entry = manifestEntry(publicManifest, "lib/util.lua")
+local function replaceInstalledFile(entry, destination)
     if not entry then return false end
-
-    local destination = fs.combine(INSTALL_ROOT, entry.path)
     local existing = readFile(destination)
     if existing and #existing == entry.size
         and checksum(existing) == entry.checksum then
@@ -583,7 +578,11 @@ local function repairInstalledBankUtility()
     local backup = destination .. ".watchdog_previous"
     if fs.exists(temporary) then fs.delete(temporary) end
     if fs.exists(backup) then fs.delete(backup) end
-    if not writeFile(temporary, body) then return false end
+    local wrote, written = pcall(writeFile, temporary, body)
+    if not wrote or not written then
+        if fs.exists(temporary) then pcall(fs.delete, temporary) end
+        return false
+    end
     local moved = pcall(function()
         if fs.exists(destination) then fs.move(destination, backup) end
         fs.move(temporary, destination)
@@ -596,6 +595,76 @@ local function repairInstalledBankUtility()
     end
     if fs.exists(backup) then fs.delete(backup) end
     return true
+end
+
+local function cleanupLegacyBankDuplicates()
+    local mappings = {
+        { depot = "bank_server.lua", installed = "bank_server.lua" },
+        { depot = "startup.lua", installed = "installer.lua" },
+        { depot = "config.lua", installed = "config.lua" },
+        { depot = "lib/net.lua", installed = "lib/net.lua" },
+        { depot = "lib/ui.lua", installed = "lib/ui.lua" },
+        { depot = "lib/update.lua", installed = "lib/update.lua" },
+        { depot = "lib/util.lua", installed = "lib/util.lua" },
+    }
+    for _, mapping in ipairs(mappings) do
+        local installed = fs.combine(INSTALL_ROOT, mapping.installed)
+        local duplicate = fs.combine(UPDATES_ROOT, mapping.depot)
+        if fs.exists(installed) and fs.exists(duplicate) then
+            pcall(fs.delete, duplicate)
+        end
+    end
+    for _, stale in ipairs({
+        fs.combine(INSTALL_ROOT, ".easy_deployment_source.lua"),
+        fs.combine(INSTALL_ROOT, ".online_update_stage"),
+        fs.combine(INSTALL_ROOT, ".online_update_backup"),
+    }) do
+        if fs.exists(stale) then pcall(fs.delete, stale) end
+    end
+end
+
+local function updateInstalledConfigVersion(version)
+    local path = fs.combine(INSTALL_ROOT, "config.lua")
+    local body = readFile(path)
+    if not body then return false end
+    local updated, replacements = body:gsub(
+        '(version%s*=%s*)"[^"]+"', '%1"' .. tostring(version) .. '"', 1)
+    if replacements ~= 1 then return false end
+    if updated == body then return true end
+    local temporary = path .. ".compact_update"
+    if fs.exists(temporary) then fs.delete(temporary) end
+    local wrote, written = pcall(writeFile, temporary, updated)
+    if not wrote or not written then
+        if fs.exists(temporary) then pcall(fs.delete, temporary) end
+        return false
+    end
+    if fs.exists(path) then fs.delete(path) end
+    fs.move(temporary, path)
+    return true
+end
+
+-- v6.0 Banks filled the disk by keeping the release in both /pumpe and
+-- /updates. Easy Deployment frees those safe duplicates first, then installs
+-- the compact Bank program before launch so an affected Bank can recover even
+-- when it cannot reach its own updater.
+local function repairInstalledBankRuntime()
+    if bootRoleId ~= "bank" or not publicManifest then return false end
+    if newerVersion(installedVersion(), publicManifest.version) then return false end
+    cleanupLegacyBankDuplicates()
+
+    replaceInstalledFile(
+        manifestEntry(publicManifest, "lib/util.lua"),
+        fs.combine(INSTALL_ROOT, "lib/util.lua"))
+
+    local needsVersionUpdate = newerVersion(
+        publicManifest.version, installedVersion())
+    local repaired = replaceInstalledFile(
+        manifestEntry(publicManifest, "bank_server.lua"),
+        fs.combine(INSTALL_ROOT, "bank_server.lua"))
+    if repaired and needsVersionUpdate then
+        updateInstalledConfigVersion(publicManifest.version)
+    end
+    return repaired
 end
 
 local function formatBytes(value)
@@ -717,13 +786,12 @@ local writeStartup
 
 local BANK_LOCAL_FILES = {
     { path = "bank_server.lua", source = "bank_server.lua" },
-    { path = "pumpe.lua", source = "pumpe.lua" },
-    { path = "service_kiosk.lua", source = "service_kiosk.lua" },
-    { path = "event_kiosk.lua", source = "event_kiosk.lua" },
-    { path = "tax_controller.lua", source = "tax_controller.lua" },
-    { path = "border_controller.lua", source = "border_controller.lua" },
-    { path = "ccg.lua", source = "ccg.lua" },
-    { path = "startup.lua", source = "startup.lua" },
+    { path = "pumpe.lua", source = "pumpe.lua", depot = true },
+    { path = "service_kiosk.lua", source = "service_kiosk.lua", depot = true },
+    { path = "event_kiosk.lua", source = "event_kiosk.lua", depot = true },
+    { path = "tax_controller.lua", source = "tax_controller.lua", depot = true },
+    { path = "border_controller.lua", source = "border_controller.lua", depot = true },
+    { path = "ccg.lua", source = "ccg.lua", depot = true },
     { path = "installer.lua", source = "startup.lua" },
     { path = "config.lua", source = "config.lua" },
     { path = "lib/net.lua", source = "lib/net.lua" },
@@ -757,6 +825,39 @@ local function localBankSourceRoot()
     return nil
 end
 
+local function bankDestination(file)
+    return fs.combine(file.depot and UPDATES_ROOT or INSTALL_ROOT, file.path)
+end
+
+local function bankStagePath(file, root)
+    return fs.combine(root, (file.depot and "depot/" or "runtime/") .. file.path)
+end
+
+local function normalizedPath(path)
+    return fs.combine("/", tostring(path or ""))
+end
+
+local function sameDrive(sourceRoot)
+    if type(fs.getDrive) ~= "function" then return false end
+    local sourceProbe = fs.combine(sourceRoot, BANK_LOCAL_FILES[1].source)
+    local okSource, sourceDrive = pcall(fs.getDrive, sourceProbe)
+    local okInstall, installDrive = pcall(fs.getDrive, INSTALL_ROOT)
+    return okSource and okInstall and sourceDrive ~= nil
+        and sourceDrive == installDrive
+end
+
+local function cleanEmptySourceFolders(sourceRoot)
+    if type(fs.list) ~= "function" then return end
+    local library = fs.combine(sourceRoot, "lib")
+    if fs.exists(library) and fs.isDir(library) and #fs.list(library) == 0 then
+        pcall(fs.delete, library)
+    end
+    if normalizedPath(sourceRoot) ~= "/" and fs.exists(sourceRoot)
+        and fs.isDir(sourceRoot) and #fs.list(sourceRoot) == 0 then
+        pcall(fs.delete, sourceRoot)
+    end
+end
+
 local function installLocalBank(role)
     local sourceRoot = localBankSourceRoot()
     if not sourceRoot then
@@ -764,16 +865,11 @@ local function installLocalBank(role)
             "Keep the complete release beside installer.lua", 2.2)
         return false
     end
-    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
-    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-    fs.makeDir(STAGING_ROOT)
-
     local manifest = { version = INSTALLER_VERSION, files = {} }
     local totalBytes = 0
     for _, file in ipairs(BANK_LOCAL_FILES) do
         local body = readFile(fs.combine(sourceRoot, file.source))
         if not body then
-            fs.delete(STAGING_ROOT)
             message("error", "LOCAL INSTALL FAILED",
                 "Could not read " .. file.source, 1.8)
             return false
@@ -782,28 +878,98 @@ local function installLocalBank(role)
             path = file.path,
             size = #body,
             checksum = checksum(body),
+            source = file.source,
+            depot = file.depot == true,
         }
         manifest.files[#manifest.files + 1] = item
         totalBytes = totalBytes + #body
-        local stagedPath = fs.combine(STAGING_ROOT, file.path)
-        local written, writeError = writeFile(stagedPath, body)
-        if not written then
-            fs.delete(STAGING_ROOT)
-            message("error", "LOCAL INSTALL FAILED", writeError, 1.8)
-            return false
-        end
     end
     local configBody = readFile(fs.combine(sourceRoot, "config.lua")) or ""
     manifest.version = configBody:match('version%s*=%s*"([^"]+)"')
         or INSTALLER_VERSION
     renderProgress(role, { path = "Local release verified" },
         totalBytes, totalBytes, #manifest.files, #manifest.files)
-    local committed, commitError = commitInstallation(manifest)
+
+    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
+    if not fs.exists(UPDATES_ROOT) then fs.makeDir(UPDATES_ROOT) end
+    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
+    if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
+    fs.makeDir(STAGING_ROOT)
+    fs.makeDir(BACKUP_ROOT)
+
+    local moveSourceFiles = sameDrive(sourceRoot)
+    local installed = {}
+    local committed, commitError = pcall(function()
+        for _, file in ipairs(manifest.files) do
+            local source = fs.combine(sourceRoot, file.source)
+            local destination = bankDestination(file)
+            if normalizedPath(source) == normalizedPath(destination) then
+                installed[#installed + 1] = {
+                    file = file, source = source, destination = destination,
+                    unchanged = true,
+                }
+            else
+                local backup = bankStagePath(file, BACKUP_ROOT)
+                local item = {
+                    file = file, source = source, destination = destination,
+                    backup = backup, moved = moveSourceFiles,
+                }
+                installed[#installed + 1] = item
+                if fs.exists(destination) then
+                    moveWithParent(destination, backup)
+                    item.backedUp = true
+                end
+                if moveSourceFiles then
+                    moveWithParent(source, destination)
+                else
+                    local body = assert(readFile(source), "Missing " .. file.source)
+                    local staged = bankStagePath(file, STAGING_ROOT)
+                    local written, writeError = writeFile(staged, body)
+                    assert(written, writeError)
+                    moveWithParent(staged, destination)
+                end
+                item.newInstalled = true
+                assert(readFile(destination)
+                    and checksum(readFile(destination)) == file.checksum,
+                    "Verification failed for " .. file.path)
+            end
+        end
+    end)
     if not committed then
-        message("error", "LOCAL INSTALL ROLLED BACK", commitError, 2)
+        for index = #installed, 1, -1 do
+            local item = installed[index]
+            if item.newInstalled and fs.exists(item.destination) then
+                if item.moved then
+                    moveWithParent(item.destination, item.source)
+                else
+                    fs.delete(item.destination)
+                end
+            end
+            if item.backedUp and item.backup and fs.exists(item.backup) then
+                moveWithParent(item.backup, item.destination)
+            end
+        end
+        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
+        if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
+        message("error", "LOCAL INSTALL ROLLED BACK", tostring(commitError), 2)
         return false
     end
+    fs.delete(STAGING_ROOT)
+    fs.delete(BACKUP_ROOT)
+
     local _, startupMessage = writeStartup(role)
+    if moveSourceFiles then
+        local extraInstaller = fs.combine(sourceRoot, "installer.lua")
+        local installedInstaller = fs.combine(INSTALL_ROOT, "installer.lua")
+        if normalizedPath(extraInstaller) ~= normalizedPath(installedInstaller)
+            and fs.exists(extraInstaller) then
+            local body = readFile(extraInstaller)
+            if body and checksum(body) == checksum(readFile(installedInstaller) or "") then
+                pcall(fs.delete, extraInstaller)
+            end
+        end
+        cleanEmptySourceFolders(sourceRoot)
+    end
     message("success", "BANK SERVER READY",
         startupMessage .. " - starting now", 0.8)
     return true
@@ -949,7 +1115,7 @@ end
 
 math.randomseed((nowMs() + os.getComputerID() * 7919) % 2147483647)
 selfUpdateInstaller()
-repairInstalledBankUtility()
+repairInstalledBankRuntime()
 
 if bootRoleId then
     local role = roleById(bootRoleId)

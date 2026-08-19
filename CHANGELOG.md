@@ -1,5 +1,13 @@
 # Changelog
 
+## 6.0.2
+
+- Cut the installed Bank Server footprint roughly in half by keeping Bank runtime files in `/pumpe` and role-specific deployment programs in `/updates`, with no second copy of the Bank, installer, configuration, or shared libraries.
+- Made Easy Deployment move a same-drive first-Bank release directly into its compact final layout instead of copying the whole bundle through another staging copy.
+- Added automatic recovery for full v6.0/v6.0.1 Banks: the updated installer removes safe legacy depot duplicates, installs the compact Bank program, preserves local configuration, and launches it without requiring the old Bank to start first.
+- Added automatic cleanup for the old installer cache, redundant `/pumpe/startup.lua`, duplicate depot runtime files, and abandoned online-update staging or backup folders.
+- Kept Easy Deployment behavior unchanged for clients: Bank and Tax remain protected by `4040`, while every role still receives checksum-verified files from the Bank.
+
 ## 6.0.1
 
 - Fixed Bank Server and Easy Deployment startup crashes reporting `Too long without yielding` while checksumming large release files.

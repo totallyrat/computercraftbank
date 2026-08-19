@@ -52,7 +52,7 @@ The Bank Server is authoritative. It generates chance-game outcomes, reserves wa
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 
-Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.1 contains the complete Bet Play mode.
+Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.2 contains the complete Bet Play mode.
 
 ## The new customer monitor
 
@@ -76,8 +76,8 @@ Only the first Bank Server needs the complete release copied locally. Every othe
 1. Keep `startup.lua` beside the complete release on the one authoritative Bank Server.
 2. Edit the local `config.lua` and change `government_key`.
 3. Run `startup`, choose **Bank Server**, and enter `4040`.
-4. Easy Deployment verifies the complete local bundle, installs it to `/pumpe`, writes an installer-based `/startup.lua`, and launches `bank_server.lua` immediately. It never tries to discover a Bank Server that does not exist yet.
-5. The Bank Server creates and fills `/updates/` in the same launch, creates a sanitized public client config, and starts serving downloads without pausing at another installer or restart screen.
+4. Easy Deployment verifies the complete local bundle, moves same-drive files directly into the compact Bank layout, writes an installer-based `/startup.lua`, and launches `bank_server.lua` immediately. It never tries to discover a Bank Server that does not exist yet.
+5. `/pumpe` keeps only the Bank runtime, installer, config, and shared libraries. `/updates` keeps one copy of each role-specific program plus the sanitized public client config; shared runtime files are served directly without duplication.
 
 If a required source file is missing, the first-boot screen lists it and lets you rescan after adding it.
 
@@ -106,7 +106,7 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 4. Preserves the existing government key, release URL, and all other local configuration.
 5. Atomically replaces the program files, rolling back if any move fails.
 6. Refreshes `/pumpe/installer.lua`, writes a direct Bank boot entry, saves the database, and restarts immediately.
-7. Detects the restart marker, bypasses every menu, rebuilds `/updates/`, and launches the Bank Server normally.
+7. Detects the restart marker, bypasses every menu, compacts `/updates/`, and launches the Bank Server normally.
 
 Installed PUMPEs, CCG consoles, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers quietly compare versions with the Bank Server whenever they start and continue checking from their live dashboards. If a newer version exists, they download, verify, install, and reboot automatically. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
 
@@ -306,6 +306,11 @@ pumpe/
 - Confirm every device uses the same `protocol` and `hostname`.
 - Check that a wireless or Ender modem is attached and enabled.
 
+**Bank says there is no space**
+
+- Restart through the latest Easy Deployment file. v6.0.2 removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
+- A compact installation is about 432 KiB before account data. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
+
 **Customer monitor is blank**
 
 - It must be an Advanced Monitor, not a basic monitor.
@@ -325,4 +330,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.0.1`.
+PUMPE Ecosystem `6.0.2`.

@@ -89,4 +89,35 @@ fs.writeFileSync(
   path.join(projectRoot, "release_manifest.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
+
+const fileSize = (relativePath) =>
+  fs.statSync(path.join(projectRoot, relativePath)).size;
+const bankRuntimeFiles = [
+  "bank_server.lua",
+  "startup.lua",
+  "config.lua",
+  "lib/net.lua",
+  "lib/ui.lua",
+  "lib/update.lua",
+  "lib/util.lua",
+];
+const depotOnlyFiles = [
+  "pumpe.lua",
+  "service_kiosk.lua",
+  "event_kiosk.lua",
+  "tax_controller.lua",
+  "border_controller.lua",
+  "ccg.lua",
+];
+const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
+  .reduce((total, relativePath) => total + fileSize(relativePath), 0);
+const compactBankBytes = uniqueReleaseBytes + fileSize("config.lua") * 2;
+const legacyBankBytes = uniqueReleaseBytes * 2 + fileSize("startup.lua") * 2;
+if (compactBankBytes > 500 * 1024) {
+  throw new Error(`Compact Bank footprint exceeded 500 KiB: ${compactBankBytes}`);
+}
 console.log(`Built release_manifest.json for PUMPE v${manifest.version}`);
+console.log(
+  `Bank footprint guard: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `
+    + `${Math.ceil(compactBankBytes / 1024)} KiB compact`,
+);

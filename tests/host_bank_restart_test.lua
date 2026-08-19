@@ -11,6 +11,7 @@ colors = {
 }
 
 local files = {}
+local directories = { ["/"] = true }
 local function canonical(path)
     path = tostring(path or ""):gsub("^%./", ""):gsub("/+", "/")
     if path:sub(1, 1) ~= "/" then path = "/" .. path end
@@ -24,8 +25,29 @@ fs = {
         return tostring(left):gsub("/+$", "") .. "/"
             .. tostring(right):gsub("^/+", "")
     end,
-    exists = function(path) return files[canonical(path)] ~= nil end,
-    isDir = function() return false end,
+    exists = function(path)
+        path = canonical(path)
+        return files[path] ~= nil or directories[path] == true
+    end,
+    isDir = function(path) return directories[canonical(path)] == true end,
+    makeDir = function(path) directories[canonical(path)] = true end,
+    delete = function(path)
+        path = canonical(path)
+        files[path], directories[path] = nil, nil
+        local prefix = path .. "/"
+        for item in pairs(files) do
+            if item:sub(1, #prefix) == prefix then files[item] = nil end
+        end
+        for item in pairs(directories) do
+            if item:sub(1, #prefix) == prefix then directories[item] = nil end
+        end
+    end,
+    move = function(source, destination)
+        source, destination = canonical(source), canonical(destination)
+        assert(files[source], "missing move source " .. source)
+        files[destination] = files[source]
+        files[source] = nil
+    end,
 }
 shell = {
     getRunningProgram = function() return "bank_server.lua" end,
@@ -56,7 +78,27 @@ assert(files["/startup.lua"]:find("-- PUMPE ROLE STARTUP", 1, true))
 assert(files["/startup.lua"]:find(
     'shell.run("/installer.lua", "--boot", "bank")', 1, true))
 assert(files["/installer.lua"] == standalone)
-assert(files["/.easy_deployment_source.lua"] == standalone)
+assert(files["/.easy_deployment_source.lua"] == nil)
 assert(bank.local_update_body("startup.lua") == standalone)
+
+files["/bank_server.lua"] = "bank runtime"
+files["/updates/bank_server.lua"] = "duplicate bank runtime"
+files["/pumpe.lua"] = "client program"
+files["/updates/pumpe.lua"] = "client program"
+files["/.easy_deployment_source.lua"] = standalone
+directories["/.online_update_stage"] = true
+files["/.online_update_stage/partial.lua"] = "partial"
+bank.compact_bank_storage()
+assert(files["/bank_server.lua"] == "bank runtime")
+assert(files["/updates/bank_server.lua"] == nil)
+assert(files["/pumpe.lua"] == nil)
+assert(files["/updates/pumpe.lua"] == "client program")
+assert(files["/.easy_deployment_source.lua"] == nil)
+assert(not directories["/.online_update_stage"])
+files["/lib/ui.lua"] = "shared runtime library"
+files["/updates/public/config.lua"] = "sanitized config"
+assert(bank.deployment_body("lib/ui.lua") == "shared runtime library")
+assert(bank.deployment_body("pumpe.lua") == "client program")
+assert(bank.deployment_body("public/config.lua") == "sanitized config")
 
 print("host_bank_restart_test: OK")

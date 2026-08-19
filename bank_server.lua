@@ -16,7 +16,7 @@ local DEPLOY_CODE = "4040"
 local DEPLOY_CHUNK_SIZE = 6000
 local UPDATES_DIR = "/updates"
 local BANK_RESTART_MARKER = fs.combine(ROOT, ".bank_auto_restart")
-local CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
+local LEGACY_CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
 local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
 local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
 local BORDER_CONTROLLER_CHECKSUM = "4fed221f"
@@ -42,6 +42,20 @@ local LOCAL_UPDATE_FILES = {
     "lib/update.lua",
     "lib/util.lua",
 }
+
+-- Only role-specific programs need physical copies in /updates. The Bank's
+-- own program, installer, configuration, and shared libraries are served
+-- directly from ROOT, avoiding a second copy of the largest runtime files.
+local DEPOT_ONLY_FILES = {
+    "pumpe.lua",
+    "service_kiosk.lua",
+    "event_kiosk.lua",
+    "tax_controller.lua",
+    "border_controller.lua",
+    "ccg.lua",
+}
+local DEPOT_ONLY_SET = {}
+for _, path in ipairs(DEPOT_ONLY_FILES) do DEPOT_ONLY_SET[path] = true end
 
 -- Keep this list compatible with v5.2.1. Its updater rejects additional
 -- manifest paths, so the verified Border Controller is fetched separately
@@ -153,31 +167,54 @@ local function fetchDeferredPublicFile(path)
     pcall(response.close)
     local body = table.concat(chunks)
     if util.checksum(body) ~= expectedChecksum then return nil end
-    pcall(util.writeFile, fs.combine(ROOT, path), body)
+    pcall(util.writeFile, fs.combine(UPDATES_DIR, path), body)
     return body
 end
 
 local function localUpdateBody(path)
-    local body = util.readFile(fs.combine(ROOT, path))
+    if path == "public/config.lua" then
+        return util.readFile(fs.combine(UPDATES_DIR, path))
+    end
+    if path == "startup.lua" then
+        local candidates = {
+            fs.combine(ROOT, "installer.lua"),
+            fs.combine(ROOT, "startup.lua"),
+            LEGACY_CACHED_INSTALLER,
+        }
+        for _, candidate in ipairs(candidates) do
+            local body = util.readFile(candidate)
+            if body and body:find("This file is intentionally standalone", 1, true) then
+                return body
+            end
+        end
+        return nil
+    end
+
+    local candidates = DEPOT_ONLY_SET[path] and {
+        fs.combine(UPDATES_DIR, path),
+        fs.combine(ROOT, path),
+    } or {
+        fs.combine(ROOT, path),
+    }
     local deferredChecksum = DEFERRED_PUBLIC_FILES[path]
-    if deferredChecksum then
-        if body and util.checksum(body) == deferredChecksum then
+    for _, candidate in ipairs(candidates) do
+        local body = util.readFile(candidate)
+        if body and (not deferredChecksum
+            or util.checksum(body) == deferredChecksum) then
             return body
         end
-        return fetchDeferredPublicFile(path)
     end
-    if path == "startup.lua"
-        and (not body
-            or not body:find("This file is intentionally standalone", 1, true)) then
-        body = util.readFile(CACHED_INSTALLER) or body
-    end
-    return body
+    if deferredChecksum then return fetchDeferredPublicFile(path) end
+    return nil
 end
 
 local function cacheInstaller(body)
     body = body or localUpdateBody("startup.lua")
     if body and body:find("This file is intentionally standalone", 1, true) then
-        util.writeFile(CACHED_INSTALLER, body)
+        util.writeFile(fs.combine(ROOT, "installer.lua"), body)
+        if fs.exists(LEGACY_CACHED_INSTALLER) then
+            pcall(fs.delete, LEGACY_CACHED_INSTALLER)
+        end
         return body
     end
     return nil
@@ -192,9 +229,6 @@ end
 
 local function ensureBankStartup(installerBody)
     installerBody = cacheInstaller(installerBody)
-    if installerBody then
-        util.writeFile(absoluteRootFile("installer.lua"), installerBody)
-    end
     local startupPath = "/startup.lua"
     local existing = util.readFile(startupPath)
     local owned = not existing
@@ -211,15 +245,82 @@ local function ensureBankStartup(installerBody)
     return true
 end
 
+local function ensureParent(path)
+    local directory = fs.getDir(path)
+    if directory ~= "" and not fs.exists(directory) then fs.makeDir(directory) end
+end
+
+local function replaceWithMove(source, destination, body)
+    ensureParent(destination)
+    if fs.exists(destination) then fs.delete(destination) end
+    local moved = pcall(fs.move, source, destination)
+    if moved then return true end
+    local ok = pcall(util.writeFile, destination, body)
+    if ok and util.readFile(destination) == body then
+        pcall(fs.delete, source)
+        return true
+    end
+    return false
+end
+
+local function compactBankStorage()
+    if not fs.exists(UPDATES_DIR) then fs.makeDir(UPDATES_DIR) end
+    local available = 0
+
+    -- Newer role programs replace the depot copy by moving, not copying.
+    -- Legacy Banks with identical copies simply discard the ROOT duplicate.
+    for _, path in ipairs(DEPOT_ONLY_FILES) do
+        local rootPath = fs.combine(ROOT, path)
+        local depotPath = fs.combine(UPDATES_DIR, path)
+        local rootBody = util.readFile(rootPath)
+        if rootBody then
+            if util.readFile(depotPath) == rootBody then
+                pcall(fs.delete, rootPath)
+            else
+                replaceWithMove(rootPath, depotPath, rootBody)
+            end
+        end
+        if localUpdateBody(path) then available = available + 1 end
+    end
+
+    -- Remove the v6.0 duplicate depot copies now served from the live runtime.
+    for _, path in ipairs(LOCAL_UPDATE_FILES) do
+        if not DEPOT_ONLY_SET[path] and localUpdateBody(path) then
+            local duplicate = fs.combine(UPDATES_DIR, path)
+            if fs.exists(duplicate) then pcall(fs.delete, duplicate) end
+            available = available + 1
+        end
+    end
+    local duplicateInstaller = fs.combine(UPDATES_DIR, "installer.lua")
+    if fs.exists(duplicateInstaller) then pcall(fs.delete, duplicateInstaller) end
+    local legacyLauncher = fs.combine(ROOT, "launcher.lua")
+    if fs.exists(legacyLauncher) then pcall(fs.delete, legacyLauncher) end
+
+    local redundantStartup = absoluteRootFile("startup.lua")
+    if redundantStartup ~= "/startup.lua" and fs.exists(redundantStartup)
+        and localUpdateBody("startup.lua") then
+        pcall(fs.delete, redundantStartup)
+    end
+    if fs.exists(LEGACY_CACHED_INSTALLER) then
+        pcall(fs.delete, LEGACY_CACHED_INSTALLER)
+    end
+
+    -- A power loss during an older update must not reserve disk forever.
+    for _, stale in ipairs({
+        fs.combine(ROOT, ".online_update_stage"),
+        fs.combine(ROOT, ".online_update_backup"),
+    }) do
+        if fs.exists(stale) then pcall(fs.delete, stale) end
+    end
+    return available
+end
+
 local function updateDepotMissingFiles()
     local missing = {}
     for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        local destination = fs.combine(UPDATES_DIR, path)
         local sourceBody = localUpdateBody(path)
         if not sourceBody then
             missing[#missing + 1] = path .. " (local source)"
-        elseif util.readFile(destination) ~= sourceBody then
-            missing[#missing + 1] = path
         end
     end
     local publicConfig = fs.combine(UPDATES_DIR, "public/config.lua")
@@ -230,18 +331,7 @@ local function updateDepotMissingFiles()
 end
 
 local function stageLocalUpdateFiles()
-    local staged = 0
-    for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        local destination = fs.combine(UPDATES_DIR, path)
-        local body = localUpdateBody(path)
-        if body then
-            local ok = pcall(util.writeFile, destination, body)
-            if ok and util.readFile(destination) == body then
-                staged = staged + 1
-            end
-        end
-    end
-    return staged
+    return compactBankStorage()
 end
 
 local function onlyDeferredFilesMissing(missing)
@@ -3623,16 +3713,19 @@ local function deploymentSourceFor(role, requestedPath)
     return nil
 end
 
+local function deploymentBody(source)
+    if source == "public/config.lua" then
+        return util.readFile(fs.combine(UPDATES_DIR, source))
+    end
+    return localUpdateBody(source)
+end
+
 local function deploymentManifest(role)
     local files = deploymentFilesForRole(role)
     if not files then return nil, "Unknown PUMPE role" end
     local manifest = {}
     for _, file in ipairs(files) do
-        local sourcePath = fs.combine(UPDATES_DIR, file.source)
-        if not fs.exists(sourcePath) or fs.isDir(sourcePath) then
-            return nil, "Update depot is missing " .. file.source
-        end
-        local body = util.readFile(sourcePath)
+        local body = deploymentBody(file.source)
         if not body then return nil, "Could not read " .. file.source end
         manifest[#manifest + 1] = {
             path = file.path,
@@ -3676,8 +3769,7 @@ local function deploymentRoute(sender, message)
                 "File is not part of this role")
             return
         end
-        local sourcePath = fs.combine(UPDATES_DIR, source)
-        local body = util.readFile(sourcePath)
+        local body = deploymentBody(source)
         if not body then
             deploymentError(sender, message.request_id, "FILE_MISSING",
                 "Update file is unavailable")
@@ -3841,6 +3933,7 @@ local function checkForOnlineUpdate()
     if not startupReady then
         logActivity(startupWarning, colors.orange)
     end
+    compactBankStorage()
     util.writeFile(BANK_RESTART_MARKER, tostring(manifest.version))
     pcall(save)
     onlineUpdateStatus = "RESTARTING v" .. manifest.version
@@ -3971,8 +4064,10 @@ if TEST_MODE then
         process_ccg_games = processCCGGames,
         advance_survivor = advanceSurvivor,
         deployment_files = deploymentFilesForRole,
+        deployment_body = deploymentBody,
         ensure_bank_startup = ensureBankStartup,
         local_update_body = localUpdateBody,
+        compact_bank_storage = compactBankStorage,
     }
 end
 
