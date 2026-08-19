@@ -34,6 +34,25 @@ assert(not util.validPin("12345"))
 assert(util.hashPin("1234") == util.hashPin("1234"))
 assert(util.normalName("  Alice Smith ") == "alice smith")
 
+-- Large release files must give ComputerCraft's watchdog regular scheduler
+-- hand-offs while preserving the exact checksum used by release manifests.
+local largeBody = string.rep("PUMPE-BANK-YIELD-SLICE\n", 10000)
+local expectedLargeChecksum = util.checksum(largeBody)
+local oldQueueEvent, oldPullEvent = os.queueEvent, os.pullEvent
+local queuedEvent, yieldCount
+yieldCount = 0
+os.queueEvent = function(event)
+    queuedEvent = event
+end
+os.pullEvent = function(filter)
+    assert(filter == queuedEvent)
+    yieldCount = yieldCount + 1
+    return filter
+end
+assert(util.checksum(largeBody) == expectedLargeChecksum)
+assert(yieldCount >= 100, "large checksum did not yield often enough")
+os.queueEvent, os.pullEvent = oldQueueEvent, oldPullEvent
+
 local items, page, pages = util.page({ 1, 2, 3, 4, 5 }, 2, 2)
 assert(page == 2 and pages == 3)
 assert(items[1] == 3 and items[2] == 4)

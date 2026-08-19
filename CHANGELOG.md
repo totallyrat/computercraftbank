@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.1
+
+- Fixed Bank Server and Easy Deployment startup crashes reporting `Too long without yielding` while checksumming large release files.
+- Split checksum work into small cooperative slices so first-Bank local installation, `/updates/` repair, deployment manifests, and automatic internet updates keep yielding to ComputerCraft's scheduler without changing checksum values.
+- Added a focused Easy Deployment repair for an installed Bank's shared checksum utility, allowing affected v6.0.0 Banks to reach and complete the normal v6.0.1 automatic update.
+
 ## 6.0.0
 
 - Added **ComputerCraftGaming (CCG) Bet Play** as a new Easy Deployment role for an Advanced Computer, Ender/wireless modem, and any-size Advanced Monitor.

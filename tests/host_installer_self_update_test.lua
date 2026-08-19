@@ -66,10 +66,19 @@ sleep = function() end
 os.getComputerID = function() return 5 end
 os.epoch = function() return 1000 end
 os.reboot = function() error("__REBOOT__") end
+local queuedEvent, yieldCount
+yieldCount = 0
+os.queueEvent = function(event) queuedEvent = event end
+os.pullEvent = function(filter)
+    assert(filter == queuedEvent)
+    yieldCount = yieldCount + 1
+    return filter
+end
 
 local newInstaller = "-- PUMPE EASY DEPLOYMENT\n"
     .. "-- This file is intentionally standalone.\n"
     .. "-- v6.1.0\n"
+    .. string.rep("-- watchdog regression padding\n", 4000)
 local function checksum(body)
     local hash = 5381
     for index = 1, #body do
@@ -121,5 +130,6 @@ assert(not ok)
 assert(tostring(err):find("__REBOOT__", 1, true))
 assert(files["/installer.lua"] == newInstaller)
 assert(#responses == 0)
+assert(yieldCount >= 50, "standalone installer checksum did not yield")
 
 print("host_installer_self_update_test: OK")

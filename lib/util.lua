@@ -1,6 +1,22 @@
 local util = {}
 
 local seeded = false
+local WATCHDOG_YIELD_EVENT = "pumpe_work_slice"
+local CHECKSUM_SLICE_BYTES = 2048
+
+-- ComputerCraft stops programs which spend too long in Lua without yielding.
+-- Queueing our own filtered event guarantees a real scheduler hand-off without
+-- consuming input, modem, or timer events meant for the surrounding program.
+function util.cooperativeYield()
+    if type(os) ~= "table"
+        or type(os.queueEvent) ~= "function"
+        or type(os.pullEvent) ~= "function" then
+        return false
+    end
+    os.queueEvent(WATCHDOG_YIELD_EVENT)
+    os.pullEvent(WATCHDOG_YIELD_EVENT)
+    return true
+end
 
 local function seedRandom()
     if seeded then return end
@@ -171,6 +187,9 @@ function util.checksum(body)
     body = tostring(body or "")
     for index = 1, #body do
         hash = (hash * 33 + string.byte(body, index)) % 4294967296
+        if index % CHECKSUM_SLICE_BYTES == 0 then
+            util.cooperativeYield()
+        end
     end
     return util.hex32(hash)
 end

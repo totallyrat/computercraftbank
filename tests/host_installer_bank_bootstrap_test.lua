@@ -127,4 +127,55 @@ assert(files["/pumpe/launcher.lua"] == nil)
 assert(files["/startup.lua"]:find(
     'shell.run("/pumpe/installer.lua", "--boot", "bank")', 1, true))
 
+-- After Easy Deployment self-updates, it repairs the small shared utility
+-- before booting an older Bank. That lets the Bank checksum and install the
+-- rest of the internet release without hitting the watchdog first.
+local repairedUtil = "-- cooperative Bank checksum utility\n"
+local function checksum(body)
+    local hash = 5381
+    for index = 1, #body do
+        hash = (hash * 33 + string.byte(body, index)) % 4294967296
+    end
+    local alphabet, output = "0123456789abcdef", {}
+    for index = 8, 1, -1 do
+        local digit = hash % 16
+        output[index] = alphabet:sub(digit + 1, digit + 1)
+        hash = math.floor(hash / 16)
+    end
+    return table.concat(output)
+end
+local repairManifest = {
+    schema = 1,
+    channel = "stable",
+    version = "6.0.1",
+    files = {
+        {
+            path = "lib/util.lua",
+            source = "lib/util.lua",
+            size = #repairedUtil,
+            checksum = checksum(repairedUtil),
+        },
+    },
+}
+textutils = { unserializeJSON = function() return repairManifest end }
+http = {
+    get = function(request)
+        local body = request.url:find("lib/util.lua", 1, true)
+            and repairedUtil or "{}"
+        local sent = false
+        return {
+            read = function()
+                if sent then return nil end
+                sent = true
+                return body
+            end,
+            close = function() end,
+        }
+    end,
+}
+launched = nil
+assert(loadfile("../startup.lua"))("--boot", "bank")
+assert(files["/pumpe/lib/util.lua"] == repairedUtil)
+assert(launched == "/pumpe/bank_server.lua")
+
 print("host_installer_bank_bootstrap_test: OK")

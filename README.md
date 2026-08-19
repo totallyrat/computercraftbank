@@ -52,7 +52,7 @@ The Bank Server is authoritative. It generates chance-game outcomes, reserves wa
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 
-Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.0 contains the complete Bet Play mode.
+Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.1 contains the complete Bet Play mode.
 
 ## The new customer monitor
 
@@ -325,4 +325,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.0.0`.
+PUMPE Ecosystem `6.0.1`.

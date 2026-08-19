@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "6.0.0"
+local INSTALLER_VERSION = "6.0.1"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -20,6 +20,9 @@ local bootRoleId = arguments[1] == "--boot"
 local target = term.current()
 local bankId
 local running = true
+local publicManifest
+local WATCHDOG_YIELD_EVENT = "pumpe_installer_work_slice"
+local CHECKSUM_SLICE_BYTES = 2048
 
 local theme = {
     background = colors.black,
@@ -347,10 +350,24 @@ local function roleMenu()
     end
 end
 
+local function cooperativeYield()
+    if type(os) ~= "table"
+        or type(os.queueEvent) ~= "function"
+        or type(os.pullEvent) ~= "function" then
+        return false
+    end
+    os.queueEvent(WATCHDOG_YIELD_EVENT)
+    os.pullEvent(WATCHDOG_YIELD_EVENT)
+    return true
+end
+
 local function checksum(body)
     local hash = 5381
     for index = 1, #body do
         hash = (hash * 33 + string.byte(body, index)) % 4294967296
+        if index % CHECKSUM_SLICE_BYTES == 0 then
+            cooperativeYield()
+        end
     end
     local alphabet, output = "0123456789abcdef", {}
     for index = 8, 1, -1 do
@@ -461,7 +478,7 @@ local function fetchHttps(url, maximumBytes)
     return table.concat(chunks)
 end
 
-local function installerEntry(manifest)
+local function manifestEntry(manifest, requestedPath)
     if type(manifest) ~= "table" or manifest.schema ~= 1
         or manifest.channel ~= "stable"
         or type(manifest.version) ~= "string"
@@ -469,7 +486,7 @@ local function installerEntry(manifest)
         return nil
     end
     for _, file in ipairs(manifest.files) do
-        if type(file) == "table" and file.path == "startup.lua"
+        if type(file) == "table" and file.path == requestedPath
             and safeRelativePath(file.source or file.path)
             and type(file.size) == "number" and file.size >= 1
             and file.size <= 256 * 1024
@@ -477,6 +494,7 @@ local function installerEntry(manifest)
             and file.checksum:match("^[0-9a-fA-F]+$")
             and #file.checksum == 8 then
             return {
+                path = file.path,
                 source = file.source or file.path,
                 size = file.size,
                 checksum = string.lower(file.checksum),
@@ -486,11 +504,16 @@ local function installerEntry(manifest)
     end
 end
 
+local function installerEntry(manifest)
+    return manifestEntry(manifest, "startup.lua")
+end
+
 local function selfUpdateInstaller()
     local manifestBody = fetchHttps(PUBLIC_MANIFEST_URL, 256 * 1024)
     if not manifestBody then return false end
     local ok, manifest = pcall(textutils.unserializeJSON, manifestBody)
     if not ok then return false end
+    publicManifest = manifest
     local entry = installerEntry(manifest)
     if not entry or not newerVersion(entry.version, INSTALLER_VERSION) then
         return false
@@ -527,6 +550,51 @@ local function selfUpdateInstaller()
     message("success", "EASY DEPLOYMENT UPDATED",
         "Installed v" .. entry.version, 0.6)
     os.reboot()
+    return true
+end
+
+-- A v6.0.0 Bank can encounter the watchdog while verifying the larger v6
+-- release, before it has a chance to install the new shared utility itself.
+-- Once Easy Deployment has updated, repair just that utility atomically before
+-- launching the Bank; the Bank's normal updater then completes the release.
+local function repairInstalledBankUtility()
+    if bootRoleId ~= "bank" or not publicManifest then return false end
+    if newerVersion(installedVersion(), publicManifest.version) then return false end
+    local entry = manifestEntry(publicManifest, "lib/util.lua")
+    if not entry then return false end
+
+    local destination = fs.combine(INSTALL_ROOT, entry.path)
+    local existing = readFile(destination)
+    if existing and #existing == entry.size
+        and checksum(existing) == entry.checksum then
+        return true
+    end
+
+    local base = PUBLIC_MANIFEST_URL:gsub("[?#].*$", "")
+        :match("^(https://.*/)[^/]+$")
+    if not base then return false end
+    local body = fetchHttps(base .. entry.source, entry.size + 1)
+    if not body or #body ~= entry.size
+        or checksum(body) ~= entry.checksum then
+        return false
+    end
+
+    local temporary = destination .. ".watchdog_update"
+    local backup = destination .. ".watchdog_previous"
+    if fs.exists(temporary) then fs.delete(temporary) end
+    if fs.exists(backup) then fs.delete(backup) end
+    if not writeFile(temporary, body) then return false end
+    local moved = pcall(function()
+        if fs.exists(destination) then fs.move(destination, backup) end
+        fs.move(temporary, destination)
+    end)
+    if not moved then
+        if fs.exists(destination) then fs.delete(destination) end
+        if fs.exists(backup) then fs.move(backup, destination) end
+        if fs.exists(temporary) then fs.delete(temporary) end
+        return false
+    end
+    if fs.exists(backup) then fs.delete(backup) end
     return true
 end
 
@@ -881,6 +949,7 @@ end
 
 math.randomseed((nowMs() + os.getComputerID() * 7919) % 2147483647)
 selfUpdateInstaller()
+repairInstalledBankUtility()
 
 if bootRoleId then
     local role = roleById(bootRoleId)
