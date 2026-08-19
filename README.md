@@ -40,7 +40,7 @@ For Send Money, the entered amount is what the recipient receives. The sender pa
 
 ## ComputerCraftGaming Bet Play
 
-CCG is a shared big-screen gaming system. Create a lobby on `ccg.lua`, then players open **Bet** on their PUMPE, verify their PIN, enter the six-character screen code, choose a display name, make their pick, and set a wager from their Bet Wallet.
+CCG is a shared big-screen gaming system. Create a lobby on `ccg.lua`, then players open **Bet** on their PUMPE, verify their PIN, enter the screen's alphanumeric lobby code, choose a display name, make their pick, and set a wager from their Bet Wallet.
 
 Three games are included:
 
@@ -52,7 +52,7 @@ The Bank Server is authoritative. It generates chance-game outcomes, reserves wa
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 
-Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.2 contains the complete Bet Play mode.
+Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.3 contains the complete Bet Play mode.
 
 ## The new customer monitor
 
@@ -308,7 +308,7 @@ pumpe/
 
 **Bank says there is no space**
 
-- Restart through the latest Easy Deployment file. v6.0.2 removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
+- Restart through the latest Easy Deployment file. v6.0.3 removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
 - A compact installation is about 432 KiB before account data. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
 
 **Customer monitor is blank**
@@ -330,4 +330,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.0.2`.
+PUMPE Ecosystem `6.0.3`.

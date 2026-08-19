@@ -1,5 +1,11 @@
 # Changelog
 
+## 6.0.3
+
+- Removed the Bet app's six-character lobby-code restriction. Its touch and physical-keyboard input now accepts letters and numbers with no fixed length.
+- Added a horizontally scrolling code field so long mixed codes remain editable on the PUMPE's native 26×20 screen, while the complete normalized code is sent to the Bank.
+- Left CCG lobby generation and console behavior unchanged; this patch is isolated to PUMPE input and shared rendering support.
+
 ## 6.0.2
 
 - Cut the installed Bank Server footprint roughly in half by keeping Bank runtime files in `/pumpe` and role-specific deployment programs in `/updates`, with no second copy of the Bank, installer, configuration, or shared libraries.

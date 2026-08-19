@@ -479,7 +479,12 @@ function ui.input(target, title, options)
         ui.fill(target, 2, fieldY, width - 2, 3, ui.theme.panel)
         local shown = value
         if options.mask then shown = string.rep(options.mask, #value) end
-        shown = ui.truncate(shown, width - 5)
+        local visibleLength = width - 5
+        if options.scrollToEnd and #shown > visibleLength then
+            shown = "<" .. shown:sub(-(visibleLength - 1))
+        else
+            shown = ui.truncate(shown, visibleLength)
+        end
         ui.text(target, 3, fieldY + 1, shown .. (blink and "_" or " "),
             ui.theme.ink, ui.theme.panel, width - 4)
 

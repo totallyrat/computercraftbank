@@ -64,6 +64,7 @@ local savedDevice
 local lockSeconds
 local betStatusCalls = 0
 local WIDTH, HEIGHT = 26, 20
+local LONG_CCG_CODE = "CCG2026LONGSCREENCODE987654321"
 
 colors = {
     white = 1, orange = 2, magenta = 4, lightBlue = 8,
@@ -115,6 +116,9 @@ package.loaded.config = {
 
 package.loaded["lib.util"] = {
     loadTable = function(_, fallback) return fallback end,
+    trim = function(value)
+        return tostring(value or ""):match("^%s*(.-)%s*$")
+    end,
     saveTable = function(_, value)
         savedDevice = {}
         for key, item in pairs(value) do savedDevice[key] = item end
@@ -384,11 +388,11 @@ local client = {
             }
         elseif action == "BET_JOIN" then
             assert(payload.bet_token == "BET_TOKEN")
-            assert(payload.code == "CCG234")
+            assert(payload.code == LONG_CCG_CODE)
             assert(payload.display_name == "FoxyPlayer")
             return {
                 lobby = {
-                    code = "CCG234",
+                    code = LONG_CCG_CODE,
                     game = "heads_tails",
                     game_name = "Heads or Tails",
                     multiplier = 2,
@@ -396,11 +400,12 @@ local client = {
                 },
             }
         elseif action == "BET_PLACE_WAGER" then
+            assert(payload.code == LONG_CCG_CODE)
             assert(payload.selection == "heads")
             assert(payload.amount == 10)
             return {
                 lobby = {
-                    code = "CCG234",
+                    code = LONG_CCG_CODE,
                     game = "heads_tails",
                     game_name = "Heads or Tails",
                     multiplier = 2,
@@ -414,11 +419,12 @@ local client = {
                 wallet = { available = 90, held = 0, holds = {} },
             }
         elseif action == "BET_LOBBY_STATUS" then
+            assert(payload.code == LONG_CCG_CODE)
             betStatusCalls = betStatusCalls + 1
             local finished = betStatusCalls >= 2
             return {
                 lobby = {
-                    code = "CCG234",
+                    code = LONG_CCG_CODE,
                     game = "heads_tails",
                     game_name = "Heads or Tails",
                     multiplier = 2,
@@ -621,12 +627,18 @@ function ui.truncate(value, maximum)
     value = tostring(value or "")
     return value:sub(1, maximum)
 end
-function ui.input(_, title)
+function ui.input(_, title, options)
     if title == "Create Foxy Account" then return "FoxyUser" end
     if title == "PAY A CODE" then return "ABC123" end
     if title == "Send Money" then return "FoxyFriend" end
     if title == "They Receive" then return "100" end
-    if title == "Join CCG" then return "CCG234" end
+    if title == "Join CCG" then
+        assert(options.mode == "code")
+        assert(options.maxLength == math.huge)
+        assert(options.scrollToEnd == true)
+        assert(options.minLength == nil)
+        return "cCg2026LongScreenCode987654321"
+    end
     if title == "Player Name" then return "FoxyPlayer" end
     if title == "Set Wager" then return "10" end
     if title == "Add to Bet Wallet" then return "25" end

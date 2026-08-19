@@ -70,6 +70,7 @@ Run this after installing into a ComputerCraft world.
 ## ComputerCraftGaming
 
 - [ ] Open **Bet** and confirm it asks for the Foxy Account PIN before showing the lobby-code screen; a wrong PIN must not open the app.
+- [ ] Enter a lobby code longer than 24 characters with mixed letters and numbers. Confirm the field scrolls as you type and the PUMPE joins with the complete code.
 - [ ] Open **Bet Wallet**, transfer money in with the PIN, and confirm the normal Foxy Account and Bet Wallet balances change by exactly the same amount in opposite directions.
 - [ ] Transfer a partial Bet Wallet balance back to the Foxy Account with the PIN and confirm held winnings cannot be withdrawn early.
 - [ ] Create a Heads or Tails lobby, join from two PUMPEs with different display names/picks, place wagers, and confirm the screen lists both as **READY**.

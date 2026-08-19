@@ -1963,7 +1963,8 @@ local function waitForBetResult(code, initial)
         local width, height = target.getSize()
         ui.clear(target, colors.black)
         ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
-        ui.center(target, 6, lobby.code, colors.cyan, colors.black)
+        ui.center(target, 6, ui.truncate(lobby.code, width - 4),
+            colors.cyan, colors.black)
         ui.center(target, 8, player.display_name, colors.white, colors.black)
         ui.center(target, 10,
             string.upper(player.selection) .. " // " .. money(player.wager),
@@ -2029,12 +2030,18 @@ local function betApp()
             "Add money in the Bet Wallet app", 1.2)
     end
     local code = ui.input(target, "Join CCG", {
-        hint = "6-character screen code",
+        hint = "Letters + numbers",
         mode = "code",
-        maxLength = 6,
-        minLength = 6,
+        maxLength = math.huge,
+        scrollToEnd = true,
     })
     if not code then return end
+    code = string.upper(util.trim(code))
+    if not code:match("^[A-Z0-9]+$") then
+        ui.message(target, "error", "INVALID CODE",
+            "Use letters and numbers only", 1.1)
+        return
+    end
     local name = ui.input(target, "Player Name", {
         hint = "Shown on the big screen",
         maxLength = 14,

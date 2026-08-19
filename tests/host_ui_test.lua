@@ -94,6 +94,28 @@ assert(pinWithEvents({
     { "mouse_click", 1, 4, 13 },
 }) == "1234")
 
+-- Long CCG codes use the same touch/keyboard code field without inheriting
+-- the normal 24-character text-input ceiling. The field keeps the newest
+-- characters visible while preserving the complete value.
+local longCode = "cCg2026LongScreenCode987654321"
+local inputEvents = {}
+for index = 1, #longCode do
+    inputEvents[#inputEvents + 1] = { "char", longCode:sub(index, index) }
+end
+inputEvents[#inputEvents + 1] = { "key", keys.enter }
+local inputIndex = 0
+os.pullEvent = function()
+    inputIndex = inputIndex + 1
+    assert(inputEvents[inputIndex], "code input requested too many events")
+    return table.unpack(inputEvents[inputIndex])
+end
+assert(ui.input(mockTerminal(26, 20), "Join CCG", {
+    hint = "Letters + numbers",
+    mode = "code",
+    maxLength = math.huge,
+    scrollToEnd = true,
+}) == string.upper(longCode))
+
 -- The PUMPE can opt into phone styling without changing the kiosk UI.
 ui.usePhoneStyle(true)
 local phoneDisplay = mockTerminal(26, 20)
