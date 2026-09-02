@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "6.0.3",
+    version = "6.1.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -27,6 +27,11 @@ return {
     ccg_result_delay_ms = 6 * 1000,
     ccg_survivor_max_seconds = 75,
 
+    -- CCG Auto Mode. The console keeps opening the next lobby on its own and
+    -- only stops when the code entered at start-up is typed back in.
+    ccg_auto_start_seconds = 15,
+    ccg_auto_next_seconds = 8,
+
     pin_free_limit = 50,
     daily_spend_limit = 5000,
     send_money_daily_limit = 2000,
@@ -46,5 +51,9 @@ return {
     auto_update = true,
     update_manifest_url = "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json",
     update_channel = "stable",
+
+    -- Only the Bank Server polls the internet. Clients ask the Bank for its
+    -- version over the connection they already hold, so this can stay slow.
     update_check_seconds = 5,
+    client_update_check_seconds = 60,
 }

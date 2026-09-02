@@ -4,6 +4,11 @@ const fs = require("fs");
 const path = require("path");
 
 const projectRoot = path.resolve(__dirname, "..");
+
+// `files` stays byte-for-byte compatible with the v5.2.1 updater, which
+// rejects any manifest entry it does not already know about. Everything added
+// since then goes in `extra_files`, which older updaters ignore and current
+// Bank Servers download in the same verified, atomic commit.
 const releaseFiles = [
   "bank_server.lua",
   "pumpe.lua",
@@ -17,6 +22,10 @@ const releaseFiles = [
   "lib/ui.lua",
   "lib/update.lua",
   "lib/util.lua",
+];
+const extraReleaseFiles = [
+  "border_controller.lua",
+  "ccg.lua",
 ];
 
 function checksum(buffer) {
@@ -32,57 +41,41 @@ const configSource = fs.readFileSync(
 const versionMatch = configSource.match(/\bversion\s*=\s*"(\d+\.\d+\.\d+)"/);
 if (!versionMatch) throw new Error("Could not read version from config.lua");
 
+// Easy Deployment reports its own version, and it only replaces itself when
+// the downloaded file says it is newer. Keeping that in step with config.lua
+// here removes the one manual step that could strand an installer.
+const startupPath = path.join(projectRoot, "startup.lua");
+const startupSource = fs.readFileSync(startupPath, "utf8");
+const stampedStartup = startupSource.replace(
+  /local INSTALLER_VERSION = "\d+\.\d+\.\d+"/,
+  `local INSTALLER_VERSION = "${versionMatch[1]}"`,
+);
+if (!stampedStartup.includes(`INSTALLER_VERSION = "${versionMatch[1]}"`)) {
+  throw new Error("Could not stamp INSTALLER_VERSION into startup.lua");
+}
+if (stampedStartup !== startupSource) fs.writeFileSync(startupPath, stampedStartup);
+
 // Keep both public one-file entry points identical. startup.lua starts
 // automatically at the computer root; installer.lua is the manual filename.
-fs.copyFileSync(
-  path.join(projectRoot, "startup.lua"),
-  path.join(projectRoot, "installer.lua"),
-);
+fs.copyFileSync(startupPath, path.join(projectRoot, "installer.lua"));
 
-const borderSource = fs.readFileSync(
-  path.join(projectRoot, "border_controller.lua"),
-);
-const borderChecksum = checksum(borderSource);
-const bankPath = path.join(projectRoot, "bank_server.lua");
-const originalBankSource = fs.readFileSync(bankPath, "utf8");
-const updatedBankSource = originalBankSource.replace(
-  /local BORDER_CONTROLLER_CHECKSUM = "[0-9a-f]{8}"/,
-  `local BORDER_CONTROLLER_CHECKSUM = "${borderChecksum}"`,
-);
-if (updatedBankSource === originalBankSource &&
-    !originalBankSource.includes(`BORDER_CONTROLLER_CHECKSUM = "${borderChecksum}"`)) {
-  throw new Error("Could not update the Border Controller checksum");
-}
-fs.writeFileSync(bankPath, updatedBankSource);
-
-const ccgSource = fs.readFileSync(
-  path.join(projectRoot, "ccg.lua"),
-);
-const ccgChecksum = checksum(ccgSource);
-const bankWithCcgChecksum = fs.readFileSync(bankPath, "utf8").replace(
-  /local CCG_CHECKSUM = "[0-9a-f]{8}"/,
-  `local CCG_CHECKSUM = "${ccgChecksum}"`,
-);
-if (bankWithCcgChecksum === fs.readFileSync(bankPath, "utf8") &&
-    !bankWithCcgChecksum.includes(`CCG_CHECKSUM = "${ccgChecksum}"`)) {
-  throw new Error("Could not update the CCG checksum");
-}
-fs.writeFileSync(bankPath, bankWithCcgChecksum);
+const describe = (relativePath) => {
+  const body = fs.readFileSync(path.join(projectRoot, relativePath));
+  return {
+    path: relativePath,
+    source: relativePath,
+    size: body.length,
+    checksum: checksum(body),
+  };
+};
 
 const manifest = {
   schema: 1,
   channel: "stable",
   version: versionMatch[1],
   notes: "PUMPE + ComputerCraftGaming automatic internet release",
-  files: releaseFiles.map((relativePath) => {
-    const body = fs.readFileSync(path.join(projectRoot, relativePath));
-    return {
-      path: relativePath,
-      source: relativePath,
-      size: body.length,
-      checksum: checksum(body),
-    };
-  }),
+  files: releaseFiles.map(describe),
+  extra_files: extraReleaseFiles.map(describe),
 };
 
 fs.writeFileSync(
@@ -106,8 +99,7 @@ const depotOnlyFiles = [
   "service_kiosk.lua",
   "event_kiosk.lua",
   "tax_controller.lua",
-  "border_controller.lua",
-  "ccg.lua",
+  ...extraReleaseFiles,
 ];
 const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
   .reduce((total, relativePath) => total + fileSize(relativePath), 0);
@@ -117,6 +109,10 @@ if (compactBankBytes > 500 * 1024) {
   throw new Error(`Compact Bank footprint exceeded 500 KiB: ${compactBankBytes}`);
 }
 console.log(`Built release_manifest.json for PUMPE v${manifest.version}`);
+console.log(
+  `Published ${manifest.files.length} required and `
+    + `${manifest.extra_files.length} optional files`,
+);
 console.log(
   `Bank footprint guard: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `
     + `${Math.ceil(compactBankBytes / 1024)} KiB compact`,

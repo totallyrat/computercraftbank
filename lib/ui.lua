@@ -190,9 +190,11 @@ function ui.header(target, title, subtitle, clockText)
         return
     end
     ui.fill(target, 1, 1, width, subtitle and 3 or 2, ui.theme.panel)
-    ui.text(target, 2, 1, ui.truncate(title, width - 3), ui.theme.ink, ui.theme.panel)
+    local titleWidth = clockText and (width - #clockText - 3) or (width - 3)
+    ui.text(target, 2, 1, ui.truncate(title, math.max(1, titleWidth)),
+        ui.theme.ink, ui.theme.panel)
     if clockText then
-        ui.text(target, width - #clockText, 1, clockText,
+        ui.text(target, math.max(1, width - #clockText + 1), 1, clockText,
             ui.theme.accent, ui.theme.panel)
     end
     if subtitle then
@@ -314,7 +316,7 @@ function Scene:wait(options)
     idleTimer = scheduleIdleTimer()
     while true do
         local event = { os.pullEvent() }
-        if event[1] == "mouse_click" then
+        if event[1] == "mouse_click" or event[1] == "monitor_touch" then
             if handleIdle() then return finish("__idle") end
             recordActivity()
             local action, button = self:hit(event[3], event[4])
@@ -327,11 +329,6 @@ function Scene:wait(options)
                 end
                 return finish(action)
             end
-        elseif event[1] == "monitor_touch" then
-            if handleIdle() then return finish("__idle") end
-            recordActivity()
-            local action = self:hit(event[3], event[4])
-            if action then return finish(action) end
         elseif event[1] == "key" then
             if handleIdle() then return finish("__idle") end
             recordActivity()
@@ -415,43 +412,49 @@ function ui.message(target, kind, title, body, duration)
         or kind == "warning" and ui.theme.warning
         or kind == "error" and ui.theme.danger
         or ui.theme.accent
-    ui.fill(target, 1, 1, width, height, ui.theme.background)
-    local y = math.max(2, math.floor(height / 2) - 3)
     local mark = kind == "success" and "OK"
         or kind == "error" and "!"
         or kind == "warning" and "!"
         or "i"
+
+    -- Wrap first, then centre the finished block, so long messages read the
+    -- same way on a 26x20 pocket screen and a wide kiosk.
+    local contentWidth = math.max(4, width - 4)
+    local titleLines = ui.wrap(title, contentWidth)
+    local bodyLines = body and ui.wrap(body, contentWidth) or {}
+    local function blockHeight()
+        return 3 + #titleLines + (#bodyLines > 0 and 1 + #bodyLines or 0)
+    end
+    local function trimTo(lines)
+        lines[#lines] = ui.truncate(lines[#lines] .. "..", contentWidth)
+    end
+    while blockHeight() > height and #bodyLines > 0 do
+        table.remove(bodyLines)
+        if #bodyLines > 0 then trimTo(bodyLines) end
+    end
+    while blockHeight() > height and #titleLines > 1 do
+        table.remove(titleLines)
+        trimTo(titleLines)
+    end
+
+    ui.fill(target, 1, 1, width, height, ui.theme.background)
+    local y = math.max(1, math.floor((height - blockHeight()) / 2) + 1)
     for size = 1, 3 do
-        ui.fill(target, math.floor((width - size * 3) / 2) + 1,
-            y, size * 3, 2, color)
+        ui.fill(target, math.floor((width - size * 3) / 2) + 1, y, size * 3, 2,
+            color)
         sleep(0.05)
     end
     ui.center(target, y, mark, colors.black, color)
-    local titleLines = phoneStyle and ui.wrap(title, width - 4)
-        or { ui.truncate(title, width - 2) }
-    if #titleLines > 2 then
-        while #titleLines > 2 do table.remove(titleLines) end
-        titleLines[2] = ui.truncate(titleLines[2] .. "..", width - 4)
+    local row = y + 3
+    for _, line in ipairs(titleLines) do
+        ui.center(target, row, line, color)
+        row = row + 1
     end
-    for index, line in ipairs(titleLines) do
-        ui.center(target, y + 3 + index - 1, line, color)
-    end
-    if body then
-        if phoneStyle then
-            local lines = ui.wrap(body, width - 4)
-            local maxBodyLines = math.max(1,
-                height - (y + 4 + #titleLines))
-            if #lines > maxBodyLines then
-                while #lines > maxBodyLines do table.remove(lines) end
-                lines[maxBodyLines] = ui.truncate(
-                    lines[maxBodyLines] .. "..", width - 4)
-            end
-            for index, line in ipairs(lines) do
-                ui.center(target, y + 4 + #titleLines + index - 1,
-                    line, ui.theme.muted)
-            end
-        else
-            ui.center(target, y + 5, ui.truncate(body, width - 2), ui.theme.muted)
+    if #bodyLines > 0 then
+        row = row + 1
+        for _, line in ipairs(bodyLines) do
+            ui.center(target, row, line, ui.theme.muted)
+            row = row + 1
         end
     end
     sleep(duration or 0.8)
@@ -488,31 +491,40 @@ function ui.input(target, title, options)
         ui.text(target, 3, fieldY + 1, shown .. (blink and "_" or " "),
             ui.theme.ink, ui.theme.panel, width - 4)
 
-        local startY = math.max(fieldY + 4, height - #rows - 3)
+        -- Lay the screen out from the bottom up so the action row, the space
+        -- bar, and the keyboard always fit whatever height the surface has.
+        local actionHeight = height >= 18 and 2 or 1
+        local actionY = height - actionHeight + 1
+        local spaceY = options.allowSpace and actionY - 1 or nil
+        local keyBottom = (spaceY or actionY) - 1
+        local startY = math.max(fieldY + 3, keyBottom - #rows + 1)
         local scene = ui.scene(target)
         for rowIndex, row in ipairs(rows) do
-            local keyWidth = math.max(1, math.floor((width - 2) / #row))
-            local totalWidth = keyWidth * #row
-            local startX = math.floor((width - totalWidth) / 2) + 1
-            for index = 1, #row do
-                local key = row:sub(index, index)
-                local label = key == "<" and "<" or key
-                scene:button("key:" .. key, startX + (index - 1) * keyWidth,
-                    startY + rowIndex - 1, keyWidth, 1, label, {
-                        background = key == "<" and ui.theme.danger or ui.theme.panelAlt,
-                        foreground = key == "<" and colors.white or colors.black,
-                    })
+            local y = startY + rowIndex - 1
+            if y <= keyBottom then
+                local keyWidth = math.max(1, math.floor((width - 2) / #row))
+                local totalWidth = keyWidth * #row
+                local startX = math.floor((width - totalWidth) / 2) + 1
+                for index = 1, #row do
+                    local key = row:sub(index, index)
+                    scene:button("key:" .. key, startX + (index - 1) * keyWidth,
+                        y, keyWidth, 1, key, {
+                            background = key == "<" and ui.theme.danger
+                                or ui.theme.panelAlt,
+                            foreground = key == "<" and colors.white
+                                or colors.black,
+                        })
+                end
             end
         end
-        local bottomY = height - 1
-        if options.allowSpace then
-            scene:button("space", 2, bottomY, math.max(5, math.floor(width / 3)), 1,
-                "SPACE", { background = ui.theme.panel })
+        if spaceY then
+            scene:button("space", 2, spaceY, width - 2, 1, "SPACE",
+                { background = ui.theme.panel })
         end
-        local okWidth = math.max(6, math.floor(width / 3))
-        scene:button("cancel", width - okWidth * 2 - 1, bottomY, okWidth, 1,
-            "CANCEL", { background = ui.theme.panel })
-        scene:button("ok", width - okWidth, bottomY, okWidth, 1,
+        local half = math.floor((width - 2) / 2)
+        scene:button("cancel", 2, actionY, half, actionHeight, "CANCEL",
+            { background = ui.theme.panel })
+        scene:button("ok", 2 + half, actionY, width - 2 - half, actionHeight,
             "DONE", { background = ui.theme.accentDark })
 
         local action = scene:wait({
@@ -575,13 +587,18 @@ function ui.pin(target, title, allowCancel)
         local buttonWidth = math.max(5, math.min(10, math.floor((width - 6) / 3)))
         local gridWidth = buttonWidth * 3 + 2
         local startX = math.floor((width - gridWidth) / 2) + 1
+        local bottom = allowCancel and height - 1 or height
         local startY = math.max(7, math.floor((height - 8) / 2) + 5)
+        local rowStep = startY + 6 <= bottom and 2 or 1
+        if startY + rowStep * 3 > bottom then
+            startY = math.max(4, bottom - rowStep * 3)
+        end
         for row = 1, 4 do
             for column = 1, 3 do
                 local label = layout[row][column]
                 scene:button("pin:" .. label,
                     startX + (column - 1) * (buttonWidth + 1),
-                    startY + (row - 1) * 2, buttonWidth, 1, label, {
+                    startY + (row - 1) * rowStep, buttonWidth, 1, label, {
                         background = label == "C" and ui.theme.danger
                             or label == "<" and ui.theme.panel
                             or ui.theme.panelAlt,
@@ -624,21 +641,17 @@ function ui.confirm(target, title, body, yesLabel, noLabel)
     local width, height = target.getSize()
     ui.clear(target)
     ui.header(target, title)
-    local bodyY = math.max(5, math.floor(height / 2) - 3)
-    if phoneStyle then
-        local lines = ui.wrap(body or "", width - 4)
-        local maxBodyLines = math.max(1, height - 4 - bodyY)
-        if #lines > maxBodyLines then
-            while #lines > maxBodyLines do table.remove(lines) end
-            lines[maxBodyLines] = ui.truncate(
-                lines[maxBodyLines] .. "..", width - 4)
-        end
-        for index, line in ipairs(lines) do
-            ui.center(target, bodyY + index - 1, line, ui.theme.ink)
-        end
-    else
-        ui.center(target, bodyY + 1,
-            ui.truncate(body or "", width - 4), ui.theme.ink)
+    -- Every confirmation wraps now. Kiosks used to truncate the description to
+    -- a single line, hiding what the customer was actually approving.
+    local lines = ui.wrap(body or "", math.max(4, width - 4))
+    local bodyY = math.max(5, math.floor((height - 3 - #lines) / 2) + 1)
+    local maxBodyLines = math.max(1, height - 4 - bodyY)
+    if #lines > maxBodyLines then
+        while #lines > maxBodyLines do table.remove(lines) end
+        lines[maxBodyLines] = ui.truncate(lines[maxBodyLines] .. "..", width - 4)
+    end
+    for index, line in ipairs(lines) do
+        ui.center(target, bodyY + index - 1, line, ui.theme.ink)
     end
     local scene = ui.scene(target)
     local buttonWidth = math.max(8, math.floor((width - 6) / 2))

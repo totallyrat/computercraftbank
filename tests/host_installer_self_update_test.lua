@@ -75,10 +75,13 @@ os.pullEvent = function(filter)
     return filter
 end
 
-local newInstaller = "-- PUMPE EASY DEPLOYMENT\n"
-    .. "-- This file is intentionally standalone.\n"
-    .. "-- v6.1.0\n"
-    .. string.rep("-- watchdog regression padding\n", 4000)
+local function fakeInstaller(version)
+    return "-- PUMPE EASY DEPLOYMENT\n"
+        .. "-- This file is intentionally standalone.\n"
+        .. 'local INSTALLER_VERSION = "' .. version .. '"\n'
+        .. string.rep("-- watchdog regression padding\n", 4000)
+end
+local newInstaller = fakeInstaller("99.0.0")
 local function checksum(body)
     local hash = 5381
     for index = 1, #body do
@@ -95,7 +98,7 @@ end
 local manifest = {
     schema = 1,
     channel = "stable",
-    version = "6.1.0",
+    version = "99.0.0",
     files = {
         {
             path = "startup.lua",
@@ -125,11 +128,29 @@ http = {
     end,
 }
 
-local ok, err = pcall(assert(loadfile("../startup.lua")))
+local installer = assert(loadfile("../startup.lua"))
+local ok, err = pcall(installer)
 assert(not ok)
 assert(tostring(err):find("__REBOOT__", 1, true))
 assert(files["/installer.lua"] == newInstaller)
 assert(#responses == 0)
 assert(yieldCount >= 50, "standalone installer checksum did not yield")
+
+-- A release published with a stale version stamp must not be installed. The
+-- manifest claims something newer, but the file itself does not, and blindly
+-- trusting the manifest would reinstall the same bytes and reboot forever.
+local staleInstaller = fakeInstaller("0.0.1")
+manifest.files[1].size = #staleInstaller
+manifest.files[1].checksum = checksum(staleInstaller)
+files["/installer.lua"] = "-- PUMPE EASY DEPLOYMENT\nprevious\n"
+responses = { "{}", staleInstaller }
+local kept = files["/installer.lua"]
+local quiet, quietError = pcall(installer)
+assert(#responses == 0,
+    "the stale release must still be fetched and inspected")
+assert(quiet or not tostring(quietError):find("__REBOOT__", 1, true),
+    "a stale version stamp must never trigger a reboot")
+assert(files["/installer.lua"] == kept,
+    "a stale version stamp must not replace the running installer")
 
 print("host_installer_self_update_test: OK")

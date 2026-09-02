@@ -65,6 +65,84 @@ local unsafe = {
 }
 assert(update.validateManifest(unsafe, expected, "stable") == nil)
 
+-- A checksum must be exactly eight hex digits.
+for _, bad in ipairs({ "1234abcg", "1234abc", "1234abcde", 12345678 }) do
+    assert(update.validateManifest({
+        schema = 1,
+        channel = "stable",
+        version = "5.1.0",
+        files = {
+            manifest.files[1],
+            {
+                path = "lib/update.lua",
+                source = "lib/update.lua",
+                size = 200,
+                checksum = bad,
+            },
+        },
+    }, expected, "stable") == nil, "accepted checksum " .. tostring(bad))
+end
+
+-- Optional roles are published in `extra_files`. Older Bank Servers ignore
+-- that array, while current ones install it in the same verified commit.
+local optional = { "ccg.lua" }
+local withExtra = {
+    schema = 1,
+    channel = "stable",
+    version = "5.1.0",
+    files = manifest.files,
+    extra_files = {
+        {
+            path = "ccg.lua",
+            source = "ccg.lua",
+            size = 300,
+            checksum = "00ff11ee",
+        },
+    },
+}
+local extended = assert(update.validateManifest(withExtra, expected, "stable",
+    optional))
+assert(#extended.files == 3, "extra_files must join the download set")
+assert(extended.files[3].path == "ccg.lua")
+
+-- A manifest with no extra_files is still complete.
+assert(update.validateManifest(manifest, expected, "stable", optional))
+
+-- An unlisted optional path is rejected instead of silently downloaded.
+local strayExtra = {
+    schema = 1,
+    channel = "stable",
+    version = "5.1.0",
+    files = manifest.files,
+    extra_files = {
+        {
+            path = "evil.lua",
+            source = "evil.lua",
+            size = 10,
+            checksum = "00ff11ee",
+        },
+    },
+}
+assert(update.validateManifest(strayExtra, expected, "stable", optional) == nil)
+
+-- Optional files must never appear in `files`; that is exactly the shape a
+-- v5.2.1 updater rejects, which would strand older Bank Servers.
+local misplaced = {
+    schema = 1,
+    channel = "stable",
+    version = "5.1.0",
+    files = {
+        manifest.files[1], manifest.files[2],
+        {
+            path = "ccg.lua",
+            source = "ccg.lua",
+            size = 300,
+            checksum = "00ff11ee",
+        },
+    },
+}
+assert(update.validateManifest(misplaced, expected, "stable", optional) == nil)
+
 -- Exercise HTTPS fetching, staged file verification, atomic commit, and
 -- rollback with an in-memory ComputerCraft filesystem.
 local files = {}
@@ -218,5 +296,49 @@ assert(not net.autoUpdate({
     update_check_seconds = 10,
 }, "service", "/pumpe"))
 assert(#updateRuns == 1)
+
+assert(net.isNewerVersion("6.1.0", "6.0.3"))
+assert(not net.isNewerVersion("6.0.3", "6.1.0"))
+assert(not net.isNewerVersion("6.1.0", "6.1.0"))
+
+-- With a Bank connection, a client asks for the Bank's version first and only
+-- launches Easy Deployment when a newer release actually exists. That keeps a
+-- live dashboard from shelling out a 45 KiB installer on every tick.
+local clock = 1
+os.epoch = function() return clock end
+local function advance() clock = clock + 5000 end
+
+local pings = 0
+local function bankAt(version)
+    return {
+        request = function(_, action)
+            assert(action == "PING", "clients must use the cheap version probe")
+            pings = pings + 1
+            return { version = version }
+        end,
+    }
+end
+
+local clientConfig = {
+    auto_update = true,
+    client_update_check_seconds = 1,
+    version = "6.1.0",
+}
+advance()
+assert(not net.autoUpdate(clientConfig, "event", "/pumpe", bankAt("6.1.0")))
+assert(pings == 1 and #updateRuns == 1,
+    "a current client must not run the installer at all")
+
+advance()
+assert(net.autoUpdate(clientConfig, "event", "/pumpe", bankAt("6.2.0")))
+assert(pings == 2 and #updateRuns == 2,
+    "a newer Bank release must still trigger the installer")
+
+-- An offline Bank is not a reason to shell out either.
+advance()
+assert(not net.autoUpdate(clientConfig, "event", "/pumpe", {
+    request = function() return nil, "Bank server is offline" end,
+}))
+assert(#updateRuns == 2)
 
 print("host_update_test: OK")

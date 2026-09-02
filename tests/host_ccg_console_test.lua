@@ -1,7 +1,8 @@
--- A full CCG Heads or Tails round on a 1x1 Advanced Monitor (29x19 at 0.5).
+-- A full CCG Heads or Tails round, rendered on a 1x1 Advanced Monitor
+-- (29x19 at text scale 0.5) and again on a large wall.
 
 local WIDTH, HEIGHT = 29, 19
-local actions = { "heads_tails", "start", "again", "close" }
+local actions = {}
 local requests, labels = {}, {}
 
 colors = {
@@ -179,9 +180,6 @@ function ui.scene()
 end
 package.loaded["lib.ui"] = ui
 
-assert(loadfile("../ccg.lua"))()
-assert(#actions == 0)
-
 local function contains(items, expected)
     for _, item in ipairs(items) do
         if item == expected then return true end
@@ -189,11 +187,30 @@ local function contains(items, expected)
     return false
 end
 
-assert(contains(requests, "CCG_REGISTER"))
-assert(contains(requests, "CCG_CREATE_LOBBY"))
-assert(contains(requests, "CCG_START"))
-assert(contains(requests, "CCG_TICK"))
-assert(contains(labels, "HEADS OR TAILS // 2X"))
-assert(contains(labels, "NEXT GAME"))
+local console = assert(loadfile("../ccg.lua"))
+local function playOneRound(width, height)
+    WIDTH, HEIGHT = width, height
+    requests, labels = {}, {}
+    for _, action in ipairs({ "heads_tails", "start", "again", "close" }) do
+        actions[#actions + 1] = action
+    end
+    console()
+    assert(#actions == 0, "the scripted round did not finish")
+    assert(contains(requests, "CCG_REGISTER"))
+    assert(contains(requests, "CCG_CREATE_LOBBY"))
+    assert(contains(requests, "CCG_START"))
+    assert(contains(requests, "CCG_TICK"))
+    assert(contains(labels, "NEXT GAME"))
+end
+
+-- The smallest supported display: every element must stay on screen.
+playOneRound(29, 19)
+assert(contains(labels, "HEADS OR TAILS // 2X"),
+    "a narrow monitor stacks the games in one column")
+
+-- A large wall uses the roomier three-card game picker.
+playOneRound(82, 38)
+assert(contains(labels, "HEADS OR TAILS\n2X"),
+    "a wide monitor shows the games as cards")
 
 print("host_ccg_console_test: OK")

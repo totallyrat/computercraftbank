@@ -9,6 +9,8 @@ colors = {
 
 local width, height = 26, 20
 local cursorX = 1
+local written = {}
+local events, eventIndex
 local display = {
     getSize = function() return width, height end,
     setBackgroundColor = function() end,
@@ -21,6 +23,7 @@ local display = {
     end,
     write = function(value)
         assert(cursorX + #tostring(value) - 1 <= width)
+        written[#written + 1] = tostring(value)
     end,
 }
 
@@ -49,15 +52,6 @@ rednet = {
 sleep = function() end
 os.getComputerID = function() return 7 end
 os.epoch = function() return 123456789 end
-local events = {
-    { "mouse_click", 1, 5, 12 }, -- Bank Server role
-    { "mouse_click", 1, 4, 13 }, -- 4
-    { "mouse_click", 1, 11, 17 }, -- 0
-    { "mouse_click", 1, 4, 13 }, -- 4
-    { "mouse_click", 1, 11, 17 }, -- 0
-    { "mouse_click", 1, 1, 20 }, -- Exit after offline-bank message
-}
-local eventIndex = 0
 os.pullEvent = function()
     eventIndex = eventIndex + 1
     assert(events[eventIndex], "installer requested too many events")
@@ -65,10 +59,49 @@ os.pullEvent = function()
 end
 
 local installer = assert(loadfile("../startup.lua"))
-installer()
+
+-- Pick the protected Bank Server entry, enter 4040, and confirm a computer
+-- with no local release says so instead of starting anything. Every write is
+-- bounds checked, so the layout cannot run off either screen.
+local function pickBankServer(screenWidth, screenHeight, script)
+    width, height = screenWidth, screenHeight
+    written, eventIndex = {}, 0
+    events = script
+    installer()
+    assert(eventIndex == #events, "the scripted run did not finish")
+    local screen = table.concat(written, "\n")
+    assert(screen:find("PROTECTED DOWNLOAD", 1, true),
+        "the Bank Server entry must ask for the protected download code")
+    assert(screen:find("LOCAL BANK FILES MISSING", 1, true),
+        "a Bank without local release files must say so")
+    assert(screen:find("Nothing installed yet", 1, true),
+        "an unassigned computer must report that no role is installed")
+end
+
+-- Pocket-sized screen: one column of roles.
+pickBankServer(26, 20, {
+    { "mouse_click", 1, 5, 13 }, -- Bank Server, fifth row
+    { "mouse_click", 1, 4, 13 }, -- 4
+    { "mouse_click", 1, 11, 17 }, -- 0
+    { "mouse_click", 1, 4, 13 }, -- 4
+    { "mouse_click", 1, 11, 17 }, -- 0
+    { "mouse_click", 1, 2, 20 }, -- EXIT
+})
+
+-- Advanced Computer: two columns of role cards with room for the detail line.
+pickBankServer(51, 19, {
+    { "mouse_click", 1, 5, 11 }, -- Bank Server, left column, third row
+    { "mouse_click", 1, 12, 12 }, -- 4
+    { "mouse_click", 1, 22, 16 }, -- 0
+    { "mouse_click", 1, 12, 12 }, -- 4
+    { "mouse_click", 1, 22, 16 }, -- 0
+    { "mouse_click", 1, 2, 19 }, -- EXIT
+})
 
 -- Automatic checks stay quiet when the Bank Server is offline and return to
 -- the direct role boot instead of opening the role picker.
+width, height = 26, 20
+events, eventIndex = {}, 0
 installer("--auto", "service")
 
 print("host_installer_ui_test: OK")

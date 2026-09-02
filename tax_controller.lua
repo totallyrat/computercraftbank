@@ -344,22 +344,23 @@ local function dashboard()
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
         tick = tick + 1
+        -- Refresh on a five second cadence and straight after any change,
+        -- instead of asking the Bank for statistics twice a second.
+        local refresh = false
         if action == "__tick" then
-            net.autoUpdate(config, "tax", ROOT)
-        end
-        if action == "__tick" and tick % 10 == 0 then
-            stats = request("GOVERNMENT_STATS", {}, true) or stats
-        elseif action == "open" then openPeriod()
-        elseif action == "rates" then setRates()
+            net.autoUpdate(config, "tax", ROOT, client)
+            refresh = tick % 10 == 0
+        elseif action == "open" then openPeriod() refresh = true
+        elseif action == "rates" then setRates() refresh = true
         elseif action == "revenue" then revenueScreen()
         elseif action == "audit" then auditCompany()
-        elseif action == "deposit" then stateDeposit()
+        elseif action == "deposit" then stateDeposit() refresh = true
         elseif action == "stats" then statsScreen()
-        elseif action == "close" then closePeriod()
+        elseif action == "close" then closePeriod() refresh = true
         elseif action == "system" then systemScreen()
         elseif action == "lock" then governmentToken = nil
         elseif action == "__terminate" then running = false end
-        if governmentToken then
+        if refresh and governmentToken then
             stats = request("GOVERNMENT_STATS", {}, true) or stats
         end
     end

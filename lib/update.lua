@@ -99,7 +99,38 @@ local function releaseFileUrl(manifestUrl, source, version)
     return cacheBusted(base .. source, version)
 end
 
-function update.validateManifest(manifest, expectedPaths, expectedChannel)
+-- Required files live in `files`; optional roles live in `extra_files` so
+-- older Bank updaters, which reject unknown entries in `files`, keep working.
+local function readEntry(rawFile, allowed, seen)
+    local path = type(rawFile) == "table" and rawFile.path or nil
+    local source = type(rawFile) == "table"
+        and (rawFile.source or rawFile.path) or nil
+    local size = type(rawFile) == "table" and rawFile.size or nil
+    local checksum = type(rawFile) == "table" and rawFile.checksum or nil
+    if not safeRelativePath(path) or not allowed[path] or seen[path] then
+        return nil, "Update manifest contains an unexpected file"
+    end
+    if not safeRelativePath(source) then
+        return nil, "Update manifest contains an unsafe source"
+    end
+    if type(size) ~= "number" or size < 0 or size % 1 ~= 0
+        or size > MAX_FILE_BYTES then
+        return nil, "Update manifest contains an invalid file size"
+    end
+    if type(checksum) ~= "string" or not checksum:match("^%x%x%x%x%x%x%x%x$") then
+        return nil, "Update manifest contains an invalid checksum"
+    end
+    seen[path] = true
+    return {
+        path = path,
+        source = source,
+        size = size,
+        checksum = string.lower(checksum),
+    }
+end
+
+function update.validateManifest(manifest, expectedPaths, expectedChannel,
+    optionalPaths)
     if type(manifest) ~= "table" or manifest.schema ~= 1 then
         return nil, "Unsupported online update manifest"
     end
@@ -114,41 +145,25 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel)
         return nil, "Update manifest has no files"
     end
 
-    local expected = {}
-    for _, path in ipairs(expectedPaths or {}) do expected[path] = true end
+    local required, optional = {}, {}
+    for _, path in ipairs(expectedPaths or {}) do required[path] = true end
+    for _, path in ipairs(optionalPaths or {}) do optional[path] = true end
     local seen, files = {}, {}
     for _, rawFile in ipairs(manifest.files) do
-        local path = type(rawFile) == "table" and rawFile.path or nil
-        local source = type(rawFile) == "table"
-            and (rawFile.source or rawFile.path) or nil
-        local size = type(rawFile) == "table" and rawFile.size or nil
-        local checksum = type(rawFile) == "table" and rawFile.checksum or nil
-        if not safeRelativePath(path) or not expected[path] or seen[path] then
-            return nil, "Update manifest contains an unexpected file"
-        end
-        if not safeRelativePath(source) then
-            return nil, "Update manifest contains an unsafe source"
-        end
-        if type(size) ~= "number" or size < 0 or size % 1 ~= 0
-            or size > MAX_FILE_BYTES then
-            return nil, "Update manifest contains an invalid file size"
-        end
-        if type(checksum) ~= "string"
-            or not checksum:match("^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]"
-                .. "[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$") then
-            return nil, "Update manifest contains an invalid checksum"
-        end
-        seen[path] = true
-        files[#files + 1] = {
-            path = path,
-            source = source,
-            size = size,
-            checksum = string.lower(checksum),
-        }
+        local file, err = readEntry(rawFile, required, seen)
+        if not file then return nil, err end
+        files[#files + 1] = file
     end
-    for path in pairs(expected) do
+    for path in pairs(required) do
         if not seen[path] then
             return nil, "Update manifest is missing " .. path
+        end
+    end
+    if type(manifest.extra_files) == "table" then
+        for _, rawFile in ipairs(manifest.extra_files) do
+            local file, err = readEntry(rawFile, optional, seen)
+            if not file then return nil, err end
+            files[#files + 1] = file
         end
     end
 
@@ -161,14 +176,28 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel)
     }
 end
 
-function update.fetchManifest(manifestUrl, expectedPaths, expectedChannel)
+function update.fetchManifest(manifestUrl, expectedPaths, expectedChannel,
+    optionalPaths)
     local body, err = fetchBody(cacheBusted(manifestUrl), MAX_MANIFEST_BYTES)
     if not body then return nil, err end
     local ok, manifest = pcall(textutils.unserializeJSON, body)
     if not ok or type(manifest) ~= "table" then
         return nil, "Online update manifest is not valid JSON"
     end
-    return update.validateManifest(manifest, expectedPaths, expectedChannel)
+    return update.validateManifest(manifest, expectedPaths, expectedChannel,
+        optionalPaths)
+end
+
+-- Downloads and verifies exactly one validated manifest entry.
+function update.fetchFile(manifestUrl, file, version)
+    local url = releaseFileUrl(manifestUrl, file.source, version)
+    if not url then return nil, "Update manifest URL has no release folder" end
+    local body, err = fetchBody(url, math.min(MAX_FILE_BYTES, file.size + 1))
+    if not body then return nil, err end
+    if #body ~= file.size or update.checksum(body) ~= file.checksum then
+        return nil, "Online checksum failed for " .. file.path
+    end
+    return body
 end
 
 function update.downloadRelease(manifest, manifestUrl, stagingRoot, onProgress)
@@ -177,13 +206,8 @@ function update.downloadRelease(manifest, manifestUrl, stagingRoot, onProgress)
 
     for index, file in ipairs(manifest.files) do
         if onProgress then onProgress(file, index, #manifest.files) end
-        local url = releaseFileUrl(manifestUrl, file.source, manifest.version)
-        if not url then return nil, "Update manifest URL has no release folder" end
-        local body, err = fetchBody(url, math.min(MAX_FILE_BYTES, file.size + 1))
+        local body, err = update.fetchFile(manifestUrl, file, manifest.version)
         if not body then return nil, err end
-        if #body ~= file.size or update.checksum(body) ~= file.checksum then
-            return nil, "Online checksum failed for " .. file.path
-        end
         local destination = fs.combine(stagingRoot, file.path)
         local ok, writeError = pcall(util.writeFile, destination, body)
         if not ok then return nil, tostring(writeError) end

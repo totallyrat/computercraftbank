@@ -1,4 +1,4 @@
-# PUMPE Ecosystem v6
+# PUMPE Ecosystem v6.1
 
 A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. It includes personal banking, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
@@ -52,7 +52,21 @@ The Bank Server is authoritative. It generates chance-game outcomes, reserves wa
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 
-Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.0.3 contains the complete Bet Play mode.
+Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.1.0 contains the complete Bet Play mode.
+
+### Auto Mode
+
+Auto Mode turns a CCG console into an unattended arcade cabinet. Tap **AUTO MODE // NON-STOP** on the game picker, choose one game or **Rotate All Games**, then type a stop code twice.
+
+From then on the console runs by itself:
+
+1. It opens a lobby and shows the join code.
+2. When every player who joined is **READY**, a countdown starts (`ccg_auto_start_seconds`, default 15). The operator can still tap **START** to begin immediately.
+3. The game plays and settles as usual.
+4. The result stays up for `ccg_auto_next_seconds` (default 8), then the next lobby opens.
+5. If nobody joins before a lobby expires, every reserved wager is returned and a fresh lobby opens straight away.
+
+Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when the mode was started; a wrong code leaves it running. The setting is saved to the console, so a restart — including one caused by an automatic update — comes back into Auto Mode instead of the game menu. Rotate mode remembers which game is next across restarts.
 
 ## The new customer monitor
 
@@ -92,7 +106,9 @@ If a required source file is missing, the first-boot screen lists it and lets yo
 
 Files are downloaded in verified chunks and staged before anything is replaced. A failed installation rolls back. Existing PUMPE data files are never touched, and an unrelated `/startup.lua` is preserved. The installed `/pumpe/installer.lua` is both the permanent boot manager and the one-file Easy Deployment menu.
 
-Before showing its menu or booting any role, Easy Deployment checks the public HTTPS manifest and safely replaces itself when a newer installer exists. This means a clean, unassigned installer learns about newly added roles such as Border Controller without first becoming another device type.
+An unassigned installer checks the public HTTPS manifest and safely replaces itself when a newer installer exists, so a clean computer learns about newly added roles such as Border Controller without first becoming another device type. Booting an already installed client role never contacts the internet — that copy of `installer.lua` arrives from the Bank Server's verified depot instead, and the role starts without waiting on an HTTPS round trip.
+
+The role picker shows the role and version this computer already has, and offers **START ROLE** so an installed computer can be relaunched without reinstalling anything.
 
 The first Bank Server cannot download itself because no deployment host exists yet. It must always be bootstrapped from the complete local package.
 
@@ -108,9 +124,18 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 6. Refreshes `/pumpe/installer.lua`, writes a direct Bank boot entry, saves the database, and restarts immediately.
 7. Detects the restart marker, bypasses every menu, compacts `/updates/`, and launches the Bank Server normally.
 
-Installed PUMPEs, CCG consoles, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers quietly compare versions with the Bank Server whenever they start and continue checking from their live dashboards. If a newer version exists, they download, verify, install, and reboot automatically. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
+Installed PUMPEs, CCG consoles, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers ask the Bank Server for its version over the Rednet connection they already hold, every `client_update_check_seconds` (default 60). Only when the Bank reports a newer release do they launch Easy Deployment to download, verify, install, and reboot. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
 
-The release manifest remains compatible with existing v5.2.1 Bank Servers. `launcher.lua` is retained only as a migration bridge for older startup entries; v6 installations and normal boots do not use it. Border Controller and CCG are checksum-pinned deferred files so the legacy-compatible manifest does not reject them. A temporary deferred-file download failure never sends an automatically restarting Bank Server into Easy Deployment; the server keeps serving and retries the depot repair.
+### Manifest layout
+
+The manifest's `files` array stays byte-compatible with v5.2.1 Bank Servers, whose updater rejects any entry it does not already know. Anything added since then — currently `border_controller.lua` and `ccg.lua` — is published in a second `extra_files` array:
+
+- Older Bank Servers ignore `extra_files` entirely and keep updating from `files`.
+- Current Bank Servers download both arrays into the same staged, checksum-verified, atomic commit.
+
+`launcher.lua` is retained only as a migration bridge for older startup entries; v6 installations and normal boots do not use it.
+
+A Bank Server that arrives from a release which published fewer files still has old copies in `/updates/`. On its next check it compares every depot program against the manifest describing the version it is running, re-downloads whatever does not match, and writes `/updates/.depot` so the check does not repeat. Nothing is pinned in Lua source, and a temporary download failure simply leaves the depot unstamped for the next attempt.
 
 ### Release source
 
@@ -121,6 +146,7 @@ auto_update = true,
 update_manifest_url = "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json",
 update_channel = "stable",
 update_check_seconds = 5,
+client_update_check_seconds = 60,
 ```
 
 The manifest and source files share the repository root. For example, `lib/update.lua` is available relative to the manifest as `lib/update.lua`. The Minecraft server's ComputerCraft HTTP configuration must allow HTTPS access to `raw.githubusercontent.com`.
@@ -131,7 +157,12 @@ After editing the release and increasing `version` in `config.lua`, run:
 
 ```text
 node tools/build_release_manifest.js
+tools/run_tests.sh
 ```
+
+The builder is the only step. It copies `startup.lua` to `installer.lua`, stamps `INSTALLER_VERSION` from `config.lua`, and regenerates `release_manifest.json` with both file arrays. It never rewrites program source, and nothing has to be checksummed by hand.
+
+`tests/host_release_manifest_test.lua` then fails the suite if the manifest, the version stamp, or the two entry points have drifted from the files in the repository — so a stale manifest cannot be published by accident.
 
 Commit or upload the changed source files and regenerated `release_manifest.json` together. The Bank Server will discover the higher version on its next check. Never publish a partially uploaded release with the new manifest first; upload the files first and the manifest last.
 
@@ -178,6 +209,7 @@ Replace `service` with `bank`, `pumpe`, `event`, `tax`, `border`, or `ccg`.
 - The console sets the monitor to text scale `0.5` and responsively supports a 1×1 monitor or a larger wall.
 - Lobby codes, ready states, coin flips, six race lanes, the shrinking Survivor ring, players, and results all render on the monitor.
 - Touch **Start** only after every displayed player is ready. Heads or Tails and Race support one or more players; Survivor requires at least two.
+- **Auto Mode** does that waiting for you and keeps opening the next lobby. It stops only for the code entered when it was started.
 - The console stores only its server-issued ID/token. It never stores PUMPE PINs or decides payouts.
 
 ### Service Kiosk
@@ -260,6 +292,7 @@ Install **CCG Bet Console**, attach the monitor and modem, and select a game. Pl
 - Temporary visa departure days are calculated by the Bank Server on entry, and the document locks permanently after its recorded exit.
 - CCG wagers leave Bet Wallet when they are marked ready. Leaving or expiring before a round starts returns the full wager.
 - CCG payouts are `2×` for Heads or Tails and `3×` for Race or Survivor. Winning payouts remain held for one complete in-game day before entering the available Bet Wallet balance.
+- CCG Auto Mode starts a round only when every player who joined is ready, and returns every wager if a lobby expires empty. It cannot be turned off without its stop code.
 - Bet Wallet funds are separate from the normal Foxy Account until the player explicitly transfers them. Both transfer directions require the PIN.
 
 ## Security reality check
@@ -291,12 +324,19 @@ pumpe/
 ├── release_manifest.json
 ├── tools/
 │   └── build_release_manifest.js
+├── tools/
+│   ├── build_release_manifest.js
+│   └── run_tests.sh
 └── lib/
     ├── net.lua
     ├── ui.lua
     ├── update.lua
     └── util.lua
 ```
+
+## Tests
+
+`tools/run_tests.sh` runs every host-side test with any Lua 5.2+ interpreter; ComputerCraft is not required. They cover the Bank routes, CCG settlement and Auto Mode, the update manifest, Easy Deployment, and screen layout at pocket, computer, and monitor sizes.
 
 ## Troubleshooting
 
@@ -308,8 +348,8 @@ pumpe/
 
 **Bank says there is no space**
 
-- Restart through the latest Easy Deployment file. v6.0.3 removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
-- A compact installation is about 432 KiB before account data. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
+- Restart through the latest Easy Deployment file. It removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
+- A compact installation is about 448 KiB before account data, against ComputerCraft's default 1000 KiB per-computer limit. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
 
 **Customer monitor is blank**
 
@@ -327,7 +367,13 @@ pumpe/
 - Every listed player must show **READY** after selecting a pick and reserving a wager.
 - Survivor requires at least two ready players.
 - Confirm the PUMPE has available Bet Wallet funds, not only funds still in Holding.
+- In Auto Mode the countdown only begins once every joined player is ready; a single player still picking holds the round.
+
+**Auto Mode will not turn off**
+
+- That is the design. **STOP AUTO** needs the exact code typed when the mode was started.
+- If the code is lost, stop the CCG program from the computer's terminal and delete `ccg_device.dat` beside it. The console re-registers on the next start.
 
 ## Version
 
-PUMPE Ecosystem `6.0.3`.
+PUMPE Ecosystem `6.1.0`.

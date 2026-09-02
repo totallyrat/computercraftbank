@@ -364,20 +364,23 @@ local function dashboard()
         local action = scene:wait({ tickRate = 0.5 })
         tick = tick + 1
         blink = not blink
+        -- The clock blinks twice a second; the Bank is only asked for fresh
+        -- numbers every five seconds, or right after something changed them.
+        local refresh = false
         if action == "__tick" then
-            net.autoUpdate(config, "event", ROOT)
-        end
-        if action == "__tick" and tick % 10 == 0 then
-            stats = request("EVENT_DASHBOARD", {}, true) or stats
-        elseif action == "create" then createEvent()
-        elseif action == "events" then ui.wipe(target); myEvents()
-        elseif action == "verify" then verifyTicket()
+            net.autoUpdate(config, "event", ROOT, client)
+            refresh = tick % 10 == 0
+        elseif action == "create" then createEvent() refresh = true
+        elseif action == "events" then ui.wipe(target) myEvents() refresh = true
+        elseif action == "verify" then verifyTicket() refresh = true
         elseif action == "logout" then
             if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT", "BACK") then
                 sessionToken, organizer = nil, nil
             end
         elseif action == "exit" or action == "__terminate" then running = false end
-        if sessionToken then stats = request("EVENT_DASHBOARD", {}, true) or stats end
+        if refresh and sessionToken then
+            stats = request("EVENT_DASHBOARD", {}, true) or stats
+        end
     end
 end
 

@@ -1,5 +1,39 @@
 # Changelog
 
+## 6.1.0
+
+### CCG Auto Mode
+
+- Added **Auto Mode** to the CCG Bet Console. Pick one game or **Rotate All Games**, type a stop code twice, and the console opens lobbies, starts each round once every joined player is ready, shows the result, and opens the next lobby on its own — forever.
+- Auto Mode only turns off when that same code is typed back in. A wrong code leaves it running.
+- Auto Mode is saved to the console, so a reboot or an automatic update comes back straight into the arena instead of the game menu.
+- Added `ccg_auto_start_seconds` and `ccg_auto_next_seconds` to `config.lua` for the ready countdown and the pause between rounds.
+
+### A cleaner update cycle
+
+- Replaced the checksums that were pinned into `bank_server.lua` for `border_controller.lua` and `ccg.lua`. Both are now published in the manifest's `extra_files` array, downloaded in the same verified, atomic commit as everything else, and no longer need the release builder to rewrite Lua source.
+- Kept the manifest's `files` array byte-compatible with the v5.2.1 updater, which rejects entries it does not recognise; older Bank Servers ignore `extra_files` and keep updating.
+- Added a `/updates/.depot` stamp. A Bank that arrives from an older release verifies every depot program against the published manifest once, repairs whatever does not match, and stamps the depot instead of relying on hard-coded checksums.
+- Made the release builder stamp `INSTALLER_VERSION` from `config.lua`, and made Easy Deployment trust the downloaded file's own version rather than the manifest's. A release published with a stale stamp used to reinstall the same bytes and reboot forever.
+- Added `tools/run_tests.sh` and a publishing guard that fails if `release_manifest.json` does not match the files in the repository.
+
+### Faster, quieter clients
+
+- Clients now ask the Bank Server for its version over the connection they already hold and only launch Easy Deployment when a newer release actually exists. Every dashboard tick used to load the 45 KiB installer, make a public HTTPS request, and pull a full deployment manifest.
+- Added `client_update_check_seconds` (default 60) so client checks are separate from the Bank's five-second internet poll.
+- Stopped Easy Deployment from contacting the internet when booting an installed client role or running an automatic check. Only the Bank Server and an unassigned installer use the public manifest now, which is what the README always claimed.
+- Fixed the Event Kiosk and Tax Controller dashboards asking the Bank for fresh statistics twice a second; both now refresh every five seconds and immediately after anything changes. The Border Controller dashboard polls visitor counts every five seconds instead of every second.
+
+### Interface work
+
+- Rebuilt the Easy Deployment role picker: a two-column card grid on wide screens, a single column on pocket-sized ones, the installed role and version in the footer, and a **START ROLE** button on a computer that already has one.
+- Made the installation screen repaint only the parts that change instead of clearing the display for every 6 KiB chunk, so the progress bar no longer flickers.
+- Rebuilt the CCG console layout around a shared header, content band, and footer, so lobbies, results, and the game picker fit a 1x1 monitor and a large wall equally well.
+- Touch screens now flash a pressed button the same way mouse clicks always did.
+- Confirmation dialogs wrap their text everywhere. Kiosks used to truncate the description to one line, hiding what the customer was approving.
+- Made `ui.message`, the touch keyboard, and the PIN pad lay themselves out from the available height, so nothing is pushed off a short screen; the keyboard's space bar no longer overlaps **CANCEL**.
+- Right-aligned the header clock and gave the Bank Server dashboard a third statistic (live CCG games) plus an Easy Deployment status line.
+
 ## 6.0.3
 
 - Removed the Bet app's six-character lobby-code restriction. Its touch and physical-keyboard input now accepts letters and numbers with no fixed length.

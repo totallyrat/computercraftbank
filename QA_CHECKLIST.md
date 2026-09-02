@@ -12,6 +12,7 @@ Run this after installing into a ComputerCraft world.
 
 ## Easy Deployment
 
+- [ ] Run `tools/run_tests.sh` and confirm every host-side test passes before touching a world.
 - [ ] Install a fresh Bank from files on the computer drive and confirm the source files are moved—not duplicated—into `/pumpe` and `/updates` before the Bank launches.
 - [ ] Upgrade a v6.0.1 Bank with duplicate runtime files in `/updates`; confirm Easy Deployment frees those copies before replacing `bank_server.lua`, then the Bank starts with no duplicate runtime or stale update folders.
 - [ ] Confirm `/pumpe` contains only the Bank runtime, installer, config, and required libraries, while `/updates` contains one copy of each role-specific program plus `public/config.lua`.
@@ -26,6 +27,9 @@ Run this after installing into a ComputerCraft world.
 - [ ] Enter `4040` and confirm a protected role downloads successfully.
 - [ ] Interrupt a download and confirm existing installed scripts remain unchanged.
 - [ ] Confirm an unrelated existing `/startup.lua` is preserved.
+- [ ] Open Easy Deployment on a computer that already has a role and confirm the footer names that role and version, and that **START ROLE** relaunches it without reinstalling.
+- [ ] Watch an installation and confirm the progress bar advances smoothly instead of flickering between chunks.
+- [ ] Reboot an installed client role with the Minecraft server's HTTP access disabled and confirm it starts without pausing for an internet request.
 
 ## Automatic Internet Updates
 
@@ -38,6 +42,11 @@ Run this after installing into a ComputerCraft world.
 - [ ] Remove one manifest file and confirm the whole release is rejected.
 - [ ] Start an older client and confirm it updates from the Bank Server and reboots before opening its role.
 - [ ] Leave an older client dashboard open, publish a newer release, and confirm its live check installs and reboots without manual input.
+- [ ] With the Bank on the current version, leave a client dashboard open and confirm it does not repeatedly launch Easy Deployment; only a cheap version probe should run.
+- [ ] Confirm `release_manifest.json` lists `border_controller.lua` and `ccg.lua` under `extra_files`, never under `files`.
+- [ ] Update a Bank from a release that predates `extra_files`, then confirm it reports **VERIFYING DEPOT**, refreshes `/updates/ccg.lua` and `/updates/border_controller.lua`, and writes `/updates/.depot`.
+- [ ] Delete `/updates/.depot` and corrupt one depot program; confirm the next check repairs it from the manifest and stamps the depot again.
+- [ ] Publish a release whose `startup.lua` carries an older `INSTALLER_VERSION` and confirm Easy Deployment refuses it instead of rebooting in a loop.
 - [ ] Leave an unassigned Easy Deployment file on a clean computer, publish a newer release, restart it, and confirm the installer updates itself before showing the role list.
 - [ ] Confirm a Bank update reboots directly back into the Bank without displaying Easy Deployment or depending on an active deployment server.
 
@@ -84,6 +93,17 @@ Run this after installing into a ComputerCraft world.
 - [ ] Attempt to alter the CCG/PUMPE payload with a preferred outcome, payout, or winner and confirm the Bank ignores it and settles only its own result.
 - [ ] Confirm Home Play is not shown in this release; only Bet Play is installed.
 
+### Auto Mode
+
+- [ ] Start Auto Mode on one game, confirm it asks for the stop code twice, and refuse a mismatch.
+- [ ] Join with one PUMPE, mark ready, and confirm the console counts down and starts the round with no operator input.
+- [ ] Confirm the result screen counts down and the next lobby opens with a new join code.
+- [ ] Let a lobby expire with nobody joined and confirm a fresh lobby opens instead of returning to the game menu.
+- [ ] Tap **STOP AUTO**, enter a wrong code, and confirm Auto Mode keeps running.
+- [ ] Enter the correct code and confirm the console returns to the game picker and cancels the open lobby with refunds.
+- [ ] Start Auto Mode with **Rotate All Games**, reboot the console, and confirm it resumes Auto Mode on the next game instead of showing the menu.
+- [ ] Confirm Survivor rounds in Auto Mode wait for at least two ready players.
+
 ## Service Kiosk and monitor
 
 - [ ] Register and link a company.
@@ -124,6 +144,15 @@ Run this after installing into a ComputerCraft world.
 - [ ] Change the government key, open a tax period, and file a declaration.
 - [ ] Underpay once and confirm the PUMPE offers to settle the difference.
 - [ ] Issue a State Deposit and verify its audit-history entry.
+
+## Interface
+
+- [ ] Tap buttons on the CCG and Service Kiosk monitors and confirm each press flashes before acting.
+- [ ] Open a kiosk payment confirmation with a long description and confirm the whole description wraps instead of being cut to one line.
+- [ ] Open the touch keyboard on a PUMPE, a computer, and a monitor. Confirm every key row, **SPACE**, **CANCEL**, and **DONE** are visible and do not overlap.
+- [ ] Open the PIN pad on each screen size and confirm all twelve keys and **BACK** stay on screen.
+- [ ] Confirm the Bank Server dashboard shows accounts, payments, live CCG games, the internet update status, and the Easy Deployment status.
+- [ ] Leave the Event Kiosk, Tax Controller, and Border Controller dashboards open and confirm the clock still blinks while the Bank is queried only every five seconds.
 
 ## Failure handling
 

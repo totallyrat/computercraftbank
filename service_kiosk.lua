@@ -875,7 +875,7 @@ local function posLoop()
         if action == "__tick" or action == "__idle" then
             customerView.frame = frame
             renderCustomerMonitor()
-            net.autoUpdate(config, "service", ROOT)
+            net.autoUpdate(config, "service", ROOT, client)
             if frame % 10 == 0 then refreshState(true) end
         elseif action == "add" then
             addProduct()

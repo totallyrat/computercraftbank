@@ -98,20 +98,48 @@ function net.reply(recipient, protocol, requestId, ok, data, err, code)
     }, protocol)
 end
 
-function net.autoUpdate(config, role, root)
+local function versionParts(value)
+    local major, minor, patch = tostring(value or ""):match(
+        "^(%d+)%.(%d+)%.(%d+)")
+    if not major then return nil end
+    return tonumber(major), tonumber(minor), tonumber(patch)
+end
+
+function net.isNewerVersion(candidate, current)
+    local a, b, c = versionParts(candidate)
+    local x, y, z = versionParts(current)
+    if not a or not x then return false end
+    if a ~= x then return a > x end
+    if b ~= y then return b > y end
+    return c > z
+end
+
+-- Clients ask the Bank Server for its version over the connection they already
+-- hold and only launch Easy Deployment when a newer release actually exists.
+-- Shelling the installer on every dashboard tick used to cost a full program
+-- load, a public HTTPS request, and a deployment manifest round trip.
+function net.autoUpdate(config, role, root, client)
     if type(config) ~= "table" or config.auto_update == false then return false end
     if type(shell) ~= "table" or type(shell.run) ~= "function" then return false end
     role = string.lower(tostring(role or ""))
     if role == "" or role == "bank" then return false end
 
     local interval = math.max(5,
-        math.floor(tonumber(config.update_check_seconds) or 10)) * 1000
+        math.floor(tonumber(config.client_update_check_seconds)
+            or config.update_check_seconds or 30)) * 1000
     local now = util.nowMs()
     if lastAutoUpdateCheck[role]
         and now - lastAutoUpdateCheck[role] < interval then
         return false
     end
     lastAutoUpdateCheck[role] = now
+
+    if client then
+        local ping = client:request("PING", {}, 3)
+        if not ping or not net.isNewerVersion(ping.version, config.version) then
+            return false
+        end
+    end
 
     local installer = fs.combine(root or "/pumpe", "installer.lua")
     if not fs.exists(installer) or fs.isDir(installer) then return false end

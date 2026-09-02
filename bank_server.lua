@@ -19,13 +19,7 @@ local BANK_RESTART_MARKER = fs.combine(ROOT, ".bank_auto_restart")
 local LEGACY_CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
 local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
 local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
-local BORDER_CONTROLLER_CHECKSUM = "4fed221f"
-local CCG_CHECKSUM = "8a18d309"
-
-local DEFERRED_PUBLIC_FILES = {
-    ["border_controller.lua"] = BORDER_CONTROLLER_CHECKSUM,
-    ["ccg.lua"] = CCG_CHECKSUM,
-}
+local DEPOT_STAMP = fs.combine(UPDATES_DIR, ".depot")
 
 local LOCAL_UPDATE_FILES = {
     "bank_server.lua",
@@ -57,9 +51,9 @@ local DEPOT_ONLY_FILES = {
 local DEPOT_ONLY_SET = {}
 for _, path in ipairs(DEPOT_ONLY_FILES) do DEPOT_ONLY_SET[path] = true end
 
--- Keep this list compatible with v5.2.1. Its updater rejects additional
--- manifest paths, so the verified Border Controller is fetched separately
--- after the new Bank Server starts.
+-- Keep this list compatible with v5.2.1, whose updater rejects unknown
+-- entries in the manifest's `files` array. Everything added since then is
+-- published in `extra_files`, which older updaters simply ignore.
 local ONLINE_UPDATE_FILES = {
     "bank_server.lua",
     "pumpe.lua",
@@ -74,6 +68,15 @@ local ONLINE_UPDATE_FILES = {
     "lib/update.lua",
     "lib/util.lua",
 }
+
+local ONLINE_OPTIONAL_FILES = {
+    "border_controller.lua",
+    "ccg.lua",
+}
+local ONLINE_OPTIONAL_SET = {}
+for _, path in ipairs(ONLINE_OPTIONAL_FILES) do
+    ONLINE_OPTIONAL_SET[path] = true
+end
 
 local ROLE_MAIN_FILES = {
     bank = "bank_server.lua",
@@ -132,45 +135,6 @@ local function writePublicDeployConfig()
         .. textutils.serialize(publicConfig, { compact = false }) .. "\n")
 end
 
-local function fetchDeferredPublicFile(path)
-    if type(http) ~= "table" or type(http.get) ~= "function" then return nil end
-    local expectedChecksum = DEFERRED_PUBLIC_FILES[path]
-    if not expectedChecksum then return nil end
-    local manifestUrl = tostring(config.update_manifest_url or "")
-    manifestUrl = manifestUrl:gsub("[?#].*$", "")
-    local base = manifestUrl:match("^(https://.*/)[^/]+$")
-    if not base then return nil end
-    local url = base .. path .. "?pumpe="
-        .. tostring(config.version or util.nowMs())
-    local ok, response = pcall(http.get, {
-        url = url,
-        headers = {
-            ["Accept"] = "text/plain",
-            ["Cache-Control"] = "no-cache",
-        },
-        binary = false,
-        redirect = false,
-        timeout = 10,
-    })
-    if not ok or not response then return nil end
-    local chunks, length = {}, 0
-    while true do
-        local chunk = response.read(8192)
-        if not chunk then break end
-        length = length + #chunk
-        if length > 256 * 1024 then
-            pcall(response.close)
-            return nil
-        end
-        chunks[#chunks + 1] = chunk
-    end
-    pcall(response.close)
-    local body = table.concat(chunks)
-    if util.checksum(body) ~= expectedChecksum then return nil end
-    pcall(util.writeFile, fs.combine(UPDATES_DIR, path), body)
-    return body
-end
-
 local function localUpdateBody(path)
     if path == "public/config.lua" then
         return util.readFile(fs.combine(UPDATES_DIR, path))
@@ -196,15 +160,10 @@ local function localUpdateBody(path)
     } or {
         fs.combine(ROOT, path),
     }
-    local deferredChecksum = DEFERRED_PUBLIC_FILES[path]
     for _, candidate in ipairs(candidates) do
         local body = util.readFile(candidate)
-        if body and (not deferredChecksum
-            or util.checksum(body) == deferredChecksum) then
-            return body
-        end
+        if body then return body end
     end
-    if deferredChecksum then return fetchDeferredPublicFile(path) end
     return nil
 end
 
@@ -330,37 +289,29 @@ local function updateDepotMissingFiles()
     return missing
 end
 
-local function stageLocalUpdateFiles()
-    return compactBankStorage()
-end
-
-local function onlyDeferredFilesMissing(missing)
+-- Programs published only in the manifest's `extra_files` can be restored
+-- from the internet, so a Bank that is otherwise complete still boots.
+local function onlyRepairableMissing(missing)
     if #missing == 0 then return false end
+    if config.auto_update == false
+        or tostring(config.update_manifest_url or "") == "" then return false end
     for _, item in ipairs(missing) do
         local path = item:match("^([^ ]+)") or item
-        if not DEFERRED_PUBLIC_FILES[path] then return false end
+        if not ONLINE_OPTIONAL_SET[path] then return false end
     end
     return true
 end
 
-local function repairDeferredDepot()
-    local allReady = true
-    for path, expectedChecksum in pairs(DEFERRED_PUBLIC_FILES) do
-        local destination = fs.combine(UPDATES_DIR, path)
-        local deployed = util.readFile(destination)
-        if not deployed or util.checksum(deployed) ~= expectedChecksum then
-            local body = localUpdateBody(path)
-            if body then
-                local ok = pcall(util.writeFile, destination, body)
-                if not ok or util.readFile(destination) ~= body then
-                    allReady = false
-                end
-            else
-                allReady = false
-            end
-        end
-    end
-    return allReady
+-- The depot stamp records which release the /updates/ copies were verified
+-- against. Only the online check writes it, after comparing every depot
+-- program with the published manifest; booting never assumes the copies are
+-- current, so a Bank cut short mid-upgrade still re-verifies afterwards.
+local function depotStamped()
+    return util.readFile(DEPOT_STAMP) == tostring(config.version)
+end
+
+local function stampDepot()
+    pcall(util.writeFile, DEPOT_STAMP, tostring(config.version))
 end
 
 local function renderUpdateBootstrap(created, staged, missing)
@@ -417,7 +368,7 @@ local function bootstrapUpdateDepot()
         fs.makeDir(UPDATES_DIR)
     end
 
-    local staged = stageLocalUpdateFiles()
+    local staged = compactBankStorage()
     writePublicDeployConfig()
     local missing = updateDepotMissingFiles()
     if automaticRestart then
@@ -425,7 +376,7 @@ local function bootstrapUpdateDepot()
         ensureBankStartup()
         return
     end
-    if #missing == 0 or onlyDeferredFilesMissing(missing) then
+    if #missing == 0 or onlyRepairableMissing(missing) then
         ensureBankStartup()
         return
     end
@@ -443,7 +394,7 @@ local function bootstrapUpdateDepot()
             ensureBankStartup()
             os.reboot()
         elseif action == "rescan" then
-            staged = stageLocalUpdateFiles()
+            staged = compactBankStorage()
             writePublicDeployConfig()
             missing = updateDepotMissingFiles()
         elseif action == "shutdown" or action == "__terminate" then
@@ -3676,10 +3627,6 @@ local function processSubscriptions()
     end
 end
 
-local function deploymentChecksum(body)
-    return util.checksum(body)
-end
-
 local function deploymentReply(recipient, requestId, ok, data, err, code)
     rednet.send(recipient, {
         version = 1,
@@ -3730,7 +3677,7 @@ local function deploymentManifest(role)
         manifest[#manifest + 1] = {
             path = file.path,
             size = #body,
-            checksum = deploymentChecksum(body),
+            checksum = util.checksum(body),
         }
     end
     return manifest
@@ -3828,6 +3775,7 @@ local onlineUpdateStatus = tostring(config.update_manifest_url or "") ~= ""
 local onlineUpdateColor = tostring(config.update_manifest_url or "") ~= ""
     and colors.orange or colors.lightGray
 local lastOnlineUpdateError
+local deployStatus, deployColor = "STARTING", colors.orange
 
 local function loadConfigTable(path)
     local loader, loadError = loadfile(path)
@@ -3858,6 +3806,40 @@ local function preserveLocalConfig(manifest)
     return true
 end
 
+-- Verifies the depot copies of every role program against the manifest that
+-- describes the running release and repairs any that are missing or stale.
+-- This is what keeps `/updates/` honest after an upgrade from an older Bank
+-- that published fewer files, and it needs no checksums pinned in source.
+local function verifyDepotAgainstManifest(manifest, manifestUrl)
+    local repaired, failed = 0, 0
+    for _, file in ipairs(manifest.files) do
+        if DEPOT_ONLY_SET[file.path] then
+            local destination = fs.combine(UPDATES_DIR, file.path)
+            local body = util.readFile(destination)
+            if not body or #body ~= file.size
+                or util.checksum(body) ~= file.checksum then
+                local fresh = onlineUpdate.fetchFile(manifestUrl, file,
+                    manifest.version)
+                if fresh and pcall(util.writeFile, destination, fresh) then
+                    repaired = repaired + 1
+                else
+                    failed = failed + 1
+                end
+            end
+        end
+    end
+    if failed > 0 then
+        deployStatus, deployColor = "DEPOT REPAIR FAILED", colors.red
+        return false, repaired
+    end
+    stampDepot()
+    deployStatus, deployColor = "READY", colors.lime
+    if repaired > 0 then
+        logActivity("Depot repaired " .. repaired .. " file(s)", colors.cyan)
+    end
+    return true, repaired
+end
+
 local function checkForOnlineUpdate()
     if config.auto_update == false then
         onlineUpdateStatus = "DISABLED"
@@ -3874,7 +3856,8 @@ local function checkForOnlineUpdate()
     onlineUpdateStatus = "CHECKING INTERNET"
     onlineUpdateColor = colors.orange
     local manifest, err = onlineUpdate.fetchManifest(
-        manifestUrl, ONLINE_UPDATE_FILES, config.update_channel or "stable")
+        manifestUrl, ONLINE_UPDATE_FILES, config.update_channel or "stable",
+        ONLINE_OPTIONAL_FILES)
     if not manifest then
         onlineUpdateStatus = "CHECK FAILED"
         onlineUpdateColor = colors.red
@@ -3887,6 +3870,11 @@ local function checkForOnlineUpdate()
     lastOnlineUpdateError = nil
 
     if not onlineUpdate.isNewer(manifest.version, config.version) then
+        if not depotStamped() and manifest.version == config.version then
+            onlineUpdateStatus = "VERIFYING DEPOT"
+            onlineUpdateColor = colors.orange
+            verifyDepotAgainstManifest(manifest, manifestUrl)
+        end
         onlineUpdateStatus = "CURRENT v" .. config.version
         onlineUpdateColor = colors.lime
         return false
@@ -3934,6 +3922,7 @@ local function checkForOnlineUpdate()
         logActivity(startupWarning, colors.orange)
     end
     compactBankStorage()
+    if fs.exists(DEPOT_STAMP) then pcall(fs.delete, DEPOT_STAMP) end
     util.writeFile(BANK_RESTART_MARKER, tostring(manifest.version))
     pcall(save)
     onlineUpdateStatus = "RESTARTING v" .. manifest.version
@@ -3968,15 +3957,10 @@ local function deploymentLoop()
 end
 
 local function schedulerLoop()
-    local nextDeferredRepair = 0
     while running do
         cleanupEphemeral()
         processSubscriptions()
         processBetHolds()
-        if util.nowMs() >= nextDeferredRepair then
-            repairDeferredDepot()
-            nextDeferredRepair = util.nowMs() + 30 * 1000
-        end
         sleep(10)
     end
 end
@@ -4011,30 +3995,39 @@ local function dashboardLoop()
         ui.clear(target)
         ui.header(target, "PUMPE BANK SERVER", "v" .. config.version,
             util.formatClock(blink))
-        ui.text(target, 2, 5, "LIVE NETWORK", colors.lime)
-        ui.card(target, 2, 7, math.floor((width - 5) / 2), 4, colors.cyan)
-        ui.text(target, 4, 8, "ACCOUNTS", colors.lightGray, colors.gray)
-        ui.text(target, 4, 9, tostring(count(state.accounts)), colors.white, colors.gray)
-        local rightX = math.floor((width - 5) / 2) + 4
-        ui.card(target, rightX, 7, width - rightX, 4, colors.magenta)
-        ui.text(target, rightX + 2, 8, "TRANSACTIONS", colors.lightGray, colors.gray)
-        ui.text(target, rightX + 2, 9, tostring(#state.transactions), colors.white, colors.gray)
-        ui.text(target, 2, 11,
-            ui.truncate("ONLINE UPDATE  " .. onlineUpdateStatus, width - 2),
+        local cardWidth = math.floor((width - 4) / 3)
+        local cards = {
+            { "ACCOUNTS", count(state.accounts), colors.cyan },
+            { "PAYMENTS", #state.transactions, colors.magenta },
+            { "CCG GAMES", count(state.ccg_lobbies), colors.lime },
+        }
+        for index, card in ipairs(cards) do
+            local x = 2 + (index - 1) * (cardWidth + 1)
+            local panelWidth = index == #cards and width - 1 - x or cardWidth
+            ui.card(target, x, 5, panelWidth, 4, card[3])
+            ui.text(target, x + 2, 6, card[1], colors.lightGray, colors.gray)
+            ui.text(target, x + 2, 7, tostring(card[2]), colors.white,
+                colors.gray, panelWidth - 3)
+        end
+        ui.text(target, 2, 10,
+            ui.truncate("INTERNET  " .. onlineUpdateStatus, width - 2),
             onlineUpdateColor)
+        ui.text(target, 2, 11,
+            ui.truncate("DEPLOYMENT  " .. deployStatus, width - 2), deployColor)
 
         local scene = ui.scene(target)
-        local feedY = 12
+        local feedY = 13
         ui.text(target, 2, feedY, "ACTIVITY", colors.lightGray)
-        local maxFeed = math.max(1, height - feedY - 3)
+        local maxFeed = math.max(1, height - feedY - 2)
         for index = 1, math.min(#activity, maxFeed) do
             local item = activity[index]
             ui.text(target, 2, feedY + index,
-                item.time .. "  " .. ui.truncate(item.text, width - 10), item.color)
+                item.time .. "  " .. ui.truncate(item.text, width - 10),
+                item.color)
         end
-        scene:button("save", width - 18, height - 1, 8, 1, "SAVE",
+        scene:button("save", width - 18, height, 8, 1, "SAVE",
             { background = colors.blue })
-        scene:button("stop", width - 9, height - 1, 8, 1, "STOP",
+        scene:button("stop", width - 9, height, 8, 1, "STOP",
             { background = colors.red })
         local action = scene:wait({ tickRate = 0.5, flash = false })
         blink = not blink
@@ -4042,7 +4035,8 @@ local function dashboardLoop()
             save()
             logActivity("Manual save complete", colors.lime)
         elseif action == "stop" then
-            if ui.confirm(target, "STOP SERVER", "Save and shut down?", "STOP", "BACK") then
+            if ui.confirm(target, "STOP SERVER", "Save and shut down?",
+                "STOP", "BACK") then
                 running = false
                 save()
                 return
@@ -4068,6 +4062,8 @@ if TEST_MODE then
         ensure_bank_startup = ensureBankStartup,
         local_update_body = localUpdateBody,
         compact_bank_storage = compactBankStorage,
+        verify_depot = verifyDepotAgainstManifest,
+        depot_stamped = depotStamped,
     }
 end
 
@@ -4077,8 +4073,11 @@ rednet.host(DEPLOY_PROTOCOL, DEPLOY_HOSTNAME)
 logActivity("Server online on computer #" .. os.getComputerID(), colors.lime)
 local depotMissing = updateDepotMissingFiles()
 if #depotMissing == 0 then
+    deployStatus, deployColor = "READY", colors.lime
     logActivity("Easy Deployment online", colors.lime)
 else
+    deployStatus = "REPAIRING " .. #depotMissing .. " FILE(S)"
+    deployColor = colors.orange
     logActivity("Deployment missing " .. #depotMissing .. " files", colors.orange)
 end
 save()

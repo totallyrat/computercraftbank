@@ -287,7 +287,7 @@ local function ownerUnlock(reason)
 end
 
 local function dashboard()
-    local blink = true
+    local blink, tick = true, 0
     while running and device.controller_id do
         local width, height = target.getSize()
         ui.clear(target)
@@ -314,8 +314,11 @@ local function dashboard()
         local action = scene:wait({ tickRate = 1 })
         if action == "__tick" or action == "__idle" then
             blink = not blink
-            net.autoUpdate(config, "border", ROOT)
-            refreshStatus(true)
+            tick = tick + 1
+            net.autoUpdate(config, "border", ROOT, client)
+            -- The clock blinks every second; visitor counts only need the
+            -- Bank every five.
+            if tick % 5 == 0 then refreshStatus(true) end
         elseif action == "enter" then
             checkVisa("enter")
         elseif action == "exit" then
@@ -357,7 +360,7 @@ while running do
             if action == "retry" then
                 setupController()
             elseif action == "__tick" or action == "__idle" then
-                net.autoUpdate(config, "border", ROOT)
+                net.autoUpdate(config, "border", ROOT, client)
             elseif action == "stop" or action == "__terminate" then
                 running = false
             end

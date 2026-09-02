@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "6.0.3"
+local INSTALLER_VERSION = "6.1.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -307,50 +307,6 @@ local function protectedCode()
     end
 end
 
-local function roleMenu()
-    local width, height = target.getSize()
-    while running do
-        clear()
-        header("EASY DEPLOYMENT", "Choose this computer's role")
-        local buttons = {}
-        local startY = 4
-        local rowHeight = math.max(2, math.floor((height - 4) / #roles))
-        for index, role in ipairs(roles) do
-            local y = startY + (index - 1) * rowHeight
-            local roleHeight = math.max(1,
-                math.min(rowHeight, height - y))
-            local label = role.label
-            if width >= 38 and roleHeight >= 2 then
-                label = label .. "\n" .. role.detail
-            end
-            button(buttons, "role:" .. role.id, 2, y, width - 2,
-                roleHeight, label,
-                role.protected and theme.warning
-                    or index == 1 and theme.accentDark or theme.panel,
-                role.protected and colors.black or colors.white)
-            if role.protected and width < 38 then
-                writeAt(width - 7, y, "[4040]", colors.black, theme.warning)
-            end
-        end
-        button(buttons, "exit", 1, height, 6, 1, "EXIT", theme.panel)
-        local bindings = {}
-        for index, role in ipairs(roles) do
-            bindings[tostring(index)] = "role:" .. role.id
-        end
-        local action = waitForButton(buttons, bindings)
-        if action == "exit" or action == "__terminate" then
-            running = false
-            return nil
-        end
-        local id = action and action:match("^role:(.+)$")
-        if id then
-            for _, role in ipairs(roles) do
-                if role.id == id then return role end
-            end
-        end
-    end
-end
-
 local function cooperativeYield()
     if type(os) ~= "table"
         or type(os.queueEvent) ~= "function"
@@ -435,6 +391,79 @@ local function writeFile(path, body)
     return true
 end
 
+-- The role this computer already boots into, taken from the marked
+-- /startup.lua Easy Deployment writes after every installation.
+local function installedRole()
+    if not fs.exists("/startup.lua") then return nil end
+    local body = readFile("/startup.lua")
+    local id = body and body:match('--boot",%s*"(%w+)"')
+    return id and roleById(id) and id or nil
+end
+
+local function roleMenu()
+    local installed = installedRole()
+    while running do
+        local width, height = target.getSize()
+        clear()
+        header("EASY DEPLOYMENT", "Choose this computer's role")
+        local buttons = {}
+        local columns = width >= 40 and 2 or 1
+        local rows = math.ceil(#roles / columns)
+        local top, bottom = 5, height - 2
+        local cardHeight = math.max(2, math.floor((bottom - top + 1) / rows))
+        local cardWidth = math.floor((width - 2 - (columns - 1)) / columns)
+        for index, role in ipairs(roles) do
+            local column = (index - 1) % columns
+            local row = math.floor((index - 1) / columns)
+            local y = top + row * cardHeight
+            if y + 1 <= bottom then
+                local label = role.label
+                if cardHeight >= 3 then
+                    label = label .. "\n" .. role.detail
+                        .. (role.protected and " (4040)" or "")
+                elseif role.protected then
+                    label = label .. " 4040"
+                end
+                button(buttons, "role:" .. role.id,
+                    2 + column * (cardWidth + 1), y, cardWidth,
+                    math.min(cardHeight - 1, bottom - y + 1), label,
+                    role.protected and theme.warning
+                        or role.id == installed and theme.accentDark
+                        or theme.panel,
+                    role.protected and colors.black or colors.white)
+            end
+        end
+        local footer = installed
+            and ("Installed: " .. string.upper(installed)
+                .. "  -  v" .. installedVersion())
+            or "Nothing installed yet"
+        writeAt(2, height - 1, truncate(footer, width - 2), theme.muted,
+            theme.background)
+        button(buttons, "exit", 2, height, 6, 1, "EXIT", theme.panel)
+        if installed then
+            button(buttons, "start", width - 12, height, 11, 1,
+                "START ROLE", theme.success, colors.black)
+        end
+        local bindings = {}
+        for index, role in ipairs(roles) do
+            bindings[tostring(index)] = "role:" .. role.id
+        end
+        local action = waitForButton(buttons, bindings)
+        if action == "exit" or action == "__terminate" then
+            running = false
+            return nil
+        end
+        if action == "start" and installed then
+            return roleById(installed), true
+        end
+        local id = action and action:match("^role:(.+)$")
+        if id then
+            local role = roleById(id)
+            if role then return role end
+        end
+    end
+end
+
 local function closeResponse(response)
     if response and type(response.close) == "function" then
         pcall(response.close)
@@ -505,17 +534,13 @@ local function manifestEntry(manifest, requestedPath)
     end
 end
 
-local function installerEntry(manifest)
-    return manifestEntry(manifest, "startup.lua")
-end
-
 local function selfUpdateInstaller()
     local manifestBody = fetchHttps(PUBLIC_MANIFEST_URL, 256 * 1024)
     if not manifestBody then return false end
     local ok, manifest = pcall(textutils.unserializeJSON, manifestBody)
     if not ok then return false end
     publicManifest = manifest
-    local entry = installerEntry(manifest)
+    local entry = manifestEntry(manifest, "startup.lua")
     if not entry or not newerVersion(entry.version, INSTALLER_VERSION) then
         return false
     end
@@ -526,6 +551,14 @@ local function selfUpdateInstaller()
     if not body or #body ~= entry.size
         or checksum(body) ~= entry.checksum
         or not body:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
+        return false
+    end
+    -- Trust the downloaded file's own version, not the manifest's. A release
+    -- published with a stale INSTALLER_VERSION would otherwise install the
+    -- same file and reboot forever.
+    local downloadedVersion = body:match('INSTALLER_VERSION = "([%d%.]+)"')
+    if not downloadedVersion
+        or not newerVersion(downloadedVersion, INSTALLER_VERSION) then
         return false
     end
 
@@ -552,7 +585,7 @@ local function selfUpdateInstaller()
     end
     if fs.exists(backup) then fs.delete(backup) end
     message("success", "EASY DEPLOYMENT UPDATED",
-        "Installed v" .. entry.version, 0.6)
+        "Installed v" .. downloadedVersion, 0.6)
     os.reboot()
     return true
 end
@@ -672,19 +705,29 @@ local function formatBytes(value)
     return value .. " B"
 end
 
+-- Only the changing rows are repainted. Clearing the whole screen for every
+-- 6 KiB chunk made the install screen flicker and hid the progress bar.
+local progressChrome
 local function renderProgress(role, file, completed, total, fileIndex, fileCount)
     local width, height = target.getSize()
-    clear()
-    header("INSTALLING " .. role.label, fileIndex .. "/" .. fileCount .. " files")
-    center(6, truncate(file.path, width - 4), theme.ink)
-    center(8, formatBytes(completed) .. " / " .. formatBytes(total), theme.muted)
     local barWidth = math.max(8, width - 6)
-    fill(4, 11, barWidth, 2, theme.panel)
+    local barY = math.max(10, math.min(height - 4, 11))
+    if progressChrome ~= role.label then
+        progressChrome = role.label
+        clear()
+        header("INSTALLING " .. role.label, "Receiving from the Bank Server")
+        fill(4, barY, barWidth, 2, theme.panel)
+    end
+    fill(2, 6, width - 2, 1, theme.background)
+    center(6, truncate(file.path, width - 4), theme.ink)
+    fill(2, 8, width - 2, 1, theme.background)
+    center(8, formatBytes(completed) .. " / " .. formatBytes(total), theme.muted)
     local filled = total > 0 and math.floor(barWidth * completed / total) or 0
-    fill(4, 11, filled, 2, theme.accent)
+    fill(4, barY, math.max(0, filled), 2, theme.accent)
     local percent = total > 0 and math.floor(completed / total * 100) or 0
-    center(14, percent .. "%", theme.accent)
-    center(height - 1, "Receiving from Bank Server...", theme.muted)
+    fill(2, barY + 3, width - 2, 1, theme.background)
+    center(barY + 3, percent .. "%  -  file " .. fileIndex .. "/" .. fileCount,
+        theme.accent)
 end
 
 local function retryDeployRequest(action, payload)
@@ -1028,6 +1071,7 @@ local function successScreen(role, manifest, startupMessage)
 end
 
 local function installRole(role, automatic)
+    progressChrome = nil
     local accessCode
     if role.protected then
         accessCode = automatic and PROTECTED_CODE or protectedCode()
@@ -1114,8 +1158,14 @@ local function installRole(role, automatic)
 end
 
 math.randomseed((nowMs() + os.getComputerID() * 7919) % 2147483647)
-selfUpdateInstaller()
-repairInstalledBankRuntime()
+
+-- Only an unassigned installer and the Bank Server need the public manifest.
+-- Every installed client role receives installer.lua from the Bank's verified
+-- depot, so booting one never waits on an HTTPS round trip.
+if not automaticRoleId and (not bootRoleId or bootRoleId == "bank") then
+    selfUpdateInstaller()
+    repairInstalledBankRuntime()
+end
 
 if bootRoleId then
     local role = roleById(bootRoleId)
@@ -1123,10 +1173,16 @@ if bootRoleId then
         message("error", "UNKNOWN ROLE", bootRoleId, 1.4)
         return
     end
-    local runningBody = readFile(shell.getRunningProgram())
-    if runningBody
-        and runningBody:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
-        writeFile(fs.combine(INSTALL_ROOT, "installer.lua"), runningBody)
+    -- A standalone copy dropped at the computer root seeds the permanent
+    -- boot manager. When it is already the installed one, skip the rewrite.
+    local runningPath = shell.getRunningProgram()
+    local installedInstaller = fs.combine(INSTALL_ROOT, "installer.lua")
+    if normalizedPath(runningPath) ~= normalizedPath(installedInstaller) then
+        local runningBody = readFile(runningPath)
+        if runningBody
+            and runningBody:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
+            writeFile(installedInstaller, runningBody)
+        end
     end
     openModems()
     if role.id ~= "bank" then installRole(role, true) end
@@ -1153,8 +1209,18 @@ boot()
 openModems()
 
 while running do
-    local role = roleMenu()
-    if role then installRole(role) end
+    local role, launch = roleMenu()
+    if role and launch then
+        local program = fs.combine(INSTALL_ROOT, rolePrograms[role.id])
+        if fs.exists(program) then
+            running = false
+            shell.run(program)
+        else
+            message("error", "ROLE FILE MISSING", "Install it again first", 1.6)
+        end
+    elseif role then
+        installRole(role)
+    end
 end
 
 clear()

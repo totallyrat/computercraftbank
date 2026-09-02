@@ -2191,7 +2191,7 @@ local function mainMenu()
         if action == "__tick" or action == "__idle" then
             blink = not blink
             tick = tick + 1
-            net.autoUpdate(config, "pumpe", ROOT)
+            net.autoUpdate(config, "pumpe", ROOT, client)
             if tick % 10 == 0 then
                 summary = refreshSummary(true) or summary
                 if not sessionToken then return end
