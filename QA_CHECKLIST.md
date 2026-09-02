@@ -104,6 +104,41 @@ Run this after installing into a ComputerCraft world.
 - [ ] Start Auto Mode with **Rotate All Games**, reboot the console, and confirm it resumes Auto Mode on the next game instead of showing the menu.
 - [ ] Confirm Survivor rounds in Auto Mode wait for at least two ready players.
 
+## Friends, Messages, and Urgent Contact
+
+### Friends
+
+- [ ] Search a partial name and confirm the match appears and your own account never does.
+- [ ] Send a request, confirm the other PUMPE shows a Friends badge and an alert, and accept it.
+- [ ] Send the same request twice and confirm only one alert arrives.
+- [ ] Have both people request each other and confirm they become friends immediately.
+- [ ] Decline a request and confirm neither side gains a friend.
+- [ ] Remove a friend and confirm they disappear from both lists.
+
+### Messages
+
+- [ ] Start a chat from Friends and from Messages and confirm both open the same conversation.
+- [ ] Send a message and confirm the other PUMPE badges Messages and raises one alert.
+- [ ] Send several more without opening the chat and confirm no further alerts arrive.
+- [ ] Open the chat and confirm the badge clears.
+- [ ] Ask for money, confirm the request appears for the other person, pay it with the PIN, and check both balances moved by the amount plus the 10% fee.
+- [ ] Decline a money request and confirm no money moves.
+- [ ] Create a group of three, send a message, and confirm both other PUMPEs are notified.
+- [ ] In a group, confirm Send money asks who to pay.
+
+### Urgent Contact
+
+- [ ] Reach a friend while their PUMPE sits on a different app, and confirm the full-screen ring takes over.
+- [ ] Decline and confirm the caller is told.
+- [ ] Accept, type from both sides, and confirm each line appears on the other screen within about a second.
+- [ ] Send money and pay a request inside the call and confirm the PIN is required.
+- [ ] Press Save on one PUMPE only, hang up, and confirm nothing was written to Messages.
+- [ ] Press Save on both, hang up, and confirm the transcript appears in the direct chat.
+- [ ] Hang up from each side in turn and confirm the other side is told.
+- [ ] Leave a call unanswered for 30 seconds and confirm both sides get a missed-call alert.
+- [ ] Start a call, restart the Bank Server, and confirm the call ends rather than hanging.
+- [ ] Confirm a second call is refused while one is already open.
+
 ## Service Kiosk and monitor
 
 - [ ] Register and link a company.

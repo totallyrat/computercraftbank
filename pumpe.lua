@@ -24,6 +24,8 @@ if device.onboarding_complete == nil then device.onboarding_complete = false end
 
 ui.usePhoneStyle(true)
 
+local disableDeviceLock
+
 local function request(action, payload, silent)
     payload = payload or {}
     if sessionToken and not payload.session_token then
@@ -33,7 +35,7 @@ local function request(action, payload, silent)
     if not result and not silent then
         if code == "SESSION_EXPIRED" then
             sessionToken, betAccessToken, account = nil, nil, nil
-            ui.setIdleLock(nil)
+            disableDeviceLock()
         end
         ui.networkError(target, err)
     end
@@ -179,10 +181,22 @@ local function lockScreen(forcePin)
     end
 end
 
+local watchForUrgentCalls
+
 local function enableDeviceLock()
     ui.setIdleLock(tonumber(config.pumpe_lock_seconds) or 60, function()
         lockScreen(false)
     end)
+    -- Urgent Contact rings from whatever app is open, so the check lives in
+    -- the shared wait loop rather than in any one screen.
+    ui.setBackgroundTask(
+        tonumber(config.urgent_ring_poll_seconds) or 3,
+        function() return watchForUrgentCalls() end)
+end
+
+disableDeviceLock = function()
+    ui.setIdleLock(nil)
+    ui.setBackgroundTask(nil)
 end
 
 local function pageFooter(scene, page, pages)
@@ -384,7 +398,7 @@ end
 
 local function welcome()
     while running and not sessionToken do
-        ui.setIdleLock(nil)
+        disableDeviceLock()
         local action = device.onboarding_complete
             and accountLanding() or onboardingIntro()
         if action == "login" then
@@ -2092,6 +2106,764 @@ local function betApp()
     end
 end
 
+-- Friends, Messages, and Urgent Contact --------------------------------------
+
+local conversationScreen
+
+local urgentCallScreen
+local inCall = false
+
+local function socialAmount(title)
+    local raw = ui.input(target, title, {
+        hint = "Amount in " .. config.currency,
+        mode = "number",
+        maxLength = 9,
+    })
+    if not raw then return nil end
+    local amount = tonumber(raw)
+    if not amount or amount <= 0 then
+        ui.message(target, "warning", "Enter an amount", nil, 1)
+        return nil
+    end
+    return amount
+end
+
+local function pickFriend(title, friends, hint)
+    if #friends == 0 then
+        ui.message(target, "info", "No friends yet",
+            "Add someone in the Friends app first", 1.4)
+        return nil
+    end
+    local page = 1
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, title, hint or (#friends .. " friends"),
+            util.formatClock())
+        local scene = ui.scene(target)
+        local pageItems, actualPage, pages = util.page(friends, page, 4)
+        page = actualPage
+        for index, friend in ipairs(pageItems) do
+            scene:button("friend:" .. friend.account_id, 2, 4 + (index - 1) * 4,
+                width - 2, 3, friend.name, { background = ui.theme.accentDark })
+        end
+        pageFooter(scene, page, pages)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "back" or action == "__terminate" then return nil
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local id = action and action:match("^friend:(.+)$")
+            if id then
+                for _, friend in ipairs(friends) do
+                    if friend.account_id == id then return friend end
+                end
+            end
+        end
+    end
+end
+
+local function friendSearchScreen()
+    local query = ui.input(target, "Find a Foxy Account", {
+        hint = "Type part of their name",
+        maxLength = 20,
+        minLength = 2,
+        allowSpace = true,
+    })
+    if not query then return end
+    local result = request("FRIEND_SEARCH", { query = query })
+    if not result then return end
+    local results, page = result.results, 1
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Search", #results .. " found", util.formatClock())
+        if #results == 0 then
+            ui.center(target, 9, "Nobody matched", ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        local pageItems, actualPage, pages = util.page(results, page, 4)
+        page = actualPage
+        for index, item in ipairs(pageItems) do
+            local state = item.friend and "Friend"
+                or item.requested and "Asked"
+                or item.incoming and "Wants you"
+                or "Tap to add"
+            scene:button("add:" .. item.account_id, 2, 4 + (index - 1) * 4,
+                width - 2, 3, item.name .. "\n" .. state, {
+                    background = item.friend and ui.theme.success
+                        or ui.theme.accentDark,
+                    foreground = item.friend and colors.black or colors.white,
+                    disabled = item.friend,
+                })
+        end
+        pageFooter(scene, page, pages)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local id = action and action:match("^add:(.+)$")
+            if id then
+                local sent = request("FRIEND_REQUEST", { account_id = id })
+                if sent then
+                    ui.message(target, "success",
+                        sent.status == "friends" and "Now friends"
+                            or "Request sent", sent.name, 1.2)
+                    result = request("FRIEND_SEARCH", { query = query }, true)
+                    results = result and result.results or results
+                end
+            end
+        end
+    end
+end
+
+local function friendRequestsScreen(incoming)
+    local page = 1
+    while #incoming > 0 do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Requests", #incoming .. " waiting", util.formatClock())
+        local scene = ui.scene(target)
+        local pageItems, actualPage, pages = util.page(incoming, page, 2)
+        page = actualPage
+        for index, item in ipairs(pageItems) do
+            local y = 4 + (index - 1) * 7
+            ui.card(target, 2, y, width - 2, 3, ui.theme.accent)
+            ui.wrappedText(target, 4, y + 1, item.name, width - 6, 2,
+                ui.theme.ink, ui.theme.panel)
+            scene:button("yes:" .. item.account_id, 2, y + 4,
+                math.floor((width - 3) / 2), 2, "Accept",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("no:" .. item.account_id,
+                2 + math.floor((width - 3) / 2) + 1, y + 4,
+                width - 3 - math.floor((width - 3) / 2), 2, "Decline",
+                { background = ui.theme.danger })
+        end
+        pageFooter(scene, page, pages)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local yesId = action and action:match("^yes:(.+)$")
+            local noId = action and action:match("^no:(.+)$")
+            local id = yesId or noId
+            if id then
+                local answered = request("FRIEND_RESPOND", {
+                    account_id = id,
+                    accept = yesId ~= nil,
+                })
+                if answered then
+                    ui.message(target, yesId and "success" or "info",
+                        yesId and "Now friends" or "Declined",
+                        answered.name, 1)
+                    local refreshed = request("FRIEND_OVERVIEW", {}, true)
+                    incoming = refreshed and refreshed.incoming or {}
+                end
+            end
+        end
+    end
+end
+
+local function friendsScreen()
+    local page = 1
+    while true do
+        local overview = request("FRIEND_OVERVIEW")
+        if not overview then return end
+        local friends, incoming = overview.friends, overview.incoming
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Friends", #friends .. " friends", util.formatClock())
+        local scene = ui.scene(target)
+        scene:button("add", 2, 4, math.floor((width - 3) / 2), 2, "Add",
+            { background = ui.theme.accentDark })
+        scene:button("requests", 2 + math.floor((width - 3) / 2) + 1, 4,
+            width - 3 - math.floor((width - 3) / 2), 2,
+            #incoming > 0 and ("Requests " .. #incoming) or "Requests", {
+                background = #incoming > 0 and ui.theme.warning
+                    or ui.theme.panel,
+                foreground = #incoming > 0 and colors.black or colors.white,
+            })
+        if #friends == 0 then
+            ui.center(target, 10, "No friends yet", ui.theme.muted)
+            ui.center(target, 12, "Tap Add to search", ui.theme.muted)
+        end
+        local pageItems, actualPage, pages = util.page(friends, page, 3)
+        page = actualPage
+        for index, friend in ipairs(pageItems) do
+            local y = 7 + (index - 1) * 4
+            scene:button("open:" .. friend.account_id, 2, y,
+                width - 9, 3, friend.name, { background = ui.theme.panel })
+            scene:button("drop:" .. friend.account_id, width - 6, y, 6, 3,
+                "X", { background = ui.theme.danger })
+        end
+        pageFooter(scene, page, pages)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        elseif action == "add" then friendSearchScreen()
+        elseif action == "requests" then friendRequestsScreen(incoming)
+        else
+            local dropId = action and action:match("^drop:(.+)$")
+            local openId = action and action:match("^open:(.+)$")
+            if dropId then
+                local name = "this friend"
+                for _, friend in ipairs(friends) do
+                    if friend.account_id == dropId then name = friend.name end
+                end
+                if ui.confirm(target, "Remove friend",
+                    "Remove " .. name .. " from your friends?",
+                    "Remove", "Keep") then
+                    request("FRIEND_REMOVE", { account_id = dropId })
+                end
+            elseif openId then
+                local started = request("CHAT_START", { account_ids = { openId } })
+                if started then
+                    conversationScreen(started.conversation)
+                end
+            end
+        end
+    end
+end
+
+-- Messages -------------------------------------------------------------------
+
+local function messageLines(item, width)
+    local prefix = item.kind == "system" and "* " or (item.sender_name .. ": ")
+    local body = item.body
+    if item.kind == "money_request" then
+        body = "asks " .. money(item.amount)
+            .. (item.status == "paid" and " (paid)"
+                or item.status == "declined" and " (declined)" or "")
+        if item.body ~= "" then body = body .. " - " .. item.body end
+    elseif item.kind == "money_sent" then
+        body = item.body
+    end
+    return ui.wrap(prefix .. body, width)
+end
+
+local function drawTranscript(items, top, bottom, width)
+    local lines = {}
+    for _, item in ipairs(items) do
+        for _, line in ipairs(messageLines(item, width - 3)) do
+            lines[#lines + 1] = { text = line, item = item }
+        end
+    end
+    local visible = bottom - top + 1
+    local first = math.max(1, #lines - visible + 1)
+    local row = top
+    for index = first, #lines do
+        local entry = lines[index]
+        local color = ui.theme.ink
+        if entry.item.kind == "system" then color = ui.theme.muted
+        elseif entry.item.kind == "money_request" then color = ui.theme.warning
+        elseif entry.item.kind == "money_sent" then color = ui.theme.success end
+        ui.text(target, 2, row, entry.text, color)
+        row = row + 1
+    end
+    if #lines == 0 then
+        ui.center(target, math.floor((top + bottom) / 2), "No messages yet",
+            ui.theme.muted)
+    end
+end
+
+local function pendingRequestFor(items, accountId)
+    for index = #items, 1, -1 do
+        local item = items[index]
+        if item.kind == "money_request" and item.status == "pending"
+            and item.sender_id ~= accountId then
+            return item
+        end
+    end
+    return nil
+end
+
+local function chatMoneyMenu(conversation, items)
+    local pending = pendingRequestFor(items, account.account_id)
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, "Money", conversation.title, util.formatClock())
+    local scene = ui.scene(target)
+    scene:button("send", 2, 5, width - 2, 3, "Send money",
+        { background = ui.theme.success, foreground = colors.black })
+    scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
+        { background = ui.theme.warning, foreground = colors.black })
+    if pending then
+        scene:button("pay", 2, 13, width - 2, 3,
+            "Pay " .. money(pending.amount) .. " to " .. pending.sender_name,
+            { background = ui.theme.accentDark })
+    end
+    scene:button("back", 1, height, 8, 1, "< Back",
+        { background = ui.theme.panel })
+    local action = scene:wait()
+    if action == "send" then
+        local recipientId
+        if conversation.kind == "group" then
+            local overview = request("FRIEND_OVERVIEW", {}, true)
+            local members = {}
+            for _, friend in ipairs(overview and overview.friends or {}) do
+                for _, name in ipairs(conversation.member_names or {}) do
+                    if name == friend.name then members[#members + 1] = friend end
+                end
+            end
+            local chosen = pickFriend("Pay who?", members)
+            if not chosen then return end
+            recipientId = chosen.account_id
+        end
+        local amount = socialAmount("Send how much?")
+        if not amount then return end
+        local pin = ui.pin(target, "Confirm with PIN", true)
+        if not pin then return end
+        local sent = request("CHAT_SEND_MONEY", {
+            conversation_id = conversation.conversation_id,
+            to_account_id = recipientId,
+            amount = amount,
+            pin = pin,
+        })
+        if sent then
+            ui.message(target, "success", "Sent " .. money(sent.quote.amount),
+                "Fee " .. money(sent.quote.fee), 1.2)
+        end
+    elseif action == "ask" then
+        local amount = socialAmount("Ask for how much?")
+        if not amount then return end
+        if request("CHAT_REQUEST_MONEY", {
+            conversation_id = conversation.conversation_id,
+            amount = amount,
+        }) then
+            ui.message(target, "success", "Request sent", nil, 1)
+        end
+    elseif action == "pay" and pending then
+        local pin = ui.pin(target, "Pay " .. money(pending.amount), true)
+        if not pin then return end
+        local paid = request("CHAT_PAY_REQUEST", {
+            conversation_id = conversation.conversation_id,
+            seq = pending.seq,
+            pin = pin,
+        })
+        if paid then
+            ui.message(target, "success", "Paid " .. money(paid.quote.amount),
+                "Fee " .. money(paid.quote.fee), 1.2)
+        end
+    end
+end
+
+conversationScreen = function(summary)
+    local opened = request("CHAT_OPEN", {
+        conversation_id = summary.conversation_id,
+    })
+    if not opened then return end
+    local items = opened.messages
+    local conversation = opened.conversation
+    local nextSeq = opened.next_seq
+    local blink = true
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, conversation.title,
+            conversation.kind == "group"
+                and (conversation.member_count .. " people") or "Direct",
+            util.formatClock(blink))
+        drawTranscript(items, 4, height - 4, width)
+        local scene = ui.scene(target)
+        local half = math.floor((width - 3) / 2)
+        scene:button("type", 2, height - 3, half, 2, "Message",
+            { background = ui.theme.accentDark })
+        scene:button("money", 2 + half + 1, height - 3, width - 3 - half, 2,
+            "Money", { background = ui.theme.success,
+                foreground = colors.black })
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        blink = not blink
+        if action == "back" or action == "__terminate" then return end
+        if action == "type" then
+            local body = ui.input(target, "Message", {
+                hint = conversation.title,
+                maxLength = 120,
+                allowSpace = true,
+            })
+            if body then
+                request("CHAT_SEND", {
+                    conversation_id = conversation.conversation_id,
+                    body = body,
+                })
+            end
+        elseif action == "money" then
+            chatMoneyMenu(conversation, items)
+        end
+        -- Pull only what is new, so an open chat stays cheap and current.
+        local update = request("CHAT_OPEN", {
+            conversation_id = conversation.conversation_id,
+            after_seq = nextSeq - 1,
+        }, true)
+        if update then
+            for _, item in ipairs(update.messages) do
+                items[#items + 1] = item
+            end
+            while #items > 60 do table.remove(items, 1) end
+            nextSeq = update.next_seq
+            conversation = update.conversation
+        end
+    end
+end
+
+local function newGroupScreen(friends)
+    if #friends < 2 then
+        ui.message(target, "info", "Need two friends",
+            "A group needs at least two other people", 1.4)
+        return
+    end
+    local chosen, chosenIds, page = {}, {}, 1
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "New group", #chosen .. " chosen", util.formatClock())
+        local scene = ui.scene(target)
+        local pageItems, actualPage, pages = util.page(friends, page, 3)
+        page = actualPage
+        for index, friend in ipairs(pageItems) do
+            scene:button("pick:" .. friend.account_id, 2, 4 + (index - 1) * 4,
+                width - 2, 3, (chosenIds[friend.account_id] and "* " or "")
+                    .. friend.name, {
+                    background = chosenIds[friend.account_id]
+                        and ui.theme.success or ui.theme.panel,
+                    foreground = chosenIds[friend.account_id]
+                        and colors.black or colors.white,
+                })
+        end
+        scene:button("create", 2, height - 3, width - 2, 2, "Create group",
+            { background = ui.theme.accentDark, disabled = #chosen < 2 })
+        pageFooter(scene, page, pages)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "prev" then page = page - 1 end
+        if action == "next" then page = page + 1 end
+        if action == "create" and #chosen >= 2 then
+            local title = ui.input(target, "Group name", {
+                hint = "Shown to everyone",
+                maxLength = 20,
+                allowSpace = true,
+            })
+            if title then
+                local created = request("CHAT_START", {
+                    account_ids = chosen,
+                    title = title,
+                })
+                if created then
+                    conversationScreen(created.conversation)
+                    return
+                end
+            end
+        else
+            local id = action and action:match("^pick:(.+)$")
+            if id then
+                if chosenIds[id] then
+                    chosenIds[id] = nil
+                    for index = #chosen, 1, -1 do
+                        if chosen[index] == id then table.remove(chosen, index) end
+                    end
+                elseif #chosen < 7 then
+                    chosenIds[id] = true
+                    chosen[#chosen + 1] = id
+                end
+            end
+        end
+    end
+end
+
+local function messagesScreen()
+    local page = 1
+    while true do
+        local list = request("CHAT_LIST")
+        if not list then return end
+        local conversations = list.conversations
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Messages", #conversations .. " chats",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local half = math.floor((width - 3) / 2)
+        scene:button("new", 2, 4, half, 2, "New chat",
+            { background = ui.theme.accentDark })
+        scene:button("group", 2 + half + 1, 4, width - 3 - half, 2, "New group",
+            { background = ui.theme.panel })
+        if #conversations == 0 then
+            ui.center(target, 11, "No chats yet", ui.theme.muted)
+        end
+        local pageItems, actualPage, pages = util.page(conversations, page, 3)
+        page = actualPage
+        for index, item in ipairs(pageItems) do
+            local y = 7 + (index - 1) * 4
+            local label = item.title
+            if item.unread > 0 then label = "(" .. item.unread .. ") " .. label end
+            scene:button("open:" .. item.conversation_id, 2, y, width - 2, 3,
+                label .. "\n" .. ui.truncate(item.last_preview, width - 6), {
+                    background = item.unread > 0 and ui.theme.accentDark
+                        or ui.theme.panel,
+                })
+        end
+        pageFooter(scene, page, pages)
+        local action = scene:wait({ tickRate = 0.5 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        elseif action == "new" or action == "group" then
+            local overview = request("FRIEND_OVERVIEW")
+            if overview then
+                if action == "new" then
+                    local friend = pickFriend("Chat with", overview.friends)
+                    if friend then
+                        local started = request("CHAT_START", {
+                            account_ids = { friend.account_id },
+                        })
+                        if started then conversationScreen(started.conversation) end
+                    end
+                else
+                    newGroupScreen(overview.friends)
+                end
+            end
+        else
+            local id = action and action:match("^open:(.+)$")
+            if id then
+                for _, item in ipairs(conversations) do
+                    if item.conversation_id == id then conversationScreen(item) end
+                end
+            end
+        end
+    end
+end
+
+-- Urgent Contact --------------------------------------------------------------
+
+local function urgentMoneyMenu(call, items)
+    local pending = pendingRequestFor(items, account.account_id)
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, "Urgent money", call.other_name, util.formatClock())
+    local scene = ui.scene(target)
+    scene:button("send", 2, 5, width - 2, 3, "Send money",
+        { background = ui.theme.success, foreground = colors.black })
+    scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
+        { background = ui.theme.warning, foreground = colors.black })
+    if pending then
+        scene:button("pay", 2, 13, width - 2, 3,
+            "Pay " .. money(pending.amount),
+            { background = ui.theme.accentDark })
+    end
+    scene:button("back", 1, height, 8, 1, "< Back",
+        { background = ui.theme.panel })
+    local action = scene:wait()
+    if action == "send" then
+        local amount = socialAmount("Send how much?")
+        if not amount then return end
+        local pin = ui.pin(target, "Confirm with PIN", true)
+        if not pin then return end
+        local sent = request("URGENT_SEND_MONEY", {
+            call_id = call.call_id, amount = amount, pin = pin,
+        })
+        if sent then
+            ui.message(target, "success", "Sent " .. money(sent.quote.amount),
+                "Fee " .. money(sent.quote.fee), 1.1)
+        end
+    elseif action == "ask" then
+        local amount = socialAmount("Ask for how much?")
+        if not amount then return end
+        request("URGENT_REQUEST_MONEY", {
+            call_id = call.call_id, amount = amount,
+        })
+    elseif action == "pay" and pending then
+        local pin = ui.pin(target, "Pay " .. money(pending.amount), true)
+        if not pin then return end
+        local paid = request("URGENT_PAY_REQUEST", {
+            call_id = call.call_id, seq = pending.seq, pin = pin,
+        })
+        if paid then
+            ui.message(target, "success", "Paid " .. money(paid.quote.amount),
+                nil, 1.1)
+        end
+    end
+end
+
+urgentCallScreen = function(call)
+    inCall = true
+    local items, nextSeq, blink = {}, 0, true
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        local saveLabel = call.i_saved and ("Saved " .. call.save_votes .. "/2")
+            or "Save"
+        ui.header(target, call.other_name,
+            call.status == "active" and "Urgent Contact" or call.status,
+            util.formatClock(blink))
+        local scene = ui.scene(target)
+        scene:button("save", width - 10, 2, 10, 1, saveLabel, {
+            background = call.save_votes and call.save_votes > 0
+                and ui.theme.success or ui.theme.panel,
+            foreground = call.save_votes and call.save_votes > 0
+                and colors.black or colors.white,
+        })
+        drawTranscript(items, 5, height - 4, width)
+        local half = math.floor((width - 3) / 2)
+        scene:button("type", 2, height - 3, half, 2, "Type",
+            { background = ui.theme.accentDark })
+        scene:button("money", 2 + half + 1, height - 3, width - 3 - half, 2,
+            "Money", { background = ui.theme.success,
+                foreground = colors.black })
+        scene:button("hang", 2, height, width - 2, 1, "Hang up",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 0.4 })
+        blink = not blink
+        if action == "hang" or action == "__terminate" then
+            request("URGENT_END", { call_id = call.call_id }, true)
+            inCall = false
+            return
+        elseif action == "type" then
+            local body = ui.input(target, "Say something", {
+                hint = call.other_name .. " sees it at once",
+                maxLength = 120,
+                allowSpace = true,
+            })
+            if body then
+                request("URGENT_SEND", { call_id = call.call_id, body = body })
+            end
+        elseif action == "money" then
+            urgentMoneyMenu(call, items)
+        elseif action == "save" then
+            local voted = request("URGENT_SAVE", { call_id = call.call_id })
+            if voted then call = voted.call end
+        end
+        local update = request("URGENT_STATE", {
+            call_id = call.call_id,
+            after_seq = nextSeq,
+        }, true)
+        if not update then
+            ui.message(target, "warning", "Urgent Contact ended", nil, 1.2)
+            inCall = false
+            return
+        end
+        call = update.call
+        for _, item in ipairs(update.messages) do
+            items[#items + 1] = item
+            nextSeq = math.max(nextSeq, item.seq)
+        end
+        while #items > 60 do table.remove(items, 1) end
+        if call.status ~= "active" then
+            ui.message(target, call.saved and "success" or "info",
+                call.saved and "Saved to Messages" or "Urgent Contact ended",
+                call.other_name, 1.4)
+            inCall = false
+            return
+        end
+    end
+    inCall = false
+end
+
+-- A full-screen ring that takes over whatever app was open.
+local function incomingCallScreen(call)
+    inCall = true
+    local frame = 0
+    while running do
+        local width, height = target.getSize()
+        ui.fill(target, 1, 1, width, height, ui.theme.danger)
+        ui.center(target, 4, "URGENT CONTACT", colors.white, ui.theme.danger)
+        ui.center(target, 6, frame % 2 == 0 and "* * *" or "  *  ",
+            colors.white, ui.theme.danger)
+        ui.wrappedText(target, 2, 9, call.other_name, width - 2, 3,
+            colors.white, ui.theme.danger)
+        ui.center(target, 13, "wants to reach you", colors.white, ui.theme.danger)
+        local scene = ui.scene(target)
+        scene:button("accept", 2, height - 5, width - 2, 2, "Accept",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("decline", 2, height - 2, width - 2, 2, "Decline",
+            { background = colors.gray })
+        local action = scene:wait({ tickRate = 0.5 })
+        frame = frame + 1
+        if action == "accept" then
+            local answered = request("URGENT_ANSWER", {
+                call_id = call.call_id, accept = true,
+            })
+            inCall = false
+            if answered then urgentCallScreen(answered.call) end
+            return
+        elseif action == "decline" or action == "__terminate" then
+            request("URGENT_ANSWER", { call_id = call.call_id, accept = false },
+                true)
+            inCall = false
+            return
+        elseif action == "__tick" then
+            local still = request("URGENT_RING", {}, true)
+            if not still or not still.call
+                or still.call.call_id ~= call.call_id then
+                inCall = false
+                return
+            end
+        end
+    end
+    inCall = false
+end
+
+local function urgentScreen()
+    local overview = request("FRIEND_OVERVIEW")
+    if not overview then return end
+    local friend = pickFriend("Urgent Contact", overview.friends,
+        "Reach a friend now")
+    if not friend then return end
+    local started = request("URGENT_CALL", { account_id = friend.account_id })
+    if not started then return end
+    local call = started.call
+    inCall = true
+    local frame = 0
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Reaching", friend.name, util.formatClock())
+        ui.center(target, 8, friend.name, ui.theme.ink)
+        ui.center(target, 10, string.rep(".", frame % 4 + 1), ui.theme.accent)
+        ui.center(target, 12, "Waiting for an answer", ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("cancel", 2, height - 2, width - 2, 2, "Cancel",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 0.5 })
+        frame = frame + 1
+        if action == "cancel" or action == "__terminate" then
+            request("URGENT_END", { call_id = call.call_id }, true)
+            inCall = false
+            return
+        end
+        local update = request("URGENT_STATE", { call_id = call.call_id }, true)
+        if not update then
+            ui.message(target, "warning", "No answer", friend.name, 1.2)
+            inCall = false
+            return
+        end
+        call = update.call
+        if call.status == "active" then
+            inCall = false
+            urgentCallScreen(call)
+            return
+        elseif call.status ~= "ringing" then
+            ui.message(target, "info",
+                call.status == "declined" and "Declined" or "No answer",
+                friend.name, 1.3)
+            inCall = false
+            return
+        end
+    end
+    inCall = false
+end
+
+-- Polled from every screen so a call reaches the user wherever they are.
+watchForUrgentCalls = function()
+    if not sessionToken or inCall then return false end
+    local ring = request("URGENT_RING", {}, true)
+    if not ring or not ring.call then return false end
+    incomingCallScreen(ring.call)
+    return true
+end
+
 local function settingsScreen()
     local width, height = target.getSize()
     ui.clear(target)
@@ -2114,7 +2886,7 @@ local function settingsScreen()
     if action == "logout" and ui.confirm(target, "Sign Out",
         "Leave this PUMPE session?", "Sign Out", "Back") then
         sessionToken, betAccessToken, account = nil, nil, nil
-        ui.setIdleLock(nil)
+        disableDeviceLock()
     elseif action == "close" and ui.confirm(target, "Close PUMPE",
         "Shut down the PUMPE app?", "CLOSE", "BACK") then
         running = false
@@ -2129,23 +2901,28 @@ local function mainMenu()
         {
             { "pay", "P\nPay", colors.blue },
             { "balance", "$\nWallet", colors.green },
+            { "messages", "M\nMessages", colors.cyan },
+            { "friends", "F\nFriends", colors.lime },
+        },
+        {
+            { "urgent", "!\nUrgent", colors.red },
+            { "notifications", "!\nAlerts", colors.orange },
             { "history", "=\nActivity", colors.lightBlue },
             { "events", "*\nEvents", colors.purple },
         },
         {
             { "tickets", "#\nTickets", colors.orange },
-            { "notifications", "!\nAlerts", colors.red },
             { "visas", "V\nVisas", colors.purple },
             { "customs", "C\nCustoms", colors.lightBlue },
+            { "subscriptions", "S\nSubs", colors.magenta },
         },
         {
             { "bet", "B\nBet", colors.magenta },
             { "bet_wallet", "$\nBet Wallet", colors.purple },
             { "tax", "%\nTax", colors.orange },
-            { "subscriptions", "S\nSubs", colors.magenta },
+            { "settings", "o\nSettings", colors.gray },
         },
         {
-            { "settings", "o\nSettings", colors.gray },
             { "lock", "L\nLock", colors.blue },
         },
     }
@@ -2171,7 +2948,13 @@ local function mainMenu()
             local y = 8 + row * 4
             local label = entry[2]
             if entry[1] == "notifications" and alertCount > 0 then
-                label = "!" .. alertCount .. "\nAlerts"
+                label = alertCount .. "\nAlerts"
+            elseif entry[1] == "messages"
+                and (summary.unread_messages or 0) > 0 then
+                label = summary.unread_messages .. "\nMessages"
+            elseif entry[1] == "friends"
+                and (summary.friend_requests or 0) > 0 then
+                label = "+" .. summary.friend_requests .. "\nFriends"
             end
             scene:button(entry[1], x, y, iconWidth, 3, label, {
                 background = entry[3],
@@ -2188,14 +2971,12 @@ local function mainMenu()
         scene:button("home", math.floor(width / 2) - 3, height, 7, 1, "",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
-        if action == "__tick" or action == "__idle" then
+        local refresh = false
+        if action == "__tick" or action == "__idle" or action == "__wake" then
             blink = not blink
             tick = tick + 1
             net.autoUpdate(config, "pumpe", ROOT, client)
-            if tick % 10 == 0 then
-                summary = refreshSummary(true) or summary
-                if not sessionToken then return end
-            end
+            refresh = tick % 6 == 0
         elseif action == "prev" then
             page = math.max(1, page - 1)
         elseif action == "next" then
@@ -2213,7 +2994,13 @@ local function mainMenu()
         elseif action == "tickets" then
             phoneTransition("Tickets", colors.orange); myTicketsScreen()
         elseif action == "notifications" then
-            phoneTransition("Alerts", colors.red); notificationsScreen()
+            phoneTransition("Alerts", colors.orange); notificationsScreen()
+        elseif action == "messages" then
+            phoneTransition("Messages", colors.cyan); messagesScreen()
+        elseif action == "friends" then
+            phoneTransition("Friends", colors.lime); friendsScreen()
+        elseif action == "urgent" then
+            phoneTransition("Urgent", colors.red); urgentScreen()
         elseif action == "visas" then
             phoneTransition("Visas", colors.purple); visasScreen()
         elseif action == "customs" then
@@ -2232,9 +3019,12 @@ local function mainMenu()
             lockScreen(true)
         elseif action == "__terminate" then
             running = false
+        else
+            refresh = true
         end
-        if sessionToken then
+        if refresh and sessionToken then
             summary = refreshSummary(true) or summary
+            if not sessionToken then return end
         end
     end
 end

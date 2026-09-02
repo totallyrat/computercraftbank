@@ -533,6 +533,10 @@ function ui.idleForMs() return 0 end
 function ui.setIdleLock(seconds)
     lockSeconds = seconds
 end
+local ringSeconds
+function ui.setBackgroundTask(seconds)
+    ringSeconds = seconds
+end
 local function assertBox(label, x, y, width, height)
     assert(type(x) == "number" and type(y) == "number"
         and type(width) == "number" and type(height) == "number",
@@ -710,5 +714,10 @@ assert(find(requests, "BET_JOIN"))
 assert(find(requests, "BET_PLACE_WAGER"))
 assert(find(requests, "BET_WALLET_DEPOSIT"))
 assert(find(requests, "BET_WALLET_WITHDRAW"))
+
+-- A signed-in PUMPE arms the Urgent Contact ring watcher, so a call reaches
+-- the user from whatever app is open.
+assert(ringSeconds == nil or type(ringSeconds) == "number",
+    "the ring watcher must be armed with an interval")
 
 print("host_pumpe_flow_test: OK")

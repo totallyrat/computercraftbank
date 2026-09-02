@@ -1,4 +1,4 @@
-# PUMPE Ecosystem v6.1
+# PUMPE Ecosystem v6.2
 
 A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. It includes personal banking, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
@@ -26,8 +26,38 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - The Home Screen uses a roomy two-column, four-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - Wallet, Activity, Events, Tickets, Notifications, Visas, Customs, Tax, Subscriptions, and Settings open as individual apps.
+- **Friends**, **Messages**, and **Urgent Contact** turn PUMPE into a small social phone. Messages and Friends carry unread badges on the home screen.
 - **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
+
+## Friends, Messages, and Urgent Contact
+
+### Friends
+
+Open **Friends** to see who you know, tap **Add** to search any Foxy Account by name, and accept or decline the requests waiting under **Requests**. Asking someone who already asked you makes you friends immediately rather than leaving two requests crossing.
+
+Tapping a friend opens your chat with them. `X` removes them after a confirmation.
+
+### Messages
+
+**Messages** holds one chat per friend plus group chats of up to eight people. A direct chat is never duplicated, whoever starts it.
+
+- **Message** opens the touch keyboard.
+- **Money** offers **Send money**, **Ask for money**, and — when a friend has asked you — **Pay**.
+- A money request stays in the transcript until it is paid or declined. Paying takes the PIN.
+- A chat raises an alert only when it goes from read to unread, so a busy group never floods the Alerts list.
+
+### Urgent Contact
+
+**Urgent Contact** reaches a friend right now. They get a full-screen ring with **Accept** and **Decline** whatever app they had open, because the check runs in the shared wait loop rather than in any one screen.
+
+Once accepted, both sides poll a live transcript several times a second, so a typed line appears on the other screen straight away. Inside a call you can send money, ask for money, and pay a request, all under the same PIN and fee rules as PUMPE Pay.
+
+- **Hang up** at the bottom ends the call from either side.
+- **Save** at the top is a *vote*. The transcript is written into your normal chat only once both people have pressed it; one vote alone saves nothing.
+- An unanswered call becomes a missed call for both sides after 30 seconds.
+
+Calls are never written to the database. A Bank Server restart drops a live call the way a dropped connection would, and only a transcript both people agreed to save is kept.
 
 ### PUMPE Pay
 
@@ -52,7 +82,7 @@ The Bank Server is authoritative. It generates chance-game outcomes, reserves wa
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 
-Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.1.0 contains the complete Bet Play mode.
+Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.2.0 contains the complete Bet Play mode.
 
 ### Auto Mode
 
@@ -281,7 +311,9 @@ Install **CCG Bet Console**, attach the monitor and modem, and select a game. Pl
 
 - Payment codes expire after five minutes and can be cancelled by the cashier.
 - Purchases above the configured PIN-free limit require the customer's PIN.
-- Send Money always requires a PIN, charges the server-calculated 10% fee, and has a separate `$2,000` daily limit.
+- Send Money always requires a PIN, charges the server-calculated 10% fee, and has a separate `$2,000` daily limit. Money sent inside Messages or Urgent Contact uses the same server-side path, so the fee, the limit, and the transaction log are identical everywhere.
+- You can only message or reach someone who is already a friend.
+- A conversation keeps its most recent 60 messages.
 - PUMPE locks after 60 seconds of inactivity and begins requiring a PIN after 120 seconds.
 - Ticket purchases always require a PIN and are limited to the configured quantity per purchase.
 - A ticket code becomes invalid immediately after **Mark Used + Admit**.
@@ -349,7 +381,7 @@ pumpe/
 **Bank says there is no space**
 
 - Restart through the latest Easy Deployment file. It removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
-- A compact installation is about 448 KiB before account data, against ComputerCraft's default 1000 KiB per-computer limit. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
+- A compact installation is about 512 KiB before account data, against ComputerCraft's default 1000 KiB per-computer limit. Chats add to the database over time, which is why a conversation keeps only its most recent 60 messages. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
 
 **Customer monitor is blank**
 
@@ -361,6 +393,11 @@ pumpe/
 
 - Event scheduling intentionally uses the Minecraft in-game day and time, not real-world time.
 - Check the current day shown in the event creation flow.
+
+**A friend cannot be messaged or reached**
+
+- Messages and Urgent Contact are friends-only. Add them under **Friends** first.
+- Urgent Contact refuses a second call while either person already has one open.
 
 **CCG lobby will not start**
 
@@ -376,4 +413,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.1.0`.
+PUMPE Ecosystem `6.2.0`.

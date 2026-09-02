@@ -425,6 +425,7 @@ local function blankState()
             visa_application = 0, visit = 0, border = 0,
             bet_hold = 0, bet_activity = 0,
             ccg_console = 0, ccg_lobby = 0,
+            conversation = 0,
         },
         accounts = {},
         account_names = {},
@@ -448,6 +449,8 @@ local function blankState()
         ccg_lobbies = {},
         ccg_codes = {},
         ccg_house_profit = 0,
+        conversations = {},
+        direct_conversations = {},
         tax_revenue = 0,
         processing_fee_revenue = 0,
         last_subscription_day = -1,
@@ -484,6 +487,10 @@ local function ensureState()
             account.bet_wallet.balance or 0) or 0
         account.bet_wallet.holds = account.bet_wallet.holds or {}
         account.bet_wallet.activity = account.bet_wallet.activity or {}
+        account.friends = account.friends or {}
+        account.friend_requests_in = account.friend_requests_in or {}
+        account.friend_requests_out = account.friend_requests_out or {}
+        account.conversation_ids = account.conversation_ids or {}
         if account.name then
             state.account_names[util.normalName(account.name)] = account.account_id
         end
@@ -614,6 +621,7 @@ local prefixes = {
     bet_activity = { "BACT", 10 },
     ccg_console = { "CCG", 6 },
     ccg_lobby = { "GAME", 8 },
+    conversation = { "CHAT", 8 },
 }
 
 local function nextId(kind)
@@ -1128,15 +1136,23 @@ function actions.LOGIN(payload)
     return { account = publicAccount(account), session_token = createSession(account) }
 end
 
+-- Assigned by the social section further down, which needs helpers defined
+-- after this route. The home screen badges come from one summary call.
+local socialBadges
+
 function actions.ACCOUNT_SUMMARY(payload)
     local account = requireSession(payload)
     local unread = 0
     for _, item in ipairs(account.notifications) do
         if not item.read then unread = unread + 1 end
     end
+    local badges = socialBadges and socialBadges(account) or {}
     return {
         account = publicAccount(account),
         unread_notifications = unread,
+        unread_messages = badges.messages or 0,
+        friend_requests = badges.friend_requests or 0,
+        friend_count = badges.friends or 0,
         day = util.ingameDay(),
         time = util.formatClock(),
     }
@@ -1175,10 +1191,14 @@ function actions.SEND_MONEY_QUOTE(payload)
     return quote
 end
 
-function actions.SEND_MONEY(payload)
-    local sender = requireSession(payload)
-    need(verifyAccount(sender, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local quote = buildSendMoneyQuote(sender, payload)
+-- One transfer path for PUMPE Pay, Messages, and Urgent Contact, so the 10%
+-- processing fee, the daily limit, and the transaction log can never differ
+-- between them.
+local function performTransfer(sender, recipientName, amount, description)
+    local quote = buildSendMoneyQuote(sender, {
+        recipient = recipientName,
+        amount = amount,
+    })
     local recipient = quote.recipient_account
     sender.balance = util.roundMoney(sender.balance - quote.total)
     recipient.balance = util.roundMoney(recipient.balance + quote.amount)
@@ -1187,13 +1207,13 @@ function actions.SEND_MONEY(payload)
     state.processing_fee_revenue = util.roundMoney(
         state.processing_fee_revenue + quote.fee)
     transaction(sender, "transfer_out", -quote.amount, recipient.name,
-        payload.description or "Money sent")
+        description or "Money sent")
     if quote.fee > 0 then
         transaction(sender, "processing_fee", -quote.fee, "PUMPE",
             "Send Money processing fee")
     end
     transaction(recipient, "transfer_in", quote.amount, sender.name,
-        payload.description or "Money received")
+        description or "Money received")
     notification(recipient, "Money received",
         sender.name .. " sent you " .. util.money(quote.amount, config.currency), "money")
     save()
@@ -1201,7 +1221,14 @@ function actions.SEND_MONEY(payload)
         .. " " .. sender.name .. " > " .. recipient.name, colors.lime)
     quote.recipient_account = nil
     quote.balance = sender.balance
-    return quote
+    return quote, recipient
+end
+
+function actions.SEND_MONEY(payload)
+    local sender = requireSession(payload)
+    need(verifyAccount(sender, payload.pin), "BAD_PIN", "Incorrect PIN")
+    return (performTransfer(sender, payload.recipient, payload.amount,
+        payload.description))
 end
 
 function actions.HISTORY(payload)
@@ -2074,6 +2101,767 @@ function actions.CCG_TICK(payload)
     end
     if settled then save() end
     return { lobby = publicCCGLobby(lobby, true) }
+end
+
+-- Friends, Messages, and Urgent Contact ------------------------------------
+-- Conversations are persistent; urgent calls are deliberately not. A Bank
+-- restart drops a live call the way a dropped connection would, and only a
+-- transcript both people agreed to save reaches the database.
+
+local MAX_GROUP_MEMBERS = 8
+local MAX_MESSAGE_LENGTH = 160
+-- Conversations are the first PUMPE feature that grows the database on its
+-- own. At 160 characters plus metadata a message costs roughly 260 bytes, so
+-- this cap keeps even a busy account well inside a ComputerCraft computer.
+local MAX_CONVERSATION_MESSAGES = 60
+local URGENT_RING_MS = 30 * 1000
+local URGENT_IDLE_MS = 10 * 60 * 1000
+local urgentCalls = {}
+
+local function socialAccount(account)
+    account.friends = account.friends or {}
+    account.friend_requests_in = account.friend_requests_in or {}
+    account.friend_requests_out = account.friend_requests_out or {}
+    account.conversation_ids = account.conversation_ids or {}
+    return account
+end
+
+local function areFriends(account, other)
+    return socialAccount(account).friends[other.account_id] == true
+end
+
+local function requireFriend(account, accountId)
+    local other = state.accounts[accountId]
+    checkAccountActive(other)
+    need(areFriends(account, other), "NOT_FRIENDS",
+        "You can only do that with a friend")
+    return socialAccount(other)
+end
+
+local function linkFriends(first, second)
+    socialAccount(first).friends[second.account_id] = true
+    socialAccount(second).friends[first.account_id] = true
+    first.friend_requests_in[second.account_id] = nil
+    first.friend_requests_out[second.account_id] = nil
+    second.friend_requests_in[first.account_id] = nil
+    second.friend_requests_out[first.account_id] = nil
+end
+
+local function friendCard(accountId)
+    local other = state.accounts[accountId]
+    if not other then return nil end
+    return { account_id = other.account_id, name = other.name }
+end
+
+function actions.FRIEND_OVERVIEW(payload)
+    local account = socialAccount(requireSession(payload))
+    local friends, incoming, outgoing = {}, {}, {}
+    for friendId in pairs(account.friends) do
+        friends[#friends + 1] = friendCard(friendId)
+    end
+    for requesterId in pairs(account.friend_requests_in) do
+        incoming[#incoming + 1] = friendCard(requesterId)
+    end
+    for targetId in pairs(account.friend_requests_out) do
+        outgoing[#outgoing + 1] = friendCard(targetId)
+    end
+    local byName = function(a, b) return a.name < b.name end
+    table.sort(friends, byName)
+    table.sort(incoming, byName)
+    table.sort(outgoing, byName)
+    return { friends = friends, incoming = incoming, outgoing = outgoing }
+end
+
+function actions.FRIEND_SEARCH(payload)
+    local account = socialAccount(requireSession(payload))
+    local query = util.normalName(util.trim(payload.query or ""))
+    need(#query >= 2, "QUERY_TOO_SHORT", "Type at least two characters")
+    local results = {}
+    for normal, accountId in pairs(state.account_names) do
+        local other = state.accounts[accountId]
+        if accountId ~= account.account_id and other and not other.banned
+            and normal:find(query, 1, true) then
+            results[#results + 1] = {
+                account_id = accountId,
+                name = other.name,
+                friend = account.friends[accountId] == true,
+                requested = account.friend_requests_out[accountId] == true,
+                incoming = account.friend_requests_in[accountId] ~= nil,
+            }
+        end
+    end
+    table.sort(results, function(a, b) return a.name < b.name end)
+    while #results > 12 do table.remove(results) end
+    return { results = results }
+end
+
+function actions.FRIEND_REQUEST(payload)
+    local account = socialAccount(requireSession(payload))
+    local other = payload.account_id and state.accounts[payload.account_id]
+        or accountByName(payload.name or "")
+    checkAccountActive(other)
+    need(other.account_id ~= account.account_id,
+        "INVALID_FRIEND", "That is your own account")
+    socialAccount(other)
+    need(not account.friends[other.account_id], "ALREADY_FRIENDS",
+        other.name .. " is already a friend")
+    if account.friend_requests_in[other.account_id] then
+        linkFriends(account, other)
+        notification(other, "Friend added",
+            account.name .. " accepted your friend request", "social")
+        save()
+        return { status = "friends", name = other.name }
+    end
+    if not account.friend_requests_out[other.account_id] then
+        account.friend_requests_out[other.account_id] = true
+        other.friend_requests_in[account.account_id] = {
+            created_day = util.ingameDay(),
+            created_time = util.formatClock(),
+        }
+        notification(other, "Friend request",
+            account.name .. " wants to be your friend", "social")
+        save()
+    end
+    return { status = "requested", name = other.name }
+end
+
+function actions.FRIEND_RESPOND(payload)
+    local account = socialAccount(requireSession(payload))
+    local other = state.accounts[payload.account_id]
+    need(other and account.friend_requests_in[other.account_id],
+        "NOT_FOUND", "That friend request is no longer waiting")
+    socialAccount(other)
+    if payload.accept == true then
+        linkFriends(account, other)
+        notification(other, "Friend added",
+            account.name .. " accepted your friend request", "social")
+        save()
+        return { status = "friends", name = other.name }
+    end
+    account.friend_requests_in[other.account_id] = nil
+    other.friend_requests_out[account.account_id] = nil
+    save()
+    return { status = "declined", name = other.name }
+end
+
+function actions.FRIEND_REMOVE(payload)
+    local account = socialAccount(requireSession(payload))
+    local other = state.accounts[payload.account_id]
+    need(other, "NOT_FOUND", "Account not found")
+    socialAccount(other)
+    account.friends[other.account_id] = nil
+    other.friends[account.account_id] = nil
+    save()
+    return { status = "removed", name = other.name }
+end
+
+-- Conversations -------------------------------------------------------------
+
+local function directKey(firstId, secondId)
+    if firstId < secondId then return firstId .. "|" .. secondId end
+    return secondId .. "|" .. firstId
+end
+
+local function unreadFor(conversation, accountId)
+    local member = conversation.members[accountId]
+    if not member then return 0 end
+    local unread = 0
+    for _, item in ipairs(conversation.messages) do
+        if item.seq > (member.last_read_seq or 0)
+            and item.sender_id ~= accountId then
+            unread = unread + 1
+        end
+    end
+    return unread
+end
+
+local function conversationTitle(conversation, accountId)
+    if conversation.kind == "group" then return conversation.title end
+    for _, memberId in ipairs(conversation.member_ids) do
+        if memberId ~= accountId then
+            local other = state.accounts[memberId]
+            return other and other.name or "Unknown"
+        end
+    end
+    return "Empty chat"
+end
+
+local function conversationSummary(conversation, account)
+    local last = conversation.messages[#conversation.messages]
+    local names = {}
+    for _, memberId in ipairs(conversation.member_ids) do
+        local member = state.accounts[memberId]
+        if member then names[#names + 1] = member.name end
+    end
+    return {
+        conversation_id = conversation.conversation_id,
+        kind = conversation.kind,
+        title = conversationTitle(conversation, account.account_id),
+        member_names = names,
+        member_count = #conversation.member_ids,
+        unread = unreadFor(conversation, account.account_id),
+        last_at = conversation.last_at,
+        last_preview = last and (last.kind == "text" and last.body
+            or last.kind == "money_request"
+                and ("asked for " .. util.money(last.amount, config.currency))
+            or last.kind == "money_sent"
+                and ("sent " .. util.money(last.amount, config.currency))
+            or last.body) or "No messages yet",
+        last_sender = last and last.sender_name or nil,
+    }
+end
+
+local function appendMessage(conversation, senderId, kind, body, extra)
+    local sender = senderId and state.accounts[senderId]
+    local item = {
+        seq = conversation.next_seq,
+        sender_id = senderId,
+        sender_name = sender and sender.name or "PUMPE",
+        kind = kind,
+        body = util.safeText(body, MAX_MESSAGE_LENGTH),
+        day = util.ingameDay(),
+        time = util.formatClock(),
+        at = util.nowMs(),
+    }
+    for key, value in pairs(extra or {}) do item[key] = value end
+    conversation.next_seq = conversation.next_seq + 1
+    conversation.messages[#conversation.messages + 1] = item
+    while #conversation.messages > MAX_CONVERSATION_MESSAGES do
+        table.remove(conversation.messages, 1)
+    end
+    conversation.last_at = item.at
+    if senderId and conversation.members[senderId] then
+        conversation.members[senderId].last_read_seq = item.seq
+    end
+    return item
+end
+
+-- Only the first unread message in a conversation raises an alert, so a busy
+-- group chat cannot flood the 50-entry Alerts list.
+local function notifyNewMessage(conversation, senderId, preview)
+    for _, memberId in ipairs(conversation.member_ids) do
+        if memberId ~= senderId then
+            local member = state.accounts[memberId]
+            if member and unreadFor(conversation, memberId) <= 1 then
+                notification(member, "Message from "
+                    .. conversationTitle(conversation, memberId),
+                    preview, "message")
+            end
+        end
+    end
+end
+
+local function newConversation(kind, memberIds, title, ownerId)
+    local conversationId = nextId("conversation")
+    local conversation = {
+        conversation_id = conversationId,
+        kind = kind,
+        title = title,
+        owner_id = ownerId,
+        member_ids = memberIds,
+        members = {},
+        messages = {},
+        next_seq = 1,
+        created_at = util.nowMs(),
+        last_at = util.nowMs(),
+    }
+    for _, memberId in ipairs(memberIds) do
+        conversation.members[memberId] = { last_read_seq = 0 }
+        local member = state.accounts[memberId]
+        if member then socialAccount(member).conversation_ids[conversationId] = true end
+    end
+    state.conversations[conversationId] = conversation
+    if kind == "direct" then
+        state.direct_conversations[directKey(memberIds[1], memberIds[2])] =
+            conversationId
+    end
+    return conversation
+end
+
+local function directConversation(first, second)
+    local existing = state.direct_conversations[
+        directKey(first.account_id, second.account_id)]
+    local conversation = existing and state.conversations[existing]
+    if conversation then return conversation end
+    return newConversation("direct",
+        { first.account_id, second.account_id }, nil, first.account_id)
+end
+
+local function requireConversation(account, conversationId)
+    local conversation = state.conversations[conversationId]
+    need(conversation and conversation.members[account.account_id],
+        "NOT_FOUND", "That chat is not available")
+    return conversation
+end
+
+function actions.CHAT_LIST(payload)
+    local account = socialAccount(requireSession(payload))
+    local list = {}
+    for conversationId in pairs(account.conversation_ids) do
+        local conversation = state.conversations[conversationId]
+        if conversation then
+            list[#list + 1] = conversationSummary(conversation, account)
+        else
+            account.conversation_ids[conversationId] = nil
+        end
+    end
+    table.sort(list, function(a, b)
+        return (a.last_at or 0) > (b.last_at or 0)
+    end)
+    return { conversations = list }
+end
+
+function actions.CHAT_START(payload)
+    local account = socialAccount(requireSession(payload))
+    local requested = type(payload.account_ids) == "table"
+        and payload.account_ids or {}
+    need(#requested >= 1, "NO_MEMBERS", "Choose at least one friend")
+    need(#requested + 1 <= MAX_GROUP_MEMBERS, "TOO_MANY_MEMBERS",
+        "A group holds at most " .. MAX_GROUP_MEMBERS .. " people")
+    local memberIds, seen = { account.account_id }, {
+        [account.account_id] = true,
+    }
+    for _, accountId in ipairs(requested) do
+        if not seen[accountId] then
+            requireFriend(account, accountId)
+            seen[accountId] = true
+            memberIds[#memberIds + 1] = accountId
+        end
+    end
+    if #memberIds == 2 then
+        local conversation = directConversation(account,
+            state.accounts[memberIds[2]])
+        save()
+        return { conversation = conversationSummary(conversation, account) }
+    end
+    local title = util.safeText(util.trim(payload.title or ""), 24)
+    if title == "" then title = account.name .. "'s group" end
+    local conversation = newConversation("group", memberIds, title,
+        account.account_id)
+    appendMessage(conversation, nil, "system",
+        account.name .. " created " .. title)
+    for _, memberId in ipairs(memberIds) do
+        if memberId ~= account.account_id then
+            notification(state.accounts[memberId], "Added to a group",
+                account.name .. " added you to " .. title, "message")
+        end
+    end
+    save()
+    return { conversation = conversationSummary(conversation, account) }
+end
+
+function actions.CHAT_OPEN(payload)
+    local account = socialAccount(requireSession(payload))
+    local conversation = requireConversation(account, payload.conversation_id)
+    local afterSeq = math.max(0, math.floor(tonumber(payload.after_seq) or 0))
+    local messages = {}
+    for _, item in ipairs(conversation.messages) do
+        if item.seq > afterSeq then messages[#messages + 1] = util.copy(item) end
+    end
+    -- An open chat polls this every second. Only write the database when the
+    -- read marker actually moved.
+    local member = conversation.members[account.account_id]
+    if payload.mark_read ~= false
+        and member.last_read_seq ~= conversation.next_seq - 1 then
+        member.last_read_seq = conversation.next_seq - 1
+        save()
+    end
+    return {
+        conversation = conversationSummary(conversation, account),
+        messages = messages,
+        next_seq = conversation.next_seq,
+    }
+end
+
+function actions.CHAT_SEND(payload)
+    local account = socialAccount(requireSession(payload))
+    local conversation = requireConversation(account, payload.conversation_id)
+    local body = util.safeText(util.trim(payload.body or ""), MAX_MESSAGE_LENGTH)
+    need(#body > 0, "EMPTY_MESSAGE", "Type a message first")
+    local item = appendMessage(conversation, account.account_id, "text", body)
+    notifyNewMessage(conversation, account.account_id, body)
+    save()
+    return { message = util.copy(item) }
+end
+
+function actions.CHAT_REQUEST_MONEY(payload)
+    local account = socialAccount(requireSession(payload))
+    local conversation = requireConversation(account, payload.conversation_id)
+    local amount = validateAmount(payload.amount)
+    local item = appendMessage(conversation, account.account_id,
+        "money_request", util.safeText(payload.note or "", 60), {
+            amount = amount,
+            status = "pending",
+        })
+    notifyNewMessage(conversation, account.account_id,
+        account.name .. " asked for " .. util.money(amount, config.currency))
+    save()
+    return { message = util.copy(item) }
+end
+
+local function conversationCounterpart(conversation, account, accountId)
+    if accountId then
+        need(conversation.members[accountId], "NOT_FOUND",
+            "That person is not in this chat")
+        return state.accounts[accountId]
+    end
+    need(conversation.kind == "direct", "CHOOSE_MEMBER",
+        "Choose who to pay in a group chat")
+    for _, memberId in ipairs(conversation.member_ids) do
+        if memberId ~= account.account_id then return state.accounts[memberId] end
+    end
+end
+
+function actions.CHAT_SEND_MONEY(payload)
+    local account = socialAccount(requireSession(payload))
+    local conversation = requireConversation(account, payload.conversation_id)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local recipient = conversationCounterpart(conversation, account,
+        payload.to_account_id)
+    checkAccountActive(recipient)
+    local quote = performTransfer(account, recipient.name, payload.amount,
+        "Sent in Messages")
+    appendMessage(conversation, account.account_id, "money_sent",
+        "sent " .. util.money(quote.amount, config.currency)
+            .. " to " .. recipient.name,
+        { amount = quote.amount, to_account_id = recipient.account_id })
+    save()
+    return { quote = quote }
+end
+
+function actions.CHAT_PAY_REQUEST(payload)
+    local account = socialAccount(requireSession(payload))
+    local conversation = requireConversation(account, payload.conversation_id)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local requestSeq = math.floor(tonumber(payload.seq) or 0)
+    local target
+    for _, item in ipairs(conversation.messages) do
+        if item.seq == requestSeq and item.kind == "money_request" then
+            target = item
+        end
+    end
+    need(target, "NOT_FOUND", "That money request is no longer here")
+    need(target.status == "pending", "ALREADY_HANDLED",
+        "That request was already handled")
+    need(target.sender_id ~= account.account_id, "OWN_REQUEST",
+        "That is your own request")
+    local recipient = state.accounts[target.sender_id]
+    checkAccountActive(recipient)
+    local quote = performTransfer(account, recipient.name, target.amount,
+        "Money request in Messages")
+    target.status = "paid"
+    target.paid_by = account.account_id
+    appendMessage(conversation, account.account_id, "money_sent",
+        "paid " .. util.money(quote.amount, config.currency)
+            .. " to " .. recipient.name,
+        { amount = quote.amount, to_account_id = recipient.account_id })
+    save()
+    return { quote = quote }
+end
+
+function actions.CHAT_DECLINE_REQUEST(payload)
+    local account = socialAccount(requireSession(payload))
+    local conversation = requireConversation(account, payload.conversation_id)
+    local requestSeq = math.floor(tonumber(payload.seq) or 0)
+    for _, item in ipairs(conversation.messages) do
+        if item.seq == requestSeq and item.kind == "money_request"
+            and item.status == "pending"
+            and item.sender_id ~= account.account_id then
+            item.status = "declined"
+            appendMessage(conversation, account.account_id, "system",
+                account.name .. " declined the request")
+            save()
+            return { status = "declined" }
+        end
+    end
+    need(false, "NOT_FOUND", "That money request is no longer here")
+end
+
+socialBadges = function(account)
+    socialAccount(account)
+    local messages, requests, friends = 0, 0, 0
+    for conversationId in pairs(account.conversation_ids) do
+        local conversation = state.conversations[conversationId]
+        if conversation then
+            messages = messages + unreadFor(conversation, account.account_id)
+        end
+    end
+    for _ in pairs(account.friend_requests_in) do requests = requests + 1 end
+    for _ in pairs(account.friends) do friends = friends + 1 end
+    return { messages = messages, friend_requests = requests, friends = friends }
+end
+
+-- Urgent Contact ------------------------------------------------------------
+
+local function endCall(call, reason, endedById)
+    if call.status == "ended" then return call end
+    call.status = "ended"
+    call.ended_at = util.nowMs()
+    call.ended_reason = reason
+    call.ended_by = endedById
+    if call.save_votes[call.from_id] and call.save_votes[call.to_id] then
+        local from = state.accounts[call.from_id]
+        local to = state.accounts[call.to_id]
+        if from and to then
+            local conversation = directConversation(from, to)
+            appendMessage(conversation, nil, "system",
+                "Urgent Contact transcript saved")
+            for _, item in ipairs(call.messages) do
+                if item.kind ~= "system" then
+                    appendMessage(conversation, item.sender_id, item.kind,
+                        item.body, { amount = item.amount })
+                end
+            end
+            call.saved = true
+            save()
+        end
+    end
+    return call
+end
+
+local function cleanupUrgentCalls()
+    local now = util.nowMs()
+    for callId, call in pairs(urgentCalls) do
+        if call.status == "ringing" and now - call.created_at > URGENT_RING_MS then
+            call.status = "missed"
+            call.ended_at = now
+            local to = state.accounts[call.to_id]
+            local from = state.accounts[call.from_id]
+            if to then
+                notification(to, "Missed Urgent Contact",
+                    call.from_name .. " tried to reach you", "warning")
+            end
+            if from then
+                notification(from, "No answer",
+                    call.to_name .. " did not answer", "warning")
+            end
+            save()
+        elseif call.status == "active" and now - (call.last_at or now) > URGENT_IDLE_MS then
+            endCall(call, "Timed out")
+        elseif call.status ~= "ringing" and call.status ~= "active"
+            and (call.ended_at or now) + 120 * 1000 < now then
+            urgentCalls[callId] = nil
+        end
+    end
+end
+
+local function busyCall(accountId)
+    for _, call in pairs(urgentCalls) do
+        if (call.status == "ringing" or call.status == "active")
+            and (call.from_id == accountId or call.to_id == accountId) then
+            return call
+        end
+    end
+    return nil
+end
+
+local function requireCall(account, callId)
+    local call = urgentCalls[callId]
+    need(call and (call.from_id == account.account_id
+        or call.to_id == account.account_id),
+        "NOT_FOUND", "That Urgent Contact has ended")
+    return call
+end
+
+local function publicCall(call, accountId)
+    local mine = call.from_id == accountId
+    return {
+        call_id = call.call_id,
+        status = call.status,
+        other_name = mine and call.to_name or call.from_name,
+        other_id = mine and call.to_id or call.from_id,
+        outgoing = mine,
+        saved = call.saved == true,
+        save_votes = (call.save_votes[call.from_id] and 1 or 0)
+            + (call.save_votes[call.to_id] and 1 or 0),
+        i_saved = call.save_votes[accountId] == true,
+        ended_reason = call.ended_reason,
+        next_seq = call.next_seq,
+    }
+end
+
+function actions.URGENT_RING(payload)
+    local account = requireSession(payload)
+    cleanupUrgentCalls()
+    for _, call in pairs(urgentCalls) do
+        if call.to_id == account.account_id and call.status == "ringing" then
+            return { call = publicCall(call, account.account_id) }
+        end
+    end
+    return {}
+end
+
+function actions.URGENT_CALL(payload)
+    local account = socialAccount(requireSession(payload))
+    cleanupUrgentCalls()
+    local other = requireFriend(account, payload.account_id)
+    need(not busyCall(account.account_id), "CALL_BUSY",
+        "You already have an Urgent Contact open")
+    need(not busyCall(other.account_id), "CALL_BUSY",
+        other.name .. " is already on an Urgent Contact")
+    local call = {
+        call_id = util.token("CALL"),
+        from_id = account.account_id,
+        from_name = account.name,
+        to_id = other.account_id,
+        to_name = other.name,
+        status = "ringing",
+        created_at = util.nowMs(),
+        last_at = util.nowMs(),
+        messages = {},
+        next_seq = 1,
+        save_votes = {},
+    }
+    urgentCalls[call.call_id] = call
+    notification(other, "Urgent Contact",
+        account.name .. " is reaching you right now", "urgent")
+    logActivity("Urgent Contact " .. account.name .. " > " .. other.name,
+        colors.orange)
+    return { call = publicCall(call, account.account_id) }
+end
+
+function actions.URGENT_ANSWER(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    need(call.to_id == account.account_id, "NOT_CALLEE",
+        "Only the person being reached can answer")
+    need(call.status == "ringing", "CALL_CLOSED", "That Urgent Contact ended")
+    if payload.accept == true then
+        call.status = "active"
+        call.answered_at = util.nowMs()
+        call.last_at = call.answered_at
+        return { call = publicCall(call, account.account_id) }
+    end
+    call.status = "declined"
+    call.ended_at = util.nowMs()
+    local from = state.accounts[call.from_id]
+    if from then
+        notification(from, "Urgent Contact declined",
+            call.to_name .. " could not talk", "warning")
+        save()
+    end
+    return { call = publicCall(call, account.account_id) }
+end
+
+local function appendCallMessage(call, senderId, kind, body, extra)
+    local sender = senderId and state.accounts[senderId]
+    local item = {
+        seq = call.next_seq,
+        sender_id = senderId,
+        sender_name = sender and sender.name or "PUMPE",
+        kind = kind,
+        body = util.safeText(body, MAX_MESSAGE_LENGTH),
+        time = util.formatClock(),
+        at = util.nowMs(),
+    }
+    for key, value in pairs(extra or {}) do item[key] = value end
+    call.next_seq = call.next_seq + 1
+    call.messages[#call.messages + 1] = item
+    while #call.messages > MAX_CONVERSATION_MESSAGES do
+        table.remove(call.messages, 1)
+    end
+    call.last_at = item.at
+    return item
+end
+
+function actions.URGENT_STATE(payload)
+    local account = requireSession(payload)
+    cleanupUrgentCalls()
+    local call = requireCall(account, payload.call_id)
+    local afterSeq = math.max(0, math.floor(tonumber(payload.after_seq) or 0))
+    local messages = {}
+    for _, item in ipairs(call.messages) do
+        if item.seq > afterSeq then messages[#messages + 1] = util.copy(item) end
+    end
+    return { call = publicCall(call, account.account_id), messages = messages }
+end
+
+function actions.URGENT_SEND(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
+    local body = util.safeText(util.trim(payload.body or ""), MAX_MESSAGE_LENGTH)
+    need(#body > 0, "EMPTY_MESSAGE", "Type something first")
+    local item = appendCallMessage(call, account.account_id, "text", body)
+    return { message = util.copy(item) }
+end
+
+function actions.URGENT_SAVE(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
+    if call.save_votes[account.account_id] then
+        call.save_votes[account.account_id] = nil
+        appendCallMessage(call, nil, "system",
+            account.name .. " no longer wants to save this")
+    else
+        call.save_votes[account.account_id] = true
+        appendCallMessage(call, nil, "system",
+            account.name .. " wants to save this conversation")
+    end
+    return { call = publicCall(call, account.account_id) }
+end
+
+function actions.URGENT_REQUEST_MONEY(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
+    local amount = validateAmount(payload.amount)
+    local item = appendCallMessage(call, account.account_id, "money_request",
+        "asked for " .. util.money(amount, config.currency),
+        { amount = amount, status = "pending" })
+    return { message = util.copy(item) }
+end
+
+function actions.URGENT_SEND_MONEY(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local otherId = call.from_id == account.account_id
+        and call.to_id or call.from_id
+    local recipient = state.accounts[otherId]
+    checkAccountActive(recipient)
+    local quote = performTransfer(account, recipient.name, payload.amount,
+        "Sent in Urgent Contact")
+    appendCallMessage(call, account.account_id, "money_sent",
+        "sent " .. util.money(quote.amount, config.currency),
+        { amount = quote.amount })
+    return { quote = quote }
+end
+
+function actions.URGENT_PAY_REQUEST(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local requestSeq = math.floor(tonumber(payload.seq) or 0)
+    local target
+    for _, item in ipairs(call.messages) do
+        if item.seq == requestSeq and item.kind == "money_request" then
+            target = item
+        end
+    end
+    need(target and target.status == "pending", "NOT_FOUND",
+        "That money request is no longer waiting")
+    need(target.sender_id ~= account.account_id, "OWN_REQUEST",
+        "That is your own request")
+    local recipient = state.accounts[target.sender_id]
+    checkAccountActive(recipient)
+    local quote = performTransfer(account, recipient.name, target.amount,
+        "Urgent Contact request")
+    target.status = "paid"
+    appendCallMessage(call, account.account_id, "money_sent",
+        "paid " .. util.money(quote.amount, config.currency),
+        { amount = quote.amount })
+    return { quote = quote }
+end
+
+function actions.URGENT_END(payload)
+    local account = requireSession(payload)
+    local call = requireCall(account, payload.call_id)
+    endCall(call, "Hung up", account.account_id)
+    return { call = publicCall(call, account.account_id) }
 end
 
 -- Customs, citizenship, and visa routes -------------------------------------
@@ -4064,6 +4852,7 @@ if TEST_MODE then
         compact_bank_storage = compactBankStorage,
         verify_depot = verifyDepotAgainstManifest,
         depot_stamped = depotStamped,
+        urgent_calls = urgentCalls,
     }
 end
 

@@ -105,8 +105,15 @@ const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
   .reduce((total, relativePath) => total + fileSize(relativePath), 0);
 const compactBankBytes = uniqueReleaseBytes + fileSize("config.lua") * 2;
 const legacyBankBytes = uniqueReleaseBytes * 2 + fileSize("startup.lua") * 2;
-if (compactBankBytes > 500 * 1024) {
-  throw new Error(`Compact Bank footprint exceeded 500 KiB: ${compactBankBytes}`);
+// A tripwire against the v6.0 regression that kept a second copy of the whole
+// release in /updates, not the real ceiling: ComputerCraft allows 1000 KiB per
+// computer by default, and account data has to fit alongside this.
+const FOOTPRINT_GUARD_KIB = 640;
+if (compactBankBytes > FOOTPRINT_GUARD_KIB * 1024) {
+  throw new Error(
+    `Compact Bank footprint exceeded ${FOOTPRINT_GUARD_KIB} KiB: `
+      + `${compactBankBytes}`,
+  );
 }
 console.log(`Built release_manifest.json for PUMPE v${manifest.version}`);
 console.log(

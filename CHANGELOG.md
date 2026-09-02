@@ -1,5 +1,66 @@
 # Changelog
 
+## 6.2.0
+
+PUMPE starts becoming a phone rather than a bank client. Three new apps join
+the home screen: **Friends**, **Messages**, and **Urgent Contact**.
+
+### Friends
+
+- Added the Friends app: your friend list, a name search that finds any Foxy
+  Account, and requests you can accept or decline.
+- Asking someone who already asked you accepts immediately instead of leaving
+  two requests crossing in the middle.
+- Repeating a request never queues a second one or raises a second alert.
+- The home screen badges Friends with the number of requests waiting.
+
+### Messages
+
+- Added the Messages app: one chat per friend, plus group chats of up to eight
+  people.
+- Tapping a friend in Friends opens the chat with them directly; a direct chat
+  is never duplicated no matter who starts it.
+- Messages raise an alert only when a chat goes from read to unread, so a busy
+  group cannot flood the 50-entry Alerts list.
+- **Send money** and **Ask for money** work inside any chat. A request sits in
+  the transcript until it is paid or declined, and paying it takes the PIN.
+- The home screen badges Messages with the number of unread messages.
+
+### Urgent Contact
+
+- Added Urgent Contact: reach a friend right now and they get a full-screen
+  ring with **Accept** and **Decline**, whatever app they had open.
+- Accepting opens a live chat both sides poll several times a second, so a
+  typed line appears on the other screen straight away.
+- Money moves inside a call too, with the same PIN and fee rules.
+- **Hang up** ends it from either side. **Save** is a vote: the transcript is
+  written into your normal chat only when both people have pressed it.
+- An unanswered call becomes a missed call for both sides after 30 seconds.
+- Calls are deliberately never written to the database. A Bank restart drops a
+  live call the way a dropped connection would, and only a transcript both
+  people agreed to save is kept.
+
+### Under the hood
+
+- Added `ui.setBackgroundTask`, a hook the shared wait loop polls from every
+  screen. Urgent Contact uses it to ring from anywhere, the same way the idle
+  lock already takes over from anywhere.
+- Gave PUMPE Pay, Messages, and Urgent Contact one shared transfer path on the
+  Bank, so the 10% processing fee, the `$2,000` daily limit, and the
+  transaction log can never drift apart between them.
+- Fixed the PUMPE home screen asking the Bank for a fresh summary twice a
+  second: it had a five-second throttle and an unconditional refresh right
+  after it. The same bug was fixed in the Event Kiosk and Tax Controller in
+  6.1.0.
+- Capped a conversation at 60 stored messages. Conversations are the first
+  PUMPE feature that grows the database on its own, and at roughly 260 bytes a
+  message this keeps a busy account well inside a ComputerCraft computer.
+- Raised the release builder's footprint tripwire to 640 KiB and documented
+  what it is for. It guards against the v6.0 regression that kept a second
+  copy of the release in `/updates`; the real ComputerCraft ceiling is
+  1000 KiB, and the compact Bank now measures 512 KiB.
+- Added `urgent_ring_poll_seconds` to `config.lua`.
+
 ## 6.1.0
 
 ### CCG Auto Mode

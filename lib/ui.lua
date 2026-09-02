@@ -7,6 +7,9 @@ local idleTimeoutMs
 local idleHandler
 local lastActivityMs = util.nowMs()
 local idleHandling = false
+local backgroundIntervalMs
+local backgroundHandler
+local backgroundRunning = false
 
 ui.theme = {
     background = colors.black,
@@ -43,6 +46,20 @@ function ui.setIdleLock(seconds, handler)
     idleTimeoutMs = seconds * 1000
     idleHandler = handler
     ui.noteActivity()
+end
+
+-- A hook every Scene:wait polls, whatever screen is open. Urgent Contact uses
+-- it so an incoming call reaches the user from anywhere, the same way the
+-- idle lock already takes over from anywhere. The handler returns true when
+-- it painted over the screen, and the caller is woken so it redraws.
+function ui.setBackgroundTask(seconds, handler)
+    seconds = tonumber(seconds)
+    if not seconds or seconds <= 0 or type(handler) ~= "function" then
+        backgroundIntervalMs, backgroundHandler = nil, nil
+        return
+    end
+    backgroundIntervalMs = seconds * 1000
+    backgroundHandler = handler
 end
 
 local function keyBindings(entries)
@@ -283,6 +300,14 @@ function Scene:wait(options)
         if timerId and os.cancelTimer then pcall(os.cancelTimer, timerId) end
     end
 
+    local backgroundTimer
+
+    local function scheduleBackgroundTimer()
+        if not backgroundIntervalMs or not backgroundHandler
+            or backgroundRunning then return nil end
+        return os.startTimer(backgroundIntervalMs / 1000)
+    end
+
     local function scheduleIdleTimer()
         if not idleTimeoutMs or not idleHandler or idleHandling then return nil end
         local remaining = math.max(50, idleTimeoutMs - ui.idleForMs())
@@ -292,6 +317,7 @@ function Scene:wait(options)
     local function finish(action)
         cancelTimer(timer)
         cancelTimer(idleTimer)
+        cancelTimer(backgroundTimer)
         return action
     end
 
@@ -314,6 +340,7 @@ function Scene:wait(options)
     end
 
     idleTimer = scheduleIdleTimer()
+    backgroundTimer = scheduleBackgroundTimer()
     while true do
         local event = { os.pullEvent() }
         if event[1] == "mouse_click" or event[1] == "monitor_touch" then
@@ -339,6 +366,14 @@ function Scene:wait(options)
             recordActivity()
             local action = options.onChar and options.onChar(event[2])
             if action then return finish(action) end
+        elseif backgroundTimer and event[1] == "timer"
+            and event[2] == backgroundTimer then
+            backgroundRunning = true
+            local ok, took = pcall(backgroundHandler)
+            backgroundRunning = false
+            if not ok then error(took, 0) end
+            if took == true then return finish("__wake") end
+            backgroundTimer = scheduleBackgroundTimer()
         elseif idleTimer and event[1] == "timer" and event[2] == idleTimer then
             if handleIdle() then return finish("__idle") end
             idleTimer = scheduleIdleTimer()
