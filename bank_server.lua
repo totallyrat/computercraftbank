@@ -73,10 +73,6 @@ local ONLINE_OPTIONAL_FILES = {
     "border_controller.lua",
     "ccg.lua",
 }
-local ONLINE_OPTIONAL_SET = {}
-for _, path in ipairs(ONLINE_OPTIONAL_FILES) do
-    ONLINE_OPTIONAL_SET[path] = true
-end
 
 local ROLE_MAIN_FILES = {
     bank = "bank_server.lua",
@@ -289,15 +285,16 @@ local function updateDepotMissingFiles()
     return missing
 end
 
--- Programs published only in the manifest's `extra_files` can be restored
--- from the internet, so a Bank that is otherwise complete still boots.
+-- Every role program in /updates is published in the manifest, so a Bank whose
+-- depot is missing or half-cleared still boots and repairs itself online
+-- instead of stopping at the Easy Deployment repair screen.
 local function onlyRepairableMissing(missing)
     if #missing == 0 then return false end
     if config.auto_update == false
         or tostring(config.update_manifest_url or "") == "" then return false end
     for _, item in ipairs(missing) do
         local path = item:match("^([^ ]+)") or item
-        if not ONLINE_OPTIONAL_SET[path] then return false end
+        if not DEPOT_ONLY_SET[path] then return false end
     end
     return true
 end
@@ -4628,6 +4625,42 @@ local function verifyDepotAgainstManifest(manifest, manifestUrl)
     return true, repaired
 end
 
+-- The updater stages a complete second copy of the release before it commits
+-- anything. On a default 1000 KiB ComputerCraft computer that no longer fits
+-- beside the installed release, so reclaim the depot first: every program in
+-- /updates is part of the download and compactBankStorage puts it back from
+-- the committed files afterwards.
+local function freeDepotForUpdate()
+    local freed = 0
+    for _, path in ipairs(DEPOT_ONLY_FILES) do
+        local depotPath = fs.combine(UPDATES_DIR, path)
+        if fs.exists(depotPath) and not fs.isDir(depotPath) then
+            local ok, size = pcall(fs.getSize, depotPath)
+            if ok and type(size) == "number" then freed = freed + size end
+            pcall(fs.delete, depotPath)
+        end
+    end
+    if fs.exists(DEPOT_STAMP) then pcall(fs.delete, DEPOT_STAMP) end
+    return freed
+end
+
+local function updateSpaceReady(manifest)
+    if type(fs.getFreeSpace) ~= "function" then return true end
+    local needed = 8192
+    for _, file in ipairs(manifest.files) do needed = needed + file.size end
+    local free = fs.getFreeSpace(ROOT)
+    if type(free) ~= "number" then return true end
+    if free >= needed then return true, free, needed end
+    local freed = freeDepotForUpdate()
+    if freed > 0 then
+        logActivity("Freed " .. math.floor(freed / 1024)
+            .. " KiB from /updates for the release", colors.orange)
+    end
+    free = fs.getFreeSpace(ROOT)
+    if type(free) ~= "number" or free >= needed then return true, free, needed end
+    return false, free, needed
+end
+
 local function checkForOnlineUpdate()
     if config.auto_update == false then
         onlineUpdateStatus = "DISABLED"
@@ -4665,6 +4698,20 @@ local function checkForOnlineUpdate()
         end
         onlineUpdateStatus = "CURRENT v" .. config.version
         onlineUpdateColor = colors.lime
+        return false
+    end
+
+    local roomy, free, needed = updateSpaceReady(manifest)
+    if not roomy then
+        onlineUpdateStatus = "NEEDS "
+            .. math.ceil((needed - free) / 1024) .. " KiB FREE"
+        onlineUpdateColor = colors.red
+        local shortfall = "Update needs " .. math.ceil(needed / 1024)
+            .. " KiB free, only " .. math.floor(free / 1024) .. " KiB left"
+        if shortfall ~= lastOnlineUpdateError then
+            logActivity(shortfall, colors.red)
+            lastOnlineUpdateError = shortfall
+        end
         return false
     end
 
@@ -4852,6 +4899,8 @@ if TEST_MODE then
         compact_bank_storage = compactBankStorage,
         verify_depot = verifyDepotAgainstManifest,
         depot_stamped = depotStamped,
+        update_space_ready = updateSpaceReady,
+        only_repairable_missing = onlyRepairableMissing,
         urgent_calls = urgentCalls,
     }
 end

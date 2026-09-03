@@ -105,22 +105,37 @@ const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
   .reduce((total, relativePath) => total + fileSize(relativePath), 0);
 const compactBankBytes = uniqueReleaseBytes + fileSize("config.lua") * 2;
 const legacyBankBytes = uniqueReleaseBytes * 2 + fileSize("startup.lua") * 2;
-// A tripwire against the v6.0 regression that kept a second copy of the whole
-// release in /updates, not the real ceiling: ComputerCraft allows 1000 KiB per
-// computer by default, and account data has to fit alongside this.
-const FOOTPRINT_GUARD_KIB = 640;
-if (compactBankBytes > FOOTPRINT_GUARD_KIB * 1024) {
+// The number that actually matters is the PEAK during an online update, not
+// the installed size: the Bank stages a complete second copy of the release
+// beside the existing install before it commits anything. v6.2.0 shipped at a
+// 1018 KiB peak and could not install at all. The Bank now reclaims /updates
+// first, so model that, and leave room for account data.
+const COMPUTER_LIMIT = 1000 * 1024;
+const DATABASE_HEADROOM = 150 * 1024;
+const stagedBytes = [...releaseFiles, ...extraReleaseFiles]
+  .reduce((total, relativePath) => total + fileSize(relativePath), 0);
+const depotBytes = depotOnlyFiles
+  .reduce((total, relativePath) => total + fileSize(relativePath), 0);
+const updatePeak = compactBankBytes - depotBytes + stagedBytes;
+if (updatePeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
   throw new Error(
-    `Compact Bank footprint exceeded ${FOOTPRINT_GUARD_KIB} KiB: `
-      + `${compactBankBytes}`,
+    `An online update would peak at ${Math.ceil(updatePeak / 1024)} KiB, `
+      + `leaving under ${Math.ceil(DATABASE_HEADROOM / 1024)} KiB for account `
+      + `data inside ComputerCraft's ${COMPUTER_LIMIT / 1024} KiB computer`,
   );
 }
+
 console.log(`Built release_manifest.json for PUMPE v${manifest.version}`);
 console.log(
   `Published ${manifest.files.length} required and `
     + `${manifest.extra_files.length} optional files`,
 );
 console.log(
-  `Bank footprint guard: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `
+  `Bank footprint: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `
     + `${Math.ceil(compactBankBytes / 1024)} KiB compact`,
+);
+console.log(
+  `Online update peak: ${Math.ceil(updatePeak / 1024)} KiB of `
+    + `${COMPUTER_LIMIT / 1024} KiB, leaving `
+    + `${Math.floor((COMPUTER_LIMIT - updatePeak) / 1024)} KiB for account data`,
 );

@@ -378,10 +378,16 @@ pumpe/
 - Confirm every device uses the same `protocol` and `hostname`.
 - Check that a wireless or Ender modem is attached and enabled.
 
+**The dashboard says NEEDS n KiB FREE**
+
+- A release cannot fit beside the installed one plus the database. The Bank already reclaims `/updates` automatically; if it still does not fit, back up `bank_data_v5.dat` and remove anything unrelated from the Bank computer.
+- Upgrading from v6.1.0 or earlier is the tight case, because those versions stage the release without reclaiming anything. Running `delete /updates` in the Bank's terminal — **without rebooting it** — gives the running server room to finish the update, and it rebuilds `/updates` itself once the new version starts.
+
 **Bank says there is no space**
 
 - Restart through the latest Easy Deployment file. It removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
-- A compact installation is about 512 KiB before account data, against ComputerCraft's default 1000 KiB per-computer limit. Chats add to the database over time, which is why a conversation keeps only its most recent 60 messages. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
+- A compact installation is about 515 KiB before account data, against ComputerCraft's default 1000 KiB per-computer limit. Chats add to the database over time, which is why a conversation keeps only its most recent 60 messages.
+- An online update briefly needs room for a second copy of the release. The Bank reclaims `/updates` first when it has to, so the peak is about 794 KiB and roughly 206 KiB stays free for account data. `tools/build_release_manifest.js` refuses to publish a release that would not leave that much. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
 
 **Customer monitor is blank**
 
@@ -413,4 +419,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.2.0`.
+PUMPE Ecosystem `6.2.1`.

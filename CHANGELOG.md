@@ -1,5 +1,29 @@
 # Changelog
 
+## 6.2.1
+
+Fixes an online update that could not physically install. **v6.2.0 should not be used.**
+
+- The Bank stages a complete second copy of the release beside the installed
+  one before it commits anything. At v6.2.0 that peaked at 1018 KiB against
+  ComputerCraft's 1000 KiB per-computer limit, so the download always failed
+  and rolled back. v6.1.0 was already marginal, leaving only 87 KiB for
+  account data, which is why Banks with real data never took it either.
+- The Bank now reclaims `/updates` before staging when a release will not
+  otherwise fit. Every program there is part of the download and is put back
+  from the committed files afterwards, so it is the safe space to take. The
+  peak drops to 794 KiB, leaving 206 KiB for account data.
+- Added a pre-flight disk check. When a release genuinely cannot fit, the
+  dashboard now reads **NEEDS n KiB FREE** and the activity log says how much
+  is needed, instead of a bare **DOWNLOAD FAILED**.
+- A Bank whose depot is missing or half-cleared now boots and repairs itself
+  from the manifest instead of stopping at the Easy Deployment repair screen.
+  Previously only `border_controller.lua` and `ccg.lua` were tolerated.
+- Replaced the release builder's installed-size tripwire, which measured the
+  wrong thing entirely and passed v6.2.0, with a guard on the real update
+  peak. Publishing now fails if an update would leave under 150 KiB for
+  account data.
+
 ## 6.2.0
 
 PUMPE starts becoming a phone rather than a bank client. Three new apps join

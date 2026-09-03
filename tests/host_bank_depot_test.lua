@@ -38,7 +38,15 @@ fs = {
         source, destination = canonical(source), canonical(destination)
         files[destination], files[source] = files[source], nil
     end,
+    getSize = function(path) return #(files[canonical(path)] or "") end,
 }
+-- A ComputerCraft computer holds 1000 KiB by default.
+local DISK = 1000 * 1000
+fs.getFreeSpace = function()
+    local used = 0
+    for _, body in pairs(files) do used = used + #body end
+    return DISK - used
+end
 shell = { getRunningProgram = function() return "bank_server.lua" end }
 os.day = function() return 1 end
 os.time = function() return 12 end
@@ -111,5 +119,60 @@ available["ccg.lua"] = nil
 assert(bank.verify_depot(manifest, "https://example.test/release_manifest.json")
     == false, "a failed repair must report failure")
 assert(not bank.depot_stamped(), "a failed repair must not stamp the depot")
+
+-- Disk space -----------------------------------------------------------------
+-- The updater stages a whole second copy of the release before committing.
+-- On a full Bank that no longer fits, so the depot is reclaimed first.
+
+local function bytes(count) return string.rep("x", count) end
+
+files["/updates/pumpe.lua"] = bytes(125000)
+files["/updates/service_kiosk.lua"] = bytes(39000)
+files["/updates/event_kiosk.lua"] = bytes(16000)
+files["/updates/tax_controller.lua"] = bytes(15000)
+files["/updates/border_controller.lua"] = bytes(14000)
+files["/updates/ccg.lua"] = bytes(26000)
+files["/bank_server.lua"] = bytes(186000)
+files["/startup.lua"] = bytes(46000)
+files["/lib/ui.lua"] = bytes(26000)
+files["/bank_data_v5.dat"] = bytes(90000)
+files["/updates/.depot"] = config.version
+
+local big = {
+    version = "9.9.9",
+    files = {
+        entry("bank_server.lua", bytes(186000)),
+        entry("pumpe.lua", bytes(125000)),
+        entry("service_kiosk.lua", bytes(39000)),
+        entry("startup.lua", bytes(46000)),
+        entry("lib/ui.lua", bytes(26000)),
+        entry("ccg.lua", bytes(26000)),
+        entry("border_controller.lua", bytes(14000)),
+    },
+}
+
+local before = fs.getFreeSpace("/")
+local needed = 0
+for _, file in ipairs(big.files) do needed = needed + file.size end
+assert(before < needed,
+    "the fixture must start without room for the staged release")
+
+assert(bank.update_space_ready(big), "the depot must be reclaimed to make room")
+assert(files["/updates/pumpe.lua"] == nil,
+    "depot programs are freed before staging")
+assert(files["/bank_server.lua"] ~= nil,
+    "the running Bank runtime is never touched to make room")
+assert(files["/bank_data_v5.dat"] ~= nil, "account data is never touched")
+assert(files["/updates/.depot"] == nil,
+    "clearing the depot must clear its stamp so it is verified again")
+assert(fs.getFreeSpace("/") >= needed, "there is now room for the release")
+
+-- A Bank whose depot was cleared still boots and repairs itself online rather
+-- than stopping at the Easy Deployment repair screen.
+assert(bank.only_repairable_missing({ "pumpe.lua (local source)", "ccg.lua" }),
+    "missing depot programs are repairable from the manifest")
+assert(not bank.only_repairable_missing({ "bank_server.lua" }),
+    "a missing Bank runtime is not repairable online")
+assert(not bank.only_repairable_missing({}), "nothing missing is not a repair")
 
 print("host_bank_depot_test: OK")

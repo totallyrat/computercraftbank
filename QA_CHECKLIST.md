@@ -39,6 +39,9 @@ Run this after installing into a ComputerCraft world.
 - [ ] Start on an older version, publish a higher version, and confirm the dashboard changes from **CHECKING INTERNET** to **DOWNLOADING** and **RESTARTING**.
 - [ ] Confirm the Bank Server database and custom government key survive the update.
 - [ ] Corrupt one hosted file and confirm its checksum fails without replacing the installed release.
+- [ ] On a nearly full Bank, publish a new release and confirm the dashboard reclaims `/updates`, logs how much it freed, and completes the update.
+- [ ] Fill the Bank so no release can fit and confirm the dashboard reads **NEEDS n KiB FREE** rather than **DOWNLOAD FAILED**, and that account data is untouched.
+- [ ] Clear `/updates` by hand, restart the Bank, and confirm it still starts and repairs the depot online instead of stopping at the Easy Deployment repair screen.
 - [ ] Remove one manifest file and confirm the whole release is rejected.
 - [ ] Start an older client and confirm it updates from the Bank Server and reboots before opening its role.
 - [ ] Leave an older client dashboard open, publish a newer release, and confirm its live check installs and reboots without manual input.
