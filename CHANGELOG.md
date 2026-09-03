@@ -1,5 +1,15 @@
 # Changelog
 
+## 6.2.3
+
+- Fixed the Urgent Contact ring never appearing, in or out of an app. The
+  shared wait loop created its tick timer before the background timer, so a
+  screen that ticks every half second returned and cancelled the three-second
+  ring check before it could mature, then started a fresh full-length one. It
+  never fired once. The interval is now measured from a global timestamp, the
+  way the idle lock always was, and the check also runs before waiting so a
+  fast screen cannot starve it.
+
 ## 6.2.2
 
 Fixes a PUMPE that crashed at launch with `attempt to call a nil value (field 'setBackgroundTask')`.

@@ -184,4 +184,47 @@ ui.usePhoneStyle(false)
 assert(ui.confirm(mockTerminal(26, 20), "CONFIRM", "Keep this page open?",
     "YES", "NO") == true)
 
+-- Regression: a screen that ticks faster than the background interval used to
+-- starve it completely. Every tick returned and cancelled the background
+-- timer, and the next wait started a fresh full-length one, so Urgent Contact
+-- never rang on any screen.
+local clock = 10000
+os.epoch = function() return clock end
+local timers, nextTimer = {}, 0
+os.startTimer = function(seconds)
+    nextTimer = nextTimer + 1
+    timers[nextTimer] = clock + seconds * 1000
+    return nextTimer
+end
+os.cancelTimer = function(id) timers[id] = nil end
+
+local rings = 0
+ui.setBackgroundTask(3, function()
+    rings = rings + 1
+    return false
+end)
+
+-- Fire whichever timer is due first, exactly as ComputerCraft would.
+os.pullEvent = function()
+    local soonest, soonestAt
+    for id, at in pairs(timers) do
+        if not soonestAt or at < soonestAt or (at == soonestAt and id < soonest) then
+            soonest, soonestAt = id, at
+        end
+    end
+    clock = math.max(clock, soonestAt)
+    timers[soonest] = nil
+    return "timer", soonest
+end
+
+-- Ten seconds of a half-second screen: the 3s task must run, not be starved.
+local elapsedStart = clock
+while clock - elapsedStart < 10000 do
+    ui.scene(mockTerminal(26, 20)):wait({ tickRate = 0.5 })
+end
+assert(rings >= 2,
+    "a 3s background task must still run on a 0.5s screen (ran " .. rings .. ")")
+assert(rings <= 5, "it must not run far more often than its interval")
+ui.setBackgroundTask(nil)
+
 print("host_ui_test: OK")

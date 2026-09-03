@@ -10,6 +10,7 @@ local idleHandling = false
 local backgroundIntervalMs
 local backgroundHandler
 local backgroundRunning = false
+local lastBackgroundMs = util.nowMs()
 
 ui.theme = {
     background = colors.black,
@@ -60,6 +61,7 @@ function ui.setBackgroundTask(seconds, handler)
     end
     backgroundIntervalMs = seconds * 1000
     backgroundHandler = handler
+    lastBackgroundMs = util.nowMs()
 end
 
 local function keyBindings(entries)
@@ -302,10 +304,29 @@ function Scene:wait(options)
 
     local backgroundTimer
 
-    local function scheduleBackgroundTimer()
+    local function backgroundDue()
         if not backgroundIntervalMs or not backgroundHandler
             or backgroundRunning then return nil end
-        return os.startTimer(backgroundIntervalMs / 1000)
+        return math.max(0, backgroundIntervalMs
+            - (util.nowMs() - lastBackgroundMs))
+    end
+
+    local function scheduleBackgroundTimer()
+        local remaining = backgroundDue()
+        if not remaining then return nil end
+        return os.startTimer(math.max(0.05, remaining / 1000))
+    end
+
+    local function runBackgroundTask()
+        local remaining = backgroundDue()
+        if not remaining or remaining > 0 then return false end
+        lastBackgroundMs = util.nowMs()
+        backgroundRunning = true
+        local ok, tookOver = pcall(backgroundHandler)
+        backgroundRunning = false
+        lastBackgroundMs = util.nowMs()
+        if not ok then error(tookOver, 0) end
+        return tookOver == true
     end
 
     local function scheduleIdleTimer()
@@ -339,6 +360,9 @@ function Scene:wait(options)
         return true
     end
 
+    -- Run it before waiting too, so a screen that ticks faster than the
+    -- interval still lets the task through.
+    if runBackgroundTask() then return finish("__wake") end
     idleTimer = scheduleIdleTimer()
     backgroundTimer = scheduleBackgroundTimer()
     while true do
@@ -368,11 +392,7 @@ function Scene:wait(options)
             if action then return finish(action) end
         elseif backgroundTimer and event[1] == "timer"
             and event[2] == backgroundTimer then
-            backgroundRunning = true
-            local ok, took = pcall(backgroundHandler)
-            backgroundRunning = false
-            if not ok then error(took, 0) end
-            if took == true then return finish("__wake") end
+            if runBackgroundTask() then return finish("__wake") end
             backgroundTimer = scheduleBackgroundTimer()
         elseif idleTimer and event[1] == "timer" and event[2] == idleTimer then
             if handleIdle() then return finish("__idle") end
