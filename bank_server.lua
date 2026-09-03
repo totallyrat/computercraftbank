@@ -19,8 +19,6 @@ local BANK_RESTART_MARKER = fs.combine(ROOT, ".bank_auto_restart")
 local LEGACY_CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
 local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
 local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
-local DEPOT_STAMP = fs.combine(UPDATES_DIR, ".depot")
-
 local LOCAL_UPDATE_FILES = {
     "bank_server.lua",
     "pumpe.lua",
@@ -270,11 +268,12 @@ local function compactBankStorage()
     return available
 end
 
+-- Only the Bank's own runtime has to be present. Role programs are fetched
+-- from the public manifest the first time a client installs one.
 local function updateDepotMissingFiles()
     local missing = {}
     for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        local sourceBody = localUpdateBody(path)
-        if not sourceBody then
+        if not DEPOT_ONLY_SET[path] and not localUpdateBody(path) then
             missing[#missing + 1] = path .. " (local source)"
         end
     end
@@ -283,32 +282,6 @@ local function updateDepotMissingFiles()
         missing[#missing + 1] = "public/config.lua"
     end
     return missing
-end
-
--- Every role program in /updates is published in the manifest, so a Bank whose
--- depot is missing or half-cleared still boots and repairs itself online
--- instead of stopping at the Easy Deployment repair screen.
-local function onlyRepairableMissing(missing)
-    if #missing == 0 then return false end
-    if config.auto_update == false
-        or tostring(config.update_manifest_url or "") == "" then return false end
-    for _, item in ipairs(missing) do
-        local path = item:match("^([^ ]+)") or item
-        if not DEPOT_ONLY_SET[path] then return false end
-    end
-    return true
-end
-
--- The depot stamp records which release the /updates/ copies were verified
--- against. Only the online check writes it, after comparing every depot
--- program with the published manifest; booting never assumes the copies are
--- current, so a Bank cut short mid-upgrade still re-verifies afterwards.
-local function depotStamped()
-    return util.readFile(DEPOT_STAMP) == tostring(config.version)
-end
-
-local function stampDepot()
-    pcall(util.writeFile, DEPOT_STAMP, tostring(config.version))
 end
 
 local function renderUpdateBootstrap(created, staged, missing)
@@ -373,7 +346,7 @@ local function bootstrapUpdateDepot()
         ensureBankStartup()
         return
     end
-    if #missing == 0 or onlyRepairableMissing(missing) then
+    if #missing == 0 then
         ensureBankStartup()
         return
     end
@@ -4445,11 +4418,38 @@ local function deploymentSourceFor(role, requestedPath)
     return nil
 end
 
+-- Role programs are fetched from the public manifest the first time a client
+-- actually asks to install one, then cached in /updates. A Bank that nobody
+-- installs from never holds a second copy of the release at all.
+local function fetchDepotFile(path)
+    local manifestUrl = tostring(config.update_manifest_url or "")
+    if manifestUrl == "" or config.auto_update == false then return nil end
+    local manifest = onlineUpdate.fetchManifest(manifestUrl,
+        ONLINE_UPDATE_FILES, config.update_channel or "stable",
+        ONLINE_OPTIONAL_FILES)
+    if not manifest or manifest.version ~= config.version then return nil end
+    for _, file in ipairs(manifest.files) do
+        if file.path == path then
+            local body = onlineUpdate.fetchFile(manifestUrl, file,
+                manifest.version)
+            if body then
+                pcall(util.writeFile, fs.combine(UPDATES_DIR, path), body)
+                logActivity("Fetched " .. path .. " for deployment", colors.cyan)
+            end
+            return body
+        end
+    end
+    return nil
+end
+
 local function deploymentBody(source)
     if source == "public/config.lua" then
         return util.readFile(fs.combine(UPDATES_DIR, source))
     end
-    return localUpdateBody(source)
+    local body = localUpdateBody(source)
+    if body then return body end
+    if DEPOT_ONLY_SET[source] then return fetchDepotFile(source) end
+    return nil
 end
 
 local function deploymentManifest(role)
@@ -4591,181 +4591,78 @@ local function preserveLocalConfig(manifest)
     return true
 end
 
--- Verifies the depot copies of every role program against the manifest that
--- describes the running release and repairs any that are missing or stale.
--- This is what keeps `/updates/` honest after an upgrade from an older Bank
--- that published fewer files, and it needs no checksums pinned in source.
-local function verifyDepotAgainstManifest(manifest, manifestUrl)
-    local repaired, failed = 0, 0
-    for _, file in ipairs(manifest.files) do
-        if DEPOT_ONLY_SET[file.path] then
-            local destination = fs.combine(UPDATES_DIR, file.path)
-            local body = util.readFile(destination)
-            if not body or #body ~= file.size
-                or util.checksum(body) ~= file.checksum then
-                local fresh = onlineUpdate.fetchFile(manifestUrl, file,
-                    manifest.version)
-                if fresh and pcall(util.writeFile, destination, fresh) then
-                    repaired = repaired + 1
-                else
-                    failed = failed + 1
-                end
-            end
-        end
-    end
-    if failed > 0 then
-        deployStatus, deployColor = "DEPOT REPAIR FAILED", colors.red
-        return false, repaired
-    end
-    stampDepot()
-    deployStatus, deployColor = "READY", colors.lime
-    if repaired > 0 then
-        logActivity("Depot repaired " .. repaired .. " file(s)", colors.cyan)
-    end
-    return true, repaired
-end
-
--- The updater stages a complete second copy of the release before it commits
--- anything. On a default 1000 KiB ComputerCraft computer that no longer fits
--- beside the installed release, so reclaim the depot first: every program in
--- /updates is part of the download and compactBankStorage puts it back from
--- the committed files afterwards.
-local function freeDepotForUpdate()
-    local freed = 0
-    for _, path in ipairs(DEPOT_ONLY_FILES) do
-        local depotPath = fs.combine(UPDATES_DIR, path)
-        if fs.exists(depotPath) and not fs.isDir(depotPath) then
-            local ok, size = pcall(fs.getSize, depotPath)
-            if ok and type(size) == "number" then freed = freed + size end
-            pcall(fs.delete, depotPath)
-        end
-    end
-    if fs.exists(DEPOT_STAMP) then pcall(fs.delete, DEPOT_STAMP) end
-    return freed
-end
-
-local function updateSpaceReady(manifest)
-    if type(fs.getFreeSpace) ~= "function" then return true end
-    local needed = 8192
-    for _, file in ipairs(manifest.files) do needed = needed + file.size end
-    local free = fs.getFreeSpace(ROOT)
-    if type(free) ~= "number" then return true end
-    if free >= needed then return true, free, needed end
-    local freed = freeDepotForUpdate()
-    if freed > 0 then
-        logActivity("Freed " .. math.floor(freed / 1024)
-            .. " KiB from /updates for the release", colors.orange)
-    end
-    free = fs.getFreeSpace(ROOT)
-    if type(free) ~= "number" or free >= needed then return true, free, needed end
-    return false, free, needed
-end
-
+-- The Bank updates itself through the same shared engine every other role
+-- uses, so it downloads only the files it runs rather than the whole release.
 local function checkForOnlineUpdate()
     if config.auto_update == false then
-        onlineUpdateStatus = "DISABLED"
-        onlineUpdateColor = colors.lightGray
+        onlineUpdateStatus, onlineUpdateColor = "DISABLED", colors.lightGray
         return false
     end
-    local manifestUrl = tostring(config.update_manifest_url or "")
-    if manifestUrl == "" then
-        onlineUpdateStatus = "URL NOT CONFIGURED"
-        onlineUpdateColor = colors.lightGray
+    if tostring(config.update_manifest_url or "") == "" then
+        onlineUpdateStatus, onlineUpdateColor = "URL NOT CONFIGURED",
+            colors.lightGray
         return false
     end
 
-    onlineUpdateStatus = "CHECKING INTERNET"
-    onlineUpdateColor = colors.orange
-    local manifest, err = onlineUpdate.fetchManifest(
-        manifestUrl, ONLINE_UPDATE_FILES, config.update_channel or "stable",
-        ONLINE_OPTIONAL_FILES)
-    if not manifest then
-        onlineUpdateStatus = "CHECK FAILED"
-        onlineUpdateColor = colors.red
-        if err ~= lastOnlineUpdateError then
-            logActivity("Online update: " .. tostring(err), colors.red)
-            lastOnlineUpdateError = err
-        end
-        return false
-    end
-    lastOnlineUpdateError = nil
+    onlineUpdateStatus, onlineUpdateColor = "CHECKING INTERNET", colors.orange
+    local updated, detail = onlineUpdate.selfUpdate({
+        config = config,
+        role = "bank",
+        root = ROOT,
+        requiredPaths = ONLINE_UPDATE_FILES,
+        optionalPaths = ONLINE_OPTIONAL_FILES,
+        onProgress = function(_, index, total)
+            onlineUpdateStatus = "DOWNLOADING " .. index .. "/" .. total
+            onlineUpdateColor = colors.cyan
+        end,
+        -- Cached role programs are re-fetchable on demand, so they are always
+        -- the first thing to give up when a release needs the room.
+        onSpaceNeeded = function()
+            local freed = 0
+            for _, path in ipairs(DEPOT_ONLY_FILES) do
+                local cached = fs.combine(UPDATES_DIR, path)
+                if fs.exists(cached) and not fs.isDir(cached) then
+                    local ok, size = pcall(fs.getSize, cached)
+                    if ok and type(size) == "number" then freed = freed + size end
+                    pcall(fs.delete, cached)
+                end
+            end
+            if freed > 0 then
+                logActivity("Dropped " .. math.floor(freed / 1024)
+                    .. " KiB of cached role programs", colors.orange)
+            end
+        end,
+    })
 
-    if not onlineUpdate.isNewer(manifest.version, config.version) then
-        if not depotStamped() and manifest.version == config.version then
-            onlineUpdateStatus = "VERIFYING DEPOT"
-            onlineUpdateColor = colors.orange
-            verifyDepotAgainstManifest(manifest, manifestUrl)
-        end
+    if updated then
+        ensureBankStartup()
+        util.writeFile(BANK_RESTART_MARKER, tostring(detail))
+        pcall(save)
+        onlineUpdateStatus, onlineUpdateColor = "RESTARTING v" .. tostring(detail),
+            colors.lime
+        logActivity("Online update installed; restarting", colors.lime)
+        sleep(0.1)
+        os.reboot()
+        return true
+    end
+
+    if detail == "current" then
         onlineUpdateStatus = "CURRENT v" .. config.version
         onlineUpdateColor = colors.lime
+        lastOnlineUpdateError = nil
+        return false
+    end
+    if detail == "disabled" or detail == "no manifest url" then
+        onlineUpdateStatus, onlineUpdateColor = "DISABLED", colors.lightGray
         return false
     end
 
-    local roomy, free, needed = updateSpaceReady(manifest)
-    if not roomy then
-        onlineUpdateStatus = "NEEDS "
-            .. math.ceil((needed - free) / 1024) .. " KiB FREE"
-        onlineUpdateColor = colors.red
-        local shortfall = "Update needs " .. math.ceil(needed / 1024)
-            .. " KiB free, only " .. math.floor(free / 1024) .. " KiB left"
-        if shortfall ~= lastOnlineUpdateError then
-            logActivity(shortfall, colors.red)
-            lastOnlineUpdateError = shortfall
-        end
-        return false
+    onlineUpdateStatus, onlineUpdateColor = "CHECK FAILED", colors.red
+    if detail ~= lastOnlineUpdateError then
+        logActivity("Online update: " .. tostring(detail), colors.red)
+        lastOnlineUpdateError = detail
     end
-
-    onlineUpdateStatus = "DOWNLOADING v" .. manifest.version
-    onlineUpdateColor = colors.cyan
-    logActivity("Online update found: v" .. manifest.version, colors.cyan)
-    local downloaded, downloadError = onlineUpdate.downloadRelease(
-        manifest, manifestUrl, ONLINE_UPDATE_STAGE,
-        function(_, index, total)
-            onlineUpdateStatus = "DOWNLOADING " .. index .. "/" .. total
-        end)
-    if not downloaded then
-        onlineUpdateStatus = "DOWNLOAD FAILED"
-        onlineUpdateColor = colors.red
-        logActivity("Online update failed: " .. tostring(downloadError), colors.red)
-        return false
-    end
-
-    local preserved, preserveError = preserveLocalConfig(manifest)
-    if not preserved then
-        if fs.exists(ONLINE_UPDATE_STAGE) then fs.delete(ONLINE_UPDATE_STAGE) end
-        onlineUpdateStatus = "CONFIG REJECTED"
-        onlineUpdateColor = colors.red
-        logActivity("Online update failed: " .. tostring(preserveError), colors.red)
-        return false
-    end
-
-    onlineUpdateStatus = "INSTALLING v" .. manifest.version
-    onlineUpdateColor = colors.orange
-    local downloadedInstaller =
-        util.readFile(fs.combine(ONLINE_UPDATE_STAGE, "startup.lua"))
-    local committed, commitError = onlineUpdate.commitRelease(
-        manifest, ONLINE_UPDATE_STAGE, ROOT, ONLINE_UPDATE_BACKUP)
-    if not committed then
-        onlineUpdateStatus = "ROLLED BACK"
-        onlineUpdateColor = colors.red
-        logActivity("Online update rolled back: " .. tostring(commitError), colors.red)
-        return false
-    end
-
-    local startupReady, startupWarning = ensureBankStartup(downloadedInstaller)
-    if not startupReady then
-        logActivity(startupWarning, colors.orange)
-    end
-    compactBankStorage()
-    if fs.exists(DEPOT_STAMP) then pcall(fs.delete, DEPOT_STAMP) end
-    util.writeFile(BANK_RESTART_MARKER, tostring(manifest.version))
-    pcall(save)
-    onlineUpdateStatus = "RESTARTING v" .. manifest.version
-    onlineUpdateColor = colors.lime
-    logActivity("Online update installed; restarting", colors.lime)
-    sleep(0.1)
-    os.reboot()
-    return true
+    return false
 end
 
 local function serverLoop()
@@ -4897,10 +4794,7 @@ if TEST_MODE then
         ensure_bank_startup = ensureBankStartup,
         local_update_body = localUpdateBody,
         compact_bank_storage = compactBankStorage,
-        verify_depot = verifyDepotAgainstManifest,
-        depot_stamped = depotStamped,
-        update_space_ready = updateSpaceReady,
-        only_repairable_missing = onlyRepairableMissing,
+        deployment_fetch = fetchDepotFile,
         urgent_calls = urgentCalls,
     }
 end

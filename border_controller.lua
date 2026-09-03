@@ -340,6 +340,9 @@ end
 
 pcall(redstone.setOutput, "back", false)
 ui.boot(target, "PUMPE BORDER", "CUSTOMS GATE v" .. config.version)
+-- Check for a new release at every restart, straight from the public
+-- manifest. The Bank Server no longer has to hold a copy for us.
+net.autoUpdate(config, "border", ROOT, client, { force = true })
 client:discover()
 
 while running do

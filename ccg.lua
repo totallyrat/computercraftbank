@@ -639,6 +639,9 @@ end
 -- Main loop ---------------------------------------------------------------
 
 bootAnimation()
+-- Check for a new release at every restart, straight from the public
+-- manifest. The Bank Server no longer has to hold a copy for us.
+net.autoUpdate(config, "ccg", ROOT, client, { force = true })
 if not registerConsole() then
     ui.clear(target, colors.black)
     ui.center(target, math.floor(select(2, target.getSize()) / 2),

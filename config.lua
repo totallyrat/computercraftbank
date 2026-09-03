@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "6.2.3",
+    version = "6.3.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -59,5 +59,5 @@ return {
     -- Only the Bank Server polls the internet. Clients ask the Bank for its
     -- version over the connection they already hold, so this can stay slow.
     update_check_seconds = 5,
-    client_update_check_seconds = 60,
+    client_update_check_seconds = 30,
 }

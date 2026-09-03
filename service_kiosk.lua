@@ -956,6 +956,9 @@ if rawget(_G, "PUMPE_SERVICE_TEST_MODE") == true then
 end
 
 ui.boot(target, "SERVICE KIOSK", "SQUARE-STYLE POS v" .. config.version)
+-- Check for a new release at every restart, straight from the public
+-- manifest. The Bank Server no longer has to hold a copy for us.
+net.autoUpdate(config, "service", ROOT, client, { force = true })
 findCustomerMonitor()
 if not client:discover() then
     ui.message(target, "error", "BANK OFFLINE", "Check the modem", 1.4)

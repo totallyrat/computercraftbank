@@ -367,6 +367,9 @@ local function dashboard()
 end
 
 ui.boot(target, "TAX CONTROLLER", "GOVERNMENT CORE v" .. config.version)
+-- Check for a new release at every restart, straight from the public
+-- manifest. The Bank Server no longer has to hold a copy for us.
+net.autoUpdate(config, "tax", ROOT, client, { force = true })
 if not client:discover() then
     ui.message(target, "error", "BANK OFFLINE", "Check the modem", 1.4)
 end

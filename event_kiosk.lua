@@ -385,6 +385,9 @@ local function dashboard()
 end
 
 ui.boot(target, "PUMPE EVENTS", "VENUE CONTROL v" .. config.version)
+-- Check for a new release at every restart, straight from the public
+-- manifest. The Bank Server no longer has to hold a copy for us.
+net.autoUpdate(config, "event", ROOT, client, { force = true })
 if not client:discover() then
     ui.message(target, "error", "BANK OFFLINE", "Check the modem", 1.4)
 end

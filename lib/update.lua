@@ -184,7 +184,159 @@ function update.fetchManifest(manifestUrl, expectedPaths, expectedChannel,
     if not ok or type(manifest) ~= "table" then
         return nil, "Online update manifest is not valid JSON"
     end
-    return update.validateManifest(manifest, expectedPaths, expectedChannel,
+    -- Self-updating roles ------------------------------------------------------
+-- Every device updates itself from the public manifest, downloading only the
+-- files its own role needs. The Bank no longer has to hold, verify and serve
+-- a second copy of the whole release for everyone else.
+
+local COMMON_ROLE_FILES = {
+    "config.lua",
+    "lib/net.lua",
+    "lib/ui.lua",
+    "lib/update.lua",
+    "lib/util.lua",
+}
+
+local ROLE_PROGRAMS = {
+    bank = "bank_server.lua",
+    pumpe = "pumpe.lua",
+    service = "service_kiosk.lua",
+    event = "event_kiosk.lua",
+    tax = "tax_controller.lua",
+    border = "border_controller.lua",
+    ccg = "ccg.lua",
+}
+
+function update.roleProgram(role)
+    return ROLE_PROGRAMS[string.lower(tostring(role or ""))]
+end
+
+-- Every path a role installs, including its own copy of Easy Deployment.
+function update.rolePaths(role)
+    local program = update.roleProgram(role)
+    if not program then return nil end
+    local paths = { program, "startup.lua" }
+    for _, path in ipairs(COMMON_ROLE_FILES) do paths[#paths + 1] = path end
+    return paths
+end
+
+-- startup.lua is published under that name but installed as installer.lua.
+function update.installPath(source)
+    if source == "startup.lua" then return "installer.lua" end
+    return source
+end
+
+function update.filesForRole(manifest, role)
+    local wanted = {}
+    for _, path in ipairs(update.rolePaths(role) or {}) do wanted[path] = true end
+    local files, total = {}, 0
+    for _, file in ipairs(manifest.files) do
+        if wanted[file.path] then
+            files[#files + 1] = file
+            total = total + file.size
+        end
+    end
+    return files, total
+end
+
+-- Local settings survive an update. Without this a device pulling config.lua
+-- from the public release would lose its currency, limits and government key.
+function update.mergeConfig(stagedPath, localConfig, version)
+    local loader = loadfile(stagedPath)
+    if not loader then return nil, "Downloaded config is invalid" end
+    local ok, defaults = pcall(loader)
+    if not ok or type(defaults) ~= "table" then
+        return nil, "Downloaded config is invalid"
+    end
+    if version and tostring(defaults.version or "") ~= version then
+        return nil, "Downloaded config does not match the manifest"
+    end
+    local merged = util.copy(defaults)
+    for key, value in pairs(localConfig or {}) do
+        if key ~= "version" then merged[key] = util.copy(value) end
+    end
+    merged.version = version or defaults.version
+    local written = pcall(util.writeFile, stagedPath,
+        "-- PUMPE configuration. Local settings are preserved during updates.\n"
+        .. "return " .. textutils.serialize(merged, { compact = false }) .. "\n")
+    if not written then return nil, "Could not write the merged config" end
+    return true
+end
+
+function update.hasFreeSpace(root, needed)
+    if type(fs.getFreeSpace) ~= "function" then return true end
+    local free = fs.getFreeSpace(root)
+    if type(free) ~= "number" then return true end
+    return free >= needed + 8192, free
+end
+
+-- Downloads and installs just this role's files. Returns true when the device
+-- should restart, false when it is already current, or nil plus a reason.
+function update.selfUpdate(options)
+    local config = options.config or {}
+    local role = options.role
+    local root = options.root or "/pumpe"
+    if config.auto_update == false then return false, "disabled" end
+    local manifestUrl = tostring(config.update_manifest_url or "")
+    if manifestUrl == "" then return false, "no manifest url" end
+
+    local manifest, err = update.fetchManifest(manifestUrl,
+        options.requiredPaths, config.update_channel or "stable",
+        options.optionalPaths)
+    if not manifest then return nil, err end
+    if not update.isNewer(manifest.version, config.version) then
+        return false, "current"
+    end
+
+    local files, total = update.filesForRole(manifest, role)
+    if #files == 0 then return nil, "release has no files for " .. tostring(role) end
+    local roomy, free = update.hasFreeSpace(root, total)
+    if not roomy and options.onSpaceNeeded then
+        pcall(options.onSpaceNeeded, total)
+        roomy, free = update.hasFreeSpace(root, total)
+    end
+    if not roomy then
+        return nil, "needs " .. math.ceil((total + 8192 - (free or 0)) / 1024)
+            .. " KiB more free space"
+    end
+
+    local staging = fs.combine(root, ".self_update")
+    local backup = fs.combine(root, ".self_backup")
+    if fs.exists(staging) then fs.delete(staging) end
+    for index, file in ipairs(files) do
+        if options.onProgress then options.onProgress(file, index, #files) end
+        local body, fetchError = update.fetchFile(manifestUrl, file,
+            manifest.version)
+        if not body then
+            if fs.exists(staging) then fs.delete(staging) end
+            return nil, fetchError
+        end
+        local ok, writeError = pcall(util.writeFile,
+            fs.combine(staging, update.installPath(file.path)), body)
+        if not ok then
+            if fs.exists(staging) then fs.delete(staging) end
+            return nil, tostring(writeError)
+        end
+    end
+
+    local mergedOk, mergeError = update.mergeConfig(
+        fs.combine(staging, "config.lua"), config, manifest.version)
+    if not mergedOk then
+        if fs.exists(staging) then fs.delete(staging) end
+        return nil, mergeError
+    end
+
+    local plan = { files = {} }
+    for _, file in ipairs(files) do
+        plan.files[#plan.files + 1] = { path = update.installPath(file.path) }
+    end
+    local committed, commitError = update.commitRelease(plan, staging, root,
+        backup)
+    if not committed then return nil, commitError end
+    return true, manifest.version
+end
+
+return update.validateManifest(manifest, expectedPaths, expectedChannel,
         optionalPaths)
 end
 
@@ -256,6 +408,158 @@ function update.commitRelease(manifest, stagingRoot, installRoot, backupRoot)
     fs.delete(stagingRoot)
     fs.delete(backupRoot)
     return true
+end
+
+-- Self-updating roles ------------------------------------------------------
+-- Every device updates itself from the public manifest, downloading only the
+-- files its own role needs. The Bank no longer has to hold, verify and serve
+-- a second copy of the whole release for everyone else.
+
+local COMMON_ROLE_FILES = {
+    "config.lua",
+    "lib/net.lua",
+    "lib/ui.lua",
+    "lib/update.lua",
+    "lib/util.lua",
+}
+
+local ROLE_PROGRAMS = {
+    bank = "bank_server.lua",
+    pumpe = "pumpe.lua",
+    service = "service_kiosk.lua",
+    event = "event_kiosk.lua",
+    tax = "tax_controller.lua",
+    border = "border_controller.lua",
+    ccg = "ccg.lua",
+}
+
+function update.roleProgram(role)
+    return ROLE_PROGRAMS[string.lower(tostring(role or ""))]
+end
+
+-- Every path a role installs, including its own copy of Easy Deployment.
+function update.rolePaths(role)
+    local program = update.roleProgram(role)
+    if not program then return nil end
+    local paths = { program, "startup.lua" }
+    for _, path in ipairs(COMMON_ROLE_FILES) do paths[#paths + 1] = path end
+    return paths
+end
+
+-- startup.lua is published under that name but installed as installer.lua.
+function update.installPath(source)
+    if source == "startup.lua" then return "installer.lua" end
+    return source
+end
+
+function update.filesForRole(manifest, role)
+    local wanted = {}
+    for _, path in ipairs(update.rolePaths(role) or {}) do wanted[path] = true end
+    local files, total = {}, 0
+    for _, file in ipairs(manifest.files) do
+        if wanted[file.path] then
+            files[#files + 1] = file
+            total = total + file.size
+        end
+    end
+    return files, total
+end
+
+-- Local settings survive an update. Without this a device pulling config.lua
+-- from the public release would lose its currency, limits and government key.
+function update.mergeConfig(stagedPath, localConfig, version)
+    local loader = loadfile(stagedPath)
+    if not loader then return nil, "Downloaded config is invalid" end
+    local ok, defaults = pcall(loader)
+    if not ok or type(defaults) ~= "table" then
+        return nil, "Downloaded config is invalid"
+    end
+    if version and tostring(defaults.version or "") ~= version then
+        return nil, "Downloaded config does not match the manifest"
+    end
+    local merged = util.copy(defaults)
+    for key, value in pairs(localConfig or {}) do
+        if key ~= "version" then merged[key] = util.copy(value) end
+    end
+    merged.version = version or defaults.version
+    local written = pcall(util.writeFile, stagedPath,
+        "-- PUMPE configuration. Local settings are preserved during updates.\n"
+        .. "return " .. textutils.serialize(merged, { compact = false }) .. "\n")
+    if not written then return nil, "Could not write the merged config" end
+    return true
+end
+
+function update.hasFreeSpace(root, needed)
+    if type(fs.getFreeSpace) ~= "function" then return true end
+    local free = fs.getFreeSpace(root)
+    if type(free) ~= "number" then return true end
+    return free >= needed + 8192, free
+end
+
+-- Downloads and installs just this role's files. Returns true when the device
+-- should restart, false when it is already current, or nil plus a reason.
+function update.selfUpdate(options)
+    local config = options.config or {}
+    local role = options.role
+    local root = options.root or "/pumpe"
+    if config.auto_update == false then return false, "disabled" end
+    local manifestUrl = tostring(config.update_manifest_url or "")
+    if manifestUrl == "" then return false, "no manifest url" end
+
+    local manifest, err = update.fetchManifest(manifestUrl,
+        options.requiredPaths, config.update_channel or "stable",
+        options.optionalPaths)
+    if not manifest then return nil, err end
+    if not update.isNewer(manifest.version, config.version) then
+        return false, "current"
+    end
+
+    local files, total = update.filesForRole(manifest, role)
+    if #files == 0 then return nil, "release has no files for " .. tostring(role) end
+    local roomy, free = update.hasFreeSpace(root, total)
+    if not roomy and options.onSpaceNeeded then
+        pcall(options.onSpaceNeeded, total)
+        roomy, free = update.hasFreeSpace(root, total)
+    end
+    if not roomy then
+        return nil, "needs " .. math.ceil((total + 8192 - (free or 0)) / 1024)
+            .. " KiB more free space"
+    end
+
+    local staging = fs.combine(root, ".self_update")
+    local backup = fs.combine(root, ".self_backup")
+    if fs.exists(staging) then fs.delete(staging) end
+    for index, file in ipairs(files) do
+        if options.onProgress then options.onProgress(file, index, #files) end
+        local body, fetchError = update.fetchFile(manifestUrl, file,
+            manifest.version)
+        if not body then
+            if fs.exists(staging) then fs.delete(staging) end
+            return nil, fetchError
+        end
+        local ok, writeError = pcall(util.writeFile,
+            fs.combine(staging, update.installPath(file.path)), body)
+        if not ok then
+            if fs.exists(staging) then fs.delete(staging) end
+            return nil, tostring(writeError)
+        end
+    end
+
+    local mergedOk, mergeError = update.mergeConfig(
+        fs.combine(staging, "config.lua"), config, manifest.version)
+    if not mergedOk then
+        if fs.exists(staging) then fs.delete(staging) end
+        return nil, mergeError
+    end
+
+    local plan = { files = {} }
+    for _, file in ipairs(files) do
+        plan.files[#plan.files + 1] = { path = update.installPath(file.path) }
+    end
+    local committed, commitError = update.commitRelease(plan, staging, root,
+        backup)
+    if not committed then return nil, commitError end
+    return true, manifest.version
 end
 
 return update

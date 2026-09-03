@@ -105,23 +105,25 @@ const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
   .reduce((total, relativePath) => total + fileSize(relativePath), 0);
 const compactBankBytes = uniqueReleaseBytes + fileSize("config.lua") * 2;
 const legacyBankBytes = uniqueReleaseBytes * 2 + fileSize("startup.lua") * 2;
-// The number that actually matters is the PEAK during an online update, not
-// the installed size: the Bank stages a complete second copy of the release
-// beside the existing install before it commits anything. v6.2.0 shipped at a
-// 1018 KiB peak and could not install at all. The Bank now reclaims /updates
-// first, so model that, and leave room for account data.
+// Since v6.3.0 every role updates itself and downloads only its own files,
+// and the Bank's /updates is a cache it drops when it needs the room. The
+// peak that matters is therefore the largest single role: its installed files
+// plus a staged copy of the same set, inside a 1000 KiB computer.
 const COMPUTER_LIMIT = 1000 * 1024;
 const DATABASE_HEADROOM = 150 * 1024;
-const stagedBytes = [...releaseFiles, ...extraReleaseFiles]
-  .reduce((total, relativePath) => total + fileSize(relativePath), 0);
-const depotBytes = depotOnlyFiles
-  .reduce((total, relativePath) => total + fileSize(relativePath), 0);
-const updatePeak = compactBankBytes - depotBytes + stagedBytes;
-if (updatePeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
+const sharedFiles = ["config.lua", "startup.lua", "lib/net.lua", "lib/ui.lua",
+  "lib/update.lua", "lib/util.lua"];
+const sharedBytes = sharedFiles.reduce((t, p) => t + fileSize(p), 0);
+let worstRole = "", worstPeak = 0;
+for (const program of ["bank_server.lua", ...depotOnlyFiles]) {
+  const peak = (sharedBytes + fileSize(program)) * 2;
+  if (peak > worstPeak) { worstPeak = peak; worstRole = program; }
+}
+if (worstPeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
   throw new Error(
-    `An online update would peak at ${Math.ceil(updatePeak / 1024)} KiB, `
-      + `leaving under ${Math.ceil(DATABASE_HEADROOM / 1024)} KiB for account `
-      + `data inside ComputerCraft's ${COMPUTER_LIMIT / 1024} KiB computer`,
+    `Updating ${worstRole} would peak at ${Math.ceil(worstPeak / 1024)} KiB, `
+      + `leaving under ${Math.ceil(DATABASE_HEADROOM / 1024)} KiB for data `
+      + `inside ComputerCraft's ${COMPUTER_LIMIT / 1024} KiB computer`,
   );
 }
 
@@ -135,7 +137,7 @@ console.log(
     + `${Math.ceil(compactBankBytes / 1024)} KiB compact`,
 );
 console.log(
-  `Online update peak: ${Math.ceil(updatePeak / 1024)} KiB of `
+  `Worst self-update (${worstRole}): ${Math.ceil(worstPeak / 1024)} KiB of `
     + `${COMPUTER_LIMIT / 1024} KiB, leaving `
-    + `${Math.floor((COMPUTER_LIMIT - updatePeak) / 1024)} KiB for account data`,
+    + `${Math.floor((COMPUTER_LIMIT - worstPeak) / 1024)} KiB for data`,
 );

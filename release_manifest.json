@@ -1,44 +1,44 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "6.2.3",
+  "version": "6.3.0",
   "notes": "PUMPE + ComputerCraftGaming automatic internet release",
   "files": [
     {
       "path": "bank_server.lua",
       "source": "bank_server.lua",
-      "size": 188215,
-      "checksum": "2c2ca0c3"
+      "size": 183942,
+      "checksum": "f22e65c9"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 126014,
-      "checksum": "a85ded22"
+      "size": 126214,
+      "checksum": "bae90106"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
-      "size": 38865,
-      "checksum": "c7cac655"
+      "size": 39067,
+      "checksum": "c8e27363"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
-      "size": 16308,
-      "checksum": "4721ac8c"
+      "size": 16508,
+      "checksum": "c3fc2c4b"
     },
     {
       "path": "tax_controller.lua",
       "source": "tax_controller.lua",
-      "size": 15386,
-      "checksum": "b1165321"
+      "size": 15584,
+      "checksum": "b73b5cab"
     },
     {
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 46693,
-      "checksum": "3f0503d6"
+      "checksum": "e4bcf694"
     },
     {
       "path": "launcher.lua",
@@ -50,13 +50,13 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 2244,
-      "checksum": "7baf7327"
+      "checksum": "b3cb3902"
     },
     {
       "path": "lib/net.lua",
       "source": "lib/net.lua",
-      "size": 4700,
-      "checksum": "b649275a"
+      "size": 5771,
+      "checksum": "a3d2ed55"
     },
     {
       "path": "lib/ui.lua",
@@ -67,8 +67,8 @@
     {
       "path": "lib/update.lua",
       "source": "lib/update.lua",
-      "size": 9373,
-      "checksum": "f80cfcfd"
+      "size": 20881,
+      "checksum": "6a7921ab"
     },
     {
       "path": "lib/util.lua",
@@ -81,14 +81,14 @@
     {
       "path": "border_controller.lua",
       "source": "border_controller.lua",
-      "size": 14013,
-      "checksum": "c330a629"
+      "size": 14214,
+      "checksum": "74c066e4"
     },
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
-      "size": 26491,
-      "checksum": "0db7561a"
+      "size": 26689,
+      "checksum": "fb59f244"
     }
   ]
 }

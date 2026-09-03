@@ -341,4 +341,111 @@ assert(not net.autoUpdate(clientConfig, "event", "/pumpe", {
 }))
 assert(#updateRuns == 2)
 
+-- Self-updating roles --------------------------------------------------------
+
+assert(update.roleProgram("pumpe") == "pumpe.lua")
+assert(update.installPath("startup.lua") == "installer.lua",
+    "startup.lua is published under that name but installed as installer.lua")
+
+local rolePaths = update.rolePaths("pumpe")
+assert(#rolePaths == 7, "a role installs its program, Easy Deployment and libs")
+local wanted = {}
+for _, path in ipairs(rolePaths) do wanted[path] = true end
+assert(wanted["pumpe.lua"] and wanted["lib/ui.lua"] and wanted["startup.lua"])
+assert(not wanted["bank_server.lua"], "a PUMPE never downloads the Bank")
+assert(not wanted["ccg.lua"], "a PUMPE never downloads another role's program")
+
+local fullManifest = { version = "9.9.9", files = {} }
+local bodies = {
+    ["bank_server.lua"] = "bank", ["pumpe.lua"] = "phone",
+    ["ccg.lua"] = "arcade", ["service_kiosk.lua"] = "pos",
+    ["startup.lua"] = "installer", ["lib/net.lua"] = "net",
+    ["lib/ui.lua"] = "ui", ["lib/update.lua"] = "updater",
+    ["lib/util.lua"] = "util",
+    ["config.lua"] = 'return { version = "9.9.9", currency = "$" }',
+}
+for path, body in pairs(bodies) do
+    fullManifest.files[#fullManifest.files + 1] = {
+        path = path, source = path, size = #body,
+        checksum = update.checksum(body),
+    }
+end
+local chosen = update.filesForRole(fullManifest, "pumpe")
+assert(#chosen == 7, "only this role's files are downloaded")
+for _, file in ipairs(chosen) do
+    assert(file.path ~= "bank_server.lua" and file.path ~= "ccg.lua")
+end
+
+-- A full self-update against the in-memory filesystem.
+textutils = textutils or {}
+textutils.serialize = function(value)
+    local parts = {}
+    for key, item in pairs(value) do
+        parts[#parts + 1] = ("  %s = %q,"):format(key, tostring(item))
+    end
+    table.sort(parts)
+    return "{\n" .. table.concat(parts, "\n") .. "\n}"
+end
+local realLoadfile = loadfile
+loadfile = function(path)
+    local body = files[path]
+    if not body then return realLoadfile(path) end
+    return load(body, path)
+end
+
+update.fetchManifest = function() return fullManifest end
+update.fetchFile = function(_, file) return bodies[file.path] end
+
+local localConfig = {
+    version = "1.0.0",
+    currency = "G",                       -- an operator customisation
+    government_key = "MY-SECRET-KEY",
+    update_manifest_url = "https://example.test/release_manifest.json",
+    auto_update = true,
+}
+local rebooted = false
+os.reboot = function() rebooted = true end
+
+local updated, detail = update.selfUpdate({
+    config = localConfig, role = "pumpe", root = "/pumpe",
+})
+assert(updated, "a newer release installs: " .. tostring(detail))
+assert(files["/pumpe/pumpe.lua"] == "phone")
+assert(files["/pumpe/installer.lua"] == "installer",
+    "startup.lua lands as installer.lua")
+assert(files["/pumpe/bank_server.lua"] ~= "bank",
+    "a PUMPE never installs the Bank program")
+
+-- Local settings survive; the version follows the release.
+local merged = files["/pumpe/config.lua"]
+assert(merged:find('currency = "G"', 1, true),
+    "an operator's customisation is preserved across updates")
+assert(merged:find('government_key = "MY%-SECRET%-KEY"'),
+    "the government key is never reset to the published placeholder")
+assert(merged:find('version = "9.9.9"', 1, true), "the version follows the release")
+
+-- Already current.
+localConfig.version = "9.9.9"
+local again, reason = update.selfUpdate({
+    config = localConfig, role = "pumpe", root = "/pumpe",
+})
+assert(again == false and reason == "current")
+
+-- Out of space: the caller is given a chance to free some, then it proceeds.
+localConfig.version = "1.0.0"
+local tight, freed = true, false
+fs.getFreeSpace = function() return tight and 10 or 900000 end
+local blocked, why = update.selfUpdate({
+    config = localConfig, role = "pumpe", root = "/pumpe",
+})
+assert(blocked == nil and tostring(why):find("free space", 1, true),
+    "a release that cannot fit reports the shortfall")
+local recovered = update.selfUpdate({
+    config = localConfig, role = "pumpe", root = "/pumpe",
+    onSpaceNeeded = function() tight, freed = false, true end,
+})
+assert(freed and recovered, "freeing room lets the update proceed")
+fs.getFreeSpace = nil
+loadfile = realLoadfile
+
 print("host_update_test: OK")

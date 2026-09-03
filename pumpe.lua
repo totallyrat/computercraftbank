@@ -3040,6 +3040,9 @@ local function mainMenu()
 end
 
 ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
+-- Check for a new release at every restart, straight from the public
+-- manifest. The Bank Server no longer has to hold a copy for us.
+net.autoUpdate(config, "pumpe", ROOT, client, { force = true })
 local online = client:discover()
 if not online then
     ui.message(target, "error", "BANK OFFLINE", "Check your wireless modem", 1.5)

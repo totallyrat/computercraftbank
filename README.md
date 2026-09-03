@@ -154,7 +154,13 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 6. Refreshes `/pumpe/installer.lua`, writes a direct Bank boot entry, saves the database, and restarts immediately.
 7. Detects the restart marker, bypasses every menu, compacts `/updates/`, and launches the Bank Server normally.
 
-Installed PUMPEs, CCG consoles, Service Kiosks, Event Kiosks, Tax Controllers, and Border Controllers ask the Bank Server for its version over the Rednet connection they already hold, every `client_update_check_seconds` (default 60). Only when the Bank reports a newer release do they launch Easy Deployment to download, verify, install, and reboot. Only the Bank Server contacts the public internet; clients update from its verified `/updates/` depot over Rednet.
+Every role updates itself. A PUMPE, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
+
+Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published placeholder.
+
+The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
+
+Because each device stages only its own role, the worst-case update peaks at about 577 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 423 KiB for account data.
 
 ### Manifest layout
 

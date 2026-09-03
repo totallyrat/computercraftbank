@@ -1,5 +1,34 @@
 # Changelog
 
+## 6.3.0
+
+Every device now updates itself. The Bank Server is no longer the middleman
+for updates, which removes the whole class of failure that broke 6.1.0
+through 6.2.2.
+
+- Each role — PUMPE, CCG, kiosks, controllers and the Bank itself — checks the
+  public manifest at restart and every `client_update_check_seconds`
+  (default 30), and downloads only the files its own role needs. A PUMPE
+  fetches `pumpe.lua`, Easy Deployment and the shared libraries; it never
+  downloads the Bank or another role's program.
+- The Bank's `/updates` is now a cache rather than a stockpile. It fetches a
+  role program the first time a client actually installs that role, and drops
+  the cache whenever a release needs the room, since everything in it can be
+  re-fetched.
+- The worst-case update peak falls from 813 KiB to **577 KiB**, leaving
+  423 KiB for account data instead of 187 KiB.
+- Local configuration survives an update. Each device merges the published
+  config over its own, so currency, limits and the government key are kept
+  rather than reset to the published placeholder.
+- Devices whose ComputerCraft HTTP access is switched off fall back to the
+  Bank's rednet depot automatically, so restricting HTTP costs the update
+  speed but never strands a device.
+- Removed the depot stamp, the depot verifier and the staging-space reclaim
+  added in 6.1.0-6.2.1. The new architecture makes all three unnecessary;
+  `bank_server.lua` is about 4 KiB smaller despite gaining on-demand fetching.
+- Replaced the release builder's update-peak guard, which modelled the old
+  whole-release staging, with one that measures the largest single role.
+
 ## 6.2.3
 
 - Fixed the Urgent Contact ring never appearing, in or out of an app. The

@@ -114,37 +114,69 @@ function net.isNewerVersion(candidate, current)
     return c > z
 end
 
--- Clients ask the Bank Server for its version over the connection they already
--- hold and only launch Easy Deployment when a newer release actually exists.
--- Shelling the installer on every dashboard tick used to cost a full program
--- load, a public HTTPS request, and a deployment manifest round trip.
-function net.autoUpdate(config, role, root, client)
-    if type(config) ~= "table" or config.auto_update == false then return false end
-    if type(shell) ~= "table" or type(shell.run) ~= "function" then return false end
-    role = string.lower(tostring(role or ""))
-    if role == "" or role == "bank" then return false end
-
-    local interval = math.max(5,
-        math.floor(tonumber(config.client_update_check_seconds)
-            or config.update_check_seconds or 30)) * 1000
-    local now = util.nowMs()
-    if lastAutoUpdateCheck[role]
-        and now - lastAutoUpdateCheck[role] < interval then
-        return false
+-- Every role updates itself straight from the public manifest, downloading
+-- only the files it needs. The Bank Server's rednet depot stays as a fallback
+-- for devices whose ComputerCraft HTTP access is switched off.
+local function loadUpdater()
+    local ok, updater = pcall(require, "lib.update")
+    if ok and type(updater) == "table"
+        and type(updater.selfUpdate) == "function" then
+        return updater
     end
-    lastAutoUpdateCheck[role] = now
+    return nil
+end
 
+local function depotUpdate(config, role, root, client)
+    if type(shell) ~= "table" or type(shell.run) ~= "function" then return false end
     if client then
         local ping = client:request("PING", {}, 3)
         if not ping or not net.isNewerVersion(ping.version, config.version) then
             return false
         end
     end
-
     local installer = fs.combine(root or "/pumpe", "installer.lua")
     if not fs.exists(installer) or fs.isDir(installer) then return false end
     local ok, result = pcall(shell.run, installer, "--auto", role)
     return ok and result ~= false
+end
+
+function net.autoUpdate(config, role, root, client, options)
+    options = options or {}
+    if type(config) ~= "table" or config.auto_update == false then return false end
+    role = string.lower(tostring(role or ""))
+    if role == "" then return false end
+
+    local interval = math.max(5,
+        math.floor(tonumber(config.client_update_check_seconds)
+            or config.update_check_seconds or 30)) * 1000
+    local now = util.nowMs()
+    if not options.force and lastAutoUpdateCheck[role]
+        and now - lastAutoUpdateCheck[role] < interval then
+        return false
+    end
+    lastAutoUpdateCheck[role] = now
+
+    local updater = loadUpdater()
+    if updater then
+        local updated, detail = updater.selfUpdate({
+            config = config,
+            role = role,
+            root = root,
+            requiredPaths = options.requiredPaths,
+            optionalPaths = options.optionalPaths,
+            onProgress = options.onProgress,
+        })
+        if updated then
+            if options.onInstalled then pcall(options.onInstalled, detail) end
+            os.reboot()
+            return true
+        end
+        -- "current" and "disabled" are settled answers; anything else means
+        -- the internet was unreachable, so try the Bank's depot instead.
+        if detail == "current" or detail == "disabled" then return false end
+        net.lastUpdateError = detail
+    end
+    return depotUpdate(config, role, root, client)
 end
 
 return net
