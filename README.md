@@ -400,6 +400,11 @@ pumpe/
 - Event scheduling intentionally uses the Minecraft in-game day and time, not real-world time.
 - Check the current day shown in the event creation flow.
 
+**A PUMPE fails to start with a `nil value` error**
+
+- Its program and the shared `lib/` are from different releases. Run Easy Deployment on that computer and reinstall the role; it downloads the program and every library together.
+- If several devices show it, the Bank Server itself is serving mismatched files. Restart the Bank so Easy Deployment repairs its whole runtime, then let the clients update again.
+
 **A friend cannot be messaged or reached**
 
 - Messages and Urgent Contact are friends-only. Add them under **Friends** first.
@@ -419,4 +424,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.2.1`.
+PUMPE Ecosystem `6.2.2`.

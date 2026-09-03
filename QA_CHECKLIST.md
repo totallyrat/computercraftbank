@@ -41,6 +41,8 @@ Run this after installing into a ComputerCraft world.
 - [ ] Corrupt one hosted file and confirm its checksum fails without replacing the installed release.
 - [ ] On a nearly full Bank, publish a new release and confirm the dashboard reclaims `/updates`, logs how much it freed, and completes the update.
 - [ ] Fill the Bank so no release can fit and confirm the dashboard reads **NEEDS n KiB FREE** rather than **DOWNLOAD FAILED**, and that account data is untouched.
+- [ ] Replace one shared library on the Bank with an older copy, restart it, and confirm Easy Deployment repairs the whole runtime rather than only `bank_server.lua`, and that `config.lua` reports the new version only once every file verified.
+- [ ] Put a newer `pumpe.lua` beside an older `lib/ui.lua` on a PUMPE and confirm it still starts, with Urgent Contact ringing from the Home Screen.
 - [ ] Clear `/updates` by hand, restart the Bank, and confirm it still starts and repairs the depot online instead of stopping at the Easy Deployment repair screen.
 - [ ] Remove one manifest file and confirm the whole release is rejected.
 - [ ] Start an older client and confirm it updates from the Bank Server and reboots before opening its role.

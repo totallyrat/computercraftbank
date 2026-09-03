@@ -183,20 +183,27 @@ end
 
 local watchForUrgentCalls
 
+-- A PUMPE can be left holding a newer program than lib/ui.lua after a partial
+-- install. Urgent Contact then rings from the Home Screen only instead of
+-- taking the whole app down at launch.
+local canRingAnywhere = type(ui.setBackgroundTask) == "function"
+
 local function enableDeviceLock()
     ui.setIdleLock(tonumber(config.pumpe_lock_seconds) or 60, function()
         lockScreen(false)
     end)
     -- Urgent Contact rings from whatever app is open, so the check lives in
     -- the shared wait loop rather than in any one screen.
-    ui.setBackgroundTask(
-        tonumber(config.urgent_ring_poll_seconds) or 3,
-        function() return watchForUrgentCalls() end)
+    if canRingAnywhere then
+        ui.setBackgroundTask(
+            tonumber(config.urgent_ring_poll_seconds) or 3,
+            function() return watchForUrgentCalls() end)
+    end
 end
 
 disableDeviceLock = function()
     ui.setIdleLock(nil)
-    ui.setBackgroundTask(nil)
+    if canRingAnywhere then ui.setBackgroundTask(nil) end
 end
 
 local function pageFooter(scene, page, pages)
@@ -2977,6 +2984,9 @@ local function mainMenu()
             tick = tick + 1
             net.autoUpdate(config, "pumpe", ROOT, client)
             refresh = tick % 6 == 0
+            if not canRingAnywhere and tick % 6 == 0 then
+                watchForUrgentCalls()
+            end
         elseif action == "prev" then
             page = math.max(1, page - 1)
         elseif action == "next" then

@@ -153,23 +153,18 @@ local function checksum(body)
     end
     return table.concat(output)
 end
+local function entry(path, body)
+    return { path = path, source = path, size = #body, checksum = checksum(body) }
+end
+-- Deliberately incomplete: the shared libraries a client also receives are
+-- missing, so this repair cannot make the Bank whole.
 local repairManifest = {
     schema = 1,
     channel = "stable",
     version = "6.0.2",
     files = {
-        {
-            path = "bank_server.lua",
-            source = "bank_server.lua",
-            size = #repairedBank,
-            checksum = checksum(repairedBank),
-        },
-        {
-            path = "lib/util.lua",
-            source = "lib/util.lua",
-            size = #repairedUtil,
-            checksum = checksum(repairedUtil),
-        },
+        entry("bank_server.lua", repairedBank),
+        entry("lib/util.lua", repairedUtil),
     },
 }
 textutils = { unserializeJSON = function() return repairManifest end }
@@ -203,9 +198,57 @@ launched = nil
 assert(loadfile("../startup.lua"))("--boot", "bank")
 assert(files["/pumpe/lib/util.lua"] == repairedUtil)
 assert(files["/pumpe/bank_server.lua"] == repairedBank)
-assert(files["/pumpe/config.lua"]:find('version = "6.0.2"', 1, true))
 assert(files["/updates/bank_server.lua"] == nil)
 assert(files["/updates/lib/util.lua"] == nil)
+assert(launched == "/pumpe/bank_server.lua")
+
+-- A partial repair must NOT claim the new version. Bumping config.lua while a
+-- shared library stayed behind made the Bank advertise a release it was not
+-- running, and it then served clients a new program beside an old library.
+assert(files["/pumpe/config.lua"]:find('version = "6.0.0"', 1, true),
+    "an incomplete repair must leave the installed version alone")
+
+-- With every shared runtime file available the repair completes, and only
+-- then does the Bank report the new version.
+local repairedUi = "-- repaired ui\n"
+local repairedNet = "-- repaired net\n"
+local repairedUpdate = "-- repaired update\n"
+local repairedInstaller = "-- PUMPE EASY DEPLOYMENT\n-- repaired installer\n"
+local bodies = {
+    ["bank_server.lua"] = repairedBank,
+    ["lib/util.lua"] = repairedUtil,
+    ["lib/ui.lua"] = repairedUi,
+    ["lib/net.lua"] = repairedNet,
+    ["lib/update.lua"] = repairedUpdate,
+    ["startup.lua"] = repairedInstaller,
+}
+repairManifest.files = {}
+for path, body in pairs(bodies) do
+    repairManifest.files[#repairManifest.files + 1] = entry(path, body)
+end
+http.get = function(request)
+    local body = "{}"
+    for path, candidate in pairs(bodies) do
+        if request.url:find(path, 1, true) then body = candidate end
+    end
+    local sent = false
+    return {
+        read = function()
+            if sent then return nil end
+            sent = true
+            return body
+        end,
+        close = function() end,
+    }
+end
+launched = nil
+assert(loadfile("../startup.lua"))("--boot", "bank")
+assert(files["/pumpe/lib/ui.lua"] == repairedUi,
+    "a complete repair replaces every shared library")
+assert(files["/pumpe/lib/net.lua"] == repairedNet)
+assert(files["/pumpe/installer.lua"] == repairedInstaller)
+assert(files["/pumpe/config.lua"]:find('version = "6.0.2"', 1, true),
+    "a complete repair reports the version it now runs")
 assert(launched == "/pumpe/bank_server.lua")
 
 print("host_installer_bank_bootstrap_test: OK")

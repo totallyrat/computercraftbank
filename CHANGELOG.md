@@ -1,5 +1,29 @@
 # Changelog
 
+## 6.2.2
+
+Fixes a PUMPE that crashed at launch with `attempt to call a nil value (field 'setBackgroundTask')`.
+
+- **Root cause.** Easy Deployment's Bank repair path replaced only
+  `bank_server.lua` and `lib/util.lua`, then bumped `config.lua` to the
+  manifest version. The Bank therefore advertised a release it was not fully
+  running: its depot was refreshed to the new programs while `lib/ui.lua`
+  stayed behind, and clients installed a new `pumpe.lua` beside the Bank's old
+  library. `ui.setBackgroundTask`, added in 6.2.0 for Urgent Contact, was the
+  first function that made the mismatch fatal.
+- The repair now replaces every shared runtime file — `bank_server.lua`,
+  `installer.lua`, and all four libraries — and only reports the new version
+  once all of them verified. A partial repair leaves the installed version
+  alone so the normal updater finishes the job.
+- Raised Easy Deployment's per-file repair ceiling from 256 KiB to 1 MiB.
+  `bank_server.lua` passed 256 KiB, which would have silently stopped it being
+  repaired at all.
+- PUMPE no longer depends on a matching `lib/ui.lua` to start. When the shared
+  library is older than the app, Urgent Contact rings from the Home Screen
+  instead of taking the whole phone down at launch.
+- Added a check that Easy Deployment's repair set covers every file the Bank
+  serves to clients, so a partial repair cannot be reintroduced.
+
 ## 6.2.1
 
 Fixes an online update that could not physically install. **v6.2.0 should not be used.**

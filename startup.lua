@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "6.2.1"
+local INSTALLER_VERSION = "6.2.2"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -519,7 +519,7 @@ local function manifestEntry(manifest, requestedPath)
         if type(file) == "table" and file.path == requestedPath
             and safeRelativePath(file.source or file.path)
             and type(file.size) == "number" and file.size >= 1
-            and file.size <= 256 * 1024
+            and file.size <= 1024 * 1024
             and type(file.checksum) == "string"
             and file.checksum:match("^[0-9a-fA-F]+$")
             and #file.checksum == 8 then
@@ -680,24 +680,39 @@ end
 -- /updates. Easy Deployment frees those safe duplicates first, then installs
 -- the compact Bank program before launch so an affected Bank can recover even
 -- when it cannot reach its own updater.
+-- Every file the Bank runtime is built from. config.lua is deliberately not
+-- here: it holds the government key and other local settings.
+local BANK_RUNTIME_REPAIR = {
+    { path = "lib/util.lua", source = "lib/util.lua" },
+    { path = "lib/net.lua", source = "lib/net.lua" },
+    { path = "lib/ui.lua", source = "lib/ui.lua" },
+    { path = "lib/update.lua", source = "lib/update.lua" },
+    { path = "installer.lua", source = "startup.lua" },
+    { path = "bank_server.lua", source = "bank_server.lua" },
+}
+
+-- Repairs a Bank that cannot reach its own updater. This must replace the
+-- whole runtime before claiming the new version: bumping config.lua while a
+-- shared library stayed behind makes the Bank advertise a release it is not
+-- running, and it then serves clients a new program beside an old library.
 local function repairInstalledBankRuntime()
     if bootRoleId ~= "bank" or not publicManifest then return false end
     if newerVersion(installedVersion(), publicManifest.version) then return false end
     cleanupLegacyBankDuplicates()
 
-    replaceInstalledFile(
-        manifestEntry(publicManifest, "lib/util.lua"),
-        fs.combine(INSTALL_ROOT, "lib/util.lua"))
-
     local needsVersionUpdate = newerVersion(
         publicManifest.version, installedVersion())
-    local repaired = replaceInstalledFile(
-        manifestEntry(publicManifest, "bank_server.lua"),
-        fs.combine(INSTALL_ROOT, "bank_server.lua"))
-    if repaired and needsVersionUpdate then
+    local complete = true
+    for _, file in ipairs(BANK_RUNTIME_REPAIR) do
+        local entry = manifestEntry(publicManifest, file.source)
+        if not replaceInstalledFile(entry, fs.combine(INSTALL_ROOT, file.path)) then
+            complete = false
+        end
+    end
+    if complete and needsVersionUpdate then
         updateInstalledConfigVersion(publicManifest.version)
     end
-    return repaired
+    return complete
 end
 
 local function formatBytes(value)

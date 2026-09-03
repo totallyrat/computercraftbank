@@ -1,8 +1,8 @@
 -- Friends, Messages, and Urgent Contact on the PUMPE's native 26x20 screen.
 
 local WIDTH, HEIGHT = 26, 20
-local buttonLabels, drawnText, requests = {}, {}, {}
-local ringHandler
+buttonLabels, drawnText, requests = {}, {}, {}
+ringHandler = nil
 
 colors = {
     white = 1, orange = 2, magenta = 4, lightBlue = 8,
@@ -73,7 +73,7 @@ local chatMessages = {
     { seq = 1, sender_id = "ACC000002", sender_name = "Bob Wolf",
         kind = "text", body = "Are you at the market?" },
 }
-local urgentStatus = "ringing"
+urgentStatus = "ringing"
 
 local client = {
     discover = function() return true end,
@@ -232,7 +232,7 @@ function ui.networkError(_, err) error("unexpected network error: " .. tostring(
 
 -- login() asks for the account name first, then each screen's own input, in
 -- the order the scripted actions below reach them.
-local inputs = {
+inputs = {
     "FoxyUser",         -- sign in
     "On my way now",    -- chat message
     "25",               -- money request amount
@@ -244,7 +244,7 @@ function ui.input() return table.remove(inputs, 1) end
 function ui.pin() return "1234" end
 function ui.confirm() return false end
 
-local actions = {
+actions = {
     "login",                    -- account landing
     "messages",                 -- home
     "open:CHAT0001",            -- chat list
@@ -273,7 +273,7 @@ local actions = {
     "next", "next", "next", "next",   -- every home page renders
     "__terminate",
 }
-local index = 0
+index = 0
 function ui.scene()
     local scene = { width = WIDTH, height = HEIGHT }
     local live = {}
@@ -356,5 +356,24 @@ assert(pressed("Hang up"), "a live call can always be hung up")
 assert(asked("FRIEND_OVERVIEW") and asked("FRIEND_SEARCH")
     and asked("FRIEND_REQUEST"))
 assert(pressed("Erin Hare\nTap to add"), "search results are tappable")
+
+-- A PUMPE left holding a newer pumpe.lua than lib/ui.lua must still launch.
+-- Before v6.2.2 this crashed at startup on ui.setBackgroundTask.
+ui.setBackgroundTask = nil
+ringHandler = nil
+buttonLabels, drawnText, requests = {}, {}, {}
+urgentStatus = "ringing"
+index = 0
+inputs = { "FoxyUser" }
+actions = {
+    "login",
+    "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
+    "__terminate",
+}
+local launched, launchError = pcall(assert(loadfile("../pumpe.lua")))
+assert(launched, "an older lib/ui.lua must not stop the PUMPE launching: "
+    .. tostring(launchError))
+assert(asked("URGENT_RING"),
+    "without the shared hook, the Home Screen must still check for calls")
 
 print("host_pumpe_social_test: OK")
