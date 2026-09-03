@@ -109,6 +109,18 @@ Run this after installing into a ComputerCraft world.
 - [ ] Start Auto Mode with **Rotate All Games**, reboot the console, and confirm it resumes Auto Mode on the next game instead of showing the menu.
 - [ ] Confirm Survivor rounds in Auto Mode wait for at least two ready players.
 
+## PUMPE home screen
+
+- [ ] Confirm the first page is Favourites and starts empty with a **+ Edit** tile.
+- [ ] Pick four apps, confirm they appear on page one, and confirm they survive a restart.
+- [ ] Try to pick a fifth and confirm it is refused until one is removed.
+- [ ] Confirm BuckApp opens on the balance and reaches payments, the Bet Wallet and Activity.
+- [ ] Confirm Friends reaches Messages, Friends and Urgent Contact, and badges what is waiting.
+- [ ] Confirm Tickets reaches both events and your tickets, and Customs reaches both visas and territories.
+- [ ] Swipe to the Alerts page, confirm unread alerts are listed and **Mark all read** clears the `!` in the page dots.
+- [ ] Have someone send you money while a different app is open and confirm a banner drops across the top, then the screen repaints.
+- [ ] Sign in with unread alerts already waiting and confirm no banner storm.
+
 ## Friends, Messages, and Urgent Contact
 
 ### Friends

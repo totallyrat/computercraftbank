@@ -133,12 +133,20 @@ local client = {
                 sender_name = "FoxyUser", kind = "money_request",
                 body = "", amount = 25, status = "pending" }
             return { message = chatMessages[#chatMessages] }
-        elseif action == "URGENT_RING" then
+        elseif action == "NOTIFICATIONS" then
+            return { notifications = {} }
+        elseif action == "MARK_NOTIFICATIONS_READ" then
+            return { ok = true }
+        elseif action == "PUMPE_POLL" then
+            local poll = {
+                balance = account.balance, unread_notifications = 0,
+                unread_messages = 2, friend_requests = 1,
+            }
             if urgentStatus == "incoming" then
-                return { call = { call_id = "CALL1", other_name = "Bob Wolf",
-                    status = "ringing", outgoing = false, save_votes = 0 } }
+                poll.call = { call_id = "CALL1", other_name = "Bob Wolf",
+                    status = "ringing", outgoing = false, save_votes = 0 }
             end
-            return {}
+            return poll
         elseif action == "URGENT_ANSWER" then
             assert(payload.accept == true)
             urgentStatus = "active"
@@ -246,7 +254,9 @@ function ui.confirm() return false end
 
 actions = {
     "login",                    -- account landing
-    "messages",                 -- home
+    "next",                     -- Favourites is page one; apps are page two
+    "open:friends",             -- the one social app
+    "messages",                 -- its Messages entry
     "open:CHAT0001",            -- chat list
     "type",                     -- send a message
     "money", "ask",             -- ask for money
@@ -258,19 +268,18 @@ actions = {
     "create",
     "back",                     -- leave the new group chat
     "back",                     -- leave Messages
-    "next",                     -- home page two
-    "__ring",                   -- a friend reaches us from the home screen
+    "__ring",                   -- a friend reaches us from inside the app
     "accept",                   -- answer the Urgent Contact
     "type",                     -- talk
     "save",                     -- vote to save
     "hang",                     -- hang up
-    "prev",                     -- back to home page one
-    "friends",                  -- Friends app
+    "people",                   -- the Friends list inside the same app
     "add",                      -- search
     "add:ACC000005",            -- send a request
     "back",                     -- leave search
-    "back",                     -- leave Friends
-    "next", "next", "next", "next",   -- every home page renders
+    "back",                     -- leave the Friends list
+    "back",                     -- leave the social app
+    "next", "next",             -- every home page renders
     "__terminate",
 }
 index = 0
@@ -329,8 +338,12 @@ local function asked(action)
 end
 
 -- Home screen badges surface waiting messages and friend requests.
-assert(pressed("2\nMessages"), "unread messages must badge the Messages icon")
-assert(pressed("+1\nFriends"), "waiting friend requests must badge Friends")
+-- One social app, badged with everything waiting inside it.
+assert(pressed("3\nFriends"),
+    "unread messages and friend requests badge the one social app")
+assert(pressed("Messages (2)"), "the hub shows what is waiting in Messages")
+assert(pressed("Friends (+1)"), "and the requests waiting in Friends")
+assert(pressed("Urgent Contact"), "Urgent Contact lives in the same app")
 
 -- Messages
 assert(asked("CHAT_LIST") and asked("CHAT_OPEN") and asked("CHAT_SEND"))
@@ -346,7 +359,7 @@ assert(picked["ACC000002"] and picked["ACC000007"],
     "a friend on the second page of the picker must be selectable")
 
 -- Urgent Contact reached the user from the home screen, not from its own app.
-assert(asked("URGENT_RING") and asked("URGENT_ANSWER"))
+assert(asked("PUMPE_POLL") and asked("URGENT_ANSWER"))
 assert(pressed("Accept") and pressed("Decline"),
     "an incoming call shows Accept and Decline")
 assert(asked("URGENT_SEND") and asked("URGENT_SAVE") and asked("URGENT_END"))
@@ -373,7 +386,7 @@ actions = {
 local launched, launchError = pcall(assert(loadfile("../pumpe.lua")))
 assert(launched, "an older lib/ui.lua must not stop the PUMPE launching: "
     .. tostring(launchError))
-assert(asked("URGENT_RING"),
+assert(asked("PUMPE_POLL"),
     "without the shared hook, the Home Screen must still check for calls")
 
 print("host_pumpe_social_test: OK")

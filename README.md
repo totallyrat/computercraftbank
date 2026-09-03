@@ -25,8 +25,11 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
 - The Home Screen uses a roomy two-column, four-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
-- Wallet, Activity, Events, Tickets, Notifications, Visas, Customs, Tax, Subscriptions, and Settings open as individual apps.
-- **Friends**, **Messages**, and **Urgent Contact** turn PUMPE into a small social phone. Messages and Friends carry unread badges on the home screen.
+- The Home Screen opens on **Favourites**, up to four apps you choose yourself, then the app pages, then **Alerts**.
+- **BuckApp** holds the balance, payments behind **Continue**, the Bet Wallet and Activity.
+- **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
+- **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
+- Alerts are part of the OS rather than an app: their own Home Screen page, a `!` in the page dots, and a banner across the top of whatever app is open when something new arrives.
 - **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 

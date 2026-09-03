@@ -1,63 +1,32 @@
 -- Full host-side 26x20 layout flow for the PUMPE 6.0.0 experience.
 
+-- Walks the consolidated v6.9 OS: Favourites first, then the app pages, then
+-- the Alerts page, with every screen bounds-checked at 26x20.
 local actions = {
-    "next",
-    "next",
-    "create",
-    "gender:They / them",
-    "pay",
-    "code",
-    "send",
-    "back",
-    "back",
-    "balance",
-    "back",
-    "history",
-    "back",
-    "events",
-    "event:EVT000001",
-    "back",
-    "back",
-    "next",
-    "tickets",
-    "back",
-    "notifications",
-    "back",
-    "visas",
-    "documents",
-    "back",
-    "applications",
-    "back",
-    "back",
-    "customs",
-    "territory:TER000001",
-    "citizens",
-    "back",
-    "applications",
-    "back",
-    "roam",
-    "back",
-    "back",
-    "back",
-    "next",
-    "bet",
-    "pick:heads",
-    "__tick",
-    "done",
-    "bet_wallet",
-    "holding",
-    "back",
-    "activity",
-    "back",
-    "add",
-    "withdraw",
-    "back",
-    "tax",
-    "subscriptions",
-    "back",
-    "next",
-    "settings",
-    "close",
+    "next", "next", "create", "gender:They / them",  -- onboarding
+    "edit", "pick:buck", "pick:friends", "back",     -- pick favourites
+    "open:buck",                                     -- BuckApp from Favourites
+    "pay", "code", "send", "back", "back",           -- payments behind Continue
+    "activity", "back",                              -- activity inside BuckApp
+    "wallet", "holding", "back", "activity", "back",
+    "add", "withdraw", "back",                       -- Bet Wallet inside BuckApp
+    "back",                                          -- leave BuckApp
+    "next",                                          -- app page one
+    "open:tickets", "browse", "event:EVT000001", "back", "back",
+    "mine", "back", "back",                          -- Tickets hub
+    "open:customs",
+    "visas", "documents", "back", "applications", "back", "back",
+    "territories", "territory:TER000001", "citizens", "back",
+    "applications", "back", "roam", "back", "back", "back",
+    "back",                                          -- leave the Customs hub
+    "next",                                          -- app page two
+    "open:bet", "pick:heads", "__tick", "done",
+    "open:tax",                                      -- returns on its own
+    "open:subs", "back",
+    "next",                                          -- Alerts page
+    "clear",
+    "prev", "prev", "prev",                          -- back to Favourites
+    "next", "next", "open:settings", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
 local savedDevice
@@ -150,10 +119,22 @@ local client = {
             assert(payload.pin == "1234")
             return { account = account, session_token = "SESSION" }
         elseif action == "ACCOUNT_SUMMARY" then
+            return { account = account, unread_notifications = 0 }
+        elseif action == "PUMPE_POLL" then
             return {
-                account = account,
-                unread_notifications = 0,
+                balance = account.balance,
+                unread_notifications = 1,
+                unread_messages = 0,
+                friend_requests = 0,
+                latest = {
+                    notification_id = "NOT00000001",
+                    title = "Welcome",
+                    body = "Your PUMPE is ready",
+                    kind = "info",
+                },
             }
+        elseif action == "MARK_NOTIFICATIONS_READ" then
+            return { ok = true }
         elseif action == "HISTORY" then
             return {
                 transactions = {
@@ -658,16 +639,24 @@ end
 
 function ui.scene()
     local scene = { width = WIDTH, height = HEIGHT }
-    function scene:button(_, x, y, width, height, label)
+    local live = {}
+    function scene:button(id, x, y, width, height, label, options)
         assertBox("button", x, y, width, height)
         local lines = ui.wrap(label, math.max(1, width - 2))
         assert(#lines <= height, "button label is clipped: "
             .. tostring(label or ""))
         buttonLabels[#buttonLabels + 1] = tostring(label or "")
+        if not (options and options.disabled) then live[id] = true end
     end
     function scene:wait()
         local action = table.remove(actions, 1)
         assert(action, "PUMPE requested an unexpected scene action")
+        -- A scripted tap must land on a button that is really on screen,
+        -- otherwise a drifting sequence silently skips whole screens.
+        if not tostring(action):match("^__") then
+            assert(live[action], "tapped '" .. action
+                .. "' but no such button is on screen")
+        end
         return action
     end
     return scene
@@ -699,12 +688,21 @@ local sendIndex = assert(find(buttonLabels,
 assert(codeIndex < sendIndex)
 assert(not find(buttonLabels, "Proximity Pay"))
 assert(find(drawnText, "SUBSCRIPTION ACTIVE"))
-assert(find(buttonLabels, "=\nActivity"))
-assert(find(buttonLabels, "o\nSettings"))
-assert(find(buttonLabels, "V\nVisas"))
+assert(find(buttonLabels, "$\nBuckApp"))
+assert(find(buttonLabels, "F\nFriends"))
+assert(find(buttonLabels, "#\nTickets"))
 assert(find(buttonLabels, "C\nCustoms"))
 assert(find(buttonLabels, "B\nBet"))
-assert(find(buttonLabels, "$\nBet Wallet"))
+assert(find(buttonLabels, "o\nSettings"))
+-- Payments, the Bet Wallet and activity all live inside BuckApp now.
+assert(find(buttonLabels, "Continue"))
+assert(find(buttonLabels, "Bet\nWallet"))
+assert(not find(buttonLabels, "$\nBet Wallet"),
+    "Bet Wallet is no longer a separate home screen app")
+assert(not find(buttonLabels, "!\nAlerts"),
+    "Alerts became an OS page rather than an app")
+assert(find(drawnText, "FAVOURITES"), "Favourites is the first page")
+assert(find(drawnText, "ALERTS"), "Alerts has a page of its own")
 assert(find(requests, "REGISTER"))
 assert(find(requests, "ACCOUNT_SUMMARY"))
 assert(find(requests, "VISA_OVERVIEW"))

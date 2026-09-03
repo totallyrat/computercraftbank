@@ -1,5 +1,52 @@
 # Changelog
 
+## 6.9.0
+
+The PUMPE stops being a list of banking screens and starts behaving like a
+phone. Eight home screen apps become four, alerts move into the OS, and the
+first page is yours.
+
+### BuckApp
+
+- Everything to do with money is now one app. It opens on your balance, puts
+  payments behind **Continue**, and holds the **Bet Wallet** and **Activity**
+  alongside them.
+- The separate Wallet, Pay, Activity and Bet Wallet tiles are gone.
+
+### Friends
+
+- Messages, Friends and Urgent Contact are one app with a single home screen
+  tile, badged with everything waiting inside it.
+
+### Tickets and Customs
+
+- **Tickets** holds both Browse Events and My Tickets.
+- **Customs** holds both My Visas and Territories.
+
+### Alerts in the OS
+
+- The Notifications app is gone. Alerts are now a page of the Home Screen,
+  reachable by swiping, with a `!` in the page dots when something is unread
+  and **Mark all read** on the page itself.
+- New alerts drop a **banner** across the top of whatever app is open, then
+  the screen repaints underneath it. The backlog waiting at sign-in never
+  banners.
+
+### Favourites
+
+- Page one of the Home Screen is now **Favourites**: up to four apps you pick,
+  saved on the device. Tap **+ Edit** to choose them.
+
+### Under the hood
+
+- Added `PUMPE_POLL`, one Bank request that carries an incoming Urgent
+  Contact, the newest unread alert for the banner, the balance and every
+  badge. The OS polls this instead of making three separate calls.
+- Both PUMPE tests now verify that every scripted tap lands on a button that
+  is actually on screen. That immediately caught a button id collision
+  between the Customs hub and the Visas screen inside it, which a drifting
+  test would have hidden.
+
 ## 6.3.0
 
 Every device now updates itself. The Bank Server is no longer the middleman

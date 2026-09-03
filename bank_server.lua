@@ -2827,6 +2827,41 @@ function actions.URGENT_PAY_REQUEST(payload)
     return { quote = quote }
 end
 
+-- One poll for the whole PUMPE OS: an incoming Urgent Contact, the newest
+-- unread alert for the banner, and every home screen badge. The phone checks
+-- this a few times a second, so it must stay a single cheap request.
+function actions.PUMPE_POLL(payload)
+    local account = requireSession(payload)
+    cleanupUrgentCalls()
+    local ring
+    for _, call in pairs(urgentCalls) do
+        if call.to_id == account.account_id and call.status == "ringing" then
+            ring = publicCall(call, account.account_id)
+        end
+    end
+    local unread, latest = 0, nil
+    for _, item in ipairs(account.notifications) do
+        if not item.read then
+            unread = unread + 1
+            if not latest then latest = item end
+        end
+    end
+    local badges = socialBadges(account)
+    return {
+        call = ring,
+        balance = account.balance,
+        unread_notifications = unread,
+        unread_messages = badges.messages,
+        friend_requests = badges.friend_requests,
+        latest = latest and {
+            notification_id = latest.notification_id,
+            title = latest.title,
+            body = latest.body,
+            kind = latest.kind,
+        } or nil,
+    }
+end
+
 function actions.URGENT_END(payload)
     local account = requireSession(payload)
     local call = requireCall(account, payload.call_id)

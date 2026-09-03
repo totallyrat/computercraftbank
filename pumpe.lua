@@ -418,44 +418,6 @@ local function welcome()
     end
 end
 
-local function balanceScreen()
-    local blink = true
-    local page = 1
-    local history = {}
-    local historyResult = request("HISTORY")
-    if historyResult then history = historyResult.transactions end
-    while sessionToken do
-        refreshSummary(true)
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Wallet", account.name, util.formatClock(blink))
-        ui.card(target, 2, 5, width - 2, 4, ui.theme.success)
-        ui.text(target, 4, 6, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 7, money(account.balance), ui.theme.ink, ui.theme.panel)
-        ui.text(target, 2, 10, "RECENT", ui.theme.muted)
-        local pageItems, actualPage, pages = util.page(history, page, 1)
-        page = actualPage
-        for index, tx in ipairs(pageItems) do
-            local y = 11 + (index - 1) * 8
-            local color = tx.amount >= 0 and ui.theme.success or ui.theme.ink
-            ui.card(target, 2, y, width - 2, 8, color)
-            ui.wrappedText(target, 4, y, tx.description,
-                width - 6, 5, ui.theme.ink, ui.theme.panel)
-            local amountText = (tx.amount >= 0 and "+" or "") .. money(tx.amount)
-            ui.text(target, 4, y + 5, "Day " .. tx.day .. " " .. tx.time,
-                ui.theme.muted)
-            ui.text(target, 4, y + 6, amountText, color)
-        end
-        local scene = ui.scene(target)
-        pageFooter(scene, page, pages)
-        local action = scene:wait({ tickRate = 0.5 })
-        blink = not blink
-        if action == "back" or action == "__terminate" then return
-        elseif action == "prev" then page = page - 1
-        elseif action == "next" then page = page + 1 end
-    end
-end
-
 local function reviewTransfer(quote)
     local blink = true
     while true do
@@ -844,40 +806,6 @@ local function myTicketsScreen()
         if action == "back" or action == "__terminate" then return
         elseif action == "prev" then index = math.max(1, index - 1)
         elseif action == "next" then index = math.min(#tickets, index + 1) end
-    end
-end
-
-local function notificationsScreen()
-    local result = request("NOTIFICATIONS")
-    if not result then return end
-    request("MARK_NOTIFICATIONS_READ", {}, true)
-    local items, page, blink = result.notifications, 1, true
-    while true do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Notifications", #items .. " total", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(items, page, 1)
-        page = actualPage
-        if #items == 0 then ui.center(target, 9, "All quiet here", ui.theme.muted) end
-        for index, item in ipairs(pageItems) do
-            local y = 4 + (index - 1) * 14
-            ui.card(target, 2, y, width - 2, 14,
-                item.kind == "warning" and ui.theme.warning or ui.theme.accent)
-            ui.wrappedText(target, 4, y, item.title,
-                width - 6, 2, ui.theme.ink, ui.theme.panel)
-            ui.wrappedText(target, 4, y + 3, item.body,
-                width - 6, 8, ui.theme.muted, ui.theme.panel)
-            ui.text(target, 4, y + 12,
-                "Day " .. item.created_day .. " " .. item.created_time,
-                ui.theme.muted, ui.theme.panel)
-        end
-        local scene = ui.scene(target)
-        pageFooter(scene, page, pages)
-        local action = scene:wait({ tickRate = 0.5 })
-        blink = not blink
-        if action == "back" or action == "__terminate" then return
-        elseif action == "prev" then page = page - 1
-        elseif action == "next" then page = page + 1 end
     end
 end
 
@@ -2119,6 +2047,21 @@ local conversationScreen
 
 local urgentCallScreen
 local inCall = false
+local lastBannerId
+
+-- A banner drops over the top of whatever app is open, then the screen
+-- repaints on its next tick, exactly like a phone.
+local function showBanner(item)
+    local width = target.getSize()
+    local color = item.kind == "warning" and ui.theme.warning
+        or item.kind == "urgent" and ui.theme.danger
+        or item.kind == "money" and ui.theme.success
+        or ui.theme.accent
+    ui.fill(target, 1, 1, width, 3, color)
+    ui.text(target, 2, 1, ui.truncate(item.title, width - 2), colors.black, color)
+    ui.wrappedText(target, 2, 2, item.body, width - 2, 2, colors.black, color)
+    sleep(1.6)
+end
 
 local function socialAmount(title)
     local raw = ui.input(target, title, {
@@ -2863,12 +2806,22 @@ local function urgentScreen()
 end
 
 -- Polled from every screen so a call reaches the user wherever they are.
+-- The one OS poll: it rings an Urgent Contact and banners a new alert.
 watchForUrgentCalls = function()
     if not sessionToken or inCall then return false end
-    local ring = request("URGENT_RING", {}, true)
-    if not ring or not ring.call then return false end
-    incomingCallScreen(ring.call)
-    return true
+    local poll = request("PUMPE_POLL", {}, true)
+    if not poll then return false end
+    local latest = poll.latest
+    if poll.call then
+        if latest then lastBannerId = latest.notification_id end
+        incomingCallScreen(poll.call)
+        return true
+    end
+    if latest and latest.notification_id ~= lastBannerId then
+        lastBannerId = latest.notification_id
+        showBanner(latest)
+    end
+    return false
 end
 
 local function settingsScreen()
@@ -2900,141 +2853,336 @@ local function settingsScreen()
     end
 end
 
-local function mainMenu()
-    local blink, tick, page = true, 0, 1
-    local summary = refreshSummary() or {}
-    enableDeviceLock()
-    local pages = {
-        {
-            { "pay", "P\nPay", colors.blue },
-            { "balance", "$\nWallet", colors.green },
-            { "messages", "M\nMessages", colors.cyan },
-            { "friends", "F\nFriends", colors.lime },
-        },
-        {
-            { "urgent", "!\nUrgent", colors.red },
-            { "notifications", "!\nAlerts", colors.orange },
-            { "history", "=\nActivity", colors.lightBlue },
-            { "events", "*\nEvents", colors.purple },
-        },
-        {
-            { "tickets", "#\nTickets", colors.orange },
-            { "visas", "V\nVisas", colors.purple },
-            { "customs", "C\nCustoms", colors.lightBlue },
-            { "subscriptions", "S\nSubs", colors.magenta },
-        },
-        {
-            { "bet", "B\nBet", colors.magenta },
-            { "bet_wallet", "$\nBet Wallet", colors.purple },
-            { "tax", "%\nTax", colors.orange },
-            { "settings", "o\nSettings", colors.gray },
-        },
-        {
-            { "lock", "L\nLock", colors.blue },
-        },
-    }
+-- The PUMPE OS: consolidated apps, alerts, banners, and favourites ----------
+
+-- BuckApp gathers everything to do with money: the balance you see first,
+-- payments behind Continue, the Bet Wallet, and your activity.
+local function buckApp()
+    local blink = true
+    while running and sessionToken do
+        local width, height = target.getSize()
+        local summary = refreshSummary(true)
+        ui.clear(target)
+        ui.header(target, "BuckApp", "Foxy Account", util.formatClock(blink))
+        ui.card(target, 2, 4, width - 2, 4, ui.theme.success)
+        ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 5, money(account.balance), ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 6, "Daily sent " .. money(account.daily_sent or 0),
+            ui.theme.muted, ui.theme.panel)
+
+        local scene = ui.scene(target)
+        scene:button("pay", 2, 9, width - 2, 3, "Continue",
+            { background = ui.theme.accentDark, shadow = true })
+        local half = math.floor((width - 3) / 2)
+        scene:button("wallet", 2, 13, half, 3, "Bet\nWallet",
+            { background = colors.purple })
+        scene:button("activity", 2 + half + 1, 13, width - 3 - half, 3,
+            "Activity", { background = ui.theme.panel })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 0.5 })
+        blink = not blink
+        if action == "back" or action == "__terminate" then return
+        elseif action == "pay" then payMenu()
+        elseif action == "wallet" then betWalletScreen()
+        elseif action == "activity" then historyScreen() end
+        if summary == nil and not sessionToken then return end
+    end
+end
+
+-- One entry point for everything social.
+local function friendsApp()
+    while running and sessionToken do
+        local width, height = target.getSize()
+        local poll = request("PUMPE_POLL", {}, true) or {}
+        ui.clear(target)
+        ui.header(target, "Friends", "People and messages", util.formatClock())
+        local scene = ui.scene(target)
+        local unread = poll.unread_messages or 0
+        local requests = poll.friend_requests or 0
+        scene:button("messages", 2, 5, width - 2, 4,
+            unread > 0 and ("Messages (" .. unread .. ")") or "Messages", {
+                background = unread > 0 and ui.theme.accentDark or colors.cyan,
+                shadow = true,
+            })
+        scene:button("people", 2, 10, width - 2, 4,
+            requests > 0 and ("Friends (+" .. requests .. ")") or "Friends", {
+                background = requests > 0 and ui.theme.warning or colors.lime,
+                foreground = colors.black,
+                shadow = true,
+            })
+        scene:button("urgent", 2, 15, width - 2, 3, "Urgent Contact",
+            { background = ui.theme.danger, shadow = true })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "messages" then messagesScreen()
+        elseif action == "people" then friendsScreen()
+        elseif action == "urgent" then urgentScreen() end
+    end
+end
+
+local function ticketsApp()
     while running and sessionToken do
         local width, height = target.getSize()
         ui.clear(target)
+        ui.header(target, "Tickets", "Events and your tickets",
+            util.formatClock())
+        local scene = ui.scene(target)
+        scene:button("browse", 2, 6, width - 2, 5, "Browse Events",
+            { background = colors.purple, shadow = true })
+        scene:button("mine", 2, 12, width - 2, 5, "My Tickets",
+            { background = colors.orange, foreground = colors.black,
+                shadow = true })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "browse" then eventsScreen()
+        elseif action == "mine" then myTicketsScreen() end
+    end
+end
+
+local function customsApp()
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Customs", "Territories and travel",
+            util.formatClock())
+        local scene = ui.scene(target)
+        scene:button("visas", 2, 6, width - 2, 5, "My Visas",
+            { background = colors.purple, shadow = true })
+        scene:button("territories", 2, 12, width - 2, 5, "Territories",
+            { background = colors.lightBlue, shadow = true })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "visas" then visasScreen()
+        elseif action == "territories" then customsScreen() end
+    end
+end
+
+-- The app catalogue the Home Screen and the favourites picker share.
+local APPS = {
+    buck = { label = "$\nBuckApp", color = colors.green, open = buckApp },
+    friends = { label = "F\nFriends", color = colors.cyan, open = friendsApp },
+    tickets = { label = "#\nTickets", color = colors.orange, open = ticketsApp },
+    customs = { label = "C\nCustoms", color = colors.lightBlue, open = customsApp },
+    bet = { label = "B\nBet", color = colors.magenta, open = nil },
+    tax = { label = "%\nTax", color = colors.orange, open = nil },
+    subs = { label = "S\nSubs", color = colors.magenta, open = nil },
+    settings = { label = "o\nSettings", color = colors.gray, open = nil },
+}
+local APP_ORDER = {
+    "buck", "friends", "tickets", "customs", "bet", "tax", "subs", "settings",
+}
+
+local function appBadge(id, poll)
+    if id == "friends" then
+        local total = (poll.unread_messages or 0) + (poll.friend_requests or 0)
+        if total > 0 then return total end
+    end
+    return nil
+end
+
+local function favouriteIds()
+    local chosen = {}
+    for _, id in ipairs(device.favorites or {}) do
+        if APPS[id] then chosen[#chosen + 1] = id end
+    end
+    return chosen
+end
+
+local function favouritesPicker()
+    while running do
+        local width, height = target.getSize()
+        local chosen, lookup = favouriteIds(), {}
+        for _, id in ipairs(chosen) do lookup[id] = true end
+        ui.clear(target)
+        ui.header(target, "Favourites", #chosen .. "/4 chosen",
+            util.formatClock())
+        local scene = ui.scene(target)
+        for index, id in ipairs(APP_ORDER) do
+            local column = (index - 1) % 2
+            local row = math.floor((index - 1) / 2)
+            local tileWidth = math.floor((width - 3) / 2)
+            local name = APPS[id].label:match("\n(.+)$") or id
+            scene:button("pick:" .. id, 2 + column * (tileWidth + 1),
+                4 + row * 3, tileWidth, 2,
+                (lookup[id] and "* " or "") .. name, {
+                    background = lookup[id] and ui.theme.success
+                        or APPS[id].color,
+                    foreground = lookup[id] and colors.black or colors.white,
+                })
+        end
+        scene:button("back", 1, height, 10, 1, "< Done",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "back" or action == "__terminate" then return end
+        local id = action and action:match("^pick:(.+)$")
+        if id and APPS[id] then
+            device.favorites = device.favorites or {}
+            if lookup[id] then
+                for index = #device.favorites, 1, -1 do
+                    if device.favorites[index] == id then
+                        table.remove(device.favorites, index)
+                    end
+                end
+            elseif #chosen < 4 then
+                device.favorites[#device.favorites + 1] = id
+            end
+            saveDevice()
+        end
+    end
+end
+
+-- Alerts are part of the OS now: a page of their own rather than an app.
+local function drawAlertsPage(scene, items, width, height)
+    ui.text(target, 2, 4, "ALERTS", ui.theme.muted)
+    if #items == 0 then
+        ui.center(target, 10, "All quiet here", ui.theme.muted)
+        return
+    end
+    local row = 6
+    for _, item in ipairs(items) do
+        if row > height - 4 then break end
+        local color = item.kind == "warning" and ui.theme.warning
+            or item.kind == "urgent" and ui.theme.danger
+            or item.read and ui.theme.muted or ui.theme.accent
+        ui.text(target, 2, row, ui.truncate(item.title, width - 2), color)
+        row = row + 1
+        if row <= height - 4 then
+            local body = ui.wrap(item.body, width - 3)
+            ui.text(target, 3, row, body[1] or "", ui.theme.muted)
+            row = row + 2
+        end
+    end
+    scene:button("clear", 2, height - 3, width - 2, 2, "Mark all read",
+        { background = ui.theme.panel })
+end
+
+local function mainMenu()
+    -- The apps that are not hubs are wired here, where their screens exist.
+    APPS.bet.open = betApp
+    APPS.tax.open = taxScreen
+    APPS.subs.open = subscriptionsScreen
+    APPS.settings.open = settingsScreen
+
+    local blink, tick, page = true, 0, 1
+    local poll = request("PUMPE_POLL", {}, true) or {}
+    lastBannerId = poll.latest and poll.latest.notification_id or lastBannerId
+    local alerts = {}
+    refreshSummary()
+    enableDeviceLock()
+
+    -- Page 1 is always Favourites, then the app pages, then Alerts.
+    local function pageCount() return 2 + math.ceil(#APP_ORDER / 4) end
+    local function alertsPage() return pageCount() end
+
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        local unreadAlerts = poll.unread_notifications or 0
         ui.header(target, "Foxy Account", account.name, util.formatClock(blink))
-        ui.card(target, 2, 4, width - 2, 3, ui.theme.success)
-        ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 5, money(account.balance), ui.theme.ink, ui.theme.panel)
-        local alertCount = summary.unread_notifications or 0
-        if alertCount > 0 then
-            ui.text(target, width - 5, 5, tostring(alertCount), colors.black,
+        ui.card(target, 2, 4, width - 2, 2, ui.theme.success)
+        ui.text(target, 4, 4, money(account.balance), ui.theme.ink, ui.theme.panel)
+        if unreadAlerts > 0 then
+            ui.text(target, width - 4, 4, tostring(unreadAlerts), colors.black,
                 ui.theme.warning)
         end
 
         local scene = ui.scene(target)
         local iconWidth = math.max(8, math.floor((width - 4) / 2))
-        for index, entry in ipairs(pages[page]) do
+        local function tile(index, id, label, color)
             local column = (index - 1) % 2
             local row = math.floor((index - 1) / 2)
-            local x = column == 0 and 2 or width - iconWidth
-            local y = 8 + row * 4
-            local label = entry[2]
-            if entry[1] == "notifications" and alertCount > 0 then
-                label = alertCount .. "\nAlerts"
-            elseif entry[1] == "messages"
-                and (summary.unread_messages or 0) > 0 then
-                label = summary.unread_messages .. "\nMessages"
-            elseif entry[1] == "friends"
-                and (summary.friend_requests or 0) > 0 then
-                label = "+" .. summary.friend_requests .. "\nFriends"
-            end
-            scene:button(entry[1], x, y, iconWidth, 3, label, {
-                background = entry[3],
-                shadow = true,
-            })
+            scene:button(id, column == 0 and 2 or width - iconWidth,
+                7 + row * 4, iconWidth, 3, label,
+                { background = color, shadow = true })
         end
-        local dots = {}
-        for dot = 1, #pages do dots[dot] = dot == page and "o" or "." end
-        ui.center(target, 16, table.concat(dots, "  "), ui.theme.muted)
-        scene:button("prev", 1, 18, 7, 1, "<",
-            { background = ui.theme.panel, disabled = page == 1 })
-        scene:button("next", width - 6, 18, 7, 1, ">",
-            { background = ui.theme.panel, disabled = page == #pages })
-        scene:button("home", math.floor(width / 2) - 3, height, 7, 1, "",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        local refresh = false
-        if action == "__tick" or action == "__idle" or action == "__wake" then
-            blink = not blink
-            tick = tick + 1
-            net.autoUpdate(config, "pumpe", ROOT, client)
-            refresh = tick % 6 == 0
-            if not canRingAnywhere and tick % 6 == 0 then
-                watchForUrgentCalls()
+
+        if page == 1 then
+            ui.text(target, 2, 6, "FAVOURITES", ui.theme.muted)
+            local chosen = favouriteIds()
+            for index, id in ipairs(chosen) do
+                local badge = appBadge(id, poll)
+                local label = APPS[id].label
+                if badge then
+                    label = badge .. label:match("\n.+$")
+                end
+                tile(index, "open:" .. id, label, APPS[id].color)
             end
-        elseif action == "prev" then
-            page = math.max(1, page - 1)
-        elseif action == "next" then
-            page = math.min(#pages, page + 1)
-        elseif action == "home" then
-            page = 1
-        elseif action == "balance" then
-            phoneTransition("Wallet", colors.green); balanceScreen()
-        elseif action == "pay" then
-            phoneTransition("PUMPE Pay", colors.blue); payMenu()
-        elseif action == "history" then
-            phoneTransition("Activity", colors.lightBlue); historyScreen()
-        elseif action == "events" then
-            phoneTransition("Events", colors.purple); eventsScreen()
-        elseif action == "tickets" then
-            phoneTransition("Tickets", colors.orange); myTicketsScreen()
-        elseif action == "notifications" then
-            phoneTransition("Alerts", colors.orange); notificationsScreen()
-        elseif action == "messages" then
-            phoneTransition("Messages", colors.cyan); messagesScreen()
-        elseif action == "friends" then
-            phoneTransition("Friends", colors.lime); friendsScreen()
-        elseif action == "urgent" then
-            phoneTransition("Urgent", colors.red); urgentScreen()
-        elseif action == "visas" then
-            phoneTransition("Visas", colors.purple); visasScreen()
-        elseif action == "customs" then
-            phoneTransition("Customs", colors.lightBlue); customsScreen()
-        elseif action == "bet" then
-            phoneTransition("CCG Bet", colors.magenta); betApp()
-        elseif action == "bet_wallet" then
-            phoneTransition("Bet Wallet", colors.purple); betWalletScreen()
-        elseif action == "tax" then
-            phoneTransition("Tax", colors.orange); taxScreen()
-        elseif action == "subscriptions" then
-            phoneTransition("Subscriptions", colors.magenta); subscriptionsScreen()
-        elseif action == "settings" then
-            phoneTransition("Settings", colors.gray); settingsScreen()
-        elseif action == "lock" then
-            lockScreen(true)
+            if #chosen < 4 then
+                tile(#chosen + 1, "edit", "+\nEdit", ui.theme.panel)
+            end
+            if #chosen == 0 then
+                ui.center(target, 17, "Pick your four", ui.theme.muted)
+            end
+        elseif page == alertsPage() then
+            drawAlertsPage(scene, alerts, width, height)
+        else
+            local first = (page - 2) * 4 + 1
+            for slot = 1, 4 do
+                local id = APP_ORDER[first + slot - 1]
+                if id then
+                    local badge = appBadge(id, poll)
+                    local label = APPS[id].label
+                    if badge then label = badge .. label:match("\n.+$") end
+                    tile(slot, "open:" .. id, label, APPS[id].color)
+                end
+            end
+        end
+
+        local dots = {}
+        for dot = 1, pageCount() do
+            dots[dot] = dot == page and "o" or (dot == alertsPage()
+                and unreadAlerts > 0 and "!" or ".")
+        end
+        ui.center(target, height - 2, table.concat(dots, " "), ui.theme.muted)
+        scene:button("prev", 1, height, 7, 1, "<",
+            { background = ui.theme.panel, disabled = page == 1 })
+        scene:button("next", width - 6, height, 7, 1, ">",
+            { background = ui.theme.panel, disabled = page == pageCount() })
+        scene:button("lock", math.floor(width / 2) - 3, height, 7, 1, "()",
+            { background = ui.theme.panel })
+
+        local action = scene:wait({ tickRate = 0.5 })
+        blink = not blink
+        if action == "prev" then page = math.max(1, page - 1)
+        elseif action == "next" then page = math.min(pageCount(), page + 1)
+        elseif action == "lock" then lockScreen(true)
+        elseif action == "edit" then favouritesPicker()
+        elseif action == "clear" then
+            request("MARK_NOTIFICATIONS_READ", {}, true)
+            for _, item in ipairs(alerts) do item.read = true end
+            poll.unread_notifications = 0
         elseif action == "__terminate" then
             running = false
         else
-            refresh = true
+            local id = action and action:match("^open:(.+)$")
+            if id and APPS[id] and APPS[id].open then
+                phoneTransition(APPS[id].label:match("\n(.+)$") or id,
+                    APPS[id].color)
+                APPS[id].open()
+                refreshSummary(true)
+            end
         end
-        if refresh and sessionToken then
-            summary = refreshSummary(true) or summary
+
+        if action == "__tick" or action == "__idle" or action == "__wake" then
+            tick = tick + 1
+            net.autoUpdate(config, "pumpe", ROOT, client)
+        end
+        -- The OS poll drives the badges, the balance and the alert dot.
+        if tick % 6 == 0 or (action ~= "__tick" and action ~= "__idle") then
+            poll = request("PUMPE_POLL", {}, true) or poll
+            if poll.balance and account then account.balance = poll.balance end
             if not sessionToken then return end
+        end
+        if page == alertsPage() and #alerts == 0 then
+            local loaded = request("NOTIFICATIONS", {}, true)
+            alerts = loaded and loaded.notifications or {}
         end
     end
 end

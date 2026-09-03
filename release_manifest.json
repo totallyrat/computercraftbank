@@ -1,20 +1,20 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "6.3.0",
+  "version": "6.9.0",
   "notes": "PUMPE + ComputerCraftGaming automatic internet release",
   "files": [
     {
       "path": "bank_server.lua",
       "source": "bank_server.lua",
-      "size": 183942,
-      "checksum": "f22e65c9"
+      "size": 185151,
+      "checksum": "d706fcd9"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 126214,
-      "checksum": "bae90106"
+      "size": 132128,
+      "checksum": "0f87bd63"
     },
     {
       "path": "service_kiosk.lua",
@@ -38,7 +38,7 @@
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 46693,
-      "checksum": "e4bcf694"
+      "checksum": "a7d9f49a"
     },
     {
       "path": "launcher.lua",
@@ -50,7 +50,7 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 2244,
-      "checksum": "b3cb3902"
+      "checksum": "d7c9b008"
     },
     {
       "path": "lib/net.lua",
