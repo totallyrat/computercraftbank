@@ -341,6 +341,27 @@ assert(not net.autoUpdate(clientConfig, "event", "/pumpe", {
 }))
 assert(#updateRuns == 2)
 
+-- A program from one release beside a config from another is a partial
+-- install. It must repair at once, even inside the check interval that would
+-- otherwise silence it - which is what leaves a device reporting a version it
+-- is not running.
+files["/pumpe/installer.lua"] = "installer"
+local matched = { auto_update = true, version = "6.9.0" }
+
+-- Prime the interval gate for this role.
+net.autoUpdate(matched, "border", "/pumpe", nil, { programVersion = "6.9.0" })
+local gated = #updateRuns
+assert(not net.autoUpdate(matched, "border", "/pumpe", nil,
+    { programVersion = "6.9.0" }))
+assert(#updateRuns == gated, "a matching install respects the interval")
+
+-- Same role, same instant, still gated - but now mismatched.
+assert(net.autoUpdate(matched, "border", "/pumpe", nil,
+    { programVersion = "6.3.0" }),
+    "a mismatched install must repair even inside the check interval")
+assert(#updateRuns == gated + 1
+    and updateRuns[#updateRuns][3] == "border")
+
 -- Self-updating roles --------------------------------------------------------
 
 assert(update.roleProgram("pumpe") == "pumpe.lua")

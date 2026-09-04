@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.9.1
+
+Fixes devices reporting 6.9.0 while still running the previous release's apps.
+
+- **The Bank served a stale cached program.** `/updates` caches a role program
+  when a client first installs that role, but nothing invalidated it when the
+  Bank itself updated. A Bank that moved to 6.9.0 kept handing clients the
+  6.3.0 `pumpe.lua` beside the new `config.lua`, so the phone reported 6.9.0
+  with none of the new apps. The cache is now stamped with the release that
+  filled it and dropped whenever that differs.
+- **Clients never received `lib/update.lua`.** It was in the self-update file
+  set but missing from the set the Bank serves over Rednet, so a client
+  installed that way could not load the self-updater at all and stayed on the
+  Bank fallback permanently. Every role now receives it.
+- Added a guard against this whole class of fault: each role program is
+  stamped with the release it was built for, and a device that finds its
+  program and its `config.lua` disagreeing repairs itself immediately rather
+  than waiting out the check interval.
+
 ## 6.9.0
 
 The PUMPE stops being a list of banking screens and starts behaving like a

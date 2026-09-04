@@ -3,6 +3,9 @@ if ROOT == "" then ROOT = "." end
 package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
     .. ";" .. fs.combine(ROOT, "?/init.lua")
 
+-- Stamped by tools/build_release_manifest.js. A program running beside a
+-- config.lua from a different release means a partial install.
+local PROGRAM_VERSION = "6.9.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -3190,7 +3193,8 @@ end
 ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
-net.autoUpdate(config, "pumpe", ROOT, client, { force = true })
+net.autoUpdate(config, "pumpe", ROOT, client,
+    { force = true, programVersion = PROGRAM_VERSION })
 local online = client:discover()
 if not online then
     ui.message(target, "error", "BANK OFFLINE", "Check your wireless modem", 1.5)

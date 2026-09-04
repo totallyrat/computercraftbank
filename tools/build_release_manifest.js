@@ -55,6 +55,26 @@ if (!stampedStartup.includes(`INSTALLER_VERSION = "${versionMatch[1]}"`)) {
 }
 if (stampedStartup !== startupSource) fs.writeFileSync(startupPath, stampedStartup);
 
+// Stamp each role program with the release it belongs to, so a device can
+// tell at startup that it is running a program from a different release than
+// its config.lua - a partial install that used to go unnoticed.
+const rolePrograms = [
+  "bank_server.lua", "pumpe.lua", "service_kiosk.lua", "event_kiosk.lua",
+  "tax_controller.lua", "border_controller.lua", "ccg.lua",
+];
+for (const program of rolePrograms) {
+  const file = path.join(projectRoot, program);
+  const source = fs.readFileSync(file, "utf8");
+  const stamped = source.replace(
+    /local PROGRAM_VERSION = "\d+\.\d+\.\d+"/,
+    `local PROGRAM_VERSION = "${versionMatch[1]}"`,
+  );
+  if (!stamped.includes(`PROGRAM_VERSION = "${versionMatch[1]}"`)) {
+    throw new Error(`Could not stamp PROGRAM_VERSION into ${program}`);
+  }
+  if (stamped !== source) fs.writeFileSync(file, stamped);
+}
+
 // Keep both public one-file entry points identical. startup.lua starts
 // automatically at the computer root; installer.lua is the manual filename.
 fs.copyFileSync(startupPath, path.join(projectRoot, "installer.lua"));

@@ -1,44 +1,44 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "6.9.0",
+  "version": "6.9.1",
   "notes": "PUMPE + ComputerCraftGaming automatic internet release",
   "files": [
     {
       "path": "bank_server.lua",
       "source": "bank_server.lua",
-      "size": 185151,
-      "checksum": "d706fcd9"
+      "size": 186531,
+      "checksum": "73cd07a9"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 132128,
-      "checksum": "0f87bd63"
+      "size": 132336,
+      "checksum": "d0a53451"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
-      "size": 39067,
-      "checksum": "c8e27363"
+      "size": 39275,
+      "checksum": "332f4111"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
-      "size": 16508,
-      "checksum": "c3fc2c4b"
+      "size": 16716,
+      "checksum": "3efc3df9"
     },
     {
       "path": "tax_controller.lua",
       "source": "tax_controller.lua",
-      "size": 15584,
-      "checksum": "b73b5cab"
+      "size": 15792,
+      "checksum": "c4b3aa19"
     },
     {
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 46693,
-      "checksum": "a7d9f49a"
+      "checksum": "fb73955b"
     },
     {
       "path": "launcher.lua",
@@ -50,13 +50,13 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 2244,
-      "checksum": "d7c9b008"
+      "checksum": "9a15da49"
     },
     {
       "path": "lib/net.lua",
       "source": "lib/net.lua",
-      "size": 5771,
-      "checksum": "a3d2ed55"
+      "size": 6456,
+      "checksum": "246b2207"
     },
     {
       "path": "lib/ui.lua",
@@ -81,14 +81,14 @@
     {
       "path": "border_controller.lua",
       "source": "border_controller.lua",
-      "size": 14214,
-      "checksum": "74c066e4"
+      "size": 14422,
+      "checksum": "60fb5b12"
     },
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
-      "size": 26689,
-      "checksum": "fb59f244"
+      "size": 26897,
+      "checksum": "2372d5b2"
     }
   ]
 }

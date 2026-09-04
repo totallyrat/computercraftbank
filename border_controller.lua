@@ -3,6 +3,9 @@ if ROOT == "" then ROOT = "." end
 package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
     .. ";" .. fs.combine(ROOT, "?/init.lua")
 
+-- Stamped by tools/build_release_manifest.js. A program running beside a
+-- config.lua from a different release means a partial install.
+local PROGRAM_VERSION = "6.9.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -342,7 +345,8 @@ pcall(redstone.setOutput, "back", false)
 ui.boot(target, "PUMPE BORDER", "CUSTOMS GATE v" .. config.version)
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
-net.autoUpdate(config, "border", ROOT, client, { force = true })
+net.autoUpdate(config, "border", ROOT, client,
+    { force = true, programVersion = PROGRAM_VERSION })
 client:discover()
 
 while running do

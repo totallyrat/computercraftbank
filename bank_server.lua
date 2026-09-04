@@ -3,6 +3,9 @@ if ROOT == "" then ROOT = "." end
 package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
     .. ";" .. fs.combine(ROOT, "?/init.lua")
 
+-- Stamped by tools/build_release_manifest.js. A program running beside a
+-- config.lua from a different release means a partial install.
+local PROGRAM_VERSION = "6.9.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -82,16 +85,17 @@ local ROLE_MAIN_FILES = {
     ccg = "ccg.lua",
 }
 
+-- lib/update.lua is included for every role: without it a client cannot load
+-- the self-updater and is stuck on the Bank fallback forever.
 local COMMON_UPDATE_FILES = {
     { path = "installer.lua", source = "startup.lua" },
     { path = "lib/net.lua", source = "lib/net.lua" },
     { path = "lib/ui.lua", source = "lib/ui.lua" },
+    { path = "lib/update.lua", source = "lib/update.lua" },
     { path = "lib/util.lua", source = "lib/util.lua" },
 }
 
-local BANK_UPDATE_FILES = {
-    { path = "lib/update.lua", source = "lib/update.lua" },
-}
+local BANK_UPDATE_FILES = {}
 
 local function protectedDeployRole(role)
     return role == "bank" or role == "tax"
@@ -117,6 +121,26 @@ local function deploymentFilesForRole(role)
     end
     files[#files + 1] = { path = mainFile, source = mainFile }
     return files
+end
+
+local CACHE_STAMP = fs.combine(UPDATES_DIR, ".cache_version")
+
+-- /updates holds cached role programs. They belong to whichever release the
+-- Bank was running when it fetched them, so a version change makes every one
+-- of them stale: serving one beside the new config.lua hands a client a new
+-- program next to an old library, or an old program next to a new config.
+local function dropStaleDepotCache()
+    if util.readFile(CACHE_STAMP) == tostring(config.version) then return 0 end
+    local dropped = 0
+    for _, path in ipairs(DEPOT_ONLY_FILES) do
+        local cached = fs.combine(UPDATES_DIR, path)
+        if fs.exists(cached) and not fs.isDir(cached) then
+            pcall(fs.delete, cached)
+            dropped = dropped + 1
+        end
+    end
+    pcall(util.writeFile, CACHE_STAMP, tostring(config.version))
+    return dropped
 end
 
 local function writePublicDeployConfig()
@@ -339,6 +363,11 @@ local function bootstrapUpdateDepot()
     end
 
     local staged = compactBankStorage()
+    local dropped = dropStaleDepotCache()
+    if dropped > 0 then
+        logActivity("Dropped " .. dropped .. " stale cached program(s)",
+            colors.orange)
+    end
     writePublicDeployConfig()
     local missing = updateDepotMissingFiles()
     if automaticRestart then
@@ -4830,6 +4859,7 @@ if TEST_MODE then
         local_update_body = localUpdateBody,
         compact_bank_storage = compactBankStorage,
         deployment_fetch = fetchDepotFile,
+        drop_stale_cache = dropStaleDepotCache,
         urgent_calls = urgentCalls,
     }
 end

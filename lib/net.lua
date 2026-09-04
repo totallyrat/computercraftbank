@@ -146,15 +146,28 @@ function net.autoUpdate(config, role, root, client, options)
     role = string.lower(tostring(role or ""))
     if role == "" then return false end
 
+    -- A program from one release running beside a config.lua from another is
+    -- a partial install. Do not wait for the manifest to move on: repair it
+    -- at once, whatever the check interval says.
+    local mismatched = options.programVersion
+        and options.programVersion ~= "0.0.0"
+        and options.programVersion ~= config.version
     local interval = math.max(5,
         math.floor(tonumber(config.client_update_check_seconds)
             or config.update_check_seconds or 30)) * 1000
     local now = util.nowMs()
-    if not options.force and lastAutoUpdateCheck[role]
+    if not options.force and not mismatched and lastAutoUpdateCheck[role]
         and now - lastAutoUpdateCheck[role] < interval then
         return false
     end
     lastAutoUpdateCheck[role] = now
+
+    if mismatched then
+        net.lastUpdateError = "installed " .. tostring(options.programVersion)
+            .. " beside config " .. tostring(config.version)
+        -- The release is not newer, so only a fresh install repairs this.
+        if depotUpdate(config, role, root, nil) then return true end
+    end
 
     local updater = loadUpdater()
     if updater then
