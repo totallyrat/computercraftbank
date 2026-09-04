@@ -188,7 +188,9 @@ Because each device stages only its own role, the worst-case update peaks at abo
 The manifest's `files` array stays byte-compatible with v5.2.1 Bank Servers, whose updater rejects any entry it does not already know. Anything added since then — currently `border_controller.lua` and `ccg.lua` — is published in a second `extra_files` array:
 
 - Older Bank Servers ignore `extra_files` entirely and keep updating from `files`.
-- Current Bank Servers download both arrays into the same staged, checksum-verified, atomic commit.
+- Current Bank Servers download every array into the same staged, checksum-verified, atomic commit.
+
+`extra_files` is frozen at `border_controller.lua` and `ccg.lua`. Bank Servers older than 7.0.1 reject any entry there they do not already recognise, so a new role added to it would make the release uninstallable for them. Anything added from now on goes in `optional_files`, which those Bank Servers never read, and which newer ones check leniently: an entry an updater does not know is skipped rather than rejected.
 
 `launcher.lua` is retained only as a migration bridge for older startup entries; v6 installations and normal boots do not use it.
 

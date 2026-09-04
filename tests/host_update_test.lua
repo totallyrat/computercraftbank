@@ -108,7 +108,10 @@ assert(extended.files[3].path == "ccg.lua")
 -- A manifest with no extra_files is still complete.
 assert(update.validateManifest(manifest, expected, "stable", optional))
 
--- An unlisted optional path is rejected instead of silently downloaded.
+-- An optional entry this updater does not know is IGNORED, not rejected.
+-- Rejecting made the array as brittle as `files`: adding one new role
+-- stranded every Bank Server published before it, which is exactly what
+-- v7.0.0 did to v6.9.1.
 local strayExtra = {
     schema = 1,
     channel = "stable",
@@ -116,14 +119,42 @@ local strayExtra = {
     files = manifest.files,
     extra_files = {
         {
-            path = "evil.lua",
-            source = "evil.lua",
+            path = "future_role.lua",
+            source = "future_role.lua",
             size = 10,
             checksum = "00ff11ee",
         },
     },
 }
-assert(update.validateManifest(strayExtra, expected, "stable", optional) == nil)
+local tolerant = assert(
+    update.validateManifest(strayExtra, expected, "stable", optional),
+    "an unknown optional entry must never reject the whole release")
+assert(#tolerant.files == 2, "the unknown entry is skipped, not installed")
+
+-- The forward array is read the same way.
+local forward = {
+    schema = 1,
+    channel = "stable",
+    version = "5.1.0",
+    files = manifest.files,
+    optional_files = {
+        {
+            path = "ccg.lua",
+            source = "ccg.lua",
+            size = 300,
+            checksum = "00ff11ee",
+        },
+        {
+            path = "future_role.lua",
+            source = "future_role.lua",
+            size = 10,
+            checksum = "00ff11ee",
+        },
+    },
+}
+local both = assert(update.validateManifest(forward, expected, "stable", optional))
+assert(#both.files == 3 and both.files[3].path == "ccg.lua",
+    "a known forward-optional entry installs; an unknown one is skipped")
 
 -- Optional files must never appear in `files`; that is exactly the shape a
 -- v5.2.1 updater rejects, which would strand older Bank Servers.

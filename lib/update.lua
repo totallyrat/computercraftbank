@@ -101,8 +101,11 @@ end
 
 -- Required files live in `files`; optional roles live in `extra_files` so
 -- older Bank updaters, which reject unknown entries in `files`, keep working.
-local function readEntry(rawFile, allowed, seen)
+local function readEntry(rawFile, allowed, seen, skipUnknown)
     local path = type(rawFile) == "table" and rawFile.path or nil
+    if skipUnknown and (type(path) ~= "string" or not allowed[path]) then
+        return nil, nil
+    end
     local source = type(rawFile) == "table"
         and (rawFile.source or rawFile.path) or nil
     local size = type(rawFile) == "table" and rawFile.size or nil
@@ -159,11 +162,16 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel,
             return nil, "Update manifest is missing " .. path
         end
     end
-    if type(manifest.extra_files) == "table" then
-        for _, rawFile in ipairs(manifest.extra_files) do
-            local file, err = readEntry(rawFile, optional, seen)
-            if not file then return nil, err end
-            files[#files + 1] = file
+    -- Optional arrays are advisory: an updater installs the entries it knows
+    -- and silently ignores the rest, so a release can add a role without
+    -- stranding every Bank published before it.
+    for _, key in ipairs({ "extra_files", "optional_files" }) do
+        if type(manifest[key]) == "table" then
+            for _, rawFile in ipairs(manifest[key]) do
+                local file, err = readEntry(rawFile, optional, seen, true)
+                if err then return nil, err end
+                if file then files[#files + 1] = file end
+            end
         end
     end
 

@@ -52,8 +52,11 @@ local expectedFiles = {
     "tax_controller.lua", "startup.lua", "launcher.lua", "config.lua",
     "lib/net.lua", "lib/ui.lua", "lib/update.lua", "lib/util.lua",
 }
-local expectedExtra = { "border_controller.lua", "ccg.lua",
-    "gps_anchor.lua" }
+-- Frozen: Bank Servers older than 7.0.1 reject any entry here they do not
+-- already know, so nothing new may ever join this array.
+local expectedExtra = { "border_controller.lua", "ccg.lua" }
+-- Everything added since. Older updaters never read this array at all.
+local expectedForward = { "gps_anchor.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)
@@ -74,6 +77,9 @@ end
 
 verify(filesSection, expectedFiles, "files")
 verify(extraSection, expectedExtra, "extra_files")
+local forwardSection = manifest:match('"optional_files":%s*%[(.-)%]')
+assert(forwardSection, "forward-optional files must be published")
+verify(forwardSection, expectedForward, "optional_files")
 
 -- Both public entry points must stay identical, because Easy Deployment
 -- installs startup.lua as /pumpe/installer.lua.

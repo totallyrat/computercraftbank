@@ -23,9 +23,16 @@ const releaseFiles = [
   "lib/update.lua",
   "lib/util.lua",
 ];
+// Frozen. Bank Servers published before 7.0.1 reject any entry here they do
+// not already know, so nothing new may ever be added to this array.
 const extraReleaseFiles = [
   "border_controller.lua",
   "ccg.lua",
+];
+// Everything added since. Older updaters never read this array at all, and
+// 7.0.1 onwards ignores entries it does not recognise, so new roles can be
+// published here safely.
+const forwardOptionalFiles = [
   "gps_anchor.lua",
 ];
 
@@ -98,6 +105,7 @@ const manifest = {
   notes: "PUMPE + ComputerCraftGaming automatic internet release",
   files: releaseFiles.map(describe),
   extra_files: extraReleaseFiles.map(describe),
+  optional_files: forwardOptionalFiles.map(describe),
 };
 
 fs.writeFileSync(
@@ -122,6 +130,7 @@ const depotOnlyFiles = [
   "event_kiosk.lua",
   "tax_controller.lua",
   ...extraReleaseFiles,
+  ...forwardOptionalFiles,
 ];
 const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
   .reduce((total, relativePath) => total + fileSize(relativePath), 0);
@@ -151,8 +160,9 @@ if (worstPeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
 
 console.log(`Built release_manifest.json for PUMPE v${manifest.version}`);
 console.log(
-  `Published ${manifest.files.length} required and `
-    + `${manifest.extra_files.length} optional files`,
+  `Published ${manifest.files.length} required, `
+    + `${manifest.extra_files.length} legacy-optional and `
+    + `${manifest.optional_files.length} forward-optional files`,
 );
 console.log(
   `Bank footprint: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `

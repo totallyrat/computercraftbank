@@ -1,5 +1,24 @@
 # Changelog
 
+## 7.0.1
+
+Fixes v7.0.0 being rejected outright by every Bank Server older than it.
+**v7.0.0 cannot be installed; use this instead.**
+
+- `extra_files` exists so a release can add a role without stranding older
+  updaters, but it was validated *strictly*: an entry the updater did not
+  recognise rejected the whole manifest, exactly like an unknown entry in
+  `files`. Adding `gps_anchor.lua` in 7.0.0 therefore made the release
+  uninstallable on 6.9.1 and earlier, which reported only `CHECK FAILED`.
+- Optional arrays are now advisory. An updater installs the entries it knows
+  and silently skips the rest, which is what the array was for.
+- `extra_files` is frozen at `border_controller.lua` and `ccg.lua`, since
+  Banks older than 7.0.1 still reject unknown entries there. Everything added
+  from now on is published in a new `optional_files` array, which those Banks
+  never read at all. Both are checked leniently from 7.0.1 onwards.
+- Verified both ways: a 6.9.1 Bank accepts this release and installs 14 files,
+  ignoring the anchor it does not know; a 7.0.1 Bank installs all 15.
+
 ## 7.0.0
 
 Proximity Pay: a kiosk offers the bill to whoever is standing closest.
