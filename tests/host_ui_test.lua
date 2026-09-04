@@ -59,6 +59,32 @@ for _, dimensions in ipairs({ { 26, 20 }, { 51, 19 }, { 29, 12 } }) do
         math.floor((dimensions[1] - 2) / 2), 2, "RIGHT")
     assert(scene:hit(2, 10) == "left")
     assert(scene:hit(math.floor(dimensions[1] / 2) + 1, 10) == "right")
+
+    -- A hotspot is a tap target with nothing painted in it, so an icon's
+    -- caption can share the icon's target without a panel behind the words.
+    scene:hotspot("left", 2, 13, 6, 1)
+    assert(scene:hit(4, 13) == "left", "a hotspot takes taps like a button")
+end
+
+-- The 8.0 wordmark. It reports failure rather than painting a half word when
+-- the screen cannot hold it, so callers can fall back to plain text.
+sleep = function() end
+assert(ui.wordmark(mockTerminal(26, 20), 2, "PUMPE", 5, colors.cyan),
+    "PUMPE fits the block face on a pocket screen")
+assert(ui.wordmark(mockTerminal(51, 19), 2, "PUMPE", 0, colors.cyan),
+    "drawing no letters yet is still a fit")
+assert(not ui.wordmark(mockTerminal(12, 20), 2, "PUMPE", 5, colors.cyan),
+    "a screen too narrow reports the miss")
+assert(not ui.wordmark(mockTerminal(26, 20), 18, "PUMPE", 5, colors.cyan),
+    "a wordmark that would run off the bottom reports the miss")
+assert(not ui.wordmark(mockTerminal(51, 19), 2, "BANK", 4, colors.cyan),
+    "a letter with no glyph reports the miss instead of drawing a gap")
+
+-- The start-up runs the same beats on a screen too small for the block face.
+for _, dimensions in ipairs({ { 26, 20 }, { 51, 19 }, { 12, 8 } }) do
+    ui.splash(mockTerminal(dimensions[1], dimensions[2]), "PUMPE",
+        "Small yet Mighty", { blinks = 3, hold = 0, step = 0,
+            footnote = "v8.0.0" })
 end
 
 -- Regression test: older key maps may not expose keys.escape. The previous

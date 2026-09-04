@@ -1,5 +1,71 @@
 # Changelog
 
+## 8.0.0
+
+A rebuilt PUMPE home screen, a new start-up and sign-up, a clearer
+notification centre, and an Easy Deployment that puts the phone first.
+
+### The home screen
+
+- Small icons in a grid with the app name underneath, the way a phone lays
+  them out, instead of four large two-line tiles. Every app now fits on one
+  page with room to grow, on a 26x20 pocket and on a wider screen alike.
+- **Favourites became the dock.** The four you pick sit under every app page
+  rather than taking a page of their own, so they are always one tap away. An
+  empty dock slot opens the picker; so does **Edit Your Dock** in Settings.
+- Unread counts sit in an icon's corner as a badge rather than replacing part
+  of its label.
+- The header carries your name and your balance; the notification centre is
+  still the last page, and its dot turns to `!` when something is waiting.
+
+### Start-up and sign-up
+
+- The PUMPE now opens with its wordmark landing one letter at a time, three
+  blinks, then **Small yet Mighty** before anything else happens.
+- Sign-up asks one question first — new account, or one you already have —
+  then username, then PIN, and ends in a six-step guide to the phone.
+- **The guide lives in Settings** under *How PUMPE Works*, so it can be read
+  again at any time rather than only once.
+- The pronoun step is gone. Nothing displayed it, and the sign-up is three
+  steps now.
+
+### The notification centre
+
+- Each alert is a row of its own: a coloured bar for its kind, the title, the
+  time it arrived, and the first line of the message. Read alerts fade.
+- **Tap an alert to read it in full** on its own screen.
+- Longer than one screen now scrolls, instead of silently showing only what
+  fit.
+
+### Easy Deployment
+
+- Checks for a newer Easy Deployment **before the menu opens**, on screen, and
+  installs it if there is one. Roles that a release adds are therefore on the
+  menu the first time it is drawn rather than the second.
+- **The PUMPE gets the whole first screen**: a block-letter title, what the
+  phone is for, and one button to install it. Every other role is behind the
+  **down arrow** at the bottom.
+
+### Fixes
+
+- **The government key did not work.** Releases before 7.1 shipped
+  `CHANGE-ME-GOVERNMENT-KEY` as the placeholder, and every Bank that
+  self-updated kept it, because an update preserves local settings. The
+  documented `Government1234` was therefore rejected on every Bank that
+  reached 7.1 by updating rather than by a fresh install. A retired
+  placeholder now means "unset", and a release can name a setting it is taking
+  back (`config_resets`) so this cannot happen silently again.
+- **Clients could never update themselves over the internet.** A role that
+  passed no path list of its own made the validator treat every entry in
+  `files` as unexpected and throw the whole release away, so every device fell
+  back to the Bank's rednet depot without saying so. Roles now fall back to
+  the published set, which is one shared list the Bank uses too.
+- `lib/update.lua` carried a 154-line copy of itself, spliced into the middle
+  of `fetchManifest`. It was harmless — the duplicates were identical — but it
+  cost every device 5.8 KiB.
+- Captions and alert text no longer inherit whatever background colour was set
+  last, which put a red badge's colour behind the word "Friends".
+
 ## 7.1.0
 
 The Tax Controller becomes the **Bank Admin Terminal**, and the government can

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "7.1.0"
+local PROGRAM_VERSION = "8.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -28,6 +28,8 @@ if device.onboarding_complete == nil then device.onboarding_complete = false end
 ui.usePhoneStyle(true)
 
 local disableDeviceLock
+-- Settings opens the dock picker, which is defined with the Home Screen.
+local favouritesPicker
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -225,13 +227,13 @@ end
 
 local function login()
     local name = ui.input(target, "Foxy Account", {
-        hint = "Enter your account name",
+        hint = "Your account name",
         initial = device.last_name,
         maxLength = 20,
         allowSpace = true,
     })
     if not name then return false end
-    local pin = ui.pin(target, "Foxy Account PIN", true)
+    local pin = ui.pin(target, "Your PIN", true)
     if not pin then return false end
     local result, err = client:request("LOGIN", { name = name, pin = pin })
     if not result then
@@ -248,32 +250,83 @@ local function login()
     return true
 end
 
-local function chooseGender()
-    local width, height = target.getSize()
-    while true do
+-- The tour that closes sign-up. Settings re-opens the same screens, so there
+-- is only ever one description of how the phone works.
+local GUIDE = {
+    {
+        "Your home screen",
+        "Apps sit in the grid. The four in the dock follow you onto"
+            .. " every page.",
+    },
+    {
+        "BuckApp",
+        "Balance, code payments, sending money and the Bet Wallet all"
+            .. " live in BuckApp.",
+    },
+    {
+        "Friends",
+        "Add a friend by name, chat, split a bill, or reach one fast"
+            .. " with Urgent Contact.",
+    },
+    {
+        "Tickets and Customs",
+        "Tickets keeps what you paid for. Customs holds your visas and"
+            .. " your territories.",
+    },
+    {
+        "Notifications",
+        "The last home page is your alerts. Some of them stay up until"
+            .. " you press Continue.",
+    },
+    {
+        "Staying safe",
+        "Your PIN locks the PUMPE when it sits idle. This guide lives"
+            .. " in Settings too.",
+    },
+}
+
+local function guideScreen(fromSettings)
+    local page = 1
+    while running do
+        local width, height = target.getSize()
+        local entry = GUIDE[page]
         ui.clear(target)
-        ui.header(target, "Foxy Account", "Choose your pronouns")
+        ui.header(target, "How PUMPE Works",
+            "Step " .. page .. " of " .. #GUIDE, util.formatClock())
+        ui.card(target, 2, 5, width - 2, 10, ui.theme.accent)
+        ui.text(target, 4, 6, entry[1], ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 4, 8, entry[2], width - 6, 6,
+            ui.theme.muted, ui.theme.panel)
         local scene = ui.scene(target)
-        local labels = { "She / her", "He / him", "They / them", "Prefer not to say" }
-        local startY = 6
-        for index, label in ipairs(labels) do
-            scene:button("gender:" .. label, 3, startY + (index - 1) * 3,
-                width - 5, 2, label, {
-                    background = index == 3 and ui.theme.accentDark or ui.theme.panel,
-                })
+        scene:button("next", 3, 15, width - 5, 3,
+            page < #GUIDE and "Next" or "Finish",
+            { background = ui.theme.accentDark, shadow = true })
+        local dots = {}
+        for index = 1, #GUIDE do
+            dots[index] = index == page and "o" or "."
         end
-        scene:button("back", 2, height, 7, 1, "<Back",
+        ui.center(target, height - 1, table.concat(dots, " "),
+            ui.theme.muted, ui.theme.background)
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel, disabled = page == 1 })
+        scene:button("done", width - 6, height, 7, 1,
+            fromSettings and "Done" or "Skip",
             { background = ui.theme.panel })
         local action = scene:wait()
-        if action == "back" or action == "__terminate" then return nil end
-        local gender = action and action:match("^gender:(.+)$")
-        if gender then return gender end
+        if action == "next" then
+            if page == #GUIDE then return end
+            page = page + 1
+        elseif action == "back" then
+            page = math.max(1, page - 1)
+        elseif action == "done" or action == "__terminate" then
+            return
+        end
     end
 end
 
 local function createAccount()
     local name = ui.input(target, "Create Foxy Account", {
-        hint = "Choose an account name",
+        hint = "Choose a username",
         maxLength = 20,
         allowSpace = true,
     })
@@ -286,13 +339,7 @@ local function createAccount()
         ui.message(target, "error", "PINs Do Not Match", "Please try again", 1)
         return false
     end
-    local gender = chooseGender()
-    if not gender then return false end
-    local result, err = client:request("REGISTER", {
-        name = name,
-        pin = pin,
-        gender = gender,
-    })
+    local result, err = client:request("REGISTER", { name = name, pin = pin })
     if not result then
         ui.message(target, "error", "Account Not Created", err, 1.1)
         return false
@@ -303,119 +350,57 @@ local function createAccount()
     device.onboarding_complete = true
     saveDevice()
     preparationAnimation(true)
+    guideScreen(false)
     enableDeviceLock()
     return true
 end
 
-local function onboardingIntro()
-    local width, height = target.getSize()
-    local page, blink = 1, true
-    while running do
+-- One screen, one question: is this a new account or an existing one.
+local function welcomeScreen()
+    local blink = true
+    while running and not sessionToken do
+        local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, page == 1 and "Hello."
-                or page == 2 and "Built for real life"
-                or "Your Foxy Account",
-            page == 1 and "Welcome to PUMPE"
-                or page == 2 and "One pocket. Every app."
-                or "One account, every app",
+        ui.header(target, "Welcome", "Let us get you started",
             util.formatClock(blink))
+        ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
+        ui.text(target, 4, 6, "PUMPE", ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 4, 7,
+            "Your money, your friends and your tickets, in one pocket.",
+            width - 6, 4, ui.theme.muted, ui.theme.panel)
         local scene = ui.scene(target)
-        if page == 1 then
-            ui.center(target, 6, "Money. Pay. Events.", ui.theme.ink)
-            ui.center(target, 8, "Made to feel like", ui.theme.muted)
-            ui.center(target, 9, "an actual phone.", ui.theme.accent)
-            scene:button("next", 3, 13, width - 5, 3, "Continue",
-                { background = ui.theme.accentDark, shadow = true })
-        elseif page == 2 then
-            local features = {
-                { "PUMPE Pay", "Pay by code or send money", colors.blue },
-                { "Live Events", "Tickets, countdowns and entry codes", colors.purple },
-                { "Private by default", "Protected by your Foxy Account PIN", colors.green },
-            }
-            for index, feature in ipairs(features) do
-                local y = 4 + (index - 1) * 5
-                ui.card(target, 2, y, width - 2, 4, feature[3])
-                ui.text(target, 4, y, feature[1], ui.theme.ink, ui.theme.panel)
-                ui.wrappedText(target, 4, y + 1, feature[2],
-                    width - 6, 2, ui.theme.muted, ui.theme.panel)
-            end
-            scene:button("next", width - 9, height, 9, 1, "Next  >",
-                { background = ui.theme.accentDark })
-            scene:button("back", 1, height, 8, 1, "< Back",
-                { background = ui.theme.panel })
-        else
-            ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
-            ui.text(target, 4, 6, "Foxy Account", ui.theme.ink, ui.theme.panel)
-            ui.wrappedText(target, 4, 8,
-                "Balance, identity and purchases stay together.",
-                width - 6, 3, ui.theme.muted, ui.theme.panel)
-            scene:button("create", 3, 12, width - 5, 3,
-                "Set Up New Account",
-                { background = ui.theme.accentDark, shadow = true })
-            scene:button("login", 3, 16, width - 5, 2,
-                "Sign In",
-                { background = ui.theme.panel })
-            scene:button("back", 1, height, 8, 1, "< Back",
-                { background = ui.theme.panel })
+        scene:button("create", 3, 12, width - 5, 3, "I need an account",
+            { background = ui.theme.accentDark, shadow = true })
+        scene:button("login", 3, 16, width - 5, 3, "I already have one",
+            { background = ui.theme.panel })
+        if device.last_name ~= "" then
+            ui.center(target, height - 1,
+                ui.truncate("Last used: " .. device.last_name, width),
+                ui.theme.muted, ui.theme.background)
         end
-        if page == 1 then
-            scene:button("exit", 1, height, 6, 1, "Exit",
-                { background = ui.theme.panel })
-        end
-        ui.center(target, height - 1,
-            page == 1 and "o . ." or page == 2 and ". o ." or ". . o",
-            ui.theme.muted)
+        scene:button("exit", 1, height, 6, 1, "Exit",
+            { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
         if action == "__tick" or action == "__idle" then
             blink = not blink
-        elseif action == "next" then
-            page = math.min(3, page + 1)
-            phoneTransition(page == 2 and "Discover" or "Foxy Account")
-        elseif action == "back" then
-            page = math.max(1, page - 1)
-        elseif action == "login" or action == "create" then
+        elseif action == "create" or action == "login" then
             return action
         elseif action == "exit" or action == "__terminate" then
             return "exit"
         end
     end
-end
-
-local function accountLanding()
-    local width, height = target.getSize()
-    while running and not sessionToken do
-        ui.clear(target)
-        ui.header(target, "PUMPE", "Your pocket economy",
-            util.formatClock())
-        ui.center(target, 6, "Welcome back.", ui.theme.ink)
-        if device.last_name ~= "" then
-            ui.center(target, 8, device.last_name, ui.theme.accent)
-        else
-            ui.center(target, 8, "Foxy Account", ui.theme.accent)
-        end
-        local scene = ui.scene(target)
-        scene:button("login", 3, 11, width - 5, 3, "Sign In",
-            { background = ui.theme.accentDark, shadow = true })
-        scene:button("create", 3, 15, width - 5, 2, "Create Foxy Account",
-            { background = ui.theme.panel })
-        scene:button("exit", 1, height, 6, 1, "Exit",
-            { background = ui.theme.panel })
-        local action = scene:wait()
-        if action == "login" or action == "create" then return action end
-        if action == "exit" or action == "__terminate" then return "exit" end
-    end
+    return "exit"
 end
 
 local function welcome()
     while running and not sessionToken do
         disableDeviceLock()
-        local action = device.onboarding_complete
-            and accountLanding() or onboardingIntro()
+        local action = welcomeScreen()
         if action == "login" then
             login()
         elseif action == "create" then
             createAccount()
-        elseif action == "exit" then
+        else
             running = false
         end
     end
@@ -2964,31 +2949,50 @@ watchForUrgentCalls = function()
 end
 
 local function settingsScreen()
-    local width, height = target.getSize()
-    ui.clear(target)
-    ui.header(target, "Settings", "Foxy Account", util.formatClock())
-    ui.card(target, 2, 5, width - 2, 8, ui.theme.accent)
-    ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 6, account.name, ui.theme.ink, ui.theme.panel)
-    ui.text(target, 4, 8, "ACCOUNT ID", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 9, account.account_id, ui.theme.ink, ui.theme.panel)
-    ui.text(target, 4, 11, "PERSONAL NUMBER", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 12, account.personal_number, ui.theme.ink, ui.theme.panel)
-    local scene = ui.scene(target)
-    scene:button("logout", 2, 14, width - 2, 2, "Sign Out",
-        { background = ui.theme.danger })
-    scene:button("close", 2, 17, width - 2, 2, "Close PUMPE",
-        { background = ui.theme.panel })
-    scene:button("back", 1, height, 8, 1, "< Home",
-        { background = ui.theme.panel })
-    local action = scene:wait()
-    if action == "logout" and ui.confirm(target, "Sign Out",
-        "Leave this PUMPE session?", "Sign Out", "Back") then
-        sessionToken, betAccessToken, account = nil, nil, nil
-        disableDeviceLock()
-    elseif action == "close" and ui.confirm(target, "Close PUMPE",
-        "Shut down the PUMPE app?", "CLOSE", "BACK") then
-        running = false
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Settings", account.name, util.formatClock())
+        ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
+        ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, ui.truncate(account.name, width - 6),
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 8, "ID  " .. tostring(account.account_id),
+            ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 9, "NO  " .. tostring(account.personal_number),
+            ui.theme.muted, ui.theme.panel)
+        local scene = ui.scene(target)
+        scene:button("guide", 2, 11, width - 2, 2, "How PUMPE Works",
+            { background = ui.theme.accentDark })
+        scene:button("dock", 2, 13, width - 2, 2, "Edit Your Dock",
+            { background = ui.theme.panel })
+        scene:button("logout", 2, 15, width - 2, 2, "Sign Out",
+            { background = ui.theme.danger })
+        scene:button("close", 2, 17, width - 2, 2, "Close PUMPE",
+            { background = ui.theme.panel })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "guide" then
+            guideScreen(true)
+        elseif action == "dock" then
+            favouritesPicker()
+        elseif action == "logout" then
+            if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
+                "Sign Out", "Back") then
+                sessionToken, betAccessToken, account = nil, nil, nil
+                disableDeviceLock()
+                return
+            end
+        elseif action == "close" then
+            if ui.confirm(target, "Close PUMPE", "Shut down the PUMPE app?",
+                "CLOSE", "BACK") then
+                running = false
+                return
+            end
+        else
+            return
+        end
     end
 end
 
@@ -3112,20 +3116,25 @@ local function customsApp()
     end
 end
 
--- The app catalogue the Home Screen and the favourites picker share.
+-- The app catalogue the Home Screen, the dock and the picker share.
 local APPS = {
-    buck = { label = "$\nBuckApp", color = colors.green, open = buckApp },
-    friends = { label = "F\nFriends", color = colors.cyan, open = friendsApp },
-    tickets = { label = "#\nTickets", color = colors.orange, open = ticketsApp },
-    customs = { label = "C\nCustoms", color = colors.lightBlue, open = customsApp },
-    bet = { label = "B\nBet", color = colors.magenta, open = nil },
-    tax = { label = "%\nTax", color = colors.orange, open = nil },
-    subs = { label = "S\nSubs", color = colors.magenta, open = nil },
-    settings = { label = "o\nSettings", color = colors.gray, open = nil },
+    buck = { name = "BuckApp", glyph = "$", color = colors.green,
+        open = buckApp },
+    friends = { name = "Friends", glyph = "@", color = colors.cyan,
+        open = friendsApp },
+    tickets = { name = "Tickets", glyph = "#", color = colors.orange,
+        open = ticketsApp },
+    customs = { name = "Customs", glyph = "=", color = colors.lightBlue,
+        open = customsApp },
+    bet = { name = "Bet", glyph = "?", color = colors.magenta },
+    tax = { name = "Tax", glyph = "%", color = colors.orange },
+    subs = { name = "Subs", glyph = "~", color = colors.magenta },
+    settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
     "buck", "friends", "tickets", "customs", "bet", "tax", "subs", "settings",
 }
+local DOCK_SLOTS = 4
 
 local function appBadge(id, poll)
     if id == "friends" then
@@ -3135,31 +3144,34 @@ local function appBadge(id, poll)
     return nil
 end
 
+local function badgeText(count)
+    return count > 9 and "9+" or (" " .. count)
+end
+
 local function favouriteIds()
     local chosen = {}
     for _, id in ipairs(device.favorites or {}) do
-        if APPS[id] then chosen[#chosen + 1] = id end
+        if APPS[id] and #chosen < DOCK_SLOTS then chosen[#chosen + 1] = id end
     end
     return chosen
 end
 
-local function favouritesPicker()
+favouritesPicker = function()
     while running do
         local width, height = target.getSize()
         local chosen, lookup = favouriteIds(), {}
         for _, id in ipairs(chosen) do lookup[id] = true end
         ui.clear(target)
-        ui.header(target, "Favourites", #chosen .. "/4 chosen",
-            util.formatClock())
+        ui.header(target, "Your Dock",
+            #chosen .. " of " .. DOCK_SLOTS .. " chosen", util.formatClock())
         local scene = ui.scene(target)
+        local tileWidth = math.floor((width - 3) / 2)
         for index, id in ipairs(APP_ORDER) do
             local column = (index - 1) % 2
             local row = math.floor((index - 1) / 2)
-            local tileWidth = math.floor((width - 3) / 2)
-            local name = APPS[id].label:match("\n(.+)$") or id
             scene:button("pick:" .. id, 2 + column * (tileWidth + 1),
                 4 + row * 3, tileWidth, 2,
-                (lookup[id] and "* " or "") .. name, {
+                (lookup[id] and "*" or "") .. APPS[id].name, {
                     background = lookup[id] and ui.theme.success
                         or APPS[id].color,
                     foreground = lookup[id] and colors.black or colors.white,
@@ -3178,7 +3190,7 @@ local function favouritesPicker()
                         table.remove(device.favorites, index)
                     end
                 end
-            elseif #chosen < 4 then
+            elseif #chosen < DOCK_SLOTS then
                 device.favorites[#device.favorites + 1] = id
             end
             saveDevice()
@@ -3186,29 +3198,144 @@ local function favouritesPicker()
     end
 end
 
--- Alerts are part of the OS now: a page of their own rather than an app.
-local function drawAlertsPage(scene, items, width, height)
-    ui.text(target, 2, 4, "ALERTS", ui.theme.muted)
-    if #items == 0 then
-        ui.center(target, 10, "All quiet here", ui.theme.muted)
-        return
+-- Home Screen geometry. Small icons in a grid with the name underneath and a
+-- dock pinned above the page dots, all measured off the screen so a 26x20
+-- pocket and a wide desktop both land on whole rows.
+local function homeLayout(width, height)
+    local columns = width >= 40 and 5 or 3
+    local cell = math.max(4, math.floor((width - 1) / columns))
+    local dockY = height - 3
+    local top = 5
+    local rows = math.max(1, math.floor((dockY - top) / 4))
+    return {
+        columns = columns,
+        rows = rows,
+        perPage = columns * rows,
+        cell = cell,
+        iconWidth = math.max(3, cell - 2),
+        left = math.max(1, math.floor((width - cell * columns) / 2) + 1),
+        top = top,
+        dividerY = dockY - 1,
+        dockY = dockY,
+        listBottom = dockY - 2,
+        dotsY = height - 1,
+        navY = height,
+    }
+end
+
+-- One icon: a small coloured square, the app name under it, and an unread
+-- badge in the corner. The caption shares the icon's tap target.
+local function drawIcon(scene, action, app, x, y, layout, badge)
+    scene:button(action, x, y, layout.iconWidth, 2, app.glyph,
+        { background = app.color, foreground = colors.white })
+    if badge then
+        ui.text(target, x + layout.iconWidth - 2, y, badgeText(badge),
+            colors.white, ui.theme.danger)
     end
-    local row = 6
-    for _, item in ipairs(items) do
-        if row > height - 4 then break end
-        local color = item.kind == "warning" and ui.theme.warning
-            or item.kind == "urgent" and ui.theme.danger
-            or item.read and ui.theme.muted or ui.theme.accent
-        ui.text(target, 2, row, ui.truncate(item.title, width - 2), color)
-        row = row + 1
-        if row <= height - 4 then
-            local body = ui.wrap(item.body, width - 3)
-            ui.text(target, 3, row, body[1] or "", ui.theme.muted)
-            row = row + 2
+    local name = ui.truncate(app.name, layout.cell)
+    local nameX = math.max(1, math.min(scene.width - #name + 1,
+        x + math.floor((layout.iconWidth - #name) / 2)))
+    -- The caption is painted on the wallpaper, not on the icon: without an
+    -- explicit background it inherits whatever colour was last set, which
+    -- put a red badge's colour behind the app's name.
+    ui.text(target, nameX, y + 2, name, ui.theme.ink, ui.theme.background)
+    scene:hotspot(action, nameX, y + 2, #name, 1)
+end
+
+-- The dock follows every app page. An empty slot is the way into the picker.
+local function drawDock(scene, layout, poll, width)
+    local slotWidth = math.max(3, math.floor((width - 2) / DOCK_SLOTS) - 1)
+    local span = DOCK_SLOTS * (slotWidth + 1) - 1
+    local left = math.max(1, math.floor((width - span) / 2) + 1)
+    ui.fill(target, 2, layout.dividerY, width - 2, 1, ui.theme.panel)
+    local chosen = favouriteIds()
+    for slot = 1, DOCK_SLOTS do
+        local x = left + (slot - 1) * (slotWidth + 1)
+        local id = chosen[slot]
+        if id then
+            scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
+                APPS[id].glyph, { background = APPS[id].color })
+            local badge = appBadge(id, poll)
+            if badge then
+                ui.text(target, x + slotWidth - 2, layout.dockY,
+                    badgeText(badge), colors.white, ui.theme.danger)
+            end
+        else
+            scene:button("edit", x, layout.dockY, slotWidth, 2, "+",
+                { background = ui.theme.panel })
         end
     end
-    scene:button("clear", 2, height - 3, width - 2, 2, "Mark all read",
+end
+
+local function alertColor(item)
+    return item.kind == "warning" and ui.theme.warning
+        or item.kind == "urgent" and ui.theme.danger
+        or item.kind == "money" and ui.theme.success
+        or ui.theme.accent
+end
+
+-- Alerts are part of the OS, so the notification centre is the last home
+-- page rather than an app. Unread entries keep their colour and a marker;
+-- read ones fade. Tapping one opens the whole message.
+local function notificationDetail(item)
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, "Notification",
+        "Day " .. tostring(item.created_day or "?") .. "  "
+            .. tostring(item.created_time or ""), util.formatClock())
+    local cardHeight = math.max(4, height - 8)
+    ui.card(target, 2, 5, width - 2, cardHeight, alertColor(item))
+    ui.wrappedText(target, 4, 6, item.title, width - 6, 2,
+        ui.theme.ink, ui.theme.panel)
+    ui.wrappedText(target, 4, 9, item.body, width - 6,
+        math.max(1, cardHeight - 5), ui.theme.muted, ui.theme.panel)
+    local scene = ui.scene(target)
+    scene:button("back", 1, height, 10, 1, "< Alerts",
         { background = ui.theme.panel })
+    scene:wait()
+end
+
+local function drawAlertsPage(scene, items, offset, width, layout)
+    -- Three rows per entry, from row four down to the row above the
+    -- controls. The last entry needs no trailing gap, hence the +1.
+    local perView = math.max(1, math.floor((layout.dividerY - 4) / 3))
+    ui.fill(target, 2, layout.dividerY - 1, width - 2, 1, ui.theme.panel)
+    scene:button("markread", 2, layout.dividerY, width - 9, 2,
+        "Mark all read", { background = ui.theme.panel,
+            disabled = #items == 0 })
+    scene:button("scrollup", width - 6, layout.dividerY, 5, 1, "^",
+        { background = ui.theme.panel, disabled = offset <= 0 })
+    scene:button("scrolldown", width - 6, layout.dividerY + 1, 5, 1, "v",
+        { background = ui.theme.panel,
+            disabled = offset + perView >= #items })
+    if #items == 0 then
+        local middle = math.max(5, math.floor((layout.dividerY + 2) / 2))
+        ui.center(target, middle - 1, "Nothing new", ui.theme.ink,
+            ui.theme.background)
+        ui.center(target, middle + 1, "Alerts land here", ui.theme.muted,
+            ui.theme.background)
+        return perView
+    end
+    for slot = 1, perView do
+        local item = items[offset + slot]
+        if not item then break end
+        local row = 4 + (slot - 1) * 3
+        local color = alertColor(item)
+        -- The bar carries the colour; the words stay on the wallpaper. Every
+        -- draw names its background, because ui.text otherwise inherits
+        -- whatever the bar just set and paints the title on top of it.
+        ui.fill(target, 2, row, 1, 2, item.read and ui.theme.panel or color)
+        ui.text(target, 4, row, ui.truncate(item.title, width - 10),
+            item.read and ui.theme.muted or ui.theme.ink, ui.theme.background)
+        ui.text(target, width - 5, row,
+            ui.truncate(tostring(item.created_time or ""), 5),
+            ui.theme.muted, ui.theme.background)
+        ui.text(target, 4, row + 1,
+            ui.truncate(ui.wrap(item.body, width - 5)[1] or "", width - 5),
+            ui.theme.muted, ui.theme.background)
+        scene:hotspot("note:" .. (offset + slot), 2, row, width - 2, 2)
+    end
+    return perView
 end
 
 local function mainMenu()
@@ -3218,101 +3345,99 @@ local function mainMenu()
     APPS.subs.open = subscriptionsScreen
     APPS.settings.open = settingsScreen
 
-    local blink, tick, page = true, 0, 1
+    local blink, tick, page, alertOffset = true, 0, 1, 0
     local poll = request("PUMPE_POLL", {}, true) or {}
     lastBannerId = poll.latest and poll.latest.notification_id or lastBannerId
-    local alerts = {}
+    local alerts, alertsLoaded, perView = {}, false, 1
     refreshSummary()
     enableDeviceLock()
 
-    -- Page 1 is always Favourites, then the app pages, then Alerts.
-    local function pageCount() return 2 + math.ceil(#APP_ORDER / 4) end
-    local function alertsPage() return pageCount() end
-
     while running and sessionToken do
         local width, height = target.getSize()
+        local layout = homeLayout(width, height)
+        -- The app pages come first, the notification centre is always last.
+        local pages = math.max(1, math.ceil(#APP_ORDER / layout.perPage)) + 1
+        page = math.max(1, math.min(page, pages))
+        local onAlerts = page == pages
+        local unread = poll.unread_notifications or 0
+        -- Load before drawing, so opening the centre never flashes "nothing
+        -- new" at alerts that are already on their way.
+        if not onAlerts then
+            alertsLoaded = false
+        elseif not alertsLoaded then
+            local loaded = request("NOTIFICATIONS", {}, true)
+            alerts = loaded and loaded.notifications or {}
+            alertsLoaded = true
+        end
+
         ui.clear(target)
-        local unreadAlerts = poll.unread_notifications or 0
-        ui.header(target, "Foxy Account", account.name, util.formatClock(blink))
-        ui.card(target, 2, 4, width - 2, 2, ui.theme.success)
-        ui.text(target, 4, 4, money(account.balance), ui.theme.ink, ui.theme.panel)
-        if unreadAlerts > 0 then
-            ui.text(target, width - 4, 4, tostring(unreadAlerts), colors.black,
-                ui.theme.warning)
+        if onAlerts then
+            ui.header(target, "Notifications",
+                unread > 0 and (unread .. " unread") or "All caught up",
+                util.formatClock(blink))
+        else
+            ui.header(target, account.name, money(account.balance),
+                util.formatClock(blink))
         end
 
         local scene = ui.scene(target)
-        local iconWidth = math.max(8, math.floor((width - 4) / 2))
-        local function tile(index, id, label, color)
-            local column = (index - 1) % 2
-            local row = math.floor((index - 1) / 2)
-            scene:button(id, column == 0 and 2 or width - iconWidth,
-                7 + row * 4, iconWidth, 3, label,
-                { background = color, shadow = true })
-        end
-
-        if page == 1 then
-            ui.text(target, 2, 6, "FAVOURITES", ui.theme.muted)
-            local chosen = favouriteIds()
-            for index, id in ipairs(chosen) do
-                local badge = appBadge(id, poll)
-                local label = APPS[id].label
-                if badge then
-                    label = badge .. label:match("\n.+$")
-                end
-                tile(index, "open:" .. id, label, APPS[id].color)
-            end
-            if #chosen < 4 then
-                tile(#chosen + 1, "edit", "+\nEdit", ui.theme.panel)
-            end
-            if #chosen == 0 then
-                ui.center(target, 17, "Pick your four", ui.theme.muted)
-            end
-        elseif page == alertsPage() then
-            drawAlertsPage(scene, alerts, width, height)
+        if onAlerts then
+            perView = drawAlertsPage(scene, alerts, alertOffset, width, layout)
         else
-            local first = (page - 2) * 4 + 1
-            for slot = 1, 4 do
-                local id = APP_ORDER[first + slot - 1]
+            local first = (page - 1) * layout.perPage
+            for slot = 1, layout.perPage do
+                local id = APP_ORDER[first + slot]
                 if id then
-                    local badge = appBadge(id, poll)
-                    local label = APPS[id].label
-                    if badge then label = badge .. label:match("\n.+$") end
-                    tile(slot, "open:" .. id, label, APPS[id].color)
+                    local column = (slot - 1) % layout.columns
+                    local row = math.floor((slot - 1) / layout.columns)
+                    drawIcon(scene, "open:" .. id, APPS[id],
+                        layout.left + column * layout.cell
+                            + math.floor((layout.cell - layout.iconWidth) / 2),
+                        layout.top + row * 4, layout, appBadge(id, poll))
                 end
             end
+            drawDock(scene, layout, poll, width)
         end
 
         local dots = {}
-        for dot = 1, pageCount() do
-            dots[dot] = dot == page and "o" or (dot == alertsPage()
-                and unreadAlerts > 0 and "!" or ".")
+        for dot = 1, pages do
+            dots[dot] = dot == page and "o"
+                or (dot == pages and unread > 0 and "!" or ".")
         end
-        ui.center(target, height - 2, table.concat(dots, " "), ui.theme.muted)
-        scene:button("prev", 1, height, 7, 1, "<",
+        ui.center(target, layout.dotsY, table.concat(dots, " "),
+            ui.theme.muted, ui.theme.background)
+        scene:button("prev", 1, layout.navY, 7, 1, "<",
             { background = ui.theme.panel, disabled = page == 1 })
-        scene:button("next", width - 6, height, 7, 1, ">",
-            { background = ui.theme.panel, disabled = page == pageCount() })
-        scene:button("lock", math.floor(width / 2) - 3, height, 7, 1, "()",
-            { background = ui.theme.panel })
+        scene:button("next", width - 6, layout.navY, 7, 1, ">",
+            { background = ui.theme.panel, disabled = page == pages })
+        scene:button("lock", math.floor(width / 2) - 3, layout.navY, 7, 1,
+            "()", { background = ui.theme.panel })
 
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
-        if action == "prev" then page = math.max(1, page - 1)
-        elseif action == "next" then page = math.min(pageCount(), page + 1)
+        if action == "prev" then
+            page, alertOffset = math.max(1, page - 1), 0
+        elseif action == "next" then
+            page, alertOffset = math.min(pages, page + 1), 0
         elseif action == "lock" then lockScreen(true)
         elseif action == "edit" then favouritesPicker()
-        elseif action == "clear" then
+        elseif action == "scrollup" then
+            alertOffset = math.max(0, alertOffset - perView)
+        elseif action == "scrolldown" then
+            alertOffset = alertOffset + perView
+        elseif action == "markread" then
             request("MARK_NOTIFICATIONS_READ", {}, true)
             for _, item in ipairs(alerts) do item.read = true end
             poll.unread_notifications = 0
         elseif action == "__terminate" then
             running = false
         else
+            local note = tonumber(action and action:match("^note:(%d+)$"))
             local id = action and action:match("^open:(.+)$")
-            if id and APPS[id] and APPS[id].open then
-                phoneTransition(APPS[id].label:match("\n(.+)$") or id,
-                    APPS[id].color)
+            if note and alerts[note] then
+                notificationDetail(alerts[note])
+            elseif id and APPS[id] and APPS[id].open then
+                phoneTransition(APPS[id].name, APPS[id].color)
                 APPS[id].open()
                 refreshSummary(true)
             end
@@ -3328,14 +3453,18 @@ local function mainMenu()
             if poll.balance and account then account.balance = poll.balance end
             if not sessionToken then return end
         end
-        if page == alertsPage() and #alerts == 0 then
-            local loaded = request("NOTIFICATIONS", {}, true)
-            alerts = loaded and loaded.notifications or {}
-        end
     end
 end
 
-ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
+-- The start-up: the letters land one at a time, the wordmark blinks, then
+-- the tagline holds. A device still carrying an older shared library has no
+-- ui.splash, so it keeps the old progress-bar boot instead of crashing.
+if type(ui.splash) == "function" then
+    ui.splash(target, "PUMPE", "Small yet Mighty",
+        { footnote = "v" .. config.version })
+else
+    ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
+end
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "pumpe", ROOT, client,

@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "7.1.0"
+local INSTALLER_VERSION = "8.0.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -43,8 +43,8 @@ local roles = {
     { id = "service", label = "SERVICE KIOSK", detail = "Shop checkout" },
     { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
-    { id = "bank", label = "BANK SERVER", detail = "Protected download", protected = true },
-    { id = "admin", label = "ADMIN TERMINAL", detail = "Protected download", protected = true },
+    { id = "bank", label = "BANK SERVER", detail = "Bank operator", protected = true },
+    { id = "admin", label = "ADMIN TERMINAL", detail = "Government use", protected = true },
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
     -- so instead of failing with an unknown role.
     { id = "tax", label = "TAX CONTROLLER", detail = "Retired", protected = true, hidden = true },
@@ -117,6 +117,53 @@ local function center(y, value, foreground, background)
     value = truncate(value, width - 2)
     writeAt(math.floor((width - #value) / 2) + 1, y,
         value, foreground, background)
+end
+
+local function wrapText(value, width)
+    local lines, line = {}, ""
+    for word in tostring(value or ""):gmatch("%S+") do
+        local candidate = line == "" and word or (line .. " " .. word)
+        if #candidate <= width then
+            line = candidate
+        else
+            if line ~= "" then lines[#lines + 1] = line end
+            line = truncate(word, width)
+        end
+    end
+    if line ~= "" then lines[#lines + 1] = line end
+    return lines
+end
+
+-- A 3x5 block face so the PUMPE panel gets a title you can read across the
+-- room. Returns false when the screen cannot hold it, so the caller can fall
+-- back to ordinary centred text.
+local BIG_GLYPHS = {
+    P = { "###", "# #", "###", "#  ", "#  " },
+    U = { "# #", "# #", "# #", "# #", "###" },
+    M = { "# #", "###", "###", "# #", "# #" },
+    E = { "###", "#  ", "###", "#  ", "###" },
+}
+
+local function wordmark(y, word, color)
+    local width, height = target.getSize()
+    local span = #word * 4 - 1
+    if span > width or y < 1 or y + 4 > height then return false end
+    for index = 1, #word do
+        if not BIG_GLYPHS[word:sub(index, index)] then return false end
+    end
+    local left = math.floor((width - span) / 2) + 1
+    for index = 1, #word do
+        local glyph = BIG_GLYPHS[word:sub(index, index)]
+        for row = 1, 5 do
+            for column = 1, 3 do
+                if glyph[row]:sub(column, column) == "#" then
+                    fill(left + (index - 1) * 4 + column - 1,
+                        y + row - 1, 1, 1, color)
+                end
+            end
+        end
+    end
+    return true
 end
 
 local function header(title, subtitle)
@@ -406,69 +453,121 @@ local function installedRole()
     return id and roleById(id) and id or nil
 end
 
+-- The PUMPE gets the whole first screen. Everything else lives one press of
+-- the down arrow away, because most computers being set up are phones.
+local function pumpeScreen(installed)
+    local width, height = target.getSize()
+    local buttons = {}
+    clear()
+    if not wordmark(2, "PUMPE", theme.accent) then
+        center(3, "PUMPE", theme.accent)
+    end
+    center(8, "PERSONAL PUMPE", theme.ink)
+    local installY = height - 5
+    local body = wrapText("Money, friends, tickets and travel papers, all in"
+        .. " one pocket computer.", width - 4)
+    for index, line in ipairs(body) do
+        local y = 9 + index
+        if y <= installY - 2 then center(y, line, theme.muted) end
+    end
+    local mine = installed == "pumpe"
+    button(buttons, mine and "start" or "install", 2, installY, width - 2, 3,
+        mine and "START PUMPE" or "INSTALL PUMPE",
+        theme.success, colors.black)
+    button(buttons, "more", 2, height - 1, width - 2, 1,
+        "v   OTHER ROLES", theme.accentDark)
+    button(buttons, "exit", 2, height, 6, 1, "EXIT", theme.panel)
+    if mine then
+        button(buttons, "install", width - 11, height, 10, 1, "REINSTALL",
+            theme.panel)
+    end
+    local bindings = { m = "more", M = "more", i = "install", I = "install" }
+    if type(keys) == "table" then
+        if keys.down then bindings[keys.down] = "more" end
+        if keys.enter then bindings[keys.enter] = mine and "start" or "install" end
+    end
+    return waitForButton(buttons, bindings)
+end
+
+-- Everything that is not a PUMPE, behind the down arrow.
+local function rolesScreen(installed)
+    local width, height = target.getSize()
+    clear()
+    header("OTHER ROLES", "What is this computer?")
+    local buttons = {}
+    local visible = {}
+    for _, role in ipairs(roles) do
+        if not role.hidden and role.id ~= "pumpe" then
+            visible[#visible + 1] = role
+        end
+    end
+    local columns = width >= 40 and 2 or 1
+    local rows = math.ceil(#visible / columns)
+    local top, bottom = 5, height - 2
+    local cardHeight = math.max(2, math.floor((bottom - top + 1) / rows))
+    local cardWidth = math.floor((width - 2 - (columns - 1)) / columns)
+    for index, role in ipairs(visible) do
+        local column = (index - 1) % columns
+        local row = math.floor((index - 1) / columns)
+        local y = top + row * cardHeight
+        if y + 1 <= bottom then
+            local label = role.label
+            if cardHeight >= 3 then
+                label = label .. "\n" .. role.detail
+                    .. (role.protected and " (4040)" or "")
+            elseif role.protected then
+                label = label .. " 4040"
+            end
+            button(buttons, "role:" .. role.id,
+                2 + column * (cardWidth + 1), y, cardWidth,
+                math.min(cardHeight - 1, bottom - y + 1), label,
+                role.protected and theme.warning
+                    or role.id == installed and theme.accentDark
+                    or theme.panel,
+                role.protected and colors.black or colors.white)
+        end
+    end
+    local footer = installed
+        and ("Installed: " .. string.upper(installed)
+            .. "  -  v" .. installedVersion())
+        or "Nothing installed yet"
+    writeAt(2, height - 1, truncate(footer, width - 2), theme.muted,
+        theme.background)
+    button(buttons, "back", 2, height, 8, 1, "^ BACK", theme.accentDark)
+    button(buttons, "exit", math.floor(width / 2) - 2, height, 6, 1,
+        "EXIT", theme.panel)
+    if installed and installed ~= "pumpe" then
+        button(buttons, "start", width - 8, height, 7, 1, "START",
+            theme.success, colors.black)
+    end
+    local bindings = {}
+    for index, role in ipairs(visible) do
+        bindings[tostring(index)] = "role:" .. role.id
+    end
+    if type(keys) == "table" and keys.up then bindings[keys.up] = "back" end
+    return waitForButton(buttons, bindings)
+end
+
 local function roleMenu()
     local installed = installedRole()
+    local screen = installed and installed ~= "pumpe" and "roles" or "pumpe"
     while running do
-        local width, height = target.getSize()
-        clear()
-        header("EASY DEPLOYMENT", "Choose this computer's role")
-        local buttons = {}
-        local visible = {}
-        for _, role in ipairs(roles) do
-            if not role.hidden then visible[#visible + 1] = role end
-        end
-        local columns = width >= 40 and 2 or 1
-        local rows = math.ceil(#visible / columns)
-        local top, bottom = 5, height - 2
-        local cardHeight = math.max(2, math.floor((bottom - top + 1) / rows))
-        local cardWidth = math.floor((width - 2 - (columns - 1)) / columns)
-        for index, role in ipairs(visible) do
-            local column = (index - 1) % columns
-            local row = math.floor((index - 1) / columns)
-            local y = top + row * cardHeight
-            if y + 1 <= bottom then
-                local label = role.label
-                if cardHeight >= 3 then
-                    label = label .. "\n" .. role.detail
-                        .. (role.protected and " (4040)" or "")
-                elseif role.protected then
-                    label = label .. " 4040"
-                end
-                button(buttons, "role:" .. role.id,
-                    2 + column * (cardWidth + 1), y, cardWidth,
-                    math.min(cardHeight - 1, bottom - y + 1), label,
-                    role.protected and theme.warning
-                        or role.id == installed and theme.accentDark
-                        or theme.panel,
-                    role.protected and colors.black or colors.white)
-            end
-        end
-        local footer = installed
-            and ("Installed: " .. string.upper(installed)
-                .. "  -  v" .. installedVersion())
-            or "Nothing installed yet"
-        writeAt(2, height - 1, truncate(footer, width - 2), theme.muted,
-            theme.background)
-        button(buttons, "exit", 2, height, 6, 1, "EXIT", theme.panel)
-        if installed then
-            button(buttons, "start", width - 12, height, 11, 1,
-                "START ROLE", theme.success, colors.black)
-        end
-        local bindings = {}
-        for index, role in ipairs(visible) do
-            bindings[tostring(index)] = "role:" .. role.id
-        end
-        local action = waitForButton(buttons, bindings)
+        local action = screen == "pumpe" and pumpeScreen(installed)
+            or rolesScreen(installed)
         if action == "exit" or action == "__terminate" then
             running = false
             return nil
-        end
-        if action == "start" and installed then
-            return roleById(installed), true
-        end
-        local id = action and action:match("^role:(.+)$")
-        if id then
-            local role = roleById(id)
+        elseif action == "more" then
+            screen = "roles"
+        elseif action == "back" then
+            screen = "pumpe"
+        elseif action == "install" then
+            return roleById("pumpe")
+        elseif action == "start" then
+            return roleById(screen == "pumpe" and "pumpe" or installed), true
+        else
+            local id = action and action:match("^role:(.+)$")
+            local role = id and roleById(id)
             if role then return role end
         end
     end
@@ -1187,7 +1286,34 @@ math.randomseed((nowMs() + os.getComputerID() * 7919) % 2147483647)
 -- Only an unassigned installer and the Bank Server need the public manifest.
 -- Every installed client role receives installer.lua from the Bank's verified
 -- depot, so booting one never waits on an HTTPS round trip.
-if not automaticRoleId and (not bootRoleId or bootRoleId == "bank") then
+
+-- The menu never opens on a stale Easy Deployment. A newer one installs
+-- itself and reboots here, so roles added by a release are on the menu the
+-- first time it is drawn rather than the second.
+local function updateCheckScreen()
+    local _, height = target.getSize()
+    local middle = math.max(2, math.floor(height / 2))
+    clear()
+    center(middle - 1, "CHECKING FOR UPDATES", theme.ink)
+    center(middle + 1, "Easy Deployment v" .. INSTALLER_VERSION, theme.muted)
+    selfUpdateInstaller()
+    repairInstalledBankRuntime()
+    clear()
+    local release = publicManifest and tostring(publicManifest.version or "")
+    if not release or release == "" then
+        center(middle - 1, "UPDATE CHECK OFFLINE", theme.warning)
+        center(middle + 1, "Running v" .. INSTALLER_VERSION, theme.muted)
+    elseif newerVersion(release, installedVersion()) then
+        center(middle - 1, "RELEASE v" .. release, theme.accent)
+        center(middle + 1, "Roles update as they start", theme.muted)
+    else
+        center(middle - 1, "UP TO DATE", theme.success)
+        center(middle + 1, "Release v" .. release, theme.muted)
+    end
+    sleep(0.7)
+end
+
+if bootRoleId == "bank" then
     selfUpdateInstaller()
     repairInstalledBankRuntime()
 end
@@ -1231,6 +1357,7 @@ if automaticRoleId then
 end
 
 boot()
+updateCheckScreen()
 openModems()
 
 while running do

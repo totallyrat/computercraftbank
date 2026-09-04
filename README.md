@@ -1,4 +1,4 @@
-# PUMPE Ecosystem v6.2
+# PUMPE Ecosystem v8.0
 
 A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. It includes personal banking, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
@@ -22,15 +22,17 @@ All screens support touch. Physical keyboard input also works.
 
 PUMPE now behaves like a small phone rather than a list of bank buttons:
 
-- A three-page animated onboarding introduces PUMPE and creates or signs into a **Foxy Account**.
+- Start-up spells **PUMPE** one letter at a time, blinks three times, then holds **Small yet Mighty** before anything else happens.
+- Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a six-step guide to the phone. **How PUMPE Works** in Settings re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
-- The Home Screen uses a roomy two-column, four-page app grid with phone-style status, app transitions, cards, navigation, touch feedback, and a home indicator.
+- The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
-- The Home Screen opens on **Favourites**, up to four apps you choose yourself, then the app pages, then **Alerts**.
+- Up to four favourites live in **the dock**, under every app page rather than on a page of their own. An empty dock slot opens the picker, and so does **Edit Your Dock** in Settings.
+- Unread counts appear as a badge in an icon's corner.
 - **BuckApp** holds the balance, payments behind **Continue**, the Bet Wallet and Activity.
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
 - **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
-- Alerts are part of the OS rather than an app: their own Home Screen page, a `!` in the page dots, and a banner across the top of whatever app is open when something new arrives.
+- The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
 - **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 
@@ -151,13 +153,13 @@ If a required source file is missing, the first-boot screen lists it and lets yo
 1. Copy only the supplied `startup.lua` to the new computer as `/startup.lua`.
 2. Attach a wireless or Ender modem, then restart the computer. You can also run `startup` immediately.
 3. Tap the desired role.
-4. Bank Server and Tax Controller downloads require code `4040`. Border Controller and **CCG Bet Console** are available as ordinary roles.
+4. **Personal PUMPE** has the first screen to itself; press the down arrow for every other role. Bank Server and Admin Terminal downloads require code `4040`. Border Controller, **CCG Bet Console** and **GPS Anchor** are ordinary roles.
 5. The installer downloads and verifies the main program, `config.lua`, `installer.lua`, and every required file under `lib/`.
 6. After installation, it replaces its own marked `/startup.lua` with a direct `installer.lua --boot <role>` entry. Tap **Reboot Now** and that role starts automatically.
 
 Files are downloaded in verified chunks and staged before anything is replaced. A failed installation rolls back. Existing PUMPE data files are never touched, and an unrelated `/startup.lua` is preserved. The installed `/pumpe/installer.lua` is both the permanent boot manager and the one-file Easy Deployment menu.
 
-An unassigned installer checks the public HTTPS manifest and safely replaces itself when a newer installer exists, so a clean computer learns about newly added roles such as Border Controller without first becoming another device type. Booting an already installed client role never contacts the internet — that copy of `installer.lua` arrives from the Bank Server's verified depot instead, and the role starts without waiting on an HTTPS round trip.
+Easy Deployment checks the public HTTPS manifest on screen before the menu opens and safely replaces itself when a newer installer exists, so a clean computer learns about newly added roles such as Border Controller without first becoming another device type. Booting an already installed client role never contacts the internet — that copy of `installer.lua` arrives from the Bank Server's verified depot instead, and the role starts without waiting on an HTTPS round trip.
 
 The role picker shows the role and version this computer already has, and offers **START ROLE** so an installed computer can be relaunched without reinstalling anything.
 
@@ -177,11 +179,11 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 
 Every role updates itself. A PUMPE, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
 
-Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published placeholder.
+Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published defaults. A release can name a setting it is taking back — `config_resets` in `config.lua` — and a device still carrying exactly that stale value adopts the new default instead. That is how the retired `CHANGE-ME-GOVERNMENT-KEY` placeholder is cleared.
 
 The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
 
-Because each device stages only its own role, the worst-case update peaks at about 577 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 423 KiB for account data.
+Because each device stages only its own role, the worst-case update peaks at about 633 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 367 KiB for account data.
 
 ### Manifest layout
 
@@ -288,7 +290,7 @@ Replace `service` with `bank`, `pumpe`, `event`, `tax`, `border`, or `ccg`.
 ### Bank Admin Terminal
 
 - Downloaded with the same protected code as the Bank Server.
-- The government key starts as `Government1234` and is changed from inside the terminal. The live key is kept in the Bank database, so it never needs a file edited on the Bank.
+- The government key starts as `Government1234` and is changed from inside the terminal. The live key is kept in the Bank database, so it never needs a file edited on the Bank. A Bank that reached 7.1 by updating kept the old `CHANGE-ME-GOVERNMENT-KEY` placeholder in its config and rejected the documented key; from 8.0 a retired placeholder means "unset" and `Government1234` works.
 - **Controls** holds account approval and the key. With approval on, every new Foxy Account waits until it is approved; accounts that already exist are never held.
 - **Accounts** finds any account and can add money, remove money, issue a tax demand, ban or unban, and approve it.
 - A tax demand is owed rather than seized. It appears in the holder's BuckApp and is paid with their own PIN, so money never moves without them.

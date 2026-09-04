@@ -20,10 +20,14 @@ Run this after installing into a ComputerCraft world.
 - [ ] Confirm the Bank launches immediately, creates `/updates/`, and reports **Easy Deployment online** without stopping at another menu.
 - [ ] Replace a local distributable script, restart the Bank Server, and confirm its `/updates/` copy is refreshed.
 - [ ] Copy only `startup.lua` to the root of a clean Advanced Computer, restart, and confirm the touch installer opens automatically.
+- [ ] Confirm **CHECKING FOR UPDATES** appears before the menu, and that it then reports either **UP TO DATE**, the newer release, or **UPDATE CHECK OFFLINE**.
+- [ ] Publish a newer Easy Deployment, open it, and confirm it installs itself and reboots so a role added by that release is on the menu the first time it is drawn.
+- [ ] Confirm the first screen is **PERSONAL PUMPE** with the block-letter title and one install button, and that the down arrow is the only way to the other roles.
+- [ ] From the other roles, confirm **^ BACK** returns to the PUMPE screen.
 - [ ] Install PUMPE and confirm the main script, config, installer, and all required `lib/` files arrive under `/pumpe`.
 - [ ] Install **CCG Bet Console** and confirm `ccg.lua`, config, installer, and all required `lib/` files arrive under `/pumpe` and CCG starts after reboot.
 - [ ] Restart after installation and confirm the selected role starts automatically.
-- [ ] Enter a wrong protected code and confirm Bank Server and Tax Controller downloads are denied.
+- [ ] Enter a wrong protected code and confirm Bank Server and Admin Terminal downloads are denied.
 - [ ] Enter `4040` and confirm a protected role downloads successfully.
 - [ ] Interrupt a download and confirm existing installed scripts remain unchanged.
 - [ ] Confirm an unrelated existing `/startup.lua` is preserved.
@@ -54,6 +58,8 @@ Run this after installing into a ComputerCraft world.
 - [ ] Update a Bank from a release that predates `extra_files`, then confirm it reports **VERIFYING DEPOT**, refreshes `/updates/ccg.lua` and `/updates/border_controller.lua`, and writes `/updates/.depot`.
 - [ ] Delete `/updates/.depot` and corrupt one depot program; confirm the next check repairs it from the manifest and stamps the depot again.
 - [ ] Publish a release whose `startup.lua` carries an older `INSTALLER_VERSION` and confirm Easy Deployment refuses it instead of rebooting in a loop.
+- [ ] With HTTP enabled, publish a new release and confirm a PUMPE, kiosk and CCG console each install it **directly from the manifest**, without the Bank's rednet depot being used. Before 8.0 every client silently fell back to the depot.
+- [ ] Take a Bank that reached 7.1 by self-updating, open the Admin Terminal, and confirm `Government1234` is accepted. Confirm a key deliberately set in `config.lua` is still honoured.
 - [ ] Leave an unassigned Easy Deployment file on a clean computer, publish a newer release, restart it, and confirm the installer updates itself before showing the role list.
 - [ ] Confirm a Bank update reboots directly back into the Bank without displaying Easy Deployment or depending on an active deployment server.
 
@@ -70,10 +76,13 @@ Run this after installing into a ComputerCraft world.
 
 ## PUMPE phone experience
 
-- [ ] On a fresh PUMPE, complete all three onboarding pages and create a Foxy Account.
+- [ ] On a fresh PUMPE, confirm start-up spells **PUMPE** one letter at a time, blinks three times, then holds **Small yet Mighty**.
+- [ ] Confirm onboarding asks new-or-existing first, then username, then PIN twice, and that mismatched PINs are refused.
+- [ ] Complete the six-step guide, then re-open it from Settings under **How PUMPE Works** and confirm **Done** returns to Settings.
+- [ ] Confirm **Skip** on the guide during sign-up still leaves the account signed in.
 - [ ] Confirm **Setting up your Foxy Account** and **Preparing your PUMPE** animate without forcing an unnecessary reboot.
 - [ ] On an Advanced Pocket Computer at its native 26×20 size, confirm every onboarding line, header, button label, and footer is fully visible.
-- [ ] Confirm the Home Screen has four two-column app pages and every full app name is readable and opens the correct app.
+- [ ] Confirm every app icon fits on one Home Screen page, that each name under an icon is readable, and that tapping either the icon or its name opens the right app.
 - [ ] Confirm PUMPE Pay contains only Code Pay and Send Money.
 - [ ] Confirm both cards are fully readable and Send Money shows the 10% processing fee and `$2,000` daily limit.
 - [ ] Open Wallet, Activity, Events, Tickets, Notifications, and Subscriptions with long sample names and confirm content wraps without overlapping controls or the footer.
@@ -113,13 +122,18 @@ Run this after installing into a ComputerCraft world.
 
 ## PUMPE home screen
 
-- [ ] Confirm the first page is Favourites and starts empty with a **+ Edit** tile.
-- [ ] Pick four apps, confirm they appear on page one, and confirm they survive a restart.
+- [ ] Confirm the dock starts empty with four **+** slots, and that tapping one opens the picker.
+- [ ] Pick four apps, confirm they appear in the dock on every page, and confirm they survive a restart.
 - [ ] Try to pick a fifth and confirm it is refused until one is removed.
+- [ ] Confirm **Edit Your Dock** in Settings opens the same picker.
+- [ ] With unread messages waiting, confirm the count appears as a badge in the Friends icon's corner, both in the grid and in the dock.
 - [ ] Confirm BuckApp opens on the balance and reaches payments, the Bet Wallet and Activity.
 - [ ] Confirm Friends reaches Messages, Friends and Urgent Contact, and badges what is waiting.
 - [ ] Confirm Tickets reaches both events and your tickets, and Customs reaches both visas and territories.
-- [ ] Swipe to the Alerts page, confirm unread alerts are listed and **Mark all read** clears the `!` in the page dots.
+- [ ] Page to the notification centre and confirm unread alerts are bright with a coloured bar, read ones are faded, and each shows its arrival time.
+- [ ] Tap an alert and confirm the whole message opens on its own screen with **< Alerts** to return.
+- [ ] With more alerts than fit, confirm **v** and **^** scroll the list and are greyed out at each end.
+- [ ] Confirm **Mark all read** fades every row and clears the `!` in the page dots.
 - [ ] Have someone send you money while a different app is open and confirm a banner drops across the top, then the screen repaints.
 - [ ] Sign in with unread alerts already waiting and confirm no banner storm.
 

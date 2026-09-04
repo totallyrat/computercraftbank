@@ -61,6 +61,17 @@ assert(config.government_key == "Government1234",
     "the documented starting key must be the configured one")
 rejected(actions.GOVERNMENT_LOGIN, "BAD_KEY", { key = "wrong" })
 local gov = actions.GOVERNMENT_LOGIN({ key = "Government1234" }).government_token
+
+-- Releases before 7.1 shipped a placeholder here, and every Bank that
+-- self-updated kept it, because an update preserves local settings. The
+-- terminal then rejected the documented key forever. A retired placeholder
+-- has to mean "unset", not "this is the live key".
+config.government_key = "CHANGE-ME-GOVERNMENT-KEY"
+rejected(actions.GOVERNMENT_LOGIN, "BAD_KEY",
+    { key = "CHANGE-ME-GOVERNMENT-KEY" })
+assert(actions.GOVERNMENT_LOGIN({ key = "Government1234" }).government_token,
+    "the documented key works on a Bank still carrying the placeholder")
+config.government_key = "Government1234"
 local function admin(extra)
     local payload = { government_token = gov }
     for key, value in pairs(extra or {}) do payload[key] = value end

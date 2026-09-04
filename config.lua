@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "7.1.0",
+    version = "8.0.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -55,6 +55,12 @@ return {
     -- The starting key for the Bank Admin Terminal. Change it from inside the
     -- terminal itself; the live key lives in the Bank database, not here.
     government_key = "Government1234",
+
+    -- Settings a release takes back. A device still carrying the value on the
+    -- right gets the new default instead, because an update otherwise
+    -- preserves every local setting and a retired placeholder would stay
+    -- forever.
+    config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY" },
 
     -- All event dates use the Minecraft/ComputerCraft in-game day.
     clock_source = "ingame",

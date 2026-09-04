@@ -414,6 +414,8 @@ local bodies = {
     ["startup.lua"] = "installer", ["lib/net.lua"] = "net",
     ["lib/ui.lua"] = "ui", ["lib/update.lua"] = "updater",
     ["lib/util.lua"] = "util",
+    ["tax_controller.lua"] = "retired", ["launcher.lua"] = "launcher",
+    ["event_kiosk.lua"] = "gate",
     ["config.lua"] = 'return { version = "9.9.9", currency = "$" }',
 }
 for path, body in pairs(bodies) do
@@ -475,6 +477,60 @@ assert(merged:find('currency = "G"', 1, true),
 assert(merged:find('government_key = "MY%-SECRET%-KEY"'),
     "the government key is never reset to the published placeholder")
 assert(merged:find('version = "9.9.9"', 1, true), "the version follows the release")
+
+-- A release can take a setting back. A device still carrying the retired
+-- placeholder gets the shipped default, while a real local value survives.
+-- Without this a Bank that self-updated kept the pre-7.1 placeholder and went
+-- on rejecting the documented government key for good.
+bodies["config.lua"] = 'return { version = "9.9.9", currency = "$",'
+    .. ' government_key = "Government1234",'
+    .. ' config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY" } }'
+local staleConfig = {
+    version = "1.0.0",
+    government_key = "CHANGE-ME-GOVERNMENT-KEY",
+    update_manifest_url = "https://example.test/release_manifest.json",
+    auto_update = true,
+}
+assert(update.selfUpdate({
+    config = staleConfig, role = "pumpe", root = "/pumpe",
+}), "a device on the placeholder still updates")
+assert(files["/pumpe/config.lua"]:find(
+    'government_key = "Government1234"', 1, true),
+    "a retired placeholder is replaced by the release default")
+assert(update.selfUpdate({
+    config = localConfig, role = "pumpe", root = "/pumpe",
+}))
+assert(files["/pumpe/config.lua"]:find(
+    'government_key = "MY-SECRET-KEY"', 1, true),
+    "a real local value is still preserved by the same merge")
+
+-- A role that names no paths of its own must still validate the published
+-- manifest. Passing nothing through made validateManifest treat every entry
+-- in `files` as unexpected, so every client threw the whole release away and
+-- quietly fell back to the Bank's rednet depot.
+local publishedManifest = { schema = 1, version = "9.9.9",
+    files = {}, extra_files = {} }
+for _, file in ipairs(fullManifest.files) do
+    local target = file.path == "ccg.lua" and publishedManifest.extra_files
+        or publishedManifest.files
+    target[#target + 1] = file
+end
+local seenRequired, seenOptional
+update.fetchManifest = function(_, required, channel, optional)
+    seenRequired, seenOptional = required, optional
+    publishedManifest.channel = channel
+    return update.validateManifest(publishedManifest, required, channel,
+        optional)
+end
+localConfig.version = "1.0.0"
+local plain, plainWhy = update.selfUpdate({
+    config = localConfig, role = "pumpe", root = "/pumpe",
+})
+assert(plain, "a client naming no paths still installs: " .. tostring(plainWhy))
+assert(seenRequired == update.PUBLISHED_FILES
+    and seenOptional == update.PUBLISHED_OPTIONAL,
+    "the published sets are what a role falls back to")
+update.fetchManifest = function() return fullManifest end
 
 -- Already current.
 localConfig.version = "9.9.9"

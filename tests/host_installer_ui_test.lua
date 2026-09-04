@@ -76,26 +76,38 @@ local function pickBankServer(screenWidth, screenHeight, script)
         "a Bank without local release files must say so")
     assert(screen:find("Nothing installed yet", 1, true),
         "an unassigned computer must report that no role is installed")
+    -- 8.0: the update check runs before anything is drawn, the PUMPE gets a
+    -- panel to itself, and the down arrow is the way to the other roles.
+    assert(screen:find("CHECKING FOR UPDATES", 1, true),
+        "Easy Deployment checks itself before the menu opens")
+    assert(screen:find("PERSONAL PUMPE", 1, true),
+        "the PUMPE gets a full screen of its own")
+    assert(screen:find("INSTALL PUMPE", 1, true),
+        "the PUMPE panel installs straight from its own button")
+    assert(screen:find("OTHER ROLES", 1, true),
+        "the down arrow leads to every other role")
 end
 
--- Pocket-sized screen: one column of roles.
+-- Pocket-sized screen: the PUMPE panel first, then one column of roles.
 pickBankServer(26, 20, {
-    { "mouse_click", 1, 5, 13 }, -- Bank Server, fifth row
+    { "mouse_click", 1, 3, 19 }, -- v OTHER ROLES
+    { "mouse_click", 1, 5, 11 }, -- Bank Server, fourth row
     { "mouse_click", 1, 4, 13 }, -- 4
     { "mouse_click", 1, 11, 17 }, -- 0
     { "mouse_click", 1, 4, 13 }, -- 4
     { "mouse_click", 1, 11, 17 }, -- 0
-    { "mouse_click", 1, 2, 20 }, -- EXIT
+    { "mouse_click", 1, 2, 20 }, -- EXIT, back on the PUMPE panel
 })
 
 -- Advanced Computer: two columns of role cards with room for the detail line.
 pickBankServer(51, 19, {
-    { "mouse_click", 1, 5, 11 }, -- Bank Server, left column, third row
+    { "mouse_click", 1, 3, 18 }, -- v OTHER ROLES
+    { "mouse_click", 1, 30, 9 }, -- Bank Server, right column, second row
     { "mouse_click", 1, 12, 12 }, -- 4
     { "mouse_click", 1, 22, 16 }, -- 0
     { "mouse_click", 1, 12, 12 }, -- 4
     { "mouse_click", 1, 22, 16 }, -- 0
-    { "mouse_click", 1, 2, 19 }, -- EXIT
+    { "mouse_click", 1, 2, 19 }, -- EXIT, back on the PUMPE panel
 })
 
 -- Automatic checks stay quiet when the Bank Server is offline and return to

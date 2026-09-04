@@ -254,9 +254,8 @@ function ui.pin() return "1234" end
 function ui.confirm() return false end
 
 actions = {
-    "login",                    -- account landing
-    "next",                     -- Favourites is page one; apps are page two
-    "open:friends",             -- the one social app
+    "login",                    -- the welcome screen
+    "open:friends",             -- the one social app, straight off page one
     "messages",                 -- its Messages entry
     "open:CHAT0001",            -- chat list
     "type",                     -- send a message
@@ -280,7 +279,7 @@ actions = {
     "back",                     -- leave search
     "back",                     -- leave the Friends list
     "back",                     -- leave the social app
-    "next", "next",             -- every home page renders
+    "next",                     -- the notification centre renders too
     "__terminate",
 }
 index = 0
@@ -293,6 +292,10 @@ function ui.scene()
         -- A disabled button is drawn but cannot be tapped, exactly as in the
         -- real scene, so the script cannot reach through one.
         if not (options and options.disabled) then live[id] = true end
+    end
+    function scene:hotspot(id, x, y, width, height)
+        assertBox("hotspot", x, y, width, height)
+        live[id] = true
     end
     function scene:wait()
         index = index + 1
@@ -338,10 +341,14 @@ local function asked(action)
     return false
 end
 
--- Home screen badges surface waiting messages and friend requests.
--- One social app, badged with everything waiting inside it.
-assert(pressed("3\nFriends"),
-    "unread messages and friend requests badge the one social app")
+-- Home screen badges surface waiting messages and friend requests. In 8.0
+-- the count sits in the icon's corner rather than inside its label.
+assert(pressed("@"), "the Friends icon is on the home screen")
+local badged = false
+for _, item in ipairs(drawnText) do
+    if item == " 3" then badged = true end
+end
+assert(badged, "unread messages and friend requests badge the Friends icon")
 assert(pressed("Messages (2)"), "the hub shows what is waiting in Messages")
 assert(pressed("Friends (+1)"), "and the requests waiting in Friends")
 assert(pressed("Urgent Contact"), "Urgent Contact lives in the same app")

@@ -279,6 +279,17 @@ function Scene:button(id, x, y, width, height, label, options)
     end
 end
 
+-- A tap target with nothing painted in it. An icon caption can share the
+-- icon's hit area without a panel drawn behind the words.
+function Scene:hotspot(id, x, y, width, height)
+    self.buttons[#self.buttons + 1] = {
+        id = id, x1 = x, y1 = y,
+        x2 = x + math.max(1, width) - 1,
+        y2 = y + math.max(1, height) - 1,
+        flash = false,
+    }
+end
+
 function Scene:hit(x, y)
     for index = #self.buttons, 1, -1 do
         local button = self.buttons[index]
@@ -372,7 +383,7 @@ function Scene:wait(options)
             recordActivity()
             local action, button = self:hit(event[3], event[4])
             if action then
-                if options.flash ~= false then
+                if options.flash ~= false and button.flash ~= false then
                     ui.fill(self.target, button.x1, button.y1,
                         button.x2 - button.x1 + 1,
                         button.y2 - button.y1 + 1, ui.theme.accentDark)
@@ -441,6 +452,90 @@ function ui.wipe(target, title)
         sleep(0.15)
     end
     ui.clear(target)
+end
+
+-- A 3x5 block face, big enough to read as a logo on a 26 wide pocket
+-- screen. Only the letters the product name needs are carried.
+local GLYPHS = {
+    P = { "###", "# #", "###", "#  ", "#  " },
+    U = { "# #", "# #", "# #", "# #", "###" },
+    M = { "# #", "###", "###", "# #", "# #" },
+    E = { "###", "#  ", "###", "#  ", "###" },
+}
+local GLYPH_WIDTH, GLYPH_HEIGHT = 3, 5
+
+ui.wordmarkHeight = GLYPH_HEIGHT
+
+-- Paints the first `count` letters of `word` as blocks, centred on the row
+-- `y`. Returns false when a letter has no glyph or the screen cannot hold
+-- the whole word, so callers can fall back to ordinary text.
+function ui.wordmark(target, y, word, count, color)
+    target = surface(target)
+    local width, height = target.getSize()
+    word = tostring(word or ""):upper()
+    if word == "" then return false end
+    local span = #word * (GLYPH_WIDTH + 1) - 1
+    if span > width or y < 1 or y + GLYPH_HEIGHT - 1 > height then
+        return false
+    end
+    for index = 1, #word do
+        if not GLYPHS[word:sub(index, index)] then return false end
+    end
+    local left = math.floor((width - span) / 2) + 1
+    for index = 1, math.min(count or #word, #word) do
+        local glyph = GLYPHS[word:sub(index, index)]
+        local x = left + (index - 1) * (GLYPH_WIDTH + 1)
+        for row = 1, GLYPH_HEIGHT do
+            for column = 1, GLYPH_WIDTH do
+                if glyph[row]:sub(column, column) == "#" then
+                    ui.fill(target, x + column - 1, y + row - 1, 1, 1,
+                        color or ui.theme.accent)
+                end
+            end
+        end
+    end
+    return true
+end
+
+-- Start-up sequence: the letters land one at a time, the finished word
+-- blinks, then the tagline holds on its own. Small screens get the same
+-- beats in plain text.
+function ui.splash(target, word, tagline, options)
+    target = surface(target)
+    options = options or {}
+    local width, height = target.getSize()
+    local top = math.max(2, math.floor((height - GLYPH_HEIGHT) / 2))
+    local color = options.color or ui.theme.accent
+    local big = ui.wordmark(target, top, word, 0, color)
+    local middle = math.max(1, math.floor(height / 2))
+
+    local function frame(count)
+        ui.clear(target)
+        if big then
+            ui.wordmark(target, top, word, count, color)
+        else
+            ui.center(target, middle, word:sub(1, count), ui.theme.ink)
+        end
+    end
+
+    for count = 1, #tostring(word) do
+        frame(count)
+        sleep(options.step or 0.16)
+    end
+    for _ = 1, (options.blinks or 3) do
+        ui.clear(target)
+        sleep(0.15)
+        frame(#tostring(word))
+        sleep(0.15)
+    end
+    if tagline then
+        ui.clear(target)
+        ui.center(target, middle, tagline, ui.theme.ink)
+        if options.footnote and middle + 2 <= height then
+            ui.center(target, middle + 2, options.footnote, ui.theme.muted)
+        end
+        sleep(options.hold or 3)
+    end
 end
 
 function ui.boot(target, product, subtitle)

@@ -106,8 +106,11 @@ sleep = function() end
 os.getComputerID = function() return 9 end
 os.epoch = function() return 12345 end
 
+-- 8.0 opens on the PUMPE panel, so the run drops to the other roles first
+-- and the Bank Server is the fourth entry there rather than the fifth.
 local events = {
-    { "char", "5" },
+    { "char", "m" },
+    { "char", "4" },
     { "char", "4" }, { "char", "0" },
     { "char", "4" }, { "char", "0" },
 }

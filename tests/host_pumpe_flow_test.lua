@@ -1,17 +1,18 @@
--- Full host-side 26x20 layout flow for the PUMPE 6.0.0 experience.
+-- Full host-side 26x20 layout flow for the PUMPE 8.0 experience.
 
--- Walks the consolidated v6.9 OS: Favourites first, then the app pages, then
--- the Alerts page, with every screen bounds-checked at 26x20.
+-- Walks the home screen rebuilt for 8.0: sign-up, the guide, the icon grid
+-- with its dock, every app hub, and the notification centre as the last
+-- page, with every screen bounds-checked at 26x20.
 local actions = {
-    "next", "next", "create", "gender:They / them",  -- onboarding
-    "edit", "pick:buck", "pick:friends", "back",     -- pick favourites
-    "open:buck",                                     -- BuckApp from Favourites
+    "create",                                        -- new account
+    "next", "next", "next", "next", "next", "next",  -- the six guide steps
+    "edit", "pick:buck", "pick:friends", "back",     -- fill the dock
+    "open:buck",                                     -- BuckApp from the dock
     "pay", "code", "send", "back", "back",           -- payments behind Continue
     "activity", "back",                              -- activity inside BuckApp
     "wallet", "holding", "back", "activity", "back",
     "add", "withdraw", "back",                       -- Bet Wallet inside BuckApp
     "back",                                          -- leave BuckApp
-    "next",                                          -- app page one
     "open:tickets", "browse", "event:EVT000001", "back", "back",
     "mine", "back", "back",                          -- Tickets hub
     "open:customs",
@@ -19,14 +20,15 @@ local actions = {
     "territories", "territory:TER000001", "citizens", "back",
     "applications", "back", "roam", "back", "back", "back",
     "back",                                          -- leave the Customs hub
-    "next",                                          -- app page two
     "open:bet", "pick:heads", "__tick", "done",
     "open:tax",                                      -- returns on its own
     "open:subs", "back",
-    "next",                                          -- Alerts page
-    "clear",
-    "prev", "prev", "prev",                          -- back to Favourites
-    "next", "next", "open:settings", "close",
+    "next",                                          -- the notification centre
+    "note:1", "back",                                -- read one in full
+    "markread",
+    "prev",                                          -- back to the apps
+    "open:settings", "guide", "next", "done",        -- the guide from Settings
+    "dock", "back", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
 local savedDevice
@@ -649,6 +651,10 @@ function ui.scene()
         buttonLabels[#buttonLabels + 1] = tostring(label or "")
         if not (options and options.disabled) then live[id] = true end
     end
+    function scene:hotspot(id, x, y, width, height)
+        assertBox("hotspot", x, y, width, height)
+        live[id] = true
+    end
     function scene:wait()
         local action = table.remove(actions, 1)
         assert(action, "PUMPE requested an unexpected scene action")
@@ -681,6 +687,12 @@ end
 assert(find(drawnText, "Setting up your"))
 assert(find(drawnText, "Foxy Account"))
 assert(find(drawnText, "Preparing your PUMPE"))
+-- Sign-up ends in the guide, and Settings can re-open the same screens.
+assert(find(drawnText, "How PUMPE Works"))
+assert(find(drawnText, "Step 1 of 6"))
+assert(find(buttonLabels, "Finish"))
+assert(find(buttonLabels, "How PUMPE Works"))
+assert(find(buttonLabels, "Edit Your Dock"))
 
 local codeIndex = assert(find(buttonLabels,
     "Code Pay\nEnter a six-character\nkiosk code"))
@@ -689,12 +701,16 @@ local sendIndex = assert(find(buttonLabels,
 assert(codeIndex < sendIndex)
 assert(not find(buttonLabels, "Proximity Pay"))
 assert(find(drawnText, "SUBSCRIPTION ACTIVE"))
-assert(find(buttonLabels, "$\nBuckApp"))
-assert(find(buttonLabels, "F\nFriends"))
-assert(find(buttonLabels, "#\nTickets"))
-assert(find(buttonLabels, "C\nCustoms"))
-assert(find(buttonLabels, "B\nBet"))
-assert(find(buttonLabels, "o\nSettings"))
+-- The 8.0 home screen: small glyph icons with the app name drawn beneath
+-- them, so every app fits on one page instead of two-per-row tiles.
+for _, glyph in ipairs({ "$", "@", "#", "=", "?", "%", "~", "*" }) do
+    assert(find(buttonLabels, glyph), "missing app icon " .. glyph)
+end
+for _, name in ipairs({ "BuckApp", "Friends", "Tickets", "Customs",
+    "Bet", "Tax", "Subs", "Settings" }) do
+    assert(find(drawnText, name), "missing app caption " .. name)
+end
+assert(not find(buttonLabels, "$\nBuckApp"), "old two-line tiles are gone")
 -- Payments, the Bet Wallet and activity all live inside BuckApp now.
 assert(find(buttonLabels, "Continue"))
 assert(find(buttonLabels, "Bet\nWallet"))
@@ -702,8 +718,15 @@ assert(not find(buttonLabels, "$\nBet Wallet"),
     "Bet Wallet is no longer a separate home screen app")
 assert(not find(buttonLabels, "!\nAlerts"),
     "Alerts became an OS page rather than an app")
-assert(find(drawnText, "FAVOURITES"), "Favourites is the first page")
-assert(find(drawnText, "ALERTS"), "Alerts has a page of its own")
+-- Favourites became the dock, so they sit under every app page instead of
+-- taking a page of their own; the notification centre is still the last one.
+assert(find(drawnText, "Your Dock"), "the dock picker is reachable")
+assert(find(drawnText, "Notifications"), "the notification centre is a page")
+assert(find(buttonLabels, "Mark all read"))
+assert(find(drawnText, "Welcome to your"),
+    "an alert title is drawn in the centre")
+assert(find(requests, "NOTIFICATIONS"))
+assert(find(requests, "MARK_NOTIFICATIONS_READ"))
 assert(find(requests, "REGISTER"))
 assert(find(requests, "ACCOUNT_SUMMARY"))
 assert(find(requests, "VISA_OVERVIEW"))
