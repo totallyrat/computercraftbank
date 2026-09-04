@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "7.0.1",
+    version = "7.1.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -52,8 +52,9 @@ return {
     smart_declare_fee = 150,
     lifetime_smart_declare_fee = 5000,
 
-    -- Change this before using the tax controller on a real server.
-    government_key = "CHANGE-ME-GOVERNMENT-KEY",
+    -- The starting key for the Bank Admin Terminal. Change it from inside the
+    -- terminal itself; the live key lives in the Bank database, not here.
+    government_key = "Government1234",
 
     -- All event dates use the Minecraft/ComputerCraft in-game day.
     clock_source = "ingame",

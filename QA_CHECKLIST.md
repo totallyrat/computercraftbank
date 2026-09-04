@@ -187,6 +187,19 @@ Run this after installing into a ComputerCraft world.
 - [ ] Detach the monitor and confirm the kiosk continues working.
 - [ ] Reattach it, tap **S → Rescan Display**, and confirm the idle screen returns.
 
+## Bank Admin Terminal
+
+- [ ] Install **Admin Terminal** with code `4040` and sign in with `Government1234`.
+- [ ] Change the key from Controls, confirm the old key is refused and the new one works, and confirm it survives a Bank restart.
+- [ ] Add money to an account and confirm the holder is notified and the transaction log matches.
+- [ ] Remove more money than an account holds and confirm it is refused.
+- [ ] Issue a tax demand, confirm it appears in the holder's BuckApp, that a wrong PIN moves nothing, and that paying it clears the demand.
+- [ ] Ban an account and confirm its PUMPE session ends at once and it cannot sign back in. Unban and confirm it works again.
+- [ ] Switch account approval on, create a new account, and confirm it waits. Confirm existing accounts are unaffected. Approve it and confirm it works.
+- [ ] Send a banner announcement and confirm every PUMPE shows the banner and keeps it in Alerts.
+- [ ] Send a full screen announcement and confirm it stays until **Continue**, returns if dismissed by restarting the PUMPE, and that acknowledging on one phone leaves it waiting on another.
+- [ ] Run the retired Tax Controller and confirm it points at the Admin Terminal instead of failing.
+
 ## Border Controller
 
 - [ ] Enter a temporary visa, confirm a second entry is denied, then use **Exit Territory** and confirm the visa locks even with days remaining.

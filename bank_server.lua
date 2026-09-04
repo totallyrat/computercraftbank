@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "7.0.1"
+local PROGRAM_VERSION = "7.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -28,6 +28,7 @@ local LOCAL_UPDATE_FILES = {
     "service_kiosk.lua",
     "event_kiosk.lua",
     "tax_controller.lua",
+    "admin_terminal.lua",
     "border_controller.lua",
     "ccg.lua",
     "gps_anchor.lua",
@@ -47,6 +48,7 @@ local DEPOT_ONLY_FILES = {
     "service_kiosk.lua",
     "event_kiosk.lua",
     "tax_controller.lua",
+    "admin_terminal.lua",
     "border_controller.lua",
     "ccg.lua",
     "gps_anchor.lua",
@@ -76,6 +78,7 @@ local ONLINE_OPTIONAL_FILES = {
     "border_controller.lua",
     "ccg.lua",
     "gps_anchor.lua",
+    "admin_terminal.lua",
 }
 
 local ROLE_MAIN_FILES = {
@@ -84,6 +87,7 @@ local ROLE_MAIN_FILES = {
     service = "service_kiosk.lua",
     event = "event_kiosk.lua",
     tax = "tax_controller.lua",
+    admin = "admin_terminal.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
@@ -102,7 +106,7 @@ local COMMON_UPDATE_FILES = {
 local BANK_UPDATE_FILES = {}
 
 local function protectedDeployRole(role)
-    return role == "bank" or role == "tax"
+    return role == "bank" or role == "tax" or role == "admin"
 end
 
 local function deploymentFilesForRole(role)
@@ -428,7 +432,7 @@ local function blankState()
             visa_application = 0, visit = 0, border = 0,
             bet_hold = 0, bet_activity = 0,
             ccg_console = 0, ccg_lobby = 0,
-            conversation = 0, proximity = 0,
+            conversation = 0, proximity = 0, announcement = 0,
         },
         accounts = {},
         account_names = {},
@@ -455,6 +459,8 @@ local function blankState()
         conversations = {},
         direct_conversations = {},
         proximity_offers = {},
+        announcements = {},
+        settings = { account_approval = false },
         tax_revenue = 0,
         processing_fee_revenue = 0,
         last_subscription_day = -1,
@@ -627,6 +633,7 @@ local prefixes = {
     ccg_lobby = { "GAME", 8 },
     conversation = { "CHAT", 8 },
     proximity = { "NEAR", 8 },
+    announcement = { "ANN", 8 },
 }
 
 local function nextId(kind)
@@ -671,6 +678,8 @@ end
 local function checkAccountActive(account)
     need(account, "ACCOUNT_NOT_FOUND", "Account not found")
     need(not account.banned, "ACCOUNT_BANNED", "This account is banned")
+    need(account.approved ~= false, "ACCOUNT_PENDING",
+        "This account is waiting for government approval")
     need(not account.frozen, "ACCOUNT_FROZEN", "This account is frozen")
 end
 
@@ -1120,6 +1129,9 @@ function actions.REGISTER(payload)
         last_spent_day = util.ingameDay(),
         created_day = util.ingameDay(),
     }
+    if state.settings and state.settings.account_approval == true then
+        account.approved = false
+    end
     state.accounts[accountId] = account
     state.account_names[util.normalName(name)] = accountId
     notification(account, "Welcome to your Foxy Account",
@@ -3034,6 +3046,270 @@ local function offerFor(accountId)
     return nil
 end
 
+-- Bank Admin Terminal routes -------------------------------------------------
+-- Everything the government can do lives behind one session. The key itself
+-- lives in the database rather than config.lua, so it can be changed from the
+-- terminal without editing a file on the Bank.
+
+local function governmentKey()
+    return state.government_key or config.government_key
+end
+
+local function adminSettings()
+    state.settings = state.settings or {}
+    if state.settings.account_approval == nil then
+        state.settings.account_approval = false
+    end
+    return state.settings
+end
+
+local function requireAccountId(payload)
+    local account = state.accounts[payload and payload.account_id]
+        or accountByName(payload and payload.name or "")
+    need(account, "ACCOUNT_NOT_FOUND", "Account not found")
+    return account
+end
+
+local function adminCard(account)
+    return {
+        account_id = account.account_id,
+        name = account.name,
+        balance = account.balance,
+        banned = account.banned == true,
+        frozen = account.frozen == true,
+        approved = account.approved ~= false,
+        tax_demand = account.tax_demand and util.copy(account.tax_demand) or nil,
+    }
+end
+
+function actions.ADMIN_SET_KEY(payload)
+    requireGovernment(payload)
+    local key = util.trim(tostring(payload.new_key or ""))
+    need(#key >= 6, "KEY_TOO_SHORT", "Use at least six characters")
+    need(#key <= 40, "KEY_TOO_LONG", "Use at most forty characters")
+    state.government_key = key
+    save()
+    logActivity("Government key changed", colors.orange)
+    return { ok = true }
+end
+
+function actions.ADMIN_SETTINGS(payload)
+    requireGovernment(payload)
+    local settings = adminSettings()
+    local pending = 0
+    for _, account in pairs(state.accounts) do
+        if account.approved == false then pending = pending + 1 end
+    end
+    return {
+        account_approval = settings.account_approval == true,
+        pending_approvals = pending,
+        announcements = #(state.announcements or {}),
+    }
+end
+
+function actions.ADMIN_SET_APPROVAL(payload)
+    requireGovernment(payload)
+    local settings = adminSettings()
+    settings.account_approval = payload.enabled == true
+    save()
+    logActivity("Account approval "
+        .. (settings.account_approval and "enabled" or "disabled"),
+        colors.orange)
+    return { account_approval = settings.account_approval }
+end
+
+function actions.ADMIN_ACCOUNTS(payload)
+    requireGovernment(payload)
+    local query = util.normalName(util.trim(payload.query or ""))
+    local pendingOnly = payload.pending_only == true
+    local results = {}
+    for _, account in pairs(state.accounts) do
+        local matches = query == ""
+            or util.normalName(account.name):find(query, 1, true)
+        if matches and (not pendingOnly or account.approved == false) then
+            results[#results + 1] = adminCard(account)
+        end
+    end
+    table.sort(results, function(a, b) return a.name < b.name end)
+    while #results > 40 do table.remove(results) end
+    return { accounts = results }
+end
+
+function actions.ADMIN_APPROVE_ACCOUNT(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    if payload.approve == false then
+        account.approved = false
+        notification(account, "Account not approved",
+            "The government has not approved this account yet", "warning")
+    else
+        account.approved = true
+        notification(account, "Account approved",
+            "Your Foxy Account is ready to use", "success")
+    end
+    save()
+    logActivity("Account " .. (account.approved and "approved" or "held")
+        .. ": " .. account.name, colors.orange)
+    return { account = adminCard(account) }
+end
+
+function actions.ADMIN_CREDIT(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local amount = validateAmount(payload.amount, 1000000)
+    local reason = util.safeText(payload.reason or "Government credit", 60)
+    account.balance = util.roundMoney(account.balance + amount)
+    transaction(account, "government_credit", amount, "Government", reason)
+    notification(account, "Money added",
+        util.money(amount, config.currency) .. " - " .. reason, "money")
+    save()
+    logActivity("Credited " .. util.money(amount, config.currency)
+        .. " to " .. account.name, colors.lime)
+    return { account = adminCard(account) }
+end
+
+function actions.ADMIN_DEBIT(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local amount = validateAmount(payload.amount, 1000000)
+    need(account.balance >= amount, "INSUFFICIENT_FUNDS",
+        account.name .. " only holds "
+            .. util.money(account.balance, config.currency))
+    local reason = util.safeText(payload.reason or "Government debit", 60)
+    account.balance = util.roundMoney(account.balance - amount)
+    state.tax_revenue = util.roundMoney((state.tax_revenue or 0) + amount)
+    transaction(account, "government_debit", -amount, "Government", reason)
+    notification(account, "Money removed",
+        util.money(amount, config.currency) .. " - " .. reason, "warning")
+    save()
+    logActivity("Debited " .. util.money(amount, config.currency)
+        .. " from " .. account.name, colors.orange)
+    return { account = adminCard(account) }
+end
+
+function actions.ADMIN_BAN(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    account.banned = payload.banned ~= false
+    if account.banned then
+        for token, session in pairs(sessions) do
+            if session.account_id == account.account_id then
+                sessions[token] = nil
+            end
+        end
+        notification(account, "Account banned",
+            util.safeText(payload.reason or "Contact the government", 60),
+            "warning")
+    else
+        notification(account, "Ban lifted", "Your account works again",
+            "success")
+    end
+    save()
+    logActivity((account.banned and "Banned " or "Unbanned ") .. account.name,
+        colors.red)
+    return { account = adminCard(account) }
+end
+
+-- A demand the account has to settle from its own PUMPE. Nothing is taken
+-- without the holder paying it, so the money always moves with their PIN.
+function actions.ADMIN_TAX_DEMAND(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local amount = validateAmount(payload.amount, 1000000)
+    account.tax_demand = {
+        amount = amount,
+        reason = util.safeText(payload.reason or "Government tax demand", 60),
+        created_day = util.ingameDay(),
+        created_at = util.nowMs(),
+    }
+    notification(account, "Tax demand",
+        util.money(amount, config.currency) .. " - " .. account.tax_demand.reason,
+        "warning")
+    save()
+    logActivity("Tax demand " .. util.money(amount, config.currency)
+        .. " to " .. account.name, colors.orange)
+    return { account = adminCard(account) }
+end
+
+function actions.TAX_DEMAND_STATUS(payload)
+    local account = requireSession(payload)
+    return { demand = account.tax_demand and util.copy(account.tax_demand) or nil }
+end
+
+function actions.PAY_TAX_DEMAND(payload)
+    local account = requireSession(payload)
+    need(account.tax_demand, "NOT_FOUND", "You have no tax demand")
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local amount = account.tax_demand.amount
+    need(account.balance >= amount, "INSUFFICIENT_FUNDS",
+        "Not enough money to settle the demand")
+    account.balance = util.roundMoney(account.balance - amount)
+    state.tax_revenue = util.roundMoney((state.tax_revenue or 0) + amount)
+    transaction(account, "tax_demand", -amount, "Government",
+        account.tax_demand.reason)
+    account.tax_demand = nil
+    save()
+    logActivity("Tax demand settled by " .. account.name, colors.lime)
+    return { balance = account.balance }
+end
+
+-- Announcements --------------------------------------------------------------
+
+function actions.ADMIN_ANNOUNCE(payload)
+    requireGovernment(payload)
+    local title = util.safeText(util.trim(payload.title or ""), 40)
+    local body = util.safeText(util.trim(payload.body or ""), 160)
+    need(#title > 0, "EMPTY_TITLE", "Give the announcement a title")
+    local mode = payload.mode == "modal" and "modal" or "banner"
+    state.announcements = state.announcements or {}
+    local item = {
+        announcement_id = nextId("announcement"),
+        title = title,
+        body = body,
+        mode = mode,
+        created_day = util.ingameDay(),
+        created_time = util.formatClock(),
+        created_at = util.nowMs(),
+        acknowledged = {},
+    }
+    table.insert(state.announcements, 1, item)
+    while #state.announcements > 20 do table.remove(state.announcements) end
+    -- Every announcement is also an ordinary alert, so it survives being
+    -- dismissed and can be read again later.
+    for _, account in pairs(state.accounts) do
+        notification(account, title, body, mode == "modal" and "urgent" or "info")
+    end
+    save()
+    logActivity("Announcement: " .. title, colors.magenta)
+    return { announcement = util.copy(item) }
+end
+
+local function announcementFor(accountId)
+    for _, item in ipairs(state.announcements or {}) do
+        if not item.acknowledged[accountId] then
+            return {
+                announcement_id = item.announcement_id,
+                title = item.title,
+                body = item.body,
+                mode = item.mode,
+            }
+        end
+    end
+    return nil
+end
+
+function actions.ANNOUNCEMENT_ACK(payload)
+    local account = requireSession(payload)
+    for _, item in ipairs(state.announcements or {}) do
+        if item.announcement_id == payload.announcement_id then
+            item.acknowledged[account.account_id] = true
+            save()
+            return { ok = true }
+        end
+    end
+    return { ok = false }
+end
+
 -- One poll for the whole PUMPE OS: an incoming Urgent Contact, the newest
 -- unread alert for the banner, and every home screen badge. The phone checks
 -- this a few times a second, so it must stay a single cheap request.
@@ -3062,6 +3338,7 @@ function actions.PUMPE_POLL(payload)
         unread_messages = badges.messages,
         friend_requests = badges.friend_requests,
         offer = offerFor(account.account_id),
+        announcement = announcementFor(account.account_id),
         latest = latest and {
             notification_id = latest.notification_id,
             title = latest.title,
@@ -4422,9 +4699,7 @@ end
 -- Government routes --------------------------------------------------------
 
 function actions.GOVERNMENT_LOGIN(payload)
-    need(config.government_key ~= "CHANGE-ME-GOVERNMENT-KEY",
-        "CONFIG_REQUIRED", "Change government_key in config.lua first")
-    need(payload.key == config.government_key,
+    need(payload.key == governmentKey(),
         "BAD_KEY", "Government key is incorrect")
     local token = util.token("GOV")
     governmentSessions[token] = {

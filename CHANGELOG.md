@@ -1,5 +1,45 @@
 # Changelog
 
+## 7.1.0
+
+The Tax Controller becomes the **Bank Admin Terminal**, and the government can
+now talk to every PUMPE at once.
+
+### Bank Admin Terminal
+
+- New protected Easy Deployment role, downloaded with the same code as the
+  Bank Server. It keeps every tax control the Tax Controller had — periods,
+  rates, revenue, audits, state deposits, bank statistics — and adds the rest
+  below.
+- The government key now defaults to `Government1234` and is **changed from
+  inside the terminal**. The live key lives in the Bank database rather than
+  `config.lua`, so it no longer needs a file edited on the Bank.
+- **Account approval** can be switched on, after which every new Foxy Account
+  waits for approval before it can be used. Existing accounts are never held
+  by switching it on.
+- **Add money** and **remove money** on any account, both written to the
+  transaction log and announced to the holder.
+- **Ban** and unban an account. A ban ends the holder's live session at once.
+- **Tax demands** of any amount. A demand is owed, not seized: it appears in
+  the holder's BuckApp and is paid with their own PIN, so money never moves
+  without them.
+
+### System-wide announcements
+
+- Announcements reach every account as an ordinary alert, and as either a
+  **banner** across the top of whatever app is open, or a **full screen**
+  notice that stays until **Continue** is pressed.
+- A full screen announcement keeps returning until that phone acknowledges it,
+  and acknowledging on one phone does not clear it for anyone else.
+
+### The Tax Controller
+
+- Retired. Install **Admin Terminal** on that computer instead.
+- `tax_controller.lua` is still published, as a stub that says so. The release
+  manifest's required list is frozen: Bank Servers older than 7.0.1 reject a
+  manifest missing an entry they expect, so removing the file would strand
+  them.
+
 ## 7.0.1
 
 Fixes v7.0.0 being rejected outright by every Bank Server older than it.

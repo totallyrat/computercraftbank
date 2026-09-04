@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "7.0.1"
+local INSTALLER_VERSION = "7.1.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -44,7 +44,10 @@ local roles = {
     { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
     { id = "bank", label = "BANK SERVER", detail = "Protected download", protected = true },
-    { id = "tax", label = "TAX CONTROLLER", detail = "Protected download", protected = true },
+    { id = "admin", label = "ADMIN TERMINAL", detail = "Protected download", protected = true },
+    -- Retired in 7.1. Still bootable so an installed Tax Controller can say
+    -- so instead of failing with an unknown role.
+    { id = "tax", label = "TAX CONTROLLER", detail = "Retired", protected = true, hidden = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
     { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
 }
@@ -55,6 +58,7 @@ local rolePrograms = {
     service = "service_kiosk.lua",
     event = "event_kiosk.lua",
     tax = "tax_controller.lua",
+    admin = "admin_terminal.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
@@ -409,12 +413,16 @@ local function roleMenu()
         clear()
         header("EASY DEPLOYMENT", "Choose this computer's role")
         local buttons = {}
+        local visible = {}
+        for _, role in ipairs(roles) do
+            if not role.hidden then visible[#visible + 1] = role end
+        end
         local columns = width >= 40 and 2 or 1
-        local rows = math.ceil(#roles / columns)
+        local rows = math.ceil(#visible / columns)
         local top, bottom = 5, height - 2
         local cardHeight = math.max(2, math.floor((bottom - top + 1) / rows))
         local cardWidth = math.floor((width - 2 - (columns - 1)) / columns)
-        for index, role in ipairs(roles) do
+        for index, role in ipairs(visible) do
             local column = (index - 1) % columns
             local row = math.floor((index - 1) / columns)
             local y = top + row * cardHeight
@@ -447,7 +455,7 @@ local function roleMenu()
                 "START ROLE", theme.success, colors.black)
         end
         local bindings = {}
-        for index, role in ipairs(roles) do
+        for index, role in ipairs(visible) do
             bindings[tostring(index)] = "role:" .. role.id
         end
         local action = waitForButton(buttons, bindings)

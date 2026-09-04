@@ -11,7 +11,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track, and Survivor arena |
 | `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Square-style touch POS, favorites, products, receipts, payment codes, withdrawals, subscriptions |
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
-| `tax_controller.lua` | Advanced Computer + wireless/Ender modem | Government-only periods, rates, revenue, deposits, audits, bank statistics |
+| `admin_terminal.lua` | Advanced Computer + wireless/Ender modem | Government-only tax controls, account approval, balances, bans, tax demands, announcements |
 | `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
@@ -285,11 +285,17 @@ Replace `service` with `bank`, `pumpe`, `event`, `tax`, `border`, or `ccg`.
 - Event day is the in-game day number.
 - Event time is entered as four digits (`1830` becomes `18:30`).
 
-### Tax Controller
+### Bank Admin Terminal
 
-- Will refuse to unlock while the default government key is still configured.
-- Government sessions expire automatically.
-- Every deposit and tax movement is written to the bank transaction log.
+- Downloaded with the same protected code as the Bank Server.
+- The government key starts as `Government1234` and is changed from inside the terminal. The live key is kept in the Bank database, so it never needs a file edited on the Bank.
+- **Controls** holds account approval and the key. With approval on, every new Foxy Account waits until it is approved; accounts that already exist are never held.
+- **Accounts** finds any account and can add money, remove money, issue a tax demand, ban or unban, and approve it.
+- A tax demand is owed rather than seized. It appears in the holder's BuckApp and is paid with their own PIN, so money never moves without them.
+- **Announce** sends every PUMPE either a banner or a full screen notice that stays until **Continue** is pressed. Either way it also arrives as an ordinary alert.
+- Government sessions expire automatically, and every movement is written to the bank transaction log.
+
+The Tax Controller was retired in 7.1.0. Install **Admin Terminal** on that computer instead; running the old program now says so.
 
 ### Border Controller
 

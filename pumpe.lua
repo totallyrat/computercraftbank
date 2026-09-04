@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "7.0.1"
+local PROGRAM_VERSION = "7.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2871,12 +2871,81 @@ local function proximityOfferScreen(offer)
     inCall = false
 end
 
+-- A government announcement. Banner mode drops in and goes away; full screen
+-- mode stays put until it is acknowledged, so it cannot be missed.
+local function announcementScreen(item)
+    inCall = true
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.fill(target, 1, 1, width, height, ui.theme.danger)
+        ui.center(target, 3, "ANNOUNCEMENT", colors.white, ui.theme.danger)
+        ui.fill(target, 2, 5, width - 2, 1, colors.white)
+        ui.wrappedText(target, 2, 7, item.title, width - 2, 3,
+            colors.white, ui.theme.danger)
+        ui.wrappedText(target, 2, 11, item.body or "", width - 2, 6,
+            colors.lightGray, ui.theme.danger)
+        local scene = ui.scene(target)
+        scene:button("ok", 2, height - 2, width - 2, 2, "Continue",
+            { background = colors.white, foreground = colors.black })
+        local action = scene:wait({ tickRate = 2 })
+        if action == "ok" or action == "__terminate" then
+            request("ANNOUNCEMENT_ACK",
+                { announcement_id = item.announcement_id }, true)
+            inCall = false
+            return
+        end
+    end
+    inCall = false
+end
+
+-- A government tax demand has to be settled from the account holder's own
+-- PUMPE, with their PIN. Nothing is ever taken without them paying it.
+local function taxDemandScreen(demand)
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Tax demand", money(demand.amount),
+            util.formatClock())
+        ui.card(target, 2, 5, width - 2, 4, ui.theme.warning)
+        ui.text(target, 4, 6, "OWED", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 7, money(demand.amount), ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 2, 10, demand.reason or "", width - 2, 4,
+            ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("pay", 2, height - 5, width - 2, 2,
+            "Pay " .. money(demand.amount),
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("back", 2, height - 2, width - 2, 2, "Later",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "pay" then
+            local pin = ui.pin(target, "Confirm tax payment", true)
+            if pin then
+                local paid = request("PAY_TAX_DEMAND", { pin = pin })
+                if paid then
+                    account.balance = paid.balance
+                    ui.message(target, "success", "Tax settled",
+                        money(demand.amount), 1.4)
+                    return
+                end
+            end
+        end
+    end
+end
+
 -- The one OS poll: it rings an Urgent Contact and banners a new alert.
 watchForUrgentCalls = function()
     if not sessionToken or inCall then return false end
     local poll = request("PUMPE_POLL", { position = net.locate(1) }, true)
     if not poll then return false end
     local latest = poll.latest
+    local announcement = poll.announcement
+    if announcement and announcement.mode == "modal" then
+        if latest then lastBannerId = latest.notification_id end
+        announcementScreen(announcement)
+        return true
+    end
     if poll.offer then
         if latest then lastBannerId = latest.notification_id end
         proximityOfferScreen(poll.offer)
@@ -2940,9 +3009,17 @@ local function buckApp()
         ui.text(target, 4, 6, "Daily sent " .. money(account.daily_sent or 0),
             ui.theme.muted, ui.theme.panel)
 
+        local demand = request("TAX_DEMAND_STATUS", {}, true)
+        demand = demand and demand.demand or nil
         local scene = ui.scene(target)
-        scene:button("pay", 2, 9, width - 2, 3, "Continue",
-            { background = ui.theme.accentDark, shadow = true })
+        if demand then
+            scene:button("demand", 2, 9, width - 2, 3,
+                "Tax demand " .. money(demand.amount),
+                { background = ui.theme.warning, foreground = colors.black })
+        else
+            scene:button("pay", 2, 9, width - 2, 3, "Continue",
+                { background = ui.theme.accentDark, shadow = true })
+        end
         local half = math.floor((width - 3) / 2)
         scene:button("wallet", 2, 13, half, 3, "Bet\nWallet",
             { background = colors.purple })
@@ -2954,6 +3031,7 @@ local function buckApp()
         blink = not blink
         if action == "back" or action == "__terminate" then return
         elseif action == "pay" then payMenu()
+        elseif action == "demand" then taxDemandScreen(demand)
         elseif action == "wallet" then betWalletScreen()
         elseif action == "activity" then historyScreen() end
         if summary == nil and not sessionToken then return end
