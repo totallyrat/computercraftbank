@@ -15,7 +15,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.0.0"
+local PROGRAM_VERSION = "8.0.1"
 local ok, ui = pcall(require, "lib.ui")
 local target = term.current()
 

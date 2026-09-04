@@ -395,6 +395,33 @@ assert(#updateRuns == gated + 1
 
 -- Self-updating roles --------------------------------------------------------
 
+-- The Bank writes its own copy of the published list so a stale updater
+-- cannot leave it with nothing to check against. Confirm the two agree.
+do
+    local bank = io.open("../bank_server.lua"):read("a")
+    local block = bank:match("local ONLINE_UPDATE_FILES = {(.-)}")
+    local names = {}
+    for name in (block or ""):gmatch('"(.-)"') do names[#names + 1] = name end
+    assert(#names == #update.PUBLISHED_FILES,
+        "the Bank and lib/update.lua publish different file counts")
+    for index, name in ipairs(update.PUBLISHED_FILES) do
+        assert(names[index] == name,
+            "the Bank's published list drifted at " .. name)
+    end
+    local optionalBlock = bank:match("local ONLINE_OPTIONAL_FILES = {(.-)}")
+    local optionalNames = {}
+    for name in (optionalBlock or ""):gmatch('"(.-)"') do
+        optionalNames[#optionalNames + 1] = name
+    end
+    assert(#optionalNames == #update.PUBLISHED_OPTIONAL,
+        "the Bank and lib/update.lua publish different optional counts")
+    for index, name in ipairs(update.PUBLISHED_OPTIONAL) do
+        assert(optionalNames[index] == name,
+            "the Bank's optional list drifted at " .. name)
+    end
+end
+
+
 assert(update.roleProgram("pumpe") == "pumpe.lua")
 assert(update.installPath("startup.lua") == "installer.lua",
     "startup.lua is published under that name but installed as installer.lua")
@@ -503,6 +530,25 @@ assert(update.selfUpdate({
 assert(files["/pumpe/config.lua"]:find(
     'government_key = "MY-SECRET-KEY"', 1, true),
     "a real local value is still preserved by the same merge")
+
+-- A caller with no list of its own validates the shape and installs what its
+-- role needs, rather than rejecting every published file as unexpected.
+local loose = assert(update.validateManifest({
+    schema = 1, channel = "stable", version = "9.9.9",
+    files = { { path = "pumpe.lua", source = "pumpe.lua", size = 5,
+        checksum = "0000abcd" } },
+}, nil, "stable", nil), "no expected list means unrestricted, not reject-all")
+assert(#loose.files == 1)
+assert(update.validateManifest({
+    schema = 1, channel = "stable", version = "9.9.9",
+    files = { { path = "pumpe.lua", source = "pumpe.lua", size = 5,
+        checksum = "0000abcd" } },
+}, {}, "stable", {}), "an empty list is treated the same as none")
+assert(not update.validateManifest({
+    schema = 1, channel = "stable", version = "9.9.9",
+    files = { { path = "/etc/passwd", source = "/etc/passwd", size = 5,
+        checksum = "0000abcd" } },
+}, nil, "stable", nil), "an unsafe path is still refused with no list")
 
 -- A role that names no paths of its own must still validate the published
 -- manifest. Passing nothing through made validateManifest treat every entry

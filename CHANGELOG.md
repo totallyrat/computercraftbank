@@ -1,5 +1,24 @@
 # Changelog
 
+## 8.0.1
+
+Hardening for the update path itself. 8.0.0 installs correctly — a shipped
+6.9.1, 7.0.1 and 7.1.0 updater each accept it, and a 7.1.0 Bank was walked
+through the whole download, checksum, merge and commit against the published
+files — but two ways for a device to strand itself were still open.
+
+- **An updater that names no expected files no longer rejects the whole
+  release.** It treated every published entry as unexpected, which is the bug
+  that had every client silently falling back to the Bank's depot before 8.0.
+  A caller with no list now checks each entry's shape — safe path, size,
+  checksum — and installs what its role needs. An unsafe path is still
+  refused.
+- **The Bank writes out its own copy of the published file list again.** 8.0.0
+  read it from `lib/update.lua` to keep the two from drifting, but that meant
+  a Bank whose updater was older than its program got `nil` and could not
+  update itself out of the skew — the exact failure that has cost this project
+  three releases. The lists are kept in step by a test instead.
+
 ## 8.0.0
 
 A rebuilt PUMPE home screen, a new start-up and sign-up, a clearer

@@ -101,16 +101,21 @@ end
 
 -- Required files live in `files`; optional roles live in `extra_files` so
 -- older Bank updaters, which reject unknown entries in `files`, keep working.
+-- `allowed` may be nil, meaning the caller carries no list of its own. That
+-- checks the entry's shape without insisting on a name, rather than treating
+-- every published file as unexpected and throwing the release away.
 local function readEntry(rawFile, allowed, seen, skipUnknown)
     local path = type(rawFile) == "table" and rawFile.path or nil
-    if skipUnknown and (type(path) ~= "string" or not allowed[path]) then
+    if skipUnknown and (type(path) ~= "string"
+        or (allowed and not allowed[path])) then
         return nil, nil
     end
     local source = type(rawFile) == "table"
         and (rawFile.source or rawFile.path) or nil
     local size = type(rawFile) == "table" and rawFile.size or nil
     local checksum = type(rawFile) == "table" and rawFile.checksum or nil
-    if not safeRelativePath(path) or not allowed[path] or seen[path] then
+    if not safeRelativePath(path) or (allowed and not allowed[path])
+        or seen[path] then
         return nil, "Update manifest contains an unexpected file"
     end
     if not safeRelativePath(source) then
@@ -148,16 +153,24 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel,
         return nil, "Update manifest has no files"
     end
 
-    local required, optional = {}, {}
-    for _, path in ipairs(expectedPaths or {}) do required[path] = true end
-    for _, path in ipairs(optionalPaths or {}) do optional[path] = true end
+    -- A caller that names no paths is not asking for every published file to
+    -- be rejected. Only a caller that supplies a list gets its release held
+    -- to that list, and only then can a file be missing from it.
+    local required = expectedPaths and #expectedPaths > 0 and {} or nil
+    local optional = optionalPaths and #optionalPaths > 0 and {} or nil
+    for _, path in ipairs(required and expectedPaths or {}) do
+        required[path] = true
+    end
+    for _, path in ipairs(optional and optionalPaths or {}) do
+        optional[path] = true
+    end
     local seen, files = {}, {}
     for _, rawFile in ipairs(manifest.files) do
         local file, err = readEntry(rawFile, required, seen)
         if not file then return nil, err end
         files[#files + 1] = file
     end
-    for path in pairs(required) do
+    for path in pairs(required or {}) do
         if not seen[path] then
             return nil, "Update manifest is missing " .. path
         end

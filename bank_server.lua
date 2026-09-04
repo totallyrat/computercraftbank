@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.0.0"
+local PROGRAM_VERSION = "8.0.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -59,10 +59,31 @@ for _, path in ipairs(DEPOT_ONLY_FILES) do DEPOT_ONLY_SET[path] = true end
 -- Keep this list compatible with v5.2.1, whose updater rejects unknown
 -- entries in the manifest's `files` array. Everything added since then is
 -- published in `extra_files`, which older updaters simply ignore.
--- One list, shared with every other role's updater, so the Bank and its
--- clients can never disagree about what a release publishes.
-local ONLINE_UPDATE_FILES = onlineUpdate.PUBLISHED_FILES
-local ONLINE_OPTIONAL_FILES = onlineUpdate.PUBLISHED_OPTIONAL
+-- Written out rather than read from lib/update.lua. A Bank whose updater is
+-- older than its program would otherwise get nil here, and a Bank that
+-- cannot name what it expects is a Bank that cannot update itself out of the
+-- skew. host_update_test.lua checks the two lists still agree.
+local ONLINE_UPDATE_FILES = {
+    "bank_server.lua",
+    "pumpe.lua",
+    "service_kiosk.lua",
+    "event_kiosk.lua",
+    "tax_controller.lua",
+    "startup.lua",
+    "launcher.lua",
+    "config.lua",
+    "lib/net.lua",
+    "lib/ui.lua",
+    "lib/update.lua",
+    "lib/util.lua",
+}
+
+local ONLINE_OPTIONAL_FILES = {
+    "border_controller.lua",
+    "ccg.lua",
+    "gps_anchor.lua",
+    "admin_terminal.lua",
+}
 
 local ROLE_MAIN_FILES = {
     bank = "bank_server.lua",
