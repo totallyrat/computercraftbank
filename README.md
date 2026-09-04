@@ -13,6 +13,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
 | `tax_controller.lua` | Advanced Computer + wireless/Ender modem | Government-only periods, rates, revenue, deposits, audits, bank statistics |
 | `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
+| `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.
@@ -100,6 +101,23 @@ From then on the console runs by itself:
 5. If nobody joins before a lobby expires, every reserved wager is returned and a fresh lobby opens straight away.
 
 Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when the mode was started; a wrong code leaves it running. The setting is saved to the console, so a restart — including one caused by an automatic update — comes back into Auto Mode instead of the game menu. Rotate mode remembers which game is next across restarts.
+
+## Proximity Pay
+
+A Service Kiosk can offer the bill to whoever is standing closest instead of reading out a code. Tap **NEARBY** with a cart built, and the nearest PUMPE gets a full-screen offer showing the merchant, the amount and the distance.
+
+**Not mine** passes the bill to the next nearest person rather than cancelling the sale, so someone declining an offer meant for the person behind them costs the cashier nothing. Accepting settles through the ordinary payment code, so PIN rules, daily limits and the transaction log are identical to every other payment, and nothing is ever charged without a tap.
+
+### GPS Anchors come first
+
+ComputerCraft can only work out where something is by trilaterating **four** hosts with known coordinates. A world with no GPS constellation cannot locate anything at all, so Proximity Pay does nothing until anchors exist.
+
+1. Install the **GPS Anchor** role on four or more computers with wireless modems.
+2. Spread them out, and put at least one at a different height — four anchors in a flat line cannot resolve a position.
+3. Give each one its exact block coordinates (press F3 in game). An anchor reads them from an existing constellation if one is already running.
+4. Every device then locates itself and reports its position to the Bank, which keeps the map.
+
+Anchors answer the same request ComputerCraft's own `gps host` answers, so ordinary GPS programs work against them too. Positions older than `position_max_age_ms` are ignored, so a PUMPE that has gone offline is never charged.
 
 ## The new customer monitor
 

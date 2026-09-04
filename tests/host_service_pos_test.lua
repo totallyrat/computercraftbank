@@ -137,6 +137,7 @@ local client = {
 package.loaded["lib.net"] = {
     client = function() return client end,
     autoUpdate = function() end,
+    locate = function() return nil end,
 }
 
 local ui = {

@@ -52,7 +52,8 @@ local expectedFiles = {
     "tax_controller.lua", "startup.lua", "launcher.lua", "config.lua",
     "lib/net.lua", "lib/ui.lua", "lib/update.lua", "lib/util.lua",
 }
-local expectedExtra = { "border_controller.lua", "ccg.lua" }
+local expectedExtra = { "border_controller.lua", "ccg.lua",
+    "gps_anchor.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

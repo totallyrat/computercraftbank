@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "6.9.1"
+local PROGRAM_VERSION = "7.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2809,12 +2809,79 @@ local function urgentScreen()
 end
 
 -- Polled from every screen so a call reaches the user wherever they are.
+-- A payment offered by a nearby kiosk takes over the screen. It is never
+-- charged without a tap, so an offer meant for someone else is just declined.
+local function proximityOfferScreen(offer)
+    inCall = true
+    local frame = 0
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
+        ui.center(target, 3, "PAYMENT NEARBY", colors.white, ui.theme.accentDark)
+        ui.center(target, 5, frame % 2 == 0 and "( ( ( ) ) )" or "  ( ( ) )  ",
+            colors.white, ui.theme.accentDark)
+        ui.wrappedText(target, 2, 7, offer.merchant, width - 2, 2,
+            colors.white, ui.theme.accentDark)
+        ui.center(target, 10, money(offer.amount), colors.white,
+            ui.theme.accentDark)
+        ui.wrappedText(target, 2, 12, offer.description or "", width - 2, 2,
+            colors.lightGray, ui.theme.accentDark)
+        if offer.distance then
+            ui.center(target, 15, offer.distance .. " blocks away",
+                colors.lightGray, ui.theme.accentDark)
+        end
+        local scene = ui.scene(target)
+        scene:button("pay", 2, height - 5, width - 2, 2, "Pay " .. money(offer.amount),
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("no", 2, height - 2, width - 2, 2, "Not mine",
+            { background = colors.gray })
+        local action = scene:wait({ tickRate = 0.5 })
+        frame = frame + 1
+        if action == "pay" then
+            inCall = false
+            local preview = request("PAY_CODE_PREVIEW", { code = offer.code })
+            if preview then
+                local pin
+                if preview.pin_required then
+                    pin = ui.pin(target, "Confirm payment", true)
+                    if not pin then return end
+                end
+                local paid = request("PAY_CODE_CONFIRM",
+                    { code = offer.code, pin = pin })
+                if paid then
+                    ui.message(target, "success", "Paid " .. money(offer.amount),
+                        offer.merchant, 1.4)
+                end
+            end
+            return
+        elseif action == "no" or action == "__terminate" then
+            request("PROXIMITY_DECLINE", { offer_id = offer.offer_id }, true)
+            inCall = false
+            return
+        elseif action == "__tick" then
+            -- Someone else may have taken it, or it may have moved on.
+            local poll = request("PUMPE_POLL", {}, true)
+            if not poll or not poll.offer
+                or poll.offer.offer_id ~= offer.offer_id then
+                inCall = false
+                return
+            end
+        end
+    end
+    inCall = false
+end
+
 -- The one OS poll: it rings an Urgent Contact and banners a new alert.
 watchForUrgentCalls = function()
     if not sessionToken or inCall then return false end
-    local poll = request("PUMPE_POLL", {}, true)
+    local poll = request("PUMPE_POLL", { position = net.locate(1) }, true)
     if not poll then return false end
     local latest = poll.latest
+    if poll.offer then
+        if latest then lastBannerId = latest.notification_id end
+        proximityOfferScreen(poll.offer)
+        return true
+    end
     if poll.call then
         if latest then lastBannerId = latest.notification_id end
         incomingCallScreen(poll.call)

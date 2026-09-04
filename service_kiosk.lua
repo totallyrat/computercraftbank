@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "6.9.1"
+local PROGRAM_VERSION = "7.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -482,6 +482,73 @@ local function waitForCode(code, amount, kind)
     return false
 end
 
+-- Offers the bill to the nearest PUMPE instead of showing a code. The Bank
+-- picks the target from the position map; declining passes it along rather
+-- than cancelling the sale.
+local function proximityCheckout(cart)
+    local items, total = cartSummary(cart)
+    if total <= 0 then
+        ui.message(target, "warning", "NOTHING TO CHARGE",
+            "Add products first", 1.4)
+        return false
+    end
+    local position = net.locate(2)
+    if not position then
+        ui.message(target, "error", "NO GPS FIX",
+            "Install GPS Anchors near this kiosk", 2.2)
+        return false
+    end
+    local created = request("PROXIMITY_OFFER", {
+        amount = total,
+        items = items,
+        description = "Nearby payment",
+        position = position,
+    })
+    if not created then return false end
+    local offer = created.offer
+    local blink = true
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "NEARBY PAYMENT", money(total),
+            util.formatClock(blink))
+        if offer.status == "offered" then
+            ui.center(target, 6, "OFFERED TO", ui.theme.muted)
+            ui.center(target, 8, offer.target_name or "?", ui.theme.ink)
+            if offer.distance then
+                ui.center(target, 10, offer.distance .. " blocks away",
+                    ui.theme.muted)
+            end
+        elseif offer.status == "nobody_nearby" then
+            ui.center(target, 8, "NOBODY NEARBY", ui.theme.warning)
+            ui.center(target, 10, "Ask them to come closer", ui.theme.muted)
+        elseif offer.status == "paid" then
+            ui.center(target, 8, "PAID", ui.theme.success)
+        else
+            ui.center(target, 8, string.upper(offer.status or "?"),
+                ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 0.6 })
+        blink = not blink
+        if action == "cancel" or action == "__terminate" then
+            request("PROXIMITY_CANCEL", { offer_id = offer.offer_id }, true)
+            return false
+        end
+        local status = request("PROXIMITY_STATUS",
+            { offer_id = offer.offer_id }, true)
+        if status then offer = status.offer end
+        if offer.status == "paid" then
+            ui.message(target, "success", "PAID " .. money(total),
+                offer.target_name, 1.6)
+            return true
+        end
+    end
+    return false
+end
+
 local function checkout(cart)
     local items, total, kind = cartSummary(cart)
     if total <= 0 then
@@ -791,6 +858,12 @@ local function posLoop()
                 background = colors.gray,
                 disabled = #cartItems == 0,
             })
+        scene:button("nearby", 2, height - 4, receiptWidth - 2, 1,
+            "NEARBY", {
+                background = colors.cyan,
+                foreground = colors.black,
+                disabled = #cartItems == 0,
+            })
         scene:button("pay", 2, height - 2, receiptWidth - 2, 2,
             total > 0 and ("PAY  " .. money(total)) or "PAY", {
                 background = colors.lime,
@@ -889,6 +962,8 @@ local function posLoop()
             cart = {}
         elseif action == "pay" then
             if checkout(cart) then cart = {} end
+        elseif action == "nearby" then
+            if proximityCheckout(cart) then cart = {} end
         elseif action == "prev" then
             page = math.max(1, page - 1)
         elseif action == "next" then

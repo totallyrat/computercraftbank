@@ -26,6 +26,7 @@ const releaseFiles = [
 const extraReleaseFiles = [
   "border_controller.lua",
   "ccg.lua",
+  "gps_anchor.lua",
 ];
 
 function checksum(buffer) {
@@ -61,6 +62,7 @@ if (stampedStartup !== startupSource) fs.writeFileSync(startupPath, stampedStart
 const rolePrograms = [
   "bank_server.lua", "pumpe.lua", "service_kiosk.lua", "event_kiosk.lua",
   "tax_controller.lua", "border_controller.lua", "ccg.lua",
+  "gps_anchor.lua",
 ];
 for (const program of rolePrograms) {
   const file = path.join(projectRoot, program);

@@ -516,6 +516,7 @@ function ui.message(target, kind, title, body, duration)
 end
 
 local function keyboardRows(mode)
+    if mode == "integer" then return { "123", "456", "789", "-0<" } end
     if mode == "number" then return { "123", "456", "789", ".0<" } end
     if mode == "code" then return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM<" } end
     return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_<" }
@@ -611,7 +612,14 @@ function ui.input(target, title, options)
             local typed = action and action:match("^typed:(.)$")
             local character = key or typed
             if character and character ~= "<" and #value < maxLength then
-                if options.mode == "number" then
+                if options.mode == "integer" then
+                    -- A minus sign only means anything at the front.
+                    if character:match("%d") then
+                        value = value .. character
+                    elseif character == "-" and #value == 0 then
+                        value = "-"
+                    end
+                elseif options.mode == "number" then
                     if character:match("%d") or (character == "." and not value:find("%.")) then
                         value = value .. character
                     end

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "6.9.1"
+local PROGRAM_VERSION = "7.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -30,6 +30,7 @@ local LOCAL_UPDATE_FILES = {
     "tax_controller.lua",
     "border_controller.lua",
     "ccg.lua",
+    "gps_anchor.lua",
     "startup.lua",
     "config.lua",
     "lib/net.lua",
@@ -48,6 +49,7 @@ local DEPOT_ONLY_FILES = {
     "tax_controller.lua",
     "border_controller.lua",
     "ccg.lua",
+    "gps_anchor.lua",
 }
 local DEPOT_ONLY_SET = {}
 for _, path in ipairs(DEPOT_ONLY_FILES) do DEPOT_ONLY_SET[path] = true end
@@ -73,6 +75,7 @@ local ONLINE_UPDATE_FILES = {
 local ONLINE_OPTIONAL_FILES = {
     "border_controller.lua",
     "ccg.lua",
+    "gps_anchor.lua",
 }
 
 local ROLE_MAIN_FILES = {
@@ -83,6 +86,7 @@ local ROLE_MAIN_FILES = {
     tax = "tax_controller.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    anchor = "gps_anchor.lua",
 }
 
 -- lib/update.lua is included for every role: without it a client cannot load
@@ -424,7 +428,7 @@ local function blankState()
             visa_application = 0, visit = 0, border = 0,
             bet_hold = 0, bet_activity = 0,
             ccg_console = 0, ccg_lobby = 0,
-            conversation = 0,
+            conversation = 0, proximity = 0,
         },
         accounts = {},
         account_names = {},
@@ -450,6 +454,7 @@ local function blankState()
         ccg_house_profit = 0,
         conversations = {},
         direct_conversations = {},
+        proximity_offers = {},
         tax_revenue = 0,
         processing_fee_revenue = 0,
         last_subscription_day = -1,
@@ -621,6 +626,7 @@ local prefixes = {
     ccg_console = { "CCG", 6 },
     ccg_lobby = { "GAME", 8 },
     conversation = { "CHAT", 8 },
+    proximity = { "NEAR", 8 },
 }
 
 local function nextId(kind)
@@ -2856,11 +2862,184 @@ function actions.URGENT_PAY_REQUEST(payload)
     return { quote = quote }
 end
 
+-- Proximity Pay ------------------------------------------------------------
+-- Devices report where they are and the Bank keeps the map. A kiosk offers
+-- its bill to the nearest PUMPE with a recent fix; declining passes it to the
+-- next one rather than cancelling the sale.
+
+local function recordPosition(holder, position)
+    if type(holder) ~= "table" or type(position) ~= "table" then return end
+    local x, y, z = tonumber(position.x), tonumber(position.y), tonumber(position.z)
+    if not x or not y or not z then return end
+    holder.position = { x = x, y = y, z = z, at = util.nowMs() }
+end
+
+local function freshPosition(holder)
+    local position = holder and holder.position
+    if not position then return nil end
+    local maxAge = tonumber(config.position_max_age_ms) or 90000
+    if util.nowMs() - (position.at or 0) > maxAge then return nil end
+    return position
+end
+
+local function distanceBetween(first, second)
+    local dx, dy, dz = first.x - second.x, first.y - second.y, first.z - second.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function nearestAccount(origin, excluded)
+    local best, bestDistance
+    local radius = tonumber(config.proximity_pay_radius) or 16
+    for accountId, account in pairs(state.accounts) do
+        local position = not excluded[accountId] and not account.banned
+            and not account.frozen and freshPosition(account)
+        if position then
+            local distance = distanceBetween(origin, position)
+            if distance <= radius and (not bestDistance or distance < bestDistance) then
+                best, bestDistance = account, distance
+            end
+        end
+    end
+    return best, bestDistance
+end
+
+local function offerExpired(offer)
+    return offer.status ~= "offered"
+        or offer.expires_at <= util.nowMs()
+end
+
+-- Hands the bill to the next nearest PUMPE, or gives up when nobody is left.
+local function retargetOffer(offer)
+    local terminal = state.terminals[offer.terminal_id]
+    local origin = terminal and freshPosition(terminal)
+    if not origin then
+        offer.status = "no_position"
+        return offer
+    end
+    local account, distance = nearestAccount(origin, offer.declined)
+    if not account then
+        offer.status = "nobody_nearby"
+        offer.target_account_id = nil
+        return offer
+    end
+    offer.target_account_id = account.account_id
+    offer.target_name = account.name
+    offer.distance = math.floor(distance * 10) / 10
+    offer.status = "offered"
+    offer.expires_at = util.nowMs()
+        + (tonumber(config.proximity_offer_ttl_ms) or 60000)
+    notification(account, "Payment nearby",
+        util.money(offer.amount, config.currency) .. " from " .. offer.merchant,
+        "money")
+    return offer
+end
+
+local function publicOffer(offer)
+    local payment = state.active_pay_codes[offer.code]
+    return {
+        offer_id = offer.offer_id,
+        code = offer.code,
+        amount = offer.amount,
+        merchant = offer.merchant,
+        description = offer.description,
+        status = payment and payment.status == "paid" and "paid" or offer.status,
+        target_name = offer.target_name,
+        distance = offer.distance,
+    }
+end
+
+function actions.REPORT_POSITION(payload)
+    local account = requireSession(payload)
+    recordPosition(account, payload.position)
+    return { ok = account.position ~= nil }
+end
+
+function actions.PROXIMITY_OFFER(payload)
+    local terminal = requireTerminal(payload)
+    cleanupEphemeral()
+    recordPosition(terminal, payload.position)
+    need(freshPosition(terminal), "NO_POSITION",
+        "This kiosk has no GPS fix. Add GPS anchors nearby.")
+    local created = actions.CREATE_PAY_CODE(payload)
+    local offer = {
+        offer_id = nextId("proximity"),
+        code = created.code,
+        terminal_id = terminal.terminal_id,
+        merchant = util.safeText(terminal.name or "Kiosk", 20),
+        description = util.safeText(payload.description or "Purchase", 60),
+        amount = created.amount,
+        declined = {},
+        status = "offered",
+        created_at = util.nowMs(),
+        expires_at = util.nowMs()
+            + (tonumber(config.proximity_offer_ttl_ms) or 60000),
+    }
+    state.proximity_offers[offer.offer_id] = offer
+    retargetOffer(offer)
+    save()
+    return { offer = publicOffer(offer) }
+end
+
+function actions.PROXIMITY_STATUS(payload)
+    local terminal = requireTerminal(payload)
+    local offer = state.proximity_offers[payload.offer_id]
+    need(offer and offer.terminal_id == terminal.terminal_id,
+        "NOT_FOUND", "That offer has ended")
+    local payment = state.active_pay_codes[offer.code]
+    if payment and payment.status == "paid" then
+        offer.status = "paid"
+    elseif offer.status == "offered" and offer.expires_at <= util.nowMs() then
+        offer.declined[offer.target_account_id or ""] = true
+        retargetOffer(offer)
+    end
+    return { offer = publicOffer(offer) }
+end
+
+function actions.PROXIMITY_CANCEL(payload)
+    local terminal = requireTerminal(payload)
+    local offer = state.proximity_offers[payload.offer_id]
+    need(offer and offer.terminal_id == terminal.terminal_id,
+        "NOT_FOUND", "That offer has ended")
+    offer.status = "cancelled"
+    local payment = state.active_pay_codes[offer.code]
+    if payment and payment.status == "pending" then
+        state.active_pay_codes[offer.code] = nil
+    end
+    save()
+    return { offer = publicOffer(offer) }
+end
+
+function actions.PROXIMITY_DECLINE(payload)
+    local account = requireSession(payload)
+    local offer = state.proximity_offers[payload.offer_id]
+    need(offer, "NOT_FOUND", "That offer has ended")
+    need(offer.target_account_id == account.account_id, "NOT_YOURS",
+        "That offer is not yours")
+    offer.declined[account.account_id] = true
+    retargetOffer(offer)
+    save()
+    return { offer = publicOffer(offer) }
+end
+
+-- The offer waiting for this account, used by the OS poll.
+local function offerFor(accountId)
+    for _, offer in pairs(state.proximity_offers) do
+        if offer.target_account_id == accountId and not offerExpired(offer) then
+            local payment = state.active_pay_codes[offer.code]
+            if payment and payment.status == "pending" then
+                return publicOffer(offer)
+            end
+        end
+    end
+    return nil
+end
+
 -- One poll for the whole PUMPE OS: an incoming Urgent Contact, the newest
 -- unread alert for the banner, and every home screen badge. The phone checks
 -- this a few times a second, so it must stay a single cheap request.
 function actions.PUMPE_POLL(payload)
     local account = requireSession(payload)
+    recordPosition(account, payload.position)
     cleanupUrgentCalls()
     local ring
     for _, call in pairs(urgentCalls) do
@@ -2882,6 +3061,7 @@ function actions.PUMPE_POLL(payload)
         unread_notifications = unread,
         unread_messages = badges.messages,
         friend_requests = badges.friend_requests,
+        offer = offerFor(account.account_id),
         latest = latest and {
             notification_id = latest.notification_id,
             title = latest.title,

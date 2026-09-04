@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "6.9.1"
+local INSTALLER_VERSION = "7.0.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -46,6 +46,7 @@ local roles = {
     { id = "bank", label = "BANK SERVER", detail = "Protected download", protected = true },
     { id = "tax", label = "TAX CONTROLLER", detail = "Protected download", protected = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
+    { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
 }
 
 local rolePrograms = {
@@ -56,6 +57,7 @@ local rolePrograms = {
     tax = "tax_controller.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    anchor = "gps_anchor.lua",
 }
 
 local function roleById(id)

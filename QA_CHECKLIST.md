@@ -158,6 +158,17 @@ Run this after installing into a ComputerCraft world.
 - [ ] Start a call, restart the Bank Server, and confirm the call ends rather than hanging.
 - [ ] Confirm a second call is refused while one is already open.
 
+## Proximity Pay
+
+- [ ] Install four GPS Anchors with wireless modems, spread out and not all at one height, and confirm each reports the coordinates you typed.
+- [ ] Run `gps locate` on an ordinary computer in range and confirm it resolves.
+- [ ] Confirm a kiosk with no fix refuses **NEARBY** and says to add anchors.
+- [ ] Stand two PUMPEs at different distances, tap **NEARBY**, and confirm the closer one gets the full-screen offer.
+- [ ] Tap **Not mine** and confirm the offer moves to the second PUMPE and disappears from the first.
+- [ ] Decline on both and confirm the kiosk reports nobody nearby rather than charging anyone.
+- [ ] Accept an offer and confirm the PIN rules and daily limits match a normal code payment, and the transaction log matches.
+- [ ] Walk far away, wait for the position to go stale, and confirm you stop being offered payments.
+
 ## Service Kiosk and monitor
 
 - [ ] Register and link a company.

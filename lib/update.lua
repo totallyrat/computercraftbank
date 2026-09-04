@@ -205,6 +205,7 @@ local ROLE_PROGRAMS = {
     tax = "tax_controller.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    anchor = "gps_anchor.lua",
 }
 
 function update.roleProgram(role)
@@ -431,6 +432,7 @@ local ROLE_PROGRAMS = {
     tax = "tax_controller.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    anchor = "gps_anchor.lua",
 }
 
 function update.roleProgram(role)

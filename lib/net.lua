@@ -98,6 +98,56 @@ function net.reply(recipient, protocol, requestId, ok, data, err, code)
     }, protocol)
 end
 
+-- GPS ----------------------------------------------------------------------
+-- ComputerCraft resolves a position by trilaterating four hosts, so a network
+-- with no constellation cannot locate anything until anchors exist.
+local CHANNEL_GPS = 65534
+local lastFix, lastFixAt
+
+function net.locate(timeout, maxAgeMs)
+    if type(gps) ~= "table" or type(gps.locate) ~= "function" then return nil end
+    local now = util.nowMs()
+    if lastFix and lastFixAt and now - lastFixAt < (maxAgeMs or 10000) then
+        return lastFix
+    end
+    local ok, x, y, z = pcall(gps.locate, timeout or 2)
+    if not ok or type(x) ~= "number" then return nil end
+    lastFix = { x = x, y = y, z = z }
+    lastFixAt = now
+    return lastFix
+end
+
+function net.gpsChannel() return CHANNEL_GPS end
+
+-- Answers the same PING that ComputerCraft's own `gps host` answers, so any
+-- vanilla program locating itself sees these anchors too.
+function net.gpsHost(position, isRunning)
+    local modems = {}
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "modem" then
+            local modem = peripheral.wrap(name)
+            if modem and modem.isWireless and modem.isWireless() then
+                modem.open(CHANNEL_GPS)
+                modems[#modems + 1] = modem
+            end
+        end
+    end
+    if #modems == 0 then return 0 end
+    local served = 0
+    while isRunning == nil or isRunning() do
+        local event, _, channel, replyChannel, message =
+            os.pullEvent("modem_message")
+        if channel == CHANNEL_GPS and message == "PING" then
+            for _, modem in ipairs(modems) do
+                modem.transmit(replyChannel, CHANNEL_GPS,
+                    { position.x, position.y, position.z })
+            end
+            served = served + 1
+        end
+    end
+    return served
+end
+
 local function versionParts(value)
     local major, minor, patch = tostring(value or ""):match(
         "^(%d+)%.(%d+)%.(%d+)")

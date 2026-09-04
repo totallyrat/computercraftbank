@@ -1,5 +1,37 @@
 # Changelog
 
+## 7.0.0
+
+Proximity Pay: a kiosk offers the bill to whoever is standing closest.
+
+### GPS Anchors
+
+- Added the **GPS Anchor** role to Easy Deployment. ComputerCraft can only
+  work out where something is by trilaterating four hosts with known
+  coordinates, so on a network with no constellation nothing can locate
+  itself. Anchors are that constellation.
+- An anchor reads its position from an existing constellation when one is
+  there, and otherwise asks for the block coordinates directly. It answers the
+  same `PING` ComputerCraft's own `gps host` answers, so vanilla programs see
+  these anchors too.
+- Place at least four in range of each other, spread out, with at least one at
+  a different height.
+- Added a signed number keypad so coordinates below zero can be typed.
+
+### Proximity Pay
+
+- Every PUMPE reports its position with the OS poll it already makes, and the
+  Bank keeps the map. Positions older than `position_max_age_ms` are ignored.
+- The Service Kiosk's new **NEARBY** button offers the cart to the closest
+  PUMPE within `proximity_pay_radius` (default 16 blocks).
+- That phone gets a full-screen offer with the merchant, the amount and the
+  distance. **Not mine** passes the bill to the next nearest rather than
+  cancelling the sale, so the wrong person declining does not cost the
+  cashier anything.
+- Accepting settles through the ordinary payment code, so the PIN rules,
+  daily limits and transaction log are identical to every other payment. A
+  charge is never made without a tap.
+
 ## 6.9.1
 
 Fixes devices reporting 6.9.0 while still running the previous release's apps.

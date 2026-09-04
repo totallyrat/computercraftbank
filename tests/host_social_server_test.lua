@@ -269,4 +269,71 @@ assert(bank.urgent_calls[missed.call_id].status == "missed")
 assert(state.conversations ~= nil and state.urgent_calls == nil,
     "urgent calls must stay out of the saved state")
 
+-- Proximity Pay ---------------------------------------------------------------
+
+local kiosk = actions.KIOSK_REGISTER({ name = "Corner Shop" })
+local kioskAuth = {
+    terminal_id = kiosk.terminal_id, terminal_token = kiosk.terminal_token,
+}
+local function atKiosk(extra)
+    local payload = {}
+    for key, value in pairs(kioskAuth) do payload[key] = value end
+    for key, value in pairs(extra or {}) do payload[key] = value end
+    return payload
+end
+
+-- Without any GPS fix the kiosk cannot offer to anyone.
+rejected(actions.PROXIMITY_OFFER, "NO_POSITION",
+    atKiosk({ amount = 25, description = "Bread" }))
+
+local shop = { x = 100, y = 64, z = 100 }
+actions.PUMPE_POLL(as(alice, { position = { x = 103, y = 64, z = 100 } }))
+actions.PUMPE_POLL(as(bob, { position = { x = 112, y = 64, z = 100 } }))
+actions.PUMPE_POLL(as(dave, { position = { x = 400, y = 64, z = 400 } }))
+
+local offered = actions.PROXIMITY_OFFER(atKiosk({
+    amount = 25, description = "Bread", position = shop })).offer
+assert(offered.target_name == "Alice Fox",
+    "the nearest PUMPE is offered the bill, got " .. tostring(offered.target_name))
+assert(offered.distance and offered.distance < 4)
+
+-- The offer reaches that phone through the same OS poll everything else uses.
+local waiting = actions.PUMPE_POLL(as(alice)).offer
+assert(waiting and waiting.offer_id == offered.offer_id)
+assert(actions.PUMPE_POLL(as(bob)).offer == nil,
+    "only the targeted phone sees the offer")
+
+-- Declining hands it to the next nearest rather than cancelling the sale.
+local passed = actions.PROXIMITY_DECLINE(
+    as(alice, { offer_id = offered.offer_id })).offer
+assert(passed.target_name == "Bob Wolf",
+    "a decline passes the bill along, got " .. tostring(passed.target_name))
+assert(actions.PUMPE_POLL(as(alice)).offer == nil,
+    "the phone that declined stops being asked")
+
+-- Someone far outside the radius is never offered anything.
+actions.PROXIMITY_DECLINE(as(bob, { offer_id = offered.offer_id }))
+local exhausted = actions.PROXIMITY_STATUS(
+    atKiosk({ offer_id = offered.offer_id })).offer
+assert(exhausted.status == "nobody_nearby",
+    "a distant PUMPE is out of range, got " .. tostring(exhausted.status))
+assert(actions.PUMPE_POLL(as(dave)).offer == nil)
+
+-- Accepting settles through the ordinary payment code, fee rules included.
+actions.PUMPE_POLL(as(alice, { position = { x = 101, y = 64, z = 100 } }))
+local second = actions.PROXIMITY_OFFER(atKiosk({
+    amount = 30, description = "Milk", position = shop })).offer
+local preview = actions.PAY_CODE_PREVIEW(as(alice, { code = second.code }))
+assert(preview.amount == 30)
+local before = actions.ACCOUNT_SUMMARY(as(alice)).account.balance
+actions.PAY_CODE_CONFIRM(as(alice, { code = second.code, pin = "1111" }))
+assert(actions.ACCOUNT_SUMMARY(as(alice)).account.balance == before - 30)
+assert(actions.PROXIMITY_STATUS(
+    atKiosk({ offer_id = second.offer_id })).offer.status == "paid")
+
+-- A stale fix does not make someone a payment target forever.
+currentEpoch = currentEpoch + 10 * 60 * 1000
+rejected(actions.PROXIMITY_OFFER, "NO_POSITION",
+    atKiosk({ amount = 5, description = "Stale", position = nil }))
+
 print("host_social_server_test: OK")
