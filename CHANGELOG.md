@@ -1,5 +1,25 @@
 # Changelog
 
+## 8.1.0
+
+The first Bank Server no longer needs the release on a drive.
+
+- Choosing **Bank Server** now downloads the Bank's runtime straight from the
+  public release manifest over HTTPS, verified file by file and committed
+  atomically. A clean computer needs nothing but `startup.lua`, which is the
+  point of Easy Deployment: anyone can add the whole system to their world
+  from one file.
+- Only the Bank's own seven files are fetched. Role programs stay out of it —
+  the Bank pulls each one into `/updates` on demand the first time somebody
+  installs that role — so a first install moves about 320 KiB instead of
+  600 KiB.
+- A release package beside `startup.lua` is still the offline route. When HTTP
+  is switched off or the manifest cannot be reached, Easy Deployment says
+  **NO ONLINE RELEASE** with the reason and installs from the local package
+  exactly as before.
+- A published file that fails its checksum rolls the whole install back and
+  starts nothing, same as every other install path.
+
 ## 8.0.1
 
 Hardening for the update path itself. 8.0.0 installs correctly — a shipped

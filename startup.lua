@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "8.0.1"
+local INSTALLER_VERSION = "8.1.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -832,6 +832,7 @@ end
 -- Only the changing rows are repainted. Clearing the whole screen for every
 -- 6 KiB chunk made the install screen flicker and hid the progress bar.
 local progressChrome
+local progressSource
 local function renderProgress(role, file, completed, total, fileIndex, fileCount)
     local width, height = target.getSize()
     local barWidth = math.max(8, width - 6)
@@ -839,7 +840,8 @@ local function renderProgress(role, file, completed, total, fileIndex, fileCount
     if progressChrome ~= role.label then
         progressChrome = role.label
         clear()
-        header("INSTALLING " .. role.label, "Receiving from the Bank Server")
+        header("INSTALLING " .. role.label,
+            progressSource or "Receiving from the Bank Server")
         fill(4, barY, barWidth, 2, theme.panel)
     end
     fill(2, 6, width - 2, 1, theme.background)
@@ -1029,7 +1031,7 @@ local function installLocalBank(role)
     local sourceRoot = localBankSourceRoot()
     if not sourceRoot then
         message("error", "LOCAL BANK FILES MISSING",
-            "Keep the complete release beside installer.lua", 2.2)
+            "Allow HTTP, or keep the release beside installer.lua", 2.2)
         return false
     end
     local manifest = { version = INSTALLER_VERSION, files = {} }
@@ -1142,6 +1144,95 @@ local function installLocalBank(role)
     return true
 end
 
+-- The first Bank in a world has nothing to download from, which used to mean
+-- keeping the whole release on a disk beside the installer. The public
+-- manifest is the same verified list of files, so fetch the Bank's runtime
+-- straight from it. Depot programs are deliberately left out: the Bank pulls
+-- each one on demand the first time somebody installs that role.
+local BANK_MANIFEST_FILES = {
+    { path = "bank_server.lua", source = "bank_server.lua" },
+    { path = "installer.lua", source = "startup.lua" },
+    { path = "config.lua", source = "config.lua" },
+    { path = "lib/net.lua", source = "lib/net.lua" },
+    { path = "lib/ui.lua", source = "lib/ui.lua" },
+    { path = "lib/update.lua", source = "lib/update.lua" },
+    { path = "lib/util.lua", source = "lib/util.lua" },
+}
+
+local function publicReleaseBase()
+    local clean = PUBLIC_MANIFEST_URL:gsub("[?#].*$", "")
+    return clean:match("^(https://.*/)[^/]+$")
+end
+
+local function loadPublicManifest()
+    if publicManifest then return publicManifest end
+    local body, err = fetchHttps(PUBLIC_MANIFEST_URL, 256 * 1024)
+    if not body then return nil, err or "Could not reach the manifest" end
+    local ok, manifest = pcall(textutils.unserializeJSON, body)
+    if not ok or type(manifest) ~= "table" then
+        return nil, "The release manifest is not valid JSON"
+    end
+    publicManifest = manifest
+    return manifest
+end
+
+-- Returns the installed release, or nil plus a reason so the caller can fall
+-- back to a local package.
+local function installBankFromManifest(role)
+    clear()
+    header("BANK SERVER", "Checking the release")
+    center(8, "Reading the manifest...", theme.accent)
+    local manifest, manifestError = loadPublicManifest()
+    if not manifest then return nil, manifestError end
+    local base = publicReleaseBase()
+    if not base then return nil, "The manifest URL has no release folder" end
+
+    local files, totalBytes = {}, 0
+    for _, file in ipairs(BANK_MANIFEST_FILES) do
+        local entry = manifestEntry(manifest, file.source)
+        if not entry then return nil, "Release is missing " .. file.source end
+        entry.path = file.path
+        files[#files + 1] = entry
+        totalBytes = totalBytes + entry.size
+    end
+
+    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
+    if not fs.exists(UPDATES_ROOT) then fs.makeDir(UPDATES_ROOT) end
+    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
+    if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
+    fs.makeDir(STAGING_ROOT)
+
+    local function fail(reason)
+        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
+        return nil, reason
+    end
+
+    progressChrome, progressSource = nil, "Downloading the release"
+    local completed = 0
+    for index, entry in ipairs(files) do
+        renderProgress(role, entry, completed, totalBytes, index, #files)
+        local body, err = fetchHttps(base .. entry.source, entry.size + 1)
+        if not body then
+            return fail(err or ("Could not download " .. entry.source))
+        end
+        cooperativeYield()
+        if #body ~= entry.size or checksum(body) ~= entry.checksum then
+            return fail("Verification failed for " .. entry.path)
+        end
+        local written, writeError =
+            writeFile(fs.combine(STAGING_ROOT, entry.path), body)
+        if not written then return fail(tostring(writeError)) end
+        completed = completed + entry.size
+        renderProgress(role, entry, completed, totalBytes, index, #files)
+    end
+
+    local release = { version = tostring(manifest.version), files = files }
+    local committed, commitError = commitInstallation(release)
+    if not committed then return fail(tostring(commitError)) end
+    progressSource = nil
+    return release
+end
+
 writeStartup = function(role)
     local startupPath = "/startup.lua"
     local installerMarker = "-- PUMPE EASY DEPLOYMENT"
@@ -1208,11 +1299,23 @@ local function installRole(role, automatic)
 
     if role.id == "bank" then
         if automatic then return false end
-        if installLocalBank(role) then
+        local function launch()
             running = false
             shell.run(fs.combine(INSTALL_ROOT, rolePrograms.bank))
             return true
         end
+        local release, onlineError = installBankFromManifest(role)
+        if release then
+            local _, startupMessage = writeStartup(role)
+            message("success", "BANK SERVER v" .. release.version,
+                startupMessage .. " - starting now", 0.9)
+            return launch()
+        end
+        -- No internet, or a manifest that cannot be used. A release sitting
+        -- beside the installer still works, so say what went wrong and try.
+        message("warning", "NO ONLINE RELEASE",
+            tostring(onlineError or "Manifest unreachable"), 1.6)
+        if installLocalBank(role) then return launch() end
         return false
     end
 

@@ -163,7 +163,7 @@ Easy Deployment checks the public HTTPS manifest on screen before the menu opens
 
 The role picker shows the role and version this computer already has, and offers **START ROLE** so an installed computer can be relaunched without reinstalling anything.
 
-The first Bank Server cannot download itself because no deployment host exists yet. It must always be bootstrapped from the complete local package.
+The first Bank Server has no deployment host to download from, so Easy Deployment fetches its runtime straight from the public release manifest over HTTPS — a clean computer needs nothing but `startup.lua`. It downloads only the Bank's own seven files; role programs are pulled into `/updates` on demand the first time somebody installs that role. If HTTP is switched off or the manifest cannot be reached, it says so and falls back to a complete release package sitting beside `startup.lua`.
 
 ## Automatic Internet Updates
 

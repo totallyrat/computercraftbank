@@ -16,7 +16,11 @@ Run this after installing into a ComputerCraft world.
 - [ ] Install a fresh Bank from files on the computer drive and confirm the source files are moved—not duplicated—into `/pumpe` and `/updates` before the Bank launches.
 - [ ] Upgrade a v6.0.1 Bank with duplicate runtime files in `/updates`; confirm Easy Deployment frees those copies before replacing `bank_server.lua`, then the Bank starts with no duplicate runtime or stale update folders.
 - [ ] Confirm `/pumpe` contains only the Bank runtime, installer, config, and required libraries, while `/updates` contains one copy of each role-specific program plus `public/config.lua`.
-- [ ] Keep the full release beside `startup.lua`, choose **Bank Server**, enter `4040`, and confirm it installs locally without trying to find a running Bank Server.
+- [ ] On a clean computer holding **only** `startup.lua`, with HTTP allowed, choose **Bank Server**, enter `4040`, and confirm it downloads and verifies the Bank from the public manifest without any release package or running Bank.
+- [ ] Confirm that install pulls only the Bank's own files — no `pumpe.lua`, `ccg.lua` or other role program — and that the Bank still starts with **Easy Deployment online**.
+- [ ] Install a client role from that Bank and confirm the role program is fetched into `/updates` on demand at that moment.
+- [ ] Switch HTTP off, keep the full release beside `startup.lua`, choose **Bank Server**, enter `4040`, and confirm it reports **NO ONLINE RELEASE** and then installs locally without trying to find a running Bank Server.
+- [ ] With neither HTTP nor a local release, confirm it reports **LOCAL BANK FILES MISSING** rather than installing something half-formed.
 - [ ] Confirm the Bank launches immediately, creates `/updates/`, and reports **Easy Deployment online** without stopping at another menu.
 - [ ] Replace a local distributable script, restart the Bank Server, and confirm its `/updates/` copy is refreshed.
 - [ ] Copy only `startup.lua` to the root of a clean Advanced Computer, restart, and confirm the touch installer opens automatically.
