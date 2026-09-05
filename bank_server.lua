@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.2"
+local PROGRAM_VERSION = "8.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -641,6 +641,7 @@ local prefixes = {
     ccg_lobby = { "GAME", 8 },
     conversation = { "CHAT", 8 },
     proximity = { "NEAR", 8 },
+    scan = { "SCAN", 8 },
     announcement = { "ANN", 8 },
 }
 
@@ -691,6 +692,14 @@ local function checkAccountActive(account)
     need(not account.frozen, "ACCOUNT_FROZEN", "This account is frozen")
 end
 
+-- Payment features are switched off while a tax demand is outstanding, so a
+-- demand handed out as a fine cannot be dodged by spending the balance first.
+-- Receiving money, and paying the demand itself, are deliberately still open.
+local function checkNoTaxDemand(account)
+    need(not account.tax_demand, "TAX_DEMAND_DUE",
+        "Settle your tax demand before paying for anything else")
+end
+
 local function createSession(account)
     local token = util.token("SESSION")
     sessions[token] = {
@@ -707,6 +716,14 @@ local function requireSession(payload)
     local account = state.accounts[session.account_id]
     checkAccountActive(account)
     resetDailySpend(account)
+    return account
+end
+
+-- Every route that moves money out of an account. requireSession alone is not
+-- enough: a new spending action must be added here on purpose.
+local function requireSpender(payload)
+    local account = requireSession(payload)
+    checkNoTaxDemand(account)
     return account
 end
 
@@ -1210,7 +1227,7 @@ local function buildSendMoneyQuote(sender, payload)
 end
 
 function actions.SEND_MONEY_QUOTE(payload)
-    local sender = requireSession(payload)
+    local sender = requireSpender(payload)
     local quote = buildSendMoneyQuote(sender, payload)
     quote.recipient_account = nil
     return quote
@@ -1250,7 +1267,7 @@ local function performTransfer(sender, recipientName, amount, description)
 end
 
 function actions.SEND_MONEY(payload)
-    local sender = requireSession(payload)
+    local sender = requireSpender(payload)
     need(verifyAccount(sender, payload.pin), "BAD_PIN", "Incorrect PIN")
     return (performTransfer(sender, payload.recipient, payload.amount,
         payload.description))
@@ -1746,7 +1763,7 @@ local function processCCGGames()
 end
 
 function actions.BET_UNLOCK(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
     releaseAccountBetHolds(account)
     save()
@@ -1763,7 +1780,7 @@ function actions.BET_WALLET_SUMMARY(payload)
 end
 
 function actions.BET_WALLET_DEPOSIT(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
     local amount = validateAmount(payload.amount, account.balance)
     local wallet = walletFor(account)
@@ -2142,6 +2159,11 @@ SOCIAL.ring_ms = 30 * 1000
 SOCIAL.idle_ms = 10 * 60 * 1000
 local urgentCalls = {}
 
+-- The proximity scan engine, gathered under one name. Open scans are
+-- deliberately not persisted: a Bank restart drops a half-finished door check
+-- the way a dropped connection would.
+local scans = { requests = {}, kinds = { ticket = true, visa = true } }
+
 local function socialAccount(account)
     account.friends = account.friends or {}
     account.friend_requests_in = account.friend_requests_in or {}
@@ -2300,6 +2322,7 @@ local function unreadFor(conversation, accountId)
 end
 
 local function conversationTitle(conversation, accountId)
+    if conversation.kind == "government" then return "Government" end
     if conversation.kind == "group" then return conversation.title end
     for _, memberId in ipairs(conversation.member_ids) do
         if memberId ~= accountId then
@@ -2340,7 +2363,8 @@ local function appendMessage(conversation, senderId, kind, body, extra)
     local item = {
         seq = conversation.next_seq,
         sender_id = senderId,
-        sender_name = sender and sender.name or "PUMPE",
+        sender_name = sender and sender.name
+            or (senderId == "GOVERNMENT" and "Government") or "PUMPE",
         kind = kind,
         body = util.safeText(body, SOCIAL.max_message),
         day = util.ingameDay(),
@@ -2511,6 +2535,8 @@ end
 function actions.CHAT_REQUEST_MONEY(payload)
     local account = socialAccount(requireSession(payload))
     local conversation = requireConversation(account, payload.conversation_id)
+    need(conversation.kind ~= "government", "GOVERNMENT_THREAD",
+        "Only the government can move money in this chat")
     local amount = validateAmount(payload.amount)
     local item = appendMessage(conversation, account.account_id,
         "money_request", util.safeText(payload.note or "", 60), {
@@ -2537,8 +2563,10 @@ local function conversationCounterpart(conversation, account, accountId)
 end
 
 function actions.CHAT_SEND_MONEY(payload)
-    local account = socialAccount(requireSession(payload))
+    local account = socialAccount(requireSpender(payload))
     local conversation = requireConversation(account, payload.conversation_id)
+    need(conversation.kind ~= "government", "GOVERNMENT_THREAD",
+        "Only the government can move money in this chat")
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
     local recipient = conversationCounterpart(conversation, account,
         payload.to_account_id)
@@ -2556,6 +2584,8 @@ end
 function actions.CHAT_PAY_REQUEST(payload)
     local account = socialAccount(requireSession(payload))
     local conversation = requireConversation(account, payload.conversation_id)
+    -- Paying the government is never blocked by owing the government.
+    if conversation.kind ~= "government" then checkNoTaxDemand(account) end
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
     local requestSeq = math.floor(tonumber(payload.seq) or 0)
     local target
@@ -2569,6 +2599,26 @@ function actions.CHAT_PAY_REQUEST(payload)
         "That request was already handled")
     need(target.sender_id ~= account.account_id, "OWN_REQUEST",
         "That is your own request")
+    -- A government demand is paid to the state. There is no counterpart
+    -- account to credit, so it settles like a fine rather than a transfer.
+    if conversation.kind == "government" then
+        local amount = validateAmount(target.amount)
+        need(account.balance >= amount, "INSUFFICIENT_FUNDS",
+            "Not enough money to pay this")
+        account.balance = util.roundMoney(account.balance - amount)
+        state.tax_revenue = util.roundMoney((state.tax_revenue or 0) + amount)
+        transaction(account, "government", -amount, "Government",
+            util.safeText(target.body or "Government demand", 60))
+        target.status = "paid"
+        target.paid_by = account.account_id
+        appendMessage(conversation, account.account_id, "money_sent",
+            "paid " .. util.money(amount, config.currency) .. " to Government",
+            { amount = amount })
+        logActivity(account.name .. " paid a government demand", colors.lime)
+        save()
+        return { quote = { amount = amount, total = amount, fee = 0,
+            recipient = "Government" } }
+    end
     local recipient = state.accounts[target.sender_id]
     checkAccountActive(recipient)
     local quote = performTransfer(account, recipient.name, target.amount,
@@ -2838,7 +2888,7 @@ function actions.URGENT_REQUEST_MONEY(payload)
 end
 
 function actions.URGENT_SEND_MONEY(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     local call = requireCall(account, payload.call_id)
     need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
@@ -2855,7 +2905,7 @@ function actions.URGENT_SEND_MONEY(payload)
 end
 
 function actions.URGENT_PAY_REQUEST(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     local call = requireCall(account, payload.call_id)
     need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
@@ -2901,6 +2951,18 @@ local function freshPosition(holder)
     return position
 end
 
+-- A scanner sends its own coordinates rather than borrowing an account's, so
+-- an organiser standing at their own door is not mistaken for the terminal.
+function scans.position(payload)
+    local position = type(payload) == "table" and payload.position or nil
+    local x = position and tonumber(position.x)
+    local y = position and tonumber(position.y)
+    local z = position and tonumber(position.z)
+    need(x and y and z, "NO_POSITION",
+        "This computer has no GPS fix. Add GPS anchors nearby.")
+    return { x = x, y = y, z = z }
+end
+
 local function distanceBetween(first, second)
     local dx, dy, dz = first.x - second.x, first.y - second.y, first.z - second.z
     return math.sqrt(dx * dx + dy * dy + dz * dz)
@@ -2929,6 +2991,9 @@ end
 
 -- Hands the bill to the next nearest PUMPE, or gives up when nobody is left.
 local function retargetOffer(offer)
+    -- Portable Mode picks the customer first and the basket second. Once
+    -- somebody has said yes, the bill is theirs and is never passed along.
+    if offer.claimed_by then return offer end
     local terminal = state.terminals[offer.terminal_id]
     local origin = terminal and freshPosition(terminal)
     if not origin then
@@ -2954,13 +3019,15 @@ local function retargetOffer(offer)
 end
 
 local function publicOffer(offer)
-    local payment = state.active_pay_codes[offer.code]
+    local payment = offer.code and state.active_pay_codes[offer.code]
     return {
         offer_id = offer.offer_id,
         code = offer.code,
         amount = offer.amount,
+        items = offer.items and util.copy(offer.items) or nil,
         merchant = offer.merchant,
         description = offer.description,
+        portable = offer.portable == true,
         status = payment and payment.status == "paid" and "paid" or offer.status,
         target_name = offer.target_name,
         distance = offer.distance,
@@ -2999,17 +3066,95 @@ function actions.PROXIMITY_OFFER(payload)
     return { offer = publicOffer(offer) }
 end
 
+-- Portable Mode. A kiosk with no customer-facing screen asks who is paying
+-- before anything is rung up, then sends the finished basket to that same
+-- PUMPE. The customer confirms twice: once to take the sale, once to pay it.
+function actions.PROXIMITY_CLAIM(payload)
+    local terminal = requireTerminal(payload)
+    cleanupEphemeral()
+    recordPosition(terminal, payload.position)
+    need(freshPosition(terminal), "NO_POSITION",
+        "This kiosk has no GPS fix. Add GPS anchors nearby.")
+    local offer = {
+        offer_id = nextId("proximity"),
+        terminal_id = terminal.terminal_id,
+        merchant = util.safeText(terminal.name or "Kiosk", 20),
+        description = util.safeText(payload.description or "Portable sale", 60),
+        portable = true,
+        declined = {},
+        status = "claiming",
+        created_at = util.nowMs(),
+        expires_at = util.nowMs()
+            + (tonumber(config.proximity_offer_ttl_ms) or 60000),
+    }
+    state.proximity_offers[offer.offer_id] = offer
+    retargetOffer(offer)
+    if offer.status == "offered" then offer.status = "claiming" end
+    save()
+    return { offer = publicOffer(offer) }
+end
+
+function actions.PROXIMITY_ACCEPT(payload)
+    local account = requireSpender(payload)
+    local offer = state.proximity_offers[payload.offer_id]
+    need(offer and offer.status == "claiming", "NOT_FOUND",
+        "That kiosk is no longer waiting")
+    need(offer.target_account_id == account.account_id, "NOT_YOURS",
+        "That offer is not yours")
+    checkAccountActive(account)
+    offer.claimed_by = account.account_id
+    offer.status = "claimed"
+    offer.expires_at = util.nowMs()
+        + (tonumber(config.proximity_offer_ttl_ms) or 60000) * 5
+    save()
+    return { offer = publicOffer(offer) }
+end
+
+-- The basket, once the operator has rung it up.
+function actions.PROXIMITY_BILL(payload)
+    local terminal = requireTerminal(payload)
+    local offer = state.proximity_offers[payload.offer_id]
+    need(offer and offer.terminal_id == terminal.terminal_id,
+        "NOT_FOUND", "That sale has ended")
+    need(offer.claimed_by, "NO_CUSTOMER", "Nobody has taken this sale yet")
+    need(not offer.code, "ALREADY_BILLED", "That sale was already sent")
+    local created = actions.CREATE_PAY_CODE(payload)
+    local payment = state.active_pay_codes[created.code]
+    offer.code = created.code
+    offer.amount = created.amount
+    offer.items = payment and util.copy(payment.items) or nil
+    offer.description = util.safeText(payload.description or offer.description, 60)
+    offer.status = "offered"
+    offer.expires_at = util.nowMs() + config.payment_code_ttl_ms
+    local account = state.accounts[offer.claimed_by]
+    if account then
+        notification(account, "Your basket is ready",
+            util.money(offer.amount, config.currency) .. " at " .. offer.merchant,
+            "money")
+    end
+    save()
+    return { offer = publicOffer(offer) }
+end
+
 function actions.PROXIMITY_STATUS(payload)
     local terminal = requireTerminal(payload)
     local offer = state.proximity_offers[payload.offer_id]
     need(offer and offer.terminal_id == terminal.terminal_id,
         "NOT_FOUND", "That offer has ended")
-    local payment = state.active_pay_codes[offer.code]
+    local payment = offer.code and state.active_pay_codes[offer.code]
     if payment and payment.status == "paid" then
         offer.status = "paid"
-    elseif offer.status == "offered" and offer.expires_at <= util.nowMs() then
-        offer.declined[offer.target_account_id or ""] = true
-        retargetOffer(offer)
+    elseif offer.expires_at <= util.nowMs()
+        and (offer.status == "offered" or offer.status == "claiming") then
+        if offer.claimed_by then
+            offer.status = "expired"
+        else
+            offer.declined[offer.target_account_id or ""] = true
+            retargetOffer(offer)
+            if offer.portable and offer.status == "offered" then
+                offer.status = "claiming"
+            end
+        end
     end
     return { offer = publicOffer(offer) }
 end
@@ -3035,17 +3180,228 @@ function actions.PROXIMITY_DECLINE(payload)
     need(offer.target_account_id == account.account_id, "NOT_YOURS",
         "That offer is not yours")
     offer.declined[account.account_id] = true
-    retargetOffer(offer)
+    if offer.claimed_by == account.account_id and offer.code then
+        -- They took the sale and the operator rang the basket up for them.
+        -- Handing that basket on would bill a stranger for someone else's
+        -- shopping, so a declined Portable sale ends instead.
+        offer.claimed_by = nil
+        offer.status = "declined"
+        local payment = state.active_pay_codes[offer.code]
+        if payment and payment.status == "pending" then
+            state.active_pay_codes[offer.code] = nil
+        end
+    else
+        offer.claimed_by = nil
+        retargetOffer(offer)
+        if offer.portable and offer.status == "offered" then
+            offer.status = "claiming"
+        end
+    end
     save()
     return { offer = publicOffer(offer) }
+end
+
+-- Proximity scanning ---------------------------------------------------------
+-- A PUMPE showing a ticket or a travel document tells the Bank what it is
+-- holding up. A door or a border then asks who is nearest with the right
+-- thing on screen, rather than anybody typing an eight character code.
+
+function scans.presenting(account, kind)
+    local held = account.presenting
+    if type(held) ~= "table" or held.kind ~= kind then return nil end
+    local maxAge = tonumber(config.present_max_age_ms) or 20000
+    if util.nowMs() - (held.at or 0) > maxAge then return nil end
+    return held
+end
+
+-- The nearest account holding up something this scanner accepts. `matches`
+-- decides whether the held reference is valid here, so the ticket door and
+-- the border gate share everything except that one rule.
+function scans.nearest(origin, kind, matches, excluded)
+    local best, bestDistance, bestHeld
+    local radius = tonumber(config.proximity_pay_radius) or 16
+    for accountId, account in pairs(state.accounts) do
+        local held = not excluded[accountId] and not account.banned
+            and not account.frozen and scans.presenting(account, kind)
+        local position = held and freshPosition(account)
+        if position and matches(account, held) then
+            local distance = distanceBetween(origin, position)
+            if distance <= radius
+                and (not bestDistance or distance < bestDistance) then
+                best, bestDistance, bestHeld = account, distance, held
+            end
+        end
+    end
+    return best, bestDistance, bestHeld
+end
+
+function scans.public(request)
+    return {
+        request_id = request.request_id,
+        kind = request.kind,
+        status = request.status,
+        title = request.title,
+        detail = request.detail,
+        target_name = request.target_name,
+        distance = request.distance,
+        reference = request.reference,
+        result = request.result,
+    }
+end
+
+function scans.expired(request)
+    return request.status ~= "offered" or request.expires_at <= util.nowMs()
+end
+
+-- Hands the ask to the next nearest holder, or reports that nobody is there.
+function scans.retarget(request)
+    local origin = request.origin
+    local account, distance, held = scans.nearest(origin, request.kind,
+        request.matches, request.declined)
+    if not account then
+        request.status = "nobody_nearby"
+        request.target_account_id, request.target_name = nil, nil
+        return request
+    end
+    request.target_account_id = account.account_id
+    request.target_name = account.name
+    request.reference = held.ref
+    request.distance = math.floor(distance * 10) / 10
+    request.status = "offered"
+    request.expires_at = util.nowMs()
+        + (tonumber(config.proximity_offer_ttl_ms) or 60000)
+    notification(account, request.title, request.detail, "info")
+    return request
+end
+
+-- Scans are in-memory, so they need their own sweep. A settled one is kept
+-- briefly so the scanner's next poll still sees the result.
+function scans.cleanup()
+    local now = util.nowMs()
+    for requestId, request in pairs(scans.requests) do
+        local settled = request.settled_at or request.created_at
+        if (request.status ~= "offered" and now - settled > 60 * 1000)
+            or request.expires_at + 5 * 60 * 1000 < now then
+            scans.requests[requestId] = nil
+        end
+    end
+end
+
+function scans.new(kind, origin, title, detail, matches, extra)
+    cleanupEphemeral()
+    scans.cleanup()
+    local request = {
+        request_id = nextId("scan"),
+        kind = kind,
+        origin = origin,
+        title = util.safeText(title, 40),
+        detail = util.safeText(detail, 90),
+        matches = matches,
+        declined = {},
+        status = "offered",
+        created_at = util.nowMs(),
+        expires_at = util.nowMs()
+            + (tonumber(config.proximity_offer_ttl_ms) or 60000),
+    }
+    for key, value in pairs(extra or {}) do request[key] = value end
+    scans.requests[request.request_id] = request
+    scans.retarget(request)
+    return request
+end
+
+function scans.poll(request)
+    scans.cleanup()
+    if request.status == "offered" and request.expires_at <= util.nowMs() then
+        request.declined[request.target_account_id or ""] = true
+        scans.retarget(request)
+    end
+    return request
+end
+
+-- The scan waiting on this account, used by the OS poll.
+function scans.forAccount(accountId)
+    for _, request in pairs(scans.requests) do
+        if request.target_account_id == accountId and not scans.expired(request) then
+            return scans.public(request)
+        end
+    end
+    return nil
+end
+
+-- The scanner's own view of a request it started.
+function scans.requireOwn(ownerId, requestId, field)
+    local request = scans.requests[requestId]
+    need(request and request[field] == ownerId, "NOT_FOUND",
+        "That check has ended")
+    return request
+end
+
+function scans.require(account, requestId)
+    local request = scans.requests[requestId]
+    need(request and not scans.expired(request), "NOT_FOUND",
+        "That request has ended")
+    need(request.target_account_id == account.account_id, "NOT_YOURS",
+        "That request is not yours")
+    return request
+end
+
+function actions.PRESENT(payload)
+    local account = requireSession(payload)
+    recordPosition(account, payload.position)
+    local kind = payload.kind
+    if not scans.kinds[kind] or type(payload.ref) ~= "string" then
+        account.presenting = nil
+        return { presenting = false }
+    end
+    account.presenting = { kind = kind, ref = payload.ref, at = util.nowMs() }
+    return { presenting = true }
+end
+
+-- Accepting runs the scan's own settle step: admitting a ticket, or putting a
+-- traveller through the border. A refusal there ends this person's turn and
+-- tells the scanner why, rather than silently passing to the next one.
+function actions.SCAN_ACCEPT(payload)
+    local account = requireSession(payload)
+    local request = scans.require(account, payload.request_id)
+    local ok, result = pcall(request.settle, request, account)
+    if not ok then
+        request.declined[account.account_id] = true
+        request.status = "rejected"
+        request.settled_at = util.nowMs()
+        request.result = type(result) == "table" and result.message
+            or "Could not be accepted"
+        save()
+        error(result, 0)
+    end
+    request.status = "accepted"
+    request.settled_at = util.nowMs()
+    request.settled_account_id = account.account_id
+    request.result = result
+    save()
+    return { scan = scans.public(request) }
+end
+
+function actions.SCAN_DECLINE(payload)
+    local account = requireSession(payload)
+    local request = scans.require(account, payload.request_id)
+    request.declined[account.account_id] = true
+    scans.retarget(request)
+    save()
+    return { scan = scans.public(request) }
 end
 
 -- The offer waiting for this account, used by the OS poll.
 local function offerFor(accountId)
     for _, offer in pairs(state.proximity_offers) do
-        if offer.target_account_id == accountId and not offerExpired(offer) then
-            local payment = state.active_pay_codes[offer.code]
-            if payment and payment.status == "pending" then
+        if offer.target_account_id == accountId then
+            -- A Portable Mode offer waits for the customer before it has a
+            -- basket, so there is no pay code to check yet.
+            if offer.status == "claiming" and offer.expires_at > util.nowMs() then
+                return publicOffer(offer)
+            end
+            local payment = offer.code and state.active_pay_codes[offer.code]
+            if not offerExpired(offer) and payment
+                and payment.status == "pending" then
                 return publicOffer(offer)
             end
         end
@@ -3278,12 +3634,17 @@ function actions.ADMIN_ANNOUNCE(payload)
     local body = util.safeText(util.trim(payload.body or ""), 160)
     need(#title > 0, "EMPTY_TITLE", "Give the announcement a title")
     local mode = payload.mode == "modal" and "modal" or "banner"
+    -- An announcement can be aimed at one account instead of the whole
+    -- network. Everything else about it is identical.
+    local target = payload.account_id and requireAccountId(payload) or nil
     state.announcements = state.announcements or {}
     local item = {
         announcement_id = nextId("announcement"),
         title = title,
         body = body,
         mode = mode,
+        account_id = target and target.account_id or nil,
+        target_name = target and target.name or nil,
         created_day = util.ingameDay(),
         created_time = util.formatClock(),
         created_at = util.nowMs(),
@@ -3294,16 +3655,137 @@ function actions.ADMIN_ANNOUNCE(payload)
     -- Every announcement is also an ordinary alert, so it survives being
     -- dismissed and can be read again later.
     for _, account in pairs(state.accounts) do
-        notification(account, title, body, mode == "modal" and "urgent" or "info")
+        if not target or account.account_id == target.account_id then
+            notification(account, title, body,
+                mode == "modal" and "urgent" or "info")
+        end
     end
     save()
-    logActivity("Announcement: " .. title, colors.magenta)
+    logActivity("Announcement: " .. title
+        .. (target and (" -> " .. target.name) or ""), colors.magenta)
     return { announcement = util.copy(item) }
+end
+
+-- Government messages. A thread between the state and one account, used for
+-- anything that needs a reply: a speeding ticket, a query, a warning. Only
+-- the government can move money in it; the holder can answer and can settle
+-- what is asked of them.
+local function governmentThread(account)
+    local threadId = account.government_conversation_id
+    local existing = threadId and state.conversations[threadId]
+    if existing then return existing end
+    local conversation = newConversation("government",
+        { account.account_id }, "Government", nil)
+    account.government_conversation_id = conversation.conversation_id
+    return conversation
+end
+
+local function governmentSay(conversation, account, kind, body, extra)
+    local item = appendMessage(conversation, "GOVERNMENT", kind, body, extra)
+    notification(account, "Government message",
+        util.safeText(body, 90), "warning")
+    return item
+end
+
+function actions.ADMIN_MESSAGE(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local body = util.safeText(util.trim(payload.body or ""), SOCIAL.max_message)
+    need(#body > 0, "EMPTY_MESSAGE", "Write something to send")
+    local conversation = governmentThread(account)
+    local item = governmentSay(conversation, account, "text", body)
+    save()
+    logActivity("Government message to " .. account.name, colors.magenta)
+    return { conversation_id = conversation.conversation_id,
+        message = util.copy(item) }
+end
+
+function actions.ADMIN_MESSAGE_DEMAND(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local amount = validateAmount(payload.amount)
+    local note = util.safeText(util.trim(payload.note or "Government demand"), 60)
+    local conversation = governmentThread(account)
+    local item = governmentSay(conversation, account, "money_request", note, {
+        amount = amount,
+        status = "pending",
+    })
+    save()
+    logActivity("Government asked " .. account.name .. " for "
+        .. util.money(amount, config.currency), colors.orange)
+    return { conversation_id = conversation.conversation_id,
+        message = util.copy(item) }
+end
+
+function actions.ADMIN_MESSAGE_PAY(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local amount = validateAmount(payload.amount)
+    local note = util.safeText(util.trim(payload.note or "Government payment"), 60)
+    local conversation = governmentThread(account)
+    account.balance = util.roundMoney(account.balance + amount)
+    state.tax_revenue = util.roundMoney((state.tax_revenue or 0) - amount)
+    transaction(account, "government", amount, "Government", note)
+    governmentSay(conversation, account, "money_sent",
+        "sent " .. util.money(amount, config.currency), { amount = amount })
+    save()
+    logActivity("Government paid " .. account.name .. " "
+        .. util.money(amount, config.currency), colors.lime)
+    return { conversation_id = conversation.conversation_id,
+        balance = account.balance }
+end
+
+function actions.ADMIN_MESSAGE_HISTORY(payload)
+    requireGovernment(payload)
+    local account = requireAccountId(payload)
+    local conversation = account.government_conversation_id
+        and state.conversations[account.government_conversation_id]
+    if not conversation then
+        return { messages = {}, name = account.name }
+    end
+    local afterSeq = math.max(0, math.floor(tonumber(payload.after_seq) or 0))
+    local messages = {}
+    for _, item in ipairs(conversation.messages) do
+        if item.seq > afterSeq then messages[#messages + 1] = util.copy(item) end
+    end
+    return {
+        conversation_id = conversation.conversation_id,
+        name = account.name,
+        messages = messages,
+        next_seq = conversation.next_seq,
+    }
+end
+
+-- Every thread the government is holding, newest first, so the terminal can
+-- see who has replied.
+function actions.ADMIN_MESSAGE_THREADS(payload)
+    requireGovernment(payload)
+    local threads = {}
+    for _, account in pairs(state.accounts) do
+        local conversation = account.government_conversation_id
+            and state.conversations[account.government_conversation_id]
+        if conversation then
+            local last = conversation.messages[#conversation.messages]
+            threads[#threads + 1] = {
+                account_id = account.account_id,
+                name = account.name,
+                last_at = conversation.last_at,
+                last_body = last and util.safeText(last.body or "", 40) or "",
+                waiting = last ~= nil and last.sender_id ~= "GOVERNMENT",
+            }
+        end
+    end
+    table.sort(threads, function(a, b)
+        return (a.last_at or 0) > (b.last_at or 0)
+    end)
+    return { threads = threads }
 end
 
 local function announcementFor(accountId)
     for _, item in ipairs(state.announcements or {}) do
-        if not item.acknowledged[accountId] then
+        -- An announcement aimed at one account is invisible to everyone else.
+        if not item.acknowledged[accountId]
+            and (not item.account_id or item.account_id == accountId) then
             return {
                 announcement_id = item.announcement_id,
                 title = item.title,
@@ -3355,6 +3837,7 @@ function actions.PUMPE_POLL(payload)
         unread_messages = badges.messages,
         friend_requests = badges.friend_requests,
         offer = offerFor(account.account_id),
+        scan = scans.forAccount(account.account_id),
         announcement = announcementFor(account.account_id),
         latest = latest and {
             notification_id = latest.notification_id,
@@ -3659,7 +4142,7 @@ function actions.VISA_OVERVIEW(payload)
 end
 
 function actions.VISA_APPLY(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     local territory = state.territories[payload.territory_id]
     need(territory and territory.status == "active",
         "TERRITORY_NOT_FOUND", "Territory not found")
@@ -3883,8 +4366,72 @@ function actions.BORDER_CHECK(payload)
     }
 end
 
+-- Proximity Visa. The controller leaves this on and the Bank keeps asking
+-- whoever is nearest with a travel document on screen. Accepting runs the
+-- ordinary border check, so entry rules, cooldowns and visits are identical
+-- to typing the code in by hand.
+
+function actions.VISA_SCAN(payload)
+    local controller = requireBorderController(payload)
+    local territory = state.territories[controller.territory_id]
+    need(territory and territory.status == "active",
+        "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
+    local origin = scans.position(payload)
+    local request = scans.new("visa", origin, "Border check",
+        "Stand at the " .. territory.name .. " border to cross",
+        function(account, held)
+            local document = state.visas[held.ref]
+            return document ~= nil
+                and document.account_id == account.account_id
+                and document.status ~= "revoked"
+                and document.status ~= "expired"
+        end,
+        {
+            controller_id = controller.controller_id,
+            controller_token = controller.auth_token,
+            territory_id = territory.territory_id,
+            settle = function(request, account)
+                local document = state.visas[request.reference]
+                need(document and document.account_id == account.account_id,
+                    "NOT_YOURS", "That travel document is not yours")
+                -- Leaving if they are already inside, entering otherwise. A
+                -- gate has no Enter/Exit buttons to press.
+                local inside = openVisit(account.account_id,
+                    request.territory_id, document.visa_id)
+                local outcome = actions.BORDER_CHECK({
+                    controller_id = request.controller_id,
+                    controller_token = request.controller_token,
+                    code = document.code,
+                    direction = inside and "exit" or "enter",
+                })
+                account.presenting = nil
+                request.direction = outcome.direction
+                return account.name .. "  -  " .. outcome.action
+            end,
+        })
+    save()
+    return { scan = scans.public(request) }
+end
+
+function actions.VISA_SCAN_STATUS(payload)
+    local controller = requireBorderController(payload)
+    local request = scans.requireOwn(controller.controller_id,
+        payload.request_id, "controller_id")
+    scans.poll(request)
+    return { scan = scans.public(request) }
+end
+
+function actions.VISA_SCAN_CANCEL(payload)
+    local controller = requireBorderController(payload)
+    local request = scans.requireOwn(controller.controller_id,
+        payload.request_id, "controller_id")
+    request.status = "cancelled"
+    request.settled_at = util.nowMs()
+    return { scan = scans.public(request) }
+end
+
 function actions.PAY_CODE_PREVIEW(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     cleanupEphemeral()
     local code = string.upper(util.trim(payload.code))
     local payment = state.active_pay_codes[code]
@@ -3995,7 +4542,7 @@ local function settleCode(account, payment, pin)
 end
 
 function actions.PAY_CODE_CONFIRM(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     cleanupEphemeral()
     local code = string.upper(util.trim(payload.code))
     local payment = state.active_pay_codes[code]
@@ -4058,7 +4605,7 @@ function actions.EVENT_DETAILS(payload)
 end
 
 function actions.BUY_TICKETS(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     local event = state.events[payload.event_id]
     local ticketType = state.ticket_types[payload.ticket_type_id]
     need(event and event.status == "active" and ticketType
@@ -4230,7 +4777,7 @@ function actions.FILE_DECLARATION(payload)
 end
 
 function actions.SMART_DECLARE(payload)
-    local account = requireSession(payload)
+    local account = requireSpender(payload)
     local period = state.declaration_periods[payload.period_id]
     need(period and period.status == "open", "NO_PERIOD", "Tax period is closed")
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
@@ -4711,6 +5258,71 @@ function actions.MARK_TICKET_USED(payload)
     save()
     logActivity("Ticket admitted: " .. ticket.qr_code, colors.lime)
     return { ticket = util.copy(ticket) }
+end
+
+-- Proximity ticket scanning. The organiser turns it on at the door and the
+-- Bank asks whoever is nearest with a ticket for this event on screen.
+
+local function requireOrganizerEvent(owner, eventId)
+    local event = state.events[eventId]
+    need(event and event.organizer_account_id == owner.account_id,
+        "NOT_OWNER", "That event is not yours")
+    need(event.status == "active", "EVENT_CLOSED", "That event is closed")
+    return event
+end
+
+function actions.TICKET_SCAN(payload)
+    local owner = requireSession(payload)
+    local event = requireOrganizerEvent(owner, payload.event_id)
+    local origin = scans.position(payload)
+    local request = scans.new("ticket", origin, "Ticket check",
+        "Scan your ticket for " .. event.title,
+        function(_, held)
+            local ticket = state.tickets[held.ref]
+            return ticket ~= nil and ticket.event_id == event.event_id
+                and ticket.status == "valid" and not ticket.used
+        end,
+        {
+            event_id = event.event_id,
+            organizer_id = owner.account_id,
+            settle = function(request, account)
+                local ticket = state.tickets[request.reference]
+                need(ticket and ticket.account_id == account.account_id,
+                    "NOT_YOURS", "That ticket is not yours")
+                need(ticket.event_id == request.event_id, "WRONG_EVENT",
+                    "That ticket is for another event")
+                need(ticket.status == "valid" and not ticket.used,
+                    "ALREADY_USED", "That ticket has already been used")
+                ticket.used = true
+                ticket.status = "used"
+                ticket.used_day = util.ingameDay()
+                ticket.used_time = util.formatClock()
+                account.presenting = nil
+                local ticketType = state.ticket_types[ticket.ticket_type_id]
+                logActivity("Ticket admitted: " .. ticket.qr_code, colors.lime)
+                return account.name .. "  -  "
+                    .. (ticketType and ticketType.name or "Ticket")
+            end,
+        })
+    save()
+    return { scan = scans.public(request) }
+end
+
+function actions.TICKET_SCAN_STATUS(payload)
+    local owner = requireSession(payload)
+    local request = scans.requireOwn(owner.account_id, payload.request_id,
+        "organizer_id")
+    scans.poll(request)
+    return { scan = scans.public(request) }
+end
+
+function actions.TICKET_SCAN_CANCEL(payload)
+    local owner = requireSession(payload)
+    local request = scans.requireOwn(owner.account_id, payload.request_id,
+        "organizer_id")
+    request.status = "cancelled"
+    request.settled_at = util.nowMs()
+    return { scan = scans.public(request) }
 end
 
 -- Government routes --------------------------------------------------------

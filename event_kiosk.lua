@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.2"
+local PROGRAM_VERSION = "8.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -332,6 +332,147 @@ local function verifyTicket()
     else ui.message(target, "error", "TICKET REJECTED", err, 1.2) end
 end
 
+-- Proximity ticket scanning. Turn it on at the door and the Bank asks
+-- whoever is nearest with a ticket for this event on their screen. Nobody
+-- reads out an eight character code.
+local function pickScanEvent()
+    local result = request("MY_EVENTS")
+    if not result then return nil end
+    local open = {}
+    for _, event in ipairs(result.events) do
+        if event.status == "active" then open[#open + 1] = event end
+    end
+    if #open == 0 then
+        ui.message(target, "info", "NO OPEN EVENTS",
+            "Create an event first", 1.4)
+        return nil
+    end
+    if #open == 1 then return open[1] end
+    local page = 1
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "SCAN WHICH EVENT", #open .. " open",
+            util.formatClock())
+        local pageItems, actualPage, pages = util.page(open, page, 4)
+        page = actualPage
+        local scene = ui.scene(target)
+        for index, event in ipairs(pageItems) do
+            scene:button("event:" .. event.event_id, 2, 4 + (index - 1) * 3,
+                width - 2, 2, ui.truncate(event.title, width - 6),
+                { background = ui.theme.panel })
+        end
+        scene:button("back", 1, height, 7, 1, "< BACK",
+            { background = ui.theme.panel })
+        if pages > 1 then
+            scene:button("prev", width - 11, height, 4, 1, "<",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            ui.text(target, width - 6, height, page .. "/" .. pages,
+                ui.theme.muted)
+            scene:button("next", width - 2, height, 2, 1, ">",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        local action = scene:wait({ tickRate = 1 })
+        if action == "back" or action == "__terminate" then return nil
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local id = action and action:match("^event:(.+)$")
+            for _, event in ipairs(open) do
+                if event.event_id == id then return event end
+            end
+        end
+    end
+end
+
+local function proximityScan()
+    local event = pickScanEvent()
+    if not event then return end
+    local requestId, status, detail, blink = nil, "STARTING", "", true
+    local admitted = {}
+
+    local function stop()
+        if requestId then
+            request("TICKET_SCAN_CANCEL", { request_id = requestId }, true)
+            requestId = nil
+        end
+    end
+
+    local function beginScan()
+        local started, err = request("TICKET_SCAN", {
+            event_id = event.event_id,
+            position = net.locate(1),
+        }, true)
+        if not started then
+            requestId, status, detail = nil, "NOT SCANNING", err or "Try again"
+            return
+        end
+        requestId = started.scan.request_id
+        status = started.scan.status == "offered" and "ASKING" or "SEARCHING"
+        detail = started.scan.target_name or "Nobody nearby yet"
+    end
+
+    beginScan()
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PROXIMITY SCAN",
+            ui.truncate(event.title, width - 4), util.formatClock(blink))
+        local accent = status == "ADMITTED" and ui.theme.success
+            or status == "REFUSED" and ui.theme.danger
+            or status == "ASKING" and ui.theme.accent
+            or ui.theme.panel
+        ui.card(target, 2, 5, width - 2, 5, accent)
+        ui.text(target, 4, 6, status, accent, ui.theme.panel, width - 6)
+        ui.wrappedText(target, 4, 7, detail, width - 6, 2,
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 2, 11, "ADMITTED  " .. #admitted, ui.theme.muted)
+        for index = 1, math.min(#admitted, height - 15) do
+            ui.text(target, 2, 11 + index,
+                ui.truncate(admitted[index], width - 3), ui.theme.ink)
+        end
+        local scene = ui.scene(target)
+        scene:button("stop", 2, height - 2, width - 2, 2, "STOP SCANNING",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 1 })
+        blink = not blink
+        if action == "stop" or action == "__terminate" then
+            stop()
+            return
+        end
+        if action == "__tick" then
+            if not requestId then
+                beginScan()
+            else
+                local polled = request("TICKET_SCAN_STATUS",
+                    { request_id = requestId }, true)
+                local scan = polled and polled.scan
+                if not scan then
+                    requestId = nil
+                elseif scan.status == "accepted" then
+                    status, detail = "ADMITTED", scan.result or "Guest admitted"
+                    table.insert(admitted, 1, scan.result or "Guest")
+                    while #admitted > 6 do table.remove(admitted) end
+                    requestId = nil
+                elseif scan.status == "rejected" then
+                    status, detail = "REFUSED", scan.result or "Ticket refused"
+                    requestId = nil
+                elseif scan.status == "nobody_nearby" then
+                    status, detail = "SEARCHING",
+                        "Nobody nearby has a ticket up"
+                    requestId = nil
+                else
+                    status = "ASKING"
+                    detail = (scan.target_name or "Someone")
+                        .. (scan.distance and ("  " .. scan.distance
+                            .. " blocks") or "")
+                end
+            end
+        end
+    end
+    stop()
+end
+
 local function dashboard()
     local blink, tick = true, 0
     local stats = request("EVENT_DASHBOARD")
@@ -360,9 +501,12 @@ local function dashboard()
             { background = ui.theme.panel, shadow = true })
         scene:button("verify", 2, 15, buttonWidth, 3, "VERIFY TICKET",
             { background = ui.theme.success, foreground = colors.black, shadow = true })
-        scene:button("logout", 3 + buttonWidth, 15, buttonWidth, 3, "LOG OUT",
-            { background = ui.theme.panel, shadow = true })
+        scene:button("scan", 3 + buttonWidth, 15, buttonWidth, 3,
+            "PROXIMITY SCAN",
+            { background = colors.purple, shadow = true })
         scene:button("exit", 1, height, 6, 1, "EXIT",
+            { background = ui.theme.panel })
+        scene:button("logout", width - 9, height, 9, 1, "LOG OUT",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
         tick = tick + 1
@@ -376,6 +520,7 @@ local function dashboard()
         elseif action == "create" then createEvent() refresh = true
         elseif action == "events" then ui.wipe(target) myEvents() refresh = true
         elseif action == "verify" then verifyTicket() refresh = true
+        elseif action == "scan" then ui.wipe(target) proximityScan() refresh = true
         elseif action == "logout" then
             if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT", "BACK") then
                 sessionToken, organizer = nil, nil

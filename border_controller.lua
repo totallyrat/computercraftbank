@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.2"
+local PROGRAM_VERSION = "8.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -277,6 +277,110 @@ local function checkVisa(direction)
     approvedScreen(result)
 end
 
+-- Proximity Visa. Left on, the gate keeps asking whoever is nearest with a
+-- travel document on screen. Accepting runs the ordinary border check, so
+-- entry rules are identical to typing the code in.
+local function openGate(seconds)
+    local ok, err = pcall(function()
+        redstone.setOutput("back", true)
+        sleep(seconds or 2)
+    end)
+    pcall(redstone.setOutput, "back", false)
+    return ok, err
+end
+
+local function proximityVisaLoop()
+    local requestId, status, detail, blink = nil, "SEARCHING", "", true
+    local crossed = {}
+
+    local function stop()
+        if requestId then
+            local payload = controllerPayload()
+            payload.request_id = requestId
+            request("VISA_SCAN_CANCEL", payload, true)
+            requestId = nil
+        end
+    end
+
+    local function beginScan()
+        local payload = controllerPayload()
+        payload.position = net.locate(1)
+        local started, err = request("VISA_SCAN", payload, true)
+        if not started then
+            requestId, status = nil, "NOT SCANNING"
+            detail = err or "No GPS fix at the gate"
+            return
+        end
+        requestId = started.scan.request_id
+        status = started.scan.status == "offered" and "ASKING" or "SEARCHING"
+        detail = started.scan.target_name or "Nobody nearby with a visa up"
+    end
+
+    beginScan()
+    while running and device.controller_id do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PROXIMITY VISA",
+            device.territory_name or "Territory", util.formatClock(blink))
+        local accent = status == "CROSSED" and ui.theme.success
+            or status == "REFUSED" and ui.theme.danger
+            or status == "ASKING" and ui.theme.accent
+            or ui.theme.panel
+        ui.card(target, 2, 5, width - 2, 5, accent)
+        ui.text(target, 4, 6, status, accent, ui.theme.panel, width - 6)
+        ui.wrappedText(target, 4, 7, detail, width - 6, 2,
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 2, 11, "CROSSINGS  " .. #crossed, ui.theme.muted)
+        for index = 1, math.min(#crossed, height - 15) do
+            ui.text(target, 2, 11 + index,
+                ui.truncate(crossed[index], width - 3), ui.theme.ink)
+        end
+        local scene = ui.scene(target)
+        scene:button("stop", 2, height - 2, width - 2, 2, "TURN OFF",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 1 })
+        blink = not blink
+        if action == "stop" or action == "__terminate" then
+            stop()
+            return
+        end
+        if action == "__tick" then
+            net.autoUpdate(config, "border", ROOT, client)
+            if not requestId then
+                beginScan()
+            else
+                local payload = controllerPayload()
+                payload.request_id = requestId
+                local polled = request("VISA_SCAN_STATUS", payload, true)
+                local scan = polled and polled.scan
+                if not scan then
+                    requestId = nil
+                elseif scan.status == "accepted" then
+                    status, detail = "CROSSED", scan.result or "Traveller through"
+                    table.insert(crossed, 1, scan.result or "Traveller")
+                    while #crossed > 6 do table.remove(crossed) end
+                    requestId = nil
+                    -- Two seconds of gate, as the PUMPE told them to expect.
+                    openGate(2)
+                elseif scan.status == "rejected" then
+                    status, detail = "REFUSED", scan.result or "Document refused"
+                    requestId = nil
+                elseif scan.status == "nobody_nearby" then
+                    status, detail = "SEARCHING",
+                        "Nobody nearby has a visa up"
+                    requestId = nil
+                else
+                    status = "ASKING"
+                    detail = (scan.target_name or "Someone")
+                        .. (scan.distance and ("  " .. scan.distance
+                            .. " blocks") or "")
+                end
+            end
+        end
+    end
+    stop()
+end
+
 local function ownerUnlock(reason)
     local pin = ui.pin(target, reason or "OWNER PIN", true)
     if not pin then return false end
@@ -309,6 +413,10 @@ local function dashboard()
                 foreground = colors.black,
                 shadow = true,
             })
+        scene:button("proximity", 3, 16, width - 5, 2,
+            "PROXIMITY VISA  -  scan whoever walks up", {
+                background = colors.purple,
+            })
         scene:button("setup", 2, height - 1,
             math.max(12, math.floor((width - 6) / 2)), 2,
             "CHANGE TERRITORY", { background = ui.theme.panel })
@@ -326,6 +434,9 @@ local function dashboard()
             checkVisa("enter")
         elseif action == "exit" then
             checkVisa("exit")
+        elseif action == "proximity" then
+            ui.wipe(target, "PROXIMITY VISA")
+            proximityVisaLoop()
         elseif action == "setup" then
             if ownerUnlock("OWNER PIN TO CHANGE")
                 and ui.confirm(target, "CHANGE TERRITORY",

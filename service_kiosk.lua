@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.2"
+local PROGRAM_VERSION = "8.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -485,6 +485,152 @@ end
 -- Offers the bill to the nearest PUMPE instead of showing a code. The Bank
 -- picks the target from the position map; declining passes it along rather
 -- than cancelling the sale.
+-- Portable Mode. A kiosk carried to the customer has no second screen to
+-- show them, so the sale finds the customer first and the basket follows.
+-- They confirm once to take the sale and again to pay it.
+local portableOffer
+
+local function portableStatus()
+    if not portableOffer then return nil end
+    local polled = request("PROXIMITY_STATUS",
+        { offer_id = portableOffer.offer_id }, true)
+    if not polled then
+        portableOffer = nil
+        return nil
+    end
+    portableOffer = polled.offer
+    return portableOffer
+end
+
+local function portableRelease()
+    if portableOffer then
+        request("PROXIMITY_CANCEL",
+            { offer_id = portableOffer.offer_id }, true)
+        portableOffer = nil
+    end
+end
+
+local function portableClaim()
+    local position = net.locate(2)
+    if not position then
+        ui.message(target, "error", "NO GPS FIX",
+            "Install GPS Anchors near this kiosk", 2.2)
+        return false
+    end
+    local created = request("PROXIMITY_CLAIM", {
+        position = position,
+        description = "Portable sale",
+    })
+    if not created then return false end
+    portableOffer = created.offer
+    local blink = true
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "FIND CUSTOMER", merchantName(),
+            util.formatClock(blink))
+        local offer = portableOffer or {}
+        if offer.status == "claimed" then
+            ui.center(target, 7, "CUSTOMER READY", ui.theme.success)
+            ui.center(target, 9, offer.target_name or "?", ui.theme.ink)
+            ui.center(target, 11, "Ring up their items now", ui.theme.muted)
+        elseif offer.status == "claiming" and offer.target_name then
+            ui.center(target, 7, "ASKING", ui.theme.accent)
+            ui.center(target, 9, offer.target_name, ui.theme.ink)
+            if offer.distance then
+                ui.center(target, 11, offer.distance .. " blocks away",
+                    ui.theme.muted)
+            end
+        else
+            ui.center(target, 9, "NOBODY NEARBY", ui.theme.warning)
+            ui.center(target, 11, "Ask them to come closer", ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        if offer.status == "claimed" then
+            scene:button("done", 2, height - 3, width - 2, 2, "START RINGING UP",
+                { background = ui.theme.success, foreground = colors.black })
+        else
+            scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL",
+                { background = ui.theme.danger })
+        end
+        local action = scene:wait({ tickRate = 0.8 })
+        blink = not blink
+        if action == "done" then return true end
+        if action == "cancel" or action == "__terminate" then
+            portableRelease()
+            return false
+        end
+        local offerNow = portableStatus()
+        if not offerNow then return false end
+        if offerNow.status == "claimed" and action == "__tick" then
+            -- Nothing else to wait for; go straight to the basket.
+            return true
+        end
+    end
+    return false
+end
+
+local function portableBill(cart)
+    local items, total, kind = cartSummary(cart)
+    if total <= 0 then
+        ui.message(target, "warning", "NOTHING TO CHARGE",
+            "Add products first", 1.4)
+        return false
+    end
+    local names = {}
+    for index, item in ipairs(items) do
+        if index <= 3 then names[#names + 1] = item.name end
+    end
+    local sent, err = request("PROXIMITY_BILL", {
+        offer_id = portableOffer.offer_id,
+        amount = total,
+        items = items,
+        purchase_type = kind or "one_time",
+        description = #names > 0 and table.concat(names, ", ") or "Portable sale",
+    }, true)
+    if not sent then
+        ui.message(target, "error", "COULD NOT SEND", err, 1.6)
+        return false
+    end
+    portableOffer = sent.offer
+    local blink = true
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "WAITING FOR PAYMENT", money(total),
+            util.formatClock(blink))
+        local offer = portableOffer or {}
+        ui.center(target, 7, offer.target_name or "Customer", ui.theme.ink)
+        ui.center(target, 9,
+            offer.status == "paid" and "PAID" or "CONFIRMING ON THEIR PUMPE",
+            offer.status == "paid" and ui.theme.success or ui.theme.accent)
+        local scene = ui.scene(target)
+        scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL SALE",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 0.6 })
+        blink = not blink
+        if action == "cancel" or action == "__terminate" then
+            portableRelease()
+            return false
+        end
+        local offerNow = portableStatus()
+        if not offerNow then return false end
+        if offerNow.status == "paid" then
+            ui.message(target, "success", "PAID " .. money(total),
+                offerNow.target_name, 1.6)
+            portableOffer = nil
+            return true
+        end
+        if offerNow.status == "expired" or offerNow.status == "cancelled" then
+            ui.message(target, "warning", "SALE ENDED",
+                "The customer did not confirm", 1.6)
+            portableOffer = nil
+            return false
+        end
+    end
+    return false
+end
+
 local function proximityCheckout(cart)
     local items, total = cartSummary(cart)
     if total <= 0 then
@@ -725,6 +871,9 @@ local function settingsScreen()
             { "products", "MANAGE PRODUCTS", colors.purple },
             { "company", "LINK COMPANY", ui.theme.warning },
             { "display", "RESCAN DISPLAY", ui.theme.panel },
+            { "portable", kiosk.portable and "PORTABLE MODE ON"
+                or "PORTABLE MODE OFF",
+                kiosk.portable and colors.cyan or ui.theme.panel },
             { "close", "CLOSE KIOSK", ui.theme.danger },
         }
         for index, entry in ipairs(entries) do
@@ -758,6 +907,15 @@ local function settingsScreen()
             ui.message(target, customerMonitor and "success" or "warning",
                 customerMonitor and "DISPLAY CONNECTED" or "NO DISPLAY FOUND",
                 customerMonitorName or "Attach an advanced monitor", 0.9)
+        elseif action == "portable" then
+            kiosk.portable = not kiosk.portable
+            saveKiosk()
+            if not kiosk.portable then portableRelease() end
+            ui.message(target, "info",
+                kiosk.portable and "PORTABLE MODE ON" or "PORTABLE MODE OFF",
+                kiosk.portable
+                    and "Find the customer before ringing up"
+                    or "Back to codes and NEARBY", 1.2)
         elseif action == "close" and ui.confirm(target, "CLOSE KIOSK",
             "End this terminal session?", "CLOSE", "BACK") then
             return true
@@ -822,7 +980,11 @@ local function posLoop()
         })
 
         ui.fill(target, 1, 3, receiptWidth, height - 2, colors.lightGray)
-        ui.text(target, 2, 4, "RECEIPT", colors.gray, colors.lightGray)
+        ui.text(target, 2, 4,
+            portableOffer and ui.truncate(
+                (portableOffer.target_name or "CUSTOMER"), receiptWidth - 2)
+                or "RECEIPT",
+            portableOffer and colors.blue or colors.gray, colors.lightGray)
         local maxReceiptRows = math.max(1, height - 11)
         local firstReceipt = math.max(1, #cartItems - maxReceiptRows + 1)
         local receiptRow = 6
@@ -853,17 +1015,30 @@ local function posLoop()
         local totalText = money(total)
         ui.text(target, math.max(2, receiptWidth - #totalText),
             height - 6, totalText, colors.black, colors.lightGray)
-        scene:button("clear", 2, height - 4, receiptWidth - 2, 1,
+        -- CLEAR and NEARBY were drawn on the same row, so CLEAR could never
+        -- be tapped. They share the row side by side now.
+        local halfWidth = math.max(5, math.floor((receiptWidth - 3) / 2))
+        scene:button("clear", 2, height - 4, halfWidth, 1,
             "CLEAR", {
                 background = colors.gray,
                 disabled = #cartItems == 0,
             })
-        scene:button("nearby", 2, height - 4, receiptWidth - 2, 1,
-            "NEARBY", {
-                background = colors.cyan,
-                foreground = colors.black,
-                disabled = #cartItems == 0,
-            })
+        if kiosk.portable then
+            scene:button("customer", 3 + halfWidth, height - 4,
+                receiptWidth - halfWidth - 3, 1,
+                portableOffer and "CUSTOMER" or "FIND", {
+                    background = portableOffer and colors.lime or colors.cyan,
+                    foreground = colors.black,
+                })
+        else
+            scene:button("nearby", 3 + halfWidth, height - 4,
+                receiptWidth - halfWidth - 3, 1,
+                "NEARBY", {
+                    background = colors.cyan,
+                    foreground = colors.black,
+                    disabled = #cartItems == 0,
+                })
+        end
         scene:button("pay", 2, height - 2, receiptWidth - 2, 2,
             total > 0 and ("PAY  " .. money(total)) or "PAY", {
                 background = colors.lime,
@@ -961,7 +1136,23 @@ local function posLoop()
         elseif action == "clear" then
             cart = {}
         elseif action == "pay" then
-            if checkout(cart) then cart = {} end
+            -- In Portable Mode the customer is already attached, so the
+            -- basket goes to their PUMPE instead of becoming a code.
+            if portableOffer then
+                if portableBill(cart) then cart = {} end
+            elseif checkout(cart) then
+                cart = {}
+            end
+        elseif action == "customer" then
+            if portableOffer then
+                if ui.confirm(target, "DROP CUSTOMER",
+                    "Let go of " .. (portableOffer.target_name or "them")
+                        .. "?", "DROP", "KEEP") then
+                    portableRelease()
+                end
+            else
+                portableClaim()
+            end
         elseif action == "nearby" then
             if proximityCheckout(cart) then cart = {} end
         elseif action == "prev" then

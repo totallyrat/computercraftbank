@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.2"
+local PROGRAM_VERSION = "8.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -49,6 +49,20 @@ end
 
 local function saveDevice()
     util.saveTable(deviceFile, device)
+end
+
+-- Holding something up. A door or a border can only find you while the Bank
+-- knows what is on your screen, and the claim lapses on its own, so a screen
+-- showing a ticket or a travel document refreshes it on every tick.
+local function present(kind, ref)
+    if not sessionToken then return end
+    request("PRESENT",
+        { kind = kind, ref = ref, position = net.locate(1) }, true)
+end
+
+local function stopPresenting()
+    if not sessionToken then return end
+    request("PRESENT", {}, true)
 end
 
 local function money(value)
@@ -779,6 +793,8 @@ local function myTicketsScreen()
     local index, blink = 1, true
     while true do
         local ticket = tickets[index]
+        -- Held up for the door to find, for as long as it is on screen.
+        if not ticket.used then present("ticket", ticket.ticket_id) end
         drawTicket(ticket, blink)
         local width, height = target.getSize()
         local scene = ui.scene(target)
@@ -791,7 +807,9 @@ local function myTicketsScreen()
             { background = ui.theme.panel, disabled = index >= #tickets })
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
-        if action == "back" or action == "__terminate" then return
+        if action == "back" or action == "__terminate" then
+            stopPresenting()
+            return
         elseif action == "prev" then index = math.max(1, index - 1)
         elseif action == "next" then index = math.min(#tickets, index + 1) end
     end
@@ -987,6 +1005,10 @@ local function travelDocumentScreen(documents)
     while sessionToken do
         local width, height = target.getSize()
         local document = documents[page]
+        -- Held up for a border running Proximity Visa to find.
+        if document and document.visa_id then
+            present("visa", document.visa_id)
+        end
         ui.clear(target)
         ui.header(target, "Travel Documents",
             #documents == 0 and "No documents"
@@ -1042,12 +1064,13 @@ local function travelDocumentScreen(documents)
             background = ui.theme.panel,
             disabled = page >= #documents,
         })
-        local action = scene:wait()
+        local action = scene:wait({ tickRate = 5 })
         if action == "prev" then
             page = math.max(1, page - 1)
         elseif action == "next" then
             page = math.min(#documents, page + 1)
         elseif action == "back" or action == "__terminate" then
+            stopPresenting()
             return
         end
     end
@@ -2324,13 +2347,23 @@ local function chatMoneyMenu(conversation, items)
     ui.clear(target)
     ui.header(target, "Money", conversation.title, util.formatClock())
     local scene = ui.scene(target)
-    scene:button("send", 2, 5, width - 2, 3, "Send money",
-        { background = ui.theme.success, foreground = colors.black })
-    scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
-        { background = ui.theme.warning, foreground = colors.black })
+    -- In a Government thread only the state moves money. You can settle what
+    -- it asks for, but you cannot send it money or bill it.
+    local official = conversation.kind == "government"
+    if official then
+        ui.wrappedText(target, 2, 5,
+            "Only the Government can move money in this chat.",
+            width - 2, 3, ui.theme.muted)
+    else
+        scene:button("send", 2, 5, width - 2, 3, "Send money",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
+            { background = ui.theme.warning, foreground = colors.black })
+    end
     if pending then
-        scene:button("pay", 2, 13, width - 2, 3,
-            "Pay " .. money(pending.amount) .. " to " .. pending.sender_name,
+        scene:button("pay", 2, official and 9 or 13, width - 2, 3,
+            "Pay " .. money(pending.amount)
+                .. (official and "" or (" to " .. pending.sender_name)),
             { background = ui.theme.accentDark })
     end
     scene:button("back", 1, height, 8, 1, "< Back",
@@ -2796,6 +2829,127 @@ end
 -- Polled from every screen so a call reaches the user wherever they are.
 -- A payment offered by a nearby kiosk takes over the screen. It is never
 -- charged without a tap, so an offer meant for someone else is just declined.
+-- Portable Mode. The kiosk has no customer screen, so the sale finds you
+-- first and the basket follows. Confirm once to take the sale, again to pay.
+local function portableBasketScreen(offer)
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Your Basket", offer.merchant, util.formatClock())
+        local row = 5
+        local items = offer.items or {}
+        for _, item in ipairs(items) do
+            if row > height - 8 then
+                ui.text(target, 2, row, "...", ui.theme.muted)
+                break
+            end
+            local line = item.quantity .. "x " .. item.name
+            ui.text(target, 2, row, ui.truncate(line, width - 10), ui.theme.ink)
+            ui.text(target, width - 7, row,
+                ui.truncate(money(item.price * item.quantity), 7),
+                ui.theme.muted)
+            row = row + 1
+        end
+        if #items == 0 then
+            ui.center(target, 8, offer.description or "Purchase", ui.theme.muted)
+        end
+        ui.fill(target, 2, height - 7, width - 2, 1, ui.theme.panel)
+        ui.text(target, 2, height - 6, "TOTAL", ui.theme.muted)
+        ui.text(target, width - 1 - #money(offer.amount), height - 6,
+            money(offer.amount), ui.theme.ink)
+        local scene = ui.scene(target)
+        scene:button("pay", 2, height - 4, width - 2, 3,
+            "Continue  " .. money(offer.amount),
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("no", 1, height, 10, 1, "< Cancel",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 2 })
+        if action == "pay" then
+            local preview = request("PAY_CODE_PREVIEW", { code = offer.code })
+            if not preview then return end
+            local pin
+            if preview.pin_required then
+                pin = ui.pin(target, "Confirm payment", true)
+                if not pin then return end
+            end
+            local paid = request("PAY_CODE_CONFIRM",
+                { code = offer.code, pin = pin })
+            if paid then
+                ui.message(target, "success", "Paid " .. money(offer.amount),
+                    offer.merchant, 1.4)
+            end
+            return
+        elseif action == "no" or action == "__terminate" then
+            request("PROXIMITY_DECLINE", { offer_id = offer.offer_id }, true)
+            return
+        end
+    end
+end
+
+local function portableClaimScreen(offer)
+    inCall = true
+    local frame = 0
+    local claimed = false
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
+        ui.center(target, 3, claimed and "RINGING UP" or "PAYING HERE?",
+            colors.white, ui.theme.accentDark)
+        ui.center(target, 5, frame % 2 == 0 and "( ( ( ) ) )" or "  ( ( ) )  ",
+            colors.white, ui.theme.accentDark)
+        ui.wrappedText(target, 2, 7, offer.merchant, width - 2, 2,
+            colors.white, ui.theme.accentDark)
+        ui.wrappedText(target, 2, 10, claimed
+            and "Wait while your items are added. The basket arrives here."
+            or "This kiosk is asking whether you are the customer.",
+            width - 2, 4, colors.lightGray, ui.theme.accentDark)
+        if offer.distance and not claimed then
+            ui.center(target, 15, offer.distance .. " blocks away",
+                colors.lightGray, ui.theme.accentDark)
+        end
+        local scene = ui.scene(target)
+        if claimed then
+            scene:button("no", 2, height - 2, width - 2, 2, "Cancel",
+                { background = colors.gray })
+        else
+            scene:button("yes", 2, height - 5, width - 2, 2, "That is me",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("no", 2, height - 2, width - 2, 2, "Not me",
+                { background = colors.gray })
+        end
+        local action = scene:wait({ tickRate = 1 })
+        frame = frame + 1
+        if action == "yes" then
+            local taken, err = request("PROXIMITY_ACCEPT",
+                { offer_id = offer.offer_id }, true)
+            if not taken then
+                inCall = false
+                ui.message(target, "error", "Could not take it",
+                    err or "The kiosk moved on", 1.6)
+                return
+            end
+            claimed = true
+        elseif action == "no" or action == "__terminate" then
+            request("PROXIMITY_DECLINE", { offer_id = offer.offer_id }, true)
+            inCall = false
+            return
+        elseif action == "__tick" then
+            local poll = request("PUMPE_POLL", {}, true)
+            local live = poll and poll.offer
+            if not live or live.offer_id ~= offer.offer_id then
+                inCall = false
+                return
+            end
+            if live.status == "offered" and live.code then
+                inCall = false
+                portableBasketScreen(live)
+                return
+            end
+        end
+    end
+    inCall = false
+end
+
 local function proximityOfferScreen(offer)
     inCall = true
     local frame = 0
@@ -2848,6 +3002,69 @@ local function proximityOfferScreen(offer)
             local poll = request("PUMPE_POLL", {}, true)
             if not poll or not poll.offer
                 or poll.offer.offer_id ~= offer.offer_id then
+                inCall = false
+                return
+            end
+        end
+    end
+    inCall = false
+end
+
+-- A door or a border found this PUMPE holding the right thing up. Same shape
+-- as an incoming call: it takes the whole screen and waits for an answer.
+local function scanScreen(scan)
+    inCall = true
+    local frame = 0
+    local visa = scan.kind == "visa"
+    local accent = visa and colors.purple or ui.theme.accentDark
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.fill(target, 1, 1, width, height, accent)
+        ui.center(target, 3, visa and "BORDER CHECK" or "TICKET CHECK",
+            colors.white, accent)
+        ui.center(target, 5, frame % 2 == 0 and "[ * ]" or "[   ]",
+            colors.white, accent)
+        ui.wrappedText(target, 2, 7, scan.detail or "", width - 2, 3,
+            colors.white, accent)
+        if visa then
+            ui.wrappedText(target, 2, 11,
+                "The gate opens for two seconds, so stand close before you"
+                    .. " accept.", width - 2, 3, colors.lightGray, accent)
+        elseif scan.distance then
+            ui.center(target, 11, scan.distance .. " blocks away",
+                colors.lightGray, accent)
+        end
+        local scene = ui.scene(target)
+        scene:button("yes", 2, height - 5, width - 2, 2,
+            visa and "Open the gate" or "Scan my ticket",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("no", 2, height - 2, width - 2, 2, "Not now",
+            { background = colors.gray })
+        local action = scene:wait({ tickRate = 0.5 })
+        frame = frame + 1
+        if action == "yes" then
+            local result, err = request("SCAN_ACCEPT",
+                { request_id = scan.request_id }, true)
+            inCall = false
+            stopPresenting()
+            if result then
+                ui.message(target, "success",
+                    visa and "Gate opening" or "Admitted",
+                    visa and "Walk through now" or "Enjoy the event", 1.5)
+            else
+                ui.message(target, "error", "Not accepted",
+                    err or "Try again at the desk", 1.8)
+            end
+            return
+        elseif action == "no" or action == "__terminate" then
+            request("SCAN_DECLINE", { request_id = scan.request_id }, true)
+            inCall = false
+            return
+        elseif action == "__tick" then
+            -- It may have moved on to somebody else, or timed out.
+            local poll = request("PUMPE_POLL", {}, true)
+            if not poll or not poll.scan
+                or poll.scan.request_id ~= scan.request_id then
                 inCall = false
                 return
             end
@@ -2931,9 +3148,20 @@ watchForUrgentCalls = function()
         announcementScreen(announcement)
         return true
     end
+    if poll.scan then
+        if latest then lastBannerId = latest.notification_id end
+        scanScreen(poll.scan)
+        return true
+    end
     if poll.offer then
         if latest then lastBannerId = latest.notification_id end
-        proximityOfferScreen(poll.offer)
+        if poll.offer.portable and poll.offer.status ~= "offered" then
+            portableClaimScreen(poll.offer)
+        elseif poll.offer.portable then
+            portableBasketScreen(poll.offer)
+        else
+            proximityOfferScreen(poll.offer)
+        end
         return true
     end
     if poll.call then

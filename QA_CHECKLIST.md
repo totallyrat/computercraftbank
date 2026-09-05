@@ -176,6 +176,50 @@ Run this after installing into a ComputerCraft world.
 - [ ] Start a call, restart the Bank Server, and confirm the call ends rather than hanging.
 - [ ] Confirm a second call is refused while one is already open.
 
+## Proximity Ticket Scanning
+
+- [ ] With four GPS anchors up, open a ticket on a PUMPE, turn on **PROXIMITY SCAN** at the Event Kiosk, and confirm the holder is asked and not somebody standing closer without a ticket.
+- [ ] Accept on the PUMPE and confirm the name and ticket type land on the organiser's screen and the ticket reads USED.
+- [ ] Scan again with the same ticket open and confirm it reports nobody nearby rather than admitting twice.
+- [ ] Close the ticket, wait past `present_max_age_ms`, and confirm scanning no longer finds that PUMPE.
+- [ ] Decline on the PUMPE and confirm the ask moves to the next person with a ticket up.
+
+## Proximity Visa
+
+- [ ] Turn on **PROXIMITY VISA**, open a travel document on a PUMPE, and confirm the traveller is asked.
+- [ ] Confirm the popup warns that the gate opens for two seconds and to stand close.
+- [ ] Accept and confirm the gate pulses redstone for two seconds, then closes.
+- [ ] Confirm the first crossing records an entry and the next one records an exit, with no Enter/Exit buttons pressed.
+- [ ] Try it with a document for another territory and confirm it is refused with a reason, and the gate stays shut.
+- [ ] Leave it running with nobody nearby and confirm it keeps searching rather than stopping.
+
+## Portable Mode
+
+- [ ] Turn **PORTABLE MODE** on in POS Settings and confirm the receipt's NEARBY button becomes FIND.
+- [ ] Tap **FIND**, accept on the nearest PUMPE, and confirm their name appears at the top of the receipt before any product is added.
+- [ ] Ring up items, press PAY, and confirm the PUMPE shows each line and the total, then asks for the PIN.
+- [ ] Confirm the money moves only after that second confirmation.
+- [ ] Back out on the PUMPE after the basket arrives and confirm the sale ends rather than being offered to someone else, and that its payment code stops working.
+- [ ] Turn Portable Mode off and confirm NEARBY and payment codes behave as before.
+
+## Government messages
+
+- [ ] From an account in the Admin Terminal, send **ANNOUNCE TO THEM** as a banner and confirm only that account sees it.
+- [ ] Send one as full screen and confirm it stays until Continue, and that nobody else gets it.
+- [ ] Send a **TEXT MESSAGE** and confirm a Government thread appears in that PUMPE's Messages.
+- [ ] Reply from the PUMPE and confirm it reaches the terminal, and that **MESSAGES** on the dashboard highlights the thread as waiting.
+- [ ] Confirm the PUMPE cannot ask the Government for money or send it money in that thread.
+- [ ] Ask for money from the terminal, pay it from the PUMPE, and confirm the balance drops and tax revenue rises.
+- [ ] Send money from the terminal and confirm the balance rises.
+- [ ] Confirm every government message lands in the one thread rather than making a new chat each time.
+
+## Payment lockout under a tax demand
+
+- [ ] Issue a tax demand and confirm code payments, sending money, buying a ticket, a visa fee, and the Bet Wallet all refuse with a message naming the demand.
+- [ ] Confirm the account can still *receive* money.
+- [ ] Pay the demand and confirm every payment feature works again immediately.
+- [ ] Issue a government money request as well as a demand and confirm the request can still be paid.
+
 ## Proximity Pay
 
 - [ ] Install four GPS Anchors with wireless modems, spread out and not all at one height, and confirm each reports the coordinates you typed.

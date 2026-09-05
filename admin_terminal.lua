@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.2"
+local PROGRAM_VERSION = "8.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -338,6 +338,150 @@ local function reasonPrompt(title)
 end
 
 -- Everything that can be done to one account, in one place.
+-- A thread between the state and one account. Only the government moves
+-- money in it, but the holder can answer and can settle what is asked, which
+-- is what makes it usable for a speeding ticket rather than a broadcast.
+local function messageThread(card)
+    local afterSeq, messages, blink = 0, {}, true
+    while running and governmentToken do
+        local width, height = target.getSize()
+        local loaded = adminRequest("ADMIN_MESSAGE_HISTORY", {
+            account_id = card.account_id,
+            after_seq = afterSeq,
+        }, true)
+        if loaded then
+            for _, item in ipairs(loaded.messages) do
+                messages[#messages + 1] = item
+                afterSeq = math.max(afterSeq, item.seq or 0)
+            end
+            while #messages > 40 do table.remove(messages, 1) end
+        end
+        ui.clear(target)
+        ui.header(target, "GOVERNMENT MESSAGE", card.name,
+            util.formatClock(blink))
+        local row, bottom = 5, height - 6
+        local first = math.max(1, #messages - (bottom - row))
+        for index = first, #messages do
+            local item = messages[index]
+            if row > bottom then break end
+            local mine = item.sender_id == "GOVERNMENT"
+            local label
+            if item.kind == "money_request" then
+                label = "ASKED " .. money(item.amount)
+                    .. (item.status == "paid" and " - PAID" or "")
+            elseif item.kind == "money_sent" then
+                label = item.body or "money"
+            else
+                label = item.body or ""
+            end
+            ui.text(target, 2, row,
+                ui.truncate((mine and "GOV  " or (card.name .. "  ")) .. label,
+                    width - 3),
+                item.kind == "money_request" and ui.theme.warning
+                    or mine and ui.theme.accent or ui.theme.ink)
+            row = row + 1
+        end
+        if #messages == 0 then
+            ui.center(target, 9, "No messages yet", ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        local buttonWidth = math.floor((width - 5) / 3)
+        scene:button("say", 2, height - 4, buttonWidth, 3, "WRITE",
+            { background = ui.theme.accentDark })
+        scene:button("demand", 3 + buttonWidth, height - 4, buttonWidth, 3,
+            "ASK FOR MONEY", { background = ui.theme.warning,
+                foreground = colors.black })
+        scene:button("pay", 4 + buttonWidth * 2, height - 4, buttonWidth, 3,
+            "SEND MONEY", { background = ui.theme.success,
+                foreground = colors.black })
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 2 })
+        blink = not blink
+        if action == "back" or action == "__terminate" then return end
+        if action == "say" then
+            local body = ui.input(target, "MESSAGE", {
+                hint = "To " .. card.name, maxLength = 120,
+                allowSpace = true, minLength = 1,
+            })
+            if body then
+                adminRequest("ADMIN_MESSAGE",
+                    { account_id = card.account_id, body = body })
+            end
+        elseif action == "demand" then
+            local amount = amountPrompt("ASK FOR MONEY",
+                card.name .. " can settle this in the chat")
+            if amount then
+                local reason = reasonPrompt("WHAT FOR")
+                if reason then
+                    adminRequest("ADMIN_MESSAGE_DEMAND", {
+                        account_id = card.account_id,
+                        amount = amount, note = reason,
+                    })
+                end
+            end
+        elseif action == "pay" then
+            local amount = amountPrompt("SEND MONEY", "Paid to " .. card.name)
+            if amount then
+                local reason = reasonPrompt("WHAT FOR")
+                if reason then
+                    adminRequest("ADMIN_MESSAGE_PAY", {
+                        account_id = card.account_id,
+                        amount = amount, note = reason,
+                    })
+                end
+            end
+        end
+    end
+end
+
+-- Banner, full screen or a message, aimed at everyone or at one account.
+local function sendAnnouncement(card)
+    local who = card and card.name or "Everyone"
+    local title = ui.input(target, "ANNOUNCEMENT", {
+        hint = who .. " will see this", maxLength = 36,
+        allowSpace = true, minLength = 2,
+    })
+    if not title then return end
+    local body = ui.input(target, "DETAILS", {
+        hint = "The line underneath", maxLength = 120,
+        allowSpace = true, minLength = 0,
+    })
+    if not body then return end
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, "HOW LOUD?", who .. "  -  " .. title, util.formatClock())
+    local scene = ui.scene(target)
+    scene:button("banner", 2, 5, width - 2, 4,
+        "BANNER\nDrops in, then goes away",
+        { background = ui.theme.accentDark })
+    scene:button("modal", 2, 10, width - 2, 4,
+        "FULL SCREEN\nStays until they press Continue",
+        { background = ui.theme.danger })
+    if card then
+        scene:button("message", 2, 15, width - 2, 3,
+            "TEXT MESSAGE\nThey can answer", { background = colors.purple })
+    end
+    scene:button("back", 1, height, 8, 1, "< BACK",
+        { background = ui.theme.panel })
+    local action = scene:wait()
+    if action == "message" and card then
+        if adminRequest("ADMIN_MESSAGE",
+            { account_id = card.account_id, body = title
+                .. (#body > 0 and (" - " .. body) or "") }) then
+            messageThread(card)
+        end
+        return
+    end
+    if action ~= "banner" and action ~= "modal" then return end
+    if adminRequest("ADMIN_ANNOUNCE", {
+        title = title, body = body, mode = action,
+        account_id = card and card.account_id or nil,
+    }) then
+        ui.message(target, "success", "ANNOUNCED", who .. "  -  " .. title, 1.4)
+    end
+end
+
 local function accountActions(card)
     while running and governmentToken do
         local width, height = target.getSize()
@@ -358,6 +502,8 @@ local function accountActions(card)
             { "debit", "REMOVE MONEY", ui.theme.warning },
             { "demand", "TAX DEMAND", ui.theme.accentDark },
             { "ban", card.banned and "UNBAN" or "BAN", ui.theme.danger },
+            { "notify", "ANNOUNCE TO THEM", colors.magenta },
+            { "thread", "MESSAGES", colors.purple },
         }
         if card.approved == false then
             items[#items + 1] = { "approve", "APPROVE", ui.theme.success }
@@ -424,6 +570,10 @@ local function accountActions(card)
             updated = adminRequest("ADMIN_APPROVE_ACCOUNT", {
                 account_id = card.account_id, approve = true,
             })
+        elseif action == "notify" then
+            sendAnnouncement(card)
+        elseif action == "thread" then
+            messageThread(card)
         end
         if updated and updated.account then card = updated.account end
     end
@@ -489,34 +639,7 @@ local function accountBrowser(pendingOnly)
 end
 
 local function announceScreen()
-    local title = ui.input(target, "ANNOUNCEMENT", {
-        hint = "Everyone sees this", maxLength = 36,
-        allowSpace = true, minLength = 2,
-    })
-    if not title then return end
-    local body = ui.input(target, "DETAILS", {
-        hint = "The line underneath", maxLength = 120,
-        allowSpace = true, minLength = 0,
-    })
-    if not body then return end
-    local width, height = target.getSize()
-    ui.clear(target)
-    ui.header(target, "HOW LOUD?", title, util.formatClock())
-    local scene = ui.scene(target)
-    scene:button("banner", 2, 6, width - 2, 4,
-        "BANNER\nDrops in, then goes away", { background = ui.theme.accentDark })
-    scene:button("modal", 2, 11, width - 2, 4,
-        "FULL SCREEN\nStays until they press Continue",
-        { background = ui.theme.danger })
-    scene:button("back", 1, height, 8, 1, "< BACK",
-        { background = ui.theme.panel })
-    local action = scene:wait()
-    if action ~= "banner" and action ~= "modal" then return end
-    if adminRequest("ADMIN_ANNOUNCE", {
-        title = title, body = body, mode = action,
-    }) then
-        ui.message(target, "success", "ANNOUNCED", title, 1.4)
-    end
+    sendAnnouncement(nil)
 end
 
 local function controlsScreen()
@@ -575,6 +698,61 @@ local function controlsScreen()
     end
 end
 
+-- Every thread the government is holding, so a reply is not missed.
+local function messageInbox()
+    local page = 1
+    while running and governmentToken do
+        local loaded = adminRequest("ADMIN_MESSAGE_THREADS")
+        if not loaded then return end
+        local threads = loaded.threads
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "GOVERNMENT MESSAGES", #threads .. " threads",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local pageItems, actualPage, pages = util.page(threads, page, 5)
+        page = actualPage
+        if #threads == 0 then
+            ui.center(target, 9, "No threads yet", ui.theme.muted)
+            ui.center(target, 11, "Start one from an account", ui.theme.muted)
+        end
+        for index, thread in ipairs(pageItems) do
+            scene:button("open:" .. thread.account_id, 2, 4 + (index - 1) * 3,
+                width - 2, 2,
+                thread.name .. "\n" .. ui.truncate(thread.last_body, width - 6),
+                {
+                    background = thread.waiting and ui.theme.warning
+                        or ui.theme.panel,
+                    foreground = thread.waiting and colors.black or colors.white,
+                })
+        end
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        if pages > 1 then
+            scene:button("prev", width - 11, height, 4, 1, "<",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            ui.text(target, width - 6, height, page .. "/" .. pages,
+                ui.theme.muted)
+            scene:button("next", width - 2, height, 2, 1, ">",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        local action = scene:wait({ tickRate = 3 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local id = action and action:match("^open:(.+)$")
+            for _, thread in ipairs(threads) do
+                if thread.account_id == id then
+                    messageThread({ account_id = thread.account_id,
+                        name = thread.name })
+                    break
+                end
+            end
+        end
+    end
+end
+
 local function dashboard()
     local blink, tick = true, 0
     local stats = request("GOVERNMENT_STATS")
@@ -600,13 +778,16 @@ local function dashboard()
             { "close", "CLOSE PERIOD", ui.theme.danger },
             { "accounts", "ACCOUNTS", ui.theme.accentDark },
             { "announce", "ANNOUNCE", colors.magenta },
+            { "messages", "MESSAGES", colors.purple },
             { "controls", "CONTROLS", ui.theme.panel },
             { "system", "SYSTEM", ui.theme.panel },
         }
-        local buttonWidth = math.floor((width - 5) / 2)
+        -- Three columns. Two ran the last row off the bottom of a 51x19
+        -- Advanced Computer once the list grew past ten entries.
+        local buttonWidth = math.floor((width - 6) / 3)
         for index, item in ipairs(labels) do
-            local column = (index - 1) % 2
-            local row = math.floor((index - 1) / 2)
+            local column = (index - 1) % 3
+            local row = math.floor((index - 1) / 3)
             scene:button(item[1], 2 + column * (buttonWidth + 1),
                 9 + row * 2, buttonWidth, 2, item[2], {
                     background = item[3],
@@ -633,6 +814,7 @@ local function dashboard()
         elseif action == "close" then closePeriod() refresh = true
         elseif action == "accounts" then accountBrowser(false)
         elseif action == "announce" then announceScreen()
+        elseif action == "messages" then messageInbox()
         elseif action == "controls" then controlsScreen()
         elseif action == "system" then systemScreen()
         elseif action == "lock" then governmentToken = nil

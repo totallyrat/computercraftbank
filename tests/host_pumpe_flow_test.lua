@@ -727,6 +727,11 @@ assert(find(drawnText, "Welcome to your"),
     "an alert title is drawn in the centre")
 assert(find(requests, "NOTIFICATIONS"))
 assert(find(requests, "MARK_NOTIFICATIONS_READ"))
+-- A ticket or travel document on screen is advertised to the Bank, which is
+-- what lets a door or a border find this PUMPE without anybody reading a
+-- code out loud.
+assert(find(requests, "PRESENT"),
+    "an open ticket and visa tell the Bank what is being held up")
 assert(find(requests, "REGISTER"))
 assert(find(requests, "ACCOUNT_SUMMARY"))
 assert(find(requests, "VISA_OVERVIEW"))

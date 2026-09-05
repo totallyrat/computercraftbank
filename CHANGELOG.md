@@ -1,5 +1,72 @@
 # Changelog
 
+## 8.2.0
+
+Proximity everywhere, a portable kiosk, and a government that can write to
+one person instead of shouting at everyone.
+
+### Proximity Ticket Scanning
+
+- **PROXIMITY SCAN** on the Event Kiosk. Turn it on at the door and the Bank
+  asks whoever is nearest with a ticket for *that event* on their screen. They
+  accept on their own PUMPE, the name appears on the organiser's screen, and
+  the ticket is stamped used. Nobody reads an eight character code out loud.
+- A PUMPE showing a ticket now tells the Bank what it is holding up. That
+  claim lapses on its own after twenty seconds, so closing the ticket stops
+  you being scannable.
+- A used ticket stops being held up, so it cannot be scanned twice.
+
+### Proximity Visa
+
+- **PROXIMITY VISA** on the Border Controller. Left on, the gate keeps asking
+  whoever is nearest with a travel document on screen.
+- Accepting runs the ordinary border check, so entry rules, cooldowns, visits
+  and Free Roam behave exactly as typing the code in by hand. Already inside
+  means the crossing is an exit; there are no Enter/Exit buttons at a gate.
+- The gate pulses redstone for **two seconds**, and the PUMPE popup says so:
+  *stand close before you accept*.
+
+### Portable Mode for the Service Kiosk
+
+- A new toggle in POS Settings. A kiosk carried to the customer has no second
+  screen to show them, so the sale finds the customer **before** anything is
+  rung up: **FIND** asks the nearest PUMPE, they say "That is me", their name
+  appears on the receipt, and the operator adds the items.
+- Pressing PAY sends the finished basket to that same PUMPE, itemised, and
+  they confirm a second time with their PIN. Two confirmations replace the
+  customer display.
+- A basket already rung up never changes hands. Backing out ends the sale and
+  kills its pay code rather than offering somebody else's shopping to a
+  stranger standing closer.
+
+### Government messages
+
+- The Admin Terminal can now aim an announcement at **one account** — banner,
+  full screen, or a **text message** — as well as at everyone.
+- A text message opens a thread between the state and that account. They can
+  answer, the terminal can answer back, and **MESSAGES** on the dashboard
+  lists every thread with the ones waiting on a reply highlighted.
+- Only the government moves money in that thread: it can ask for money or
+  send money, and the holder can settle what is asked. They cannot bill the
+  state or send it money. Good for a speeding ticket.
+- Money paid to a government demand goes to tax revenue, not to another
+  account.
+
+### Payments stop while a tax demand is outstanding
+
+- A tax demand handed out as a fine can no longer be dodged by spending the
+  balance first. Code payments, sending money, ticket purchases, visa fees,
+  the Bet Wallet and Bet all refuse with **Settle your tax demand first**.
+- Being paid still works, and so does settling the demand. Paying the
+  government inside a government thread is never blocked either.
+
+### Fixed on the way
+
+- CLEAR and NEARBY were drawn at the same spot on the POS receipt, so CLEAR
+  could never be tapped. They share the row properly now.
+- The Admin Terminal's dashboard ran its last row of buttons off the bottom of
+  a 51x19 Advanced Computer once the list passed ten entries. Three columns.
+
 ## 8.1.2
 
 Fixes the Bank Server dying on start-up right after 8.1.1 got it loading

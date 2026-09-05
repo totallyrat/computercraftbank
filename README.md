@@ -32,6 +32,7 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - **BuckApp** holds the balance, payments behind **Continue**, the Bet Wallet and Activity.
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
 - **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
+- Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
 - The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
 - **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
@@ -120,6 +121,27 @@ ComputerCraft can only work out where something is by trilaterating **four** hos
 4. Every device then locates itself and reports its position to the Bank, which keeps the map.
 
 Anchors answer the same request ComputerCraft's own `gps host` answers, so ordinary GPS programs work against them too. Positions older than `position_max_age_ms` are ignored, so a PUMPE that has gone offline is never charged.
+
+### Portable Mode
+
+A kiosk carried to the customer has no second screen to show them what they are buying, so **Portable Mode** (POS Settings) turns the sale around: the customer is found *first*.
+
+1. Tap **FIND**. The nearest PUMPE is asked "are you the customer?"
+2. They tap **That is me**, and their name appears at the top of the receipt.
+3. The operator rings up the items as normal.
+4. **PAY** sends the finished basket to that same PUMPE, itemised, and they confirm again with their PIN.
+
+Two confirmations replace the customer display: one to take the sale, one to pay it. A basket that has been rung up never changes hands — backing out ends the sale and kills its payment code, rather than offering somebody else's shopping to whoever is standing closest.
+
+### Proximity Ticket Scanning
+
+**PROXIMITY SCAN** on the Event Kiosk asks whoever is nearest with a ticket for *that event* on their screen. They accept on their own PUMPE, the name lands on the organiser's screen, and the ticket is stamped used. A used ticket stops being held up, so it cannot be scanned twice.
+
+### Proximity Visa
+
+**PROXIMITY VISA** on the Border Controller stays on once toggled, asking whoever is nearest with a travel document on screen. Accepting runs the ordinary border check, so entry rules, cooldowns, visits and Free Roam are identical to typing the code in; already being inside makes the crossing an exit. The gate pulses redstone for **two seconds**, which is why the PUMPE popup tells the traveller to stand close before accepting.
+
+Opening a ticket or a travel document is what makes a PUMPE findable. The claim lapses `present_max_age_ms` after that screen last checked in, so closing it stops you being scanned.
 
 ## The new customer monitor
 
@@ -293,7 +315,9 @@ Replace `service` with `bank`, `pumpe`, `event`, `tax`, `border`, or `ccg`.
 - The government key starts as `Government1234` and is changed from inside the terminal. The live key is kept in the Bank database, so it never needs a file edited on the Bank. A Bank that reached 7.1 by updating kept the old `CHANGE-ME-GOVERNMENT-KEY` placeholder in its config and rejected the documented key; from 8.0 a retired placeholder means "unset" and `Government1234` works.
 - **Controls** holds account approval and the key. With approval on, every new Foxy Account waits until it is approved; accounts that already exist are never held.
 - **Accounts** finds any account and can add money, remove money, issue a tax demand, ban or unban, and approve it.
-- A tax demand is owed rather than seized. It appears in the holder's BuckApp and is paid with their own PIN, so money never moves without them.
+- A tax demand is owed rather than seized. It appears in the holder's BuckApp and is paid with their own PIN, so money never moves without them. **While one is outstanding, that account's payment features are switched off** — code payments, sending money, ticket purchases, visa fees, the Bet Wallet and Bet all refuse — so a fine cannot be dodged by spending the balance first. Being paid still works, and so does settling the demand.
+- An announcement can be aimed at **one account** as well as at everyone: banner, full screen, or a **text message**.
+- A text message opens a thread between the state and that account. They can answer, the terminal answers back, and **MESSAGES** lists every thread with the ones waiting on a reply highlighted. Only the government moves money there — it can ask for money or send it, and the holder can settle what is asked, but cannot bill the state. That is what makes it usable as a speeding ticket.
 - **Announce** sends every PUMPE either a banner or a full screen notice that stays until **Continue** is pressed. Either way it also arrives as an ordinary alert.
 - Government sessions expire automatically, and every movement is written to the bank transaction log.
 
