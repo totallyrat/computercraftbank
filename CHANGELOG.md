@@ -1,5 +1,26 @@
 # Changelog
 
+## 8.1.2
+
+Fixes the Bank Server dying on start-up right after 8.1.1 got it loading
+again. **Reboot the Bank computer and it repairs itself.**
+
+- `bank_server.lua:380: attempt to call a nil value (global 'logActivity')`.
+  The depot bootstrap runs the moment the file is loaded, and when it drops a
+  cache left over from an earlier release it logs that to the dashboard feed —
+  but `logActivity` was declared 200 lines further down, so it was still nil.
+  The feed and its logger now sit above the bootstrap.
+- This was waiting to happen since the lazy depot cache landed in 7.x. It only
+  fires when the Bank has cached role programs *and* the version changed, and
+  8.1.1's load failure was hiding it.
+- `tests/host_bank_bootstrap_test.lua` loads the Bank the way ComputerCraft
+  does, with `PUMPE_TEST_MODE` off, so everything that runs before that guard
+  is covered: a stale cache being dropped, an automatic-update restart, and a
+  cache already stamped for the running release. `PUMPE_TEST_MODE` returns
+  early, which is exactly why no existing test could see this.
+- A static sweep for the same shape — anything the load-time path touches that
+  is declared later — now comes back clean.
+
 ## 8.1.1
 
 Fixes the Bank Server refusing to start. **8.0.0, 8.0.1 and 8.1.0 cannot run

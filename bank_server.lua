@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.1"
+local PROGRAM_VERSION = "8.1.2"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -135,6 +135,20 @@ local function deploymentFilesForRole(role)
     end
     files[#files + 1] = { path = mainFile, source = mainFile }
     return files
+end
+
+-- The dashboard feed. Declared up here because the depot bootstrap runs at
+-- load time and logs to it: a Bank whose cached programs went stale used to
+-- reach a logActivity that had not been defined yet and die on the spot.
+local activity = {}
+
+local function logActivity(text, color)
+    table.insert(activity, 1, {
+        text = util.safeText(text, 42),
+        color = color or colors.lightGray,
+        time = util.formatClock(),
+    })
+    while #activity > 8 do table.remove(activity) end
 end
 
 -- /updates holds cached role programs. They belong to whichever release the
@@ -420,7 +434,6 @@ local DATA_FILE = fs.combine(ROOT, config.data_file)
 local sessions = {}
 local governmentSessions = {}
 local betSessions = {}
-local activity = {}
 local running = true
 local BANK_BOOT_ID = util.token("BANK_BOOT")
 
@@ -595,15 +608,6 @@ ensureState()
 
 local function save()
     util.saveTable(DATA_FILE, state)
-end
-
-local function logActivity(text, color)
-    table.insert(activity, 1, {
-        text = util.safeText(text, 42),
-        color = color or colors.lightGray,
-        time = util.formatClock(),
-    })
-    while #activity > 8 do table.remove(activity) end
 end
 
 local function reject(code, message)
