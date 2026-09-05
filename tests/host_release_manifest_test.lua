@@ -107,9 +107,9 @@ for path in repairBlock:gmatch('source = "([^"]+)"') do repaired[path] = true en
 
 local bank = readFile("../bank_server.lua")
 local shared = { "bank_server.lua" }
-for _, section in ipairs({ "COMMON_UPDATE_FILES", "BANK_UPDATE_FILES" }) do
-    local block = bank:match("local " .. section .. " = {(.-)\n}")
-    assert(block, "bank_server.lua must define " .. section)
+do
+    local block = bank:match("RELEASE%.common = {(.-)\n}")
+    assert(block, "bank_server.lua must list the files every role receives")
     for path in block:gmatch('source = "([^"]+)"') do
         shared[#shared + 1] = path
     end

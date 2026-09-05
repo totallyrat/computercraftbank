@@ -1,5 +1,29 @@
 # Changelog
 
+## 8.1.1
+
+Fixes the Bank Server refusing to start. **8.0.0, 8.0.1 and 8.1.0 cannot run
+the Bank; use this instead.**
+
+- Lua allows 200 local variables per function, and a program's whole top level
+  counts as one function. `bank_server.lua` sat at 187 through 7.1.0 and my
+  two new government-key constants in 8.0.0 pushed it to 189, past what
+  ComputerCraft's Lua accepts: `function at line 5257 has more than 200 local
+  variables`, with nothing loading at all. `luac` on a desktop still accepted
+  the same file, which is why the test suite never saw it.
+- Related constants are now grouped into tables — deployment settings, the
+  published file lists, the social limits and the dashboard's status — which
+  brings the top level down to 162 with room to work in.
+- `tests/host_local_limit_test.lua` measures every program the way the parser
+  does and fails above 175, so this cannot reach a release again.
+- Dropped two dead declarations found on the way: an unused online-update
+  backup path, and an empty extra-file list the Bank iterated for its own
+  role.
+
+**Recovering a Bank that will not start:** reboot the computer. Easy
+Deployment repairs the whole Bank runtime from the public manifest before
+launching it, so one or two reboots brings it back on its own.
+
 ## 8.1.0
 
 The first Bank Server no longer needs the release on a drive.

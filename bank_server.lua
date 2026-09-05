@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.1.0"
+local PROGRAM_VERSION = "8.1.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -13,16 +13,25 @@ local ui = require("lib.ui")
 local onlineUpdate = require("lib.update")
 local TEST_MODE = rawget(_G, "PUMPE_TEST_MODE") == true
 
-local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
-local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
-local DEPLOY_CODE = "4040"
-local DEPLOY_CHUNK_SIZE = 6000
 local UPDATES_DIR = "/updates"
-local BANK_RESTART_MARKER = fs.combine(ROOT, ".bank_auto_restart")
-local LEGACY_CACHED_INSTALLER = fs.combine(ROOT, ".easy_deployment_source.lua")
-local ROLE_STARTUP_MARKER = "-- PUMPE ROLE STARTUP"
-local EASY_DEPLOYMENT_MARKER = "-- PUMPE EASY DEPLOYMENT"
-local LOCAL_UPDATE_FILES = {
+
+-- Grouped rather than declared one by one. Lua allows 200 locals per
+-- function and this file's top level is one function; 8.0.0 crossed the line
+-- and the Bank would not load at all. tests/host_bank_restart_test.lua now
+-- fails long before that happens again.
+local DEPLOY = {
+    protocol = "PUMPE_DEPLOY_V5",
+    hostname = "PUMPE_UPDATES",
+    code = "4040",
+    chunk = 6000,
+    restart_marker = fs.combine(ROOT, ".bank_auto_restart"),
+    legacy_installer = fs.combine(ROOT, ".easy_deployment_source.lua"),
+    role_marker = "-- PUMPE ROLE STARTUP",
+    installer_marker = "-- PUMPE EASY DEPLOYMENT",
+    cache_stamp = fs.combine("/updates", ".cache_version"),
+}
+local RELEASE = {}
+RELEASE.local_files = {
     "bank_server.lua",
     "pumpe.lua",
     "service_kiosk.lua",
@@ -43,7 +52,7 @@ local LOCAL_UPDATE_FILES = {
 -- Only role-specific programs need physical copies in /updates. The Bank's
 -- own program, installer, configuration, and shared libraries are served
 -- directly from ROOT, avoiding a second copy of the largest runtime files.
-local DEPOT_ONLY_FILES = {
+RELEASE.depot_files = {
     "pumpe.lua",
     "service_kiosk.lua",
     "event_kiosk.lua",
@@ -53,8 +62,8 @@ local DEPOT_ONLY_FILES = {
     "ccg.lua",
     "gps_anchor.lua",
 }
-local DEPOT_ONLY_SET = {}
-for _, path in ipairs(DEPOT_ONLY_FILES) do DEPOT_ONLY_SET[path] = true end
+RELEASE.depot_set = {}
+for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
 
 -- Keep this list compatible with v5.2.1, whose updater rejects unknown
 -- entries in the manifest's `files` array. Everything added since then is
@@ -63,7 +72,7 @@ for _, path in ipairs(DEPOT_ONLY_FILES) do DEPOT_ONLY_SET[path] = true end
 -- older than its program would otherwise get nil here, and a Bank that
 -- cannot name what it expects is a Bank that cannot update itself out of the
 -- skew. host_update_test.lua checks the two lists still agree.
-local ONLINE_UPDATE_FILES = {
+RELEASE.published = {
     "bank_server.lua",
     "pumpe.lua",
     "service_kiosk.lua",
@@ -78,14 +87,14 @@ local ONLINE_UPDATE_FILES = {
     "lib/util.lua",
 }
 
-local ONLINE_OPTIONAL_FILES = {
+RELEASE.optional = {
     "border_controller.lua",
     "ccg.lua",
     "gps_anchor.lua",
     "admin_terminal.lua",
 }
 
-local ROLE_MAIN_FILES = {
+RELEASE.programs = {
     bank = "bank_server.lua",
     pumpe = "pumpe.lua",
     service = "service_kiosk.lua",
@@ -99,7 +108,7 @@ local ROLE_MAIN_FILES = {
 
 -- lib/update.lua is included for every role: without it a client cannot load
 -- the self-updater and is stuck on the Bank fallback forever.
-local COMMON_UPDATE_FILES = {
+RELEASE.common = {
     { path = "installer.lua", source = "startup.lua" },
     { path = "lib/net.lua", source = "lib/net.lua" },
     { path = "lib/ui.lua", source = "lib/ui.lua" },
@@ -107,14 +116,12 @@ local COMMON_UPDATE_FILES = {
     { path = "lib/util.lua", source = "lib/util.lua" },
 }
 
-local BANK_UPDATE_FILES = {}
-
 local function protectedDeployRole(role)
     return role == "bank" or role == "tax" or role == "admin"
 end
 
 local function deploymentFilesForRole(role)
-    local mainFile = ROLE_MAIN_FILES[role]
+    local mainFile = RELEASE.programs[role]
     if not mainFile then return nil end
     local files = {
         {
@@ -123,35 +130,28 @@ local function deploymentFilesForRole(role)
                 and "config.lua" or "public/config.lua",
         },
     }
-    for _, file in ipairs(COMMON_UPDATE_FILES) do
+    for _, file in ipairs(RELEASE.common) do
         files[#files + 1] = { path = file.path, source = file.source }
-    end
-    if role == "bank" then
-        for _, file in ipairs(BANK_UPDATE_FILES) do
-            files[#files + 1] = { path = file.path, source = file.source }
-        end
     end
     files[#files + 1] = { path = mainFile, source = mainFile }
     return files
 end
-
-local CACHE_STAMP = fs.combine(UPDATES_DIR, ".cache_version")
 
 -- /updates holds cached role programs. They belong to whichever release the
 -- Bank was running when it fetched them, so a version change makes every one
 -- of them stale: serving one beside the new config.lua hands a client a new
 -- program next to an old library, or an old program next to a new config.
 local function dropStaleDepotCache()
-    if util.readFile(CACHE_STAMP) == tostring(config.version) then return 0 end
+    if util.readFile(DEPLOY.cache_stamp) == tostring(config.version) then return 0 end
     local dropped = 0
-    for _, path in ipairs(DEPOT_ONLY_FILES) do
+    for _, path in ipairs(RELEASE.depot_files) do
         local cached = fs.combine(UPDATES_DIR, path)
         if fs.exists(cached) and not fs.isDir(cached) then
             pcall(fs.delete, cached)
             dropped = dropped + 1
         end
     end
-    pcall(util.writeFile, CACHE_STAMP, tostring(config.version))
+    pcall(util.writeFile, DEPLOY.cache_stamp, tostring(config.version))
     return dropped
 end
 
@@ -173,7 +173,7 @@ local function localUpdateBody(path)
         local candidates = {
             fs.combine(ROOT, "installer.lua"),
             fs.combine(ROOT, "startup.lua"),
-            LEGACY_CACHED_INSTALLER,
+            DEPLOY.legacy_installer,
         }
         for _, candidate in ipairs(candidates) do
             local body = util.readFile(candidate)
@@ -184,7 +184,7 @@ local function localUpdateBody(path)
         return nil
     end
 
-    local candidates = DEPOT_ONLY_SET[path] and {
+    local candidates = RELEASE.depot_set[path] and {
         fs.combine(UPDATES_DIR, path),
         fs.combine(ROOT, path),
     } or {
@@ -201,8 +201,8 @@ local function cacheInstaller(body)
     body = body or localUpdateBody("startup.lua")
     if body and body:find("This file is intentionally standalone", 1, true) then
         util.writeFile(fs.combine(ROOT, "installer.lua"), body)
-        if fs.exists(LEGACY_CACHED_INSTALLER) then
-            pcall(fs.delete, LEGACY_CACHED_INSTALLER)
+        if fs.exists(DEPLOY.legacy_installer) then
+            pcall(fs.delete, DEPLOY.legacy_installer)
         end
         return body
     end
@@ -221,13 +221,13 @@ local function ensureBankStartup(installerBody)
     local startupPath = "/startup.lua"
     local existing = util.readFile(startupPath)
     local owned = not existing
-        or existing:find(EASY_DEPLOYMENT_MARKER, 1, true)
-        or existing:find(ROLE_STARTUP_MARKER, 1, true)
+        or existing:find(DEPLOY.installer_marker, 1, true)
+        or existing:find(DEPLOY.role_marker, 1, true)
         or existing:find("This file is intentionally standalone", 1, true)
     if not owned then
         return false, "Existing non-PUMPE /startup.lua was preserved"
     end
-    local body = ROLE_STARTUP_MARKER .. "\n"
+    local body = DEPLOY.role_marker .. "\n"
         .. "shell.run(" .. string.format("%q", absoluteRootFile("installer.lua"))
         .. ", \"--boot\", \"bank\")\n"
     util.writeFile(startupPath, body)
@@ -258,7 +258,7 @@ local function compactBankStorage()
 
     -- Newer role programs replace the depot copy by moving, not copying.
     -- Legacy Banks with identical copies simply discard the ROOT duplicate.
-    for _, path in ipairs(DEPOT_ONLY_FILES) do
+    for _, path in ipairs(RELEASE.depot_files) do
         local rootPath = fs.combine(ROOT, path)
         local depotPath = fs.combine(UPDATES_DIR, path)
         local rootBody = util.readFile(rootPath)
@@ -273,8 +273,8 @@ local function compactBankStorage()
     end
 
     -- Remove the v6.0 duplicate depot copies now served from the live runtime.
-    for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        if not DEPOT_ONLY_SET[path] and localUpdateBody(path) then
+    for _, path in ipairs(RELEASE.local_files) do
+        if not RELEASE.depot_set[path] and localUpdateBody(path) then
             local duplicate = fs.combine(UPDATES_DIR, path)
             if fs.exists(duplicate) then pcall(fs.delete, duplicate) end
             available = available + 1
@@ -290,8 +290,8 @@ local function compactBankStorage()
         and localUpdateBody("startup.lua") then
         pcall(fs.delete, redundantStartup)
     end
-    if fs.exists(LEGACY_CACHED_INSTALLER) then
-        pcall(fs.delete, LEGACY_CACHED_INSTALLER)
+    if fs.exists(DEPLOY.legacy_installer) then
+        pcall(fs.delete, DEPLOY.legacy_installer)
     end
 
     -- A power loss during an older update must not reserve disk forever.
@@ -308,8 +308,8 @@ end
 -- from the public manifest the first time a client installs one.
 local function updateDepotMissingFiles()
     local missing = {}
-    for _, path in ipairs(LOCAL_UPDATE_FILES) do
-        if not DEPOT_ONLY_SET[path] and not localUpdateBody(path) then
+    for _, path in ipairs(RELEASE.local_files) do
+        if not RELEASE.depot_set[path] and not localUpdateBody(path) then
             missing[#missing + 1] = path .. " (local source)"
         end
     end
@@ -327,7 +327,7 @@ local function renderUpdateBootstrap(created, staged, missing)
     ui.header(target, "EASY DEPLOYMENT SETUP", "/updates/")
     ui.text(target, 2, 5, created and "UPDATE DEPOT CREATED" or "UPDATE DEPOT CHECK",
         created and ui.theme.success or ui.theme.accent)
-    ui.text(target, 2, 7, "Synced locally: " .. staged .. "/" .. #LOCAL_UPDATE_FILES,
+    ui.text(target, 2, 7, "Synced locally: " .. staged .. "/" .. #RELEASE.local_files,
         ui.theme.ink)
     if #missing == 0 then
         ui.text(target, 2, 9, "All deployment files are ready.", ui.theme.success)
@@ -368,7 +368,7 @@ local function bootstrapUpdateDepot()
         error("/updates must be a directory")
     end
 
-    local automaticRestart = fs.exists(BANK_RESTART_MARKER)
+    local automaticRestart = fs.exists(DEPLOY.restart_marker)
     local created = not fs.exists(UPDATES_DIR)
     if created then
         fs.makeDir(UPDATES_DIR)
@@ -383,7 +383,7 @@ local function bootstrapUpdateDepot()
     writePublicDeployConfig()
     local missing = updateDepotMissingFiles()
     if automaticRestart then
-        fs.delete(BANK_RESTART_MARKER)
+        fs.delete(DEPLOY.restart_marker)
         ensureBankStartup()
         return
     end
@@ -2129,14 +2129,13 @@ end
 -- restart drops a live call the way a dropped connection would, and only a
 -- transcript both people agreed to save reaches the database.
 
-local MAX_GROUP_MEMBERS = 8
-local MAX_MESSAGE_LENGTH = 160
+local SOCIAL = { max_group = 8, max_message = 160 }
 -- Conversations are the first PUMPE feature that grows the database on its
 -- own. At 160 characters plus metadata a message costs roughly 260 bytes, so
 -- this cap keeps even a busy account well inside a ComputerCraft computer.
-local MAX_CONVERSATION_MESSAGES = 60
-local URGENT_RING_MS = 30 * 1000
-local URGENT_IDLE_MS = 10 * 60 * 1000
+SOCIAL.max_conversation = 60
+SOCIAL.ring_ms = 30 * 1000
+SOCIAL.idle_ms = 10 * 60 * 1000
 local urgentCalls = {}
 
 local function socialAccount(account)
@@ -2339,7 +2338,7 @@ local function appendMessage(conversation, senderId, kind, body, extra)
         sender_id = senderId,
         sender_name = sender and sender.name or "PUMPE",
         kind = kind,
-        body = util.safeText(body, MAX_MESSAGE_LENGTH),
+        body = util.safeText(body, SOCIAL.max_message),
         day = util.ingameDay(),
         time = util.formatClock(),
         at = util.nowMs(),
@@ -2347,7 +2346,7 @@ local function appendMessage(conversation, senderId, kind, body, extra)
     for key, value in pairs(extra or {}) do item[key] = value end
     conversation.next_seq = conversation.next_seq + 1
     conversation.messages[#conversation.messages + 1] = item
-    while #conversation.messages > MAX_CONVERSATION_MESSAGES do
+    while #conversation.messages > SOCIAL.max_conversation do
         table.remove(conversation.messages, 1)
     end
     conversation.last_at = item.at
@@ -2437,8 +2436,8 @@ function actions.CHAT_START(payload)
     local requested = type(payload.account_ids) == "table"
         and payload.account_ids or {}
     need(#requested >= 1, "NO_MEMBERS", "Choose at least one friend")
-    need(#requested + 1 <= MAX_GROUP_MEMBERS, "TOO_MANY_MEMBERS",
-        "A group holds at most " .. MAX_GROUP_MEMBERS .. " people")
+    need(#requested + 1 <= SOCIAL.max_group, "TOO_MANY_MEMBERS",
+        "A group holds at most " .. SOCIAL.max_group .. " people")
     local memberIds, seen = { account.account_id }, {
         [account.account_id] = true,
     }
@@ -2497,7 +2496,7 @@ end
 function actions.CHAT_SEND(payload)
     local account = socialAccount(requireSession(payload))
     local conversation = requireConversation(account, payload.conversation_id)
-    local body = util.safeText(util.trim(payload.body or ""), MAX_MESSAGE_LENGTH)
+    local body = util.safeText(util.trim(payload.body or ""), SOCIAL.max_message)
     need(#body > 0, "EMPTY_MESSAGE", "Type a message first")
     local item = appendMessage(conversation, account.account_id, "text", body)
     notifyNewMessage(conversation, account.account_id, body)
@@ -2643,7 +2642,7 @@ end
 local function cleanupUrgentCalls()
     local now = util.nowMs()
     for callId, call in pairs(urgentCalls) do
-        if call.status == "ringing" and now - call.created_at > URGENT_RING_MS then
+        if call.status == "ringing" and now - call.created_at > SOCIAL.ring_ms then
             call.status = "missed"
             call.ended_at = now
             local to = state.accounts[call.to_id]
@@ -2657,7 +2656,7 @@ local function cleanupUrgentCalls()
                     call.to_name .. " did not answer", "warning")
             end
             save()
-        elseif call.status == "active" and now - (call.last_at or now) > URGENT_IDLE_MS then
+        elseif call.status == "active" and now - (call.last_at or now) > SOCIAL.idle_ms then
             endCall(call, "Timed out")
         elseif call.status ~= "ringing" and call.status ~= "active"
             and (call.ended_at or now) + 120 * 1000 < now then
@@ -2771,14 +2770,14 @@ local function appendCallMessage(call, senderId, kind, body, extra)
         sender_id = senderId,
         sender_name = sender and sender.name or "PUMPE",
         kind = kind,
-        body = util.safeText(body, MAX_MESSAGE_LENGTH),
+        body = util.safeText(body, SOCIAL.max_message),
         time = util.formatClock(),
         at = util.nowMs(),
     }
     for key, value in pairs(extra or {}) do item[key] = value end
     call.next_seq = call.next_seq + 1
     call.messages[#call.messages + 1] = item
-    while #call.messages > MAX_CONVERSATION_MESSAGES do
+    while #call.messages > SOCIAL.max_conversation do
         table.remove(call.messages, 1)
     end
     call.last_at = item.at
@@ -2801,7 +2800,7 @@ function actions.URGENT_SEND(payload)
     local account = requireSession(payload)
     local call = requireCall(account, payload.call_id)
     need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
-    local body = util.safeText(util.trim(payload.body or ""), MAX_MESSAGE_LENGTH)
+    local body = util.safeText(util.trim(payload.body or ""), SOCIAL.max_message)
     need(#body > 0, "EMPTY_MESSAGE", "Type something first")
     local item = appendCallMessage(call, account.account_id, "text", body)
     return { message = util.copy(item) }
@@ -3058,15 +3057,13 @@ end
 -- Releases before 7.1 shipped a placeholder here. A Bank that self-updated
 -- kept it, because an update preserves local settings, so the terminal kept
 -- rejecting the documented key. A retired placeholder now means "unset".
-local DEFAULT_GOVERNMENT_KEY = "Government1234"
-local RETIRED_GOVERNMENT_KEYS = { ["CHANGE-ME-GOVERNMENT-KEY"] = true }
-
 local function governmentKey()
     local key = state.government_key
     if type(key) == "string" and key ~= "" then return key end
     key = config.government_key
-    if type(key) ~= "string" or key == "" or RETIRED_GOVERNMENT_KEYS[key] then
-        return DEFAULT_GOVERNMENT_KEY
+    if type(key) ~= "string" or key == ""
+        or key == "CHANGE-ME-GOVERNMENT-KEY" then
+        return "Government1234"
     end
     return key
 end
@@ -4929,7 +4926,7 @@ local function deploymentReply(recipient, requestId, ok, data, err, code)
         data = data,
         error = err,
         code = code,
-    }, DEPLOY_PROTOCOL)
+    }, DEPLOY.protocol)
 end
 
 local function deploymentError(recipient, requestId, code, message)
@@ -4937,10 +4934,10 @@ local function deploymentError(recipient, requestId, code, message)
 end
 
 local function authorizedDeploymentRole(role, code)
-    if not ROLE_MAIN_FILES[role] then
+    if not RELEASE.programs[role] then
         return false, "INVALID_ROLE", "Unknown PUMPE role"
     end
-    if protectedDeployRole(role) and tostring(code or "") ~= DEPLOY_CODE then
+    if protectedDeployRole(role) and tostring(code or "") ~= DEPLOY.code then
         return false, "PROTECTED_ROLE", "Download code is incorrect"
     end
     return true
@@ -4960,8 +4957,8 @@ local function fetchDepotFile(path)
     local manifestUrl = tostring(config.update_manifest_url or "")
     if manifestUrl == "" or config.auto_update == false then return nil end
     local manifest = onlineUpdate.fetchManifest(manifestUrl,
-        ONLINE_UPDATE_FILES, config.update_channel or "stable",
-        ONLINE_OPTIONAL_FILES)
+        RELEASE.published, config.update_channel or "stable",
+        RELEASE.optional)
     if not manifest or manifest.version ~= config.version then return nil end
     for _, file in ipairs(manifest.files) do
         if file.path == path then
@@ -4983,7 +4980,7 @@ local function deploymentBody(source)
     end
     local body = localUpdateBody(source)
     if body then return body end
-    if DEPOT_ONLY_SET[source] then return fetchDepotFile(source) end
+    if RELEASE.depot_set[source] then return fetchDepotFile(source) end
     return nil
 end
 
@@ -5025,7 +5022,7 @@ local function deploymentRoute(sender, message)
             role = role,
             version = config.version,
             install_root = "/pumpe",
-            chunk_size = DEPLOY_CHUNK_SIZE,
+            chunk_size = DEPLOY.chunk,
             files = manifest,
         })
     elseif message.action == "FILE_CHUNK" then
@@ -5043,13 +5040,13 @@ local function deploymentRoute(sender, message)
             return
         end
         local offset = math.floor(tonumber(payload.offset) or -1)
-        local limit = math.floor(tonumber(payload.limit) or DEPLOY_CHUNK_SIZE)
+        local limit = math.floor(tonumber(payload.limit) or DEPLOY.chunk)
         if offset < 0 or offset > #body then
             deploymentError(sender, message.request_id, "BAD_OFFSET",
                 "Invalid file offset")
             return
         end
-        limit = math.max(1, math.min(DEPLOY_CHUNK_SIZE, limit))
+        limit = math.max(1, math.min(DEPLOY.chunk, limit))
         local chunk = body:sub(offset + 1, offset + limit)
         local nextOffset = offset + #chunk
         deploymentReply(sender, message.request_id, true, {
@@ -5088,14 +5085,20 @@ local function route(sender, message)
     end
 end
 
-local ONLINE_UPDATE_STAGE = fs.combine(ROOT, ".online_update_stage")
-local ONLINE_UPDATE_BACKUP = fs.combine(ROOT, ".online_update_backup")
-local onlineUpdateStatus = tostring(config.update_manifest_url or "") ~= ""
-    and "CHECKING" or "URL NOT CONFIGURED"
-local onlineUpdateColor = tostring(config.update_manifest_url or "") ~= ""
-    and colors.orange or colors.lightGray
-local lastOnlineUpdateError
-local deployStatus, deployColor = "STARTING", colors.orange
+-- What the dashboard shows, kept in one table rather than six top-level
+-- locals. The file's top level is a single Lua function with a 200 local
+-- ceiling, and it was two over.
+local dash = {
+    stage = fs.combine(ROOT, ".online_update_stage"),
+    update_status = "URL NOT CONFIGURED",
+    update_color = colors.lightGray,
+    last_error = nil,
+    deploy_status = "STARTING",
+    deploy_color = colors.orange,
+}
+if tostring(config.update_manifest_url or "") ~= "" then
+    dash.update_status, dash.update_color = "CHECKING", colors.orange
+end
 
 local function loadConfigTable(path)
     local loader, loadError = loadfile(path)
@@ -5108,7 +5111,7 @@ local function loadConfigTable(path)
 end
 
 local function preserveLocalConfig(manifest)
-    local stagedPath = fs.combine(ONLINE_UPDATE_STAGE, "config.lua")
+    local stagedPath = fs.combine(dash.stage, "config.lua")
     local defaults, err = loadConfigTable(stagedPath)
     if not defaults then return nil, "Downloaded config is invalid: " .. tostring(err) end
     if tostring(defaults.version or "") ~= manifest.version then
@@ -5130,31 +5133,31 @@ end
 -- uses, so it downloads only the files it runs rather than the whole release.
 local function checkForOnlineUpdate()
     if config.auto_update == false then
-        onlineUpdateStatus, onlineUpdateColor = "DISABLED", colors.lightGray
+        dash.update_status, dash.update_color = "DISABLED", colors.lightGray
         return false
     end
     if tostring(config.update_manifest_url or "") == "" then
-        onlineUpdateStatus, onlineUpdateColor = "URL NOT CONFIGURED",
+        dash.update_status, dash.update_color = "URL NOT CONFIGURED",
             colors.lightGray
         return false
     end
 
-    onlineUpdateStatus, onlineUpdateColor = "CHECKING INTERNET", colors.orange
+    dash.update_status, dash.update_color = "CHECKING INTERNET", colors.orange
     local updated, detail = onlineUpdate.selfUpdate({
         config = config,
         role = "bank",
         root = ROOT,
-        requiredPaths = ONLINE_UPDATE_FILES,
-        optionalPaths = ONLINE_OPTIONAL_FILES,
+        requiredPaths = RELEASE.published,
+        optionalPaths = RELEASE.optional,
         onProgress = function(_, index, total)
-            onlineUpdateStatus = "DOWNLOADING " .. index .. "/" .. total
-            onlineUpdateColor = colors.cyan
+            dash.update_status = "DOWNLOADING " .. index .. "/" .. total
+            dash.update_color = colors.cyan
         end,
         -- Cached role programs are re-fetchable on demand, so they are always
         -- the first thing to give up when a release needs the room.
         onSpaceNeeded = function()
             local freed = 0
-            for _, path in ipairs(DEPOT_ONLY_FILES) do
+            for _, path in ipairs(RELEASE.depot_files) do
                 local cached = fs.combine(UPDATES_DIR, path)
                 if fs.exists(cached) and not fs.isDir(cached) then
                     local ok, size = pcall(fs.getSize, cached)
@@ -5171,9 +5174,9 @@ local function checkForOnlineUpdate()
 
     if updated then
         ensureBankStartup()
-        util.writeFile(BANK_RESTART_MARKER, tostring(detail))
+        util.writeFile(DEPLOY.restart_marker, tostring(detail))
         pcall(save)
-        onlineUpdateStatus, onlineUpdateColor = "RESTARTING v" .. tostring(detail),
+        dash.update_status, dash.update_color = "RESTARTING v" .. tostring(detail),
             colors.lime
         logActivity("Online update installed; restarting", colors.lime)
         sleep(0.1)
@@ -5182,20 +5185,20 @@ local function checkForOnlineUpdate()
     end
 
     if detail == "current" then
-        onlineUpdateStatus = "CURRENT v" .. config.version
-        onlineUpdateColor = colors.lime
-        lastOnlineUpdateError = nil
+        dash.update_status = "CURRENT v" .. config.version
+        dash.update_color = colors.lime
+        dash.last_error = nil
         return false
     end
     if detail == "disabled" or detail == "no manifest url" then
-        onlineUpdateStatus, onlineUpdateColor = "DISABLED", colors.lightGray
+        dash.update_status, dash.update_color = "DISABLED", colors.lightGray
         return false
     end
 
-    onlineUpdateStatus, onlineUpdateColor = "CHECK FAILED", colors.red
-    if detail ~= lastOnlineUpdateError then
+    dash.update_status, dash.update_color = "CHECK FAILED", colors.red
+    if detail ~= dash.last_error then
         logActivity("Online update: " .. tostring(detail), colors.red)
-        lastOnlineUpdateError = detail
+        dash.last_error = detail
     end
     return false
 end
@@ -5209,7 +5212,7 @@ end
 
 local function deploymentLoop()
     while running do
-        local sender, message = rednet.receive(DEPLOY_PROTOCOL, 1)
+        local sender, message = rednet.receive(DEPLOY.protocol, 1)
         if sender then
             local ok, err = pcall(deploymentRoute, sender, message)
             if not ok then
@@ -5277,10 +5280,10 @@ local function dashboardLoop()
                 colors.gray, panelWidth - 3)
         end
         ui.text(target, 2, 10,
-            ui.truncate("INTERNET  " .. onlineUpdateStatus, width - 2),
-            onlineUpdateColor)
+            ui.truncate("INTERNET  " .. dash.update_status, width - 2),
+            dash.update_color)
         ui.text(target, 2, 11,
-            ui.truncate("DEPLOYMENT  " .. deployStatus, width - 2), deployColor)
+            ui.truncate("DEPLOYMENT  " .. dash.deploy_status, width - 2), dash.deploy_color)
 
         local scene = ui.scene(target)
         local feedY = 13
@@ -5337,15 +5340,15 @@ end
 
 ui.boot(term.current(), "PUMPE BANK", "SECURE ECONOMY CORE")
 net.host(config.protocol, config.hostname)
-rednet.host(DEPLOY_PROTOCOL, DEPLOY_HOSTNAME)
+rednet.host(DEPLOY.protocol, DEPLOY.hostname)
 logActivity("Server online on computer #" .. os.getComputerID(), colors.lime)
 local depotMissing = updateDepotMissingFiles()
 if #depotMissing == 0 then
-    deployStatus, deployColor = "READY", colors.lime
+    dash.deploy_status, dash.deploy_color = "READY", colors.lime
     logActivity("Easy Deployment online", colors.lime)
 else
-    deployStatus = "REPAIRING " .. #depotMissing .. " FILE(S)"
-    deployColor = colors.orange
+    dash.deploy_status = "REPAIRING " .. #depotMissing .. " FILE(S)"
+    dash.deploy_color = colors.orange
     logActivity("Deployment missing " .. #depotMissing .. " files", colors.orange)
 end
 save()
@@ -5353,6 +5356,6 @@ save()
 parallel.waitForAny(serverLoop, deploymentLoop, schedulerLoop,
     ccgGameLoop, onlineUpdateLoop, dashboardLoop)
 pcall(rednet.unhost, config.protocol)
-pcall(rednet.unhost, DEPLOY_PROTOCOL)
+pcall(rednet.unhost, DEPLOY.protocol)
 ui.clear(term.current())
 print("PUMPE Bank Server stopped safely.")

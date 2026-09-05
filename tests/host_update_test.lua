@@ -399,7 +399,7 @@ assert(#updateRuns == gated + 1
 -- cannot leave it with nothing to check against. Confirm the two agree.
 do
     local bank = io.open("../bank_server.lua"):read("a")
-    local block = bank:match("local ONLINE_UPDATE_FILES = {(.-)}")
+    local block = bank:match("RELEASE%.published = {(.-)}")
     local names = {}
     for name in (block or ""):gmatch('"(.-)"') do names[#names + 1] = name end
     assert(#names == #update.PUBLISHED_FILES,
@@ -408,7 +408,7 @@ do
         assert(names[index] == name,
             "the Bank's published list drifted at " .. name)
     end
-    local optionalBlock = bank:match("local ONLINE_OPTIONAL_FILES = {(.-)}")
+    local optionalBlock = bank:match("RELEASE%.optional = {(.-)}")
     local optionalNames = {}
     for name in (optionalBlock or ""):gmatch('"(.-)"') do
         optionalNames[#optionalNames + 1] = name
