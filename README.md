@@ -14,6 +14,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `admin_terminal.lua` | Advanced Computer + wireless/Ender modem | Government-only tax controls, account approval, balances, bans, tax demands, announcements |
 | `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
+| `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
+| `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.
@@ -142,6 +144,46 @@ Two confirmations replace the customer display: one to take the sale, one to pay
 **PROXIMITY VISA** on the Border Controller stays on once toggled, asking whoever is nearest with a travel document on screen. Accepting runs the ordinary border check, so entry rules, cooldowns, visits and Free Roam are identical to typing the code in; already being inside makes the crossing an exit. The gate pulses redstone for **two seconds**, which is why the PUMPE popup tells the traveller to stand close before accepting.
 
 Opening a ticket or a travel document is what makes a PUMPE findable. The claim lapses `present_max_age_ms` after that screen last checked in, so closing it stops you being scanned.
+
+## Foxy, the App Browser and the App Server
+
+### Foxy
+
+Foxy is the Foxy Account and the bank behind it, and it is **not** built into the phone — you get it from the App Browser. BuckApp still works and carries a banner saying it is closing down.
+
+- **Bank** opens on your card, drawn on screen with your name across the front, and your balance underneath.
+- Under the balance are **your accounts**. `+ New account` opens another one — Savings, Rent, Holiday — and opening one lets you move money to any of your others. It never leaves your account, and closing an account hands its money straight back.
+- Under the accounts is **Foxy Cash**: instant, a 2% fee, no daily ceiling, and friends only. Add someone in Friends first. The fee is the sender's; your friend receives the whole amount.
+- **Account** changes your name and your PIN.
+
+Savings are not a hiding place. While a tax demand is outstanding you cannot move money out of your main balance, only back into it.
+
+### The App Browser
+
+**Apps** on the Home Screen lists everything the App Server is offering. Installing one downloads it in verified chunks and puts it on your Home Screen beside the built-in apps; a download whose size or checksum does not match what was advertised is thrown away rather than run, and an app that crashes is caught and hands you back the phone.
+
+Every byte comes from the App Server, never from the Bank — that is what the machine is for. The Bank is asked one question, once, when something is published: is this developer real.
+
+### Dev Mode: writing your own app
+
+1. Open **POS Settings** on a Service Kiosk and tap **ENTER DEV MODE**. That registers a developer account against the kiosk's company owner and creates `/apps/` on that computer.
+2. Put a `.lua` file in `/apps/`.
+3. Open **Dev Mode** again, tap the file, give it a name and a description, and launch it.
+
+It appears in every PUMPE's App Browser. Republishing the same file is an update rather than a second copy, and the app keeps its place and its download count. An app belongs to whoever published it: nobody else can overwrite or delete it, and a developer can delete their own from the App Browser.
+
+An app is one file returning one function:
+
+```lua
+-- PUMPE APP: Notes
+return function(api)
+    -- api.ui, api.util, api.target, api.config, api.colors
+    -- api.request(action, payload, silent)  as the signed-in account
+    -- api.account(), api.refresh(), api.money(value), api.running()
+end
+```
+
+It is handed that `api` table and nothing else. It can draw, and it can make requests as the signed-in account, but it never sees the session token or the device file.
 
 ## The new customer monitor
 

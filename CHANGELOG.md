@@ -1,5 +1,74 @@
 # Changelog
 
+## 8.3.0
+
+Foxy, an App Browser, an App Server, and a way for anyone to write apps for
+the PUMPE. BuckApp keeps working, with a notice on it.
+
+### Foxy
+
+- A new app that puts the Foxy Account and the bank behind it in one place.
+  It is **not** built into the phone: you get it from the App Browser, so it
+  can move faster than the PUMPE underneath it.
+- **Bank** opens on your card, drawn on screen with your name across the front
+  and a number that reads like a card rather than an account id, with a light
+  band that sweeps across it as it lands. Your balance sits under it.
+- **Sub-accounts.** Under the balance are your accounts, and `+ New account`
+  makes another — Savings, Rent, Holiday, whatever you name it. Open one to
+  move money to any of your others; it never leaves your account, and closing
+  one hands its money straight back.
+- **Foxy Cash**, under the accounts. Instant, a **2% fee**, and no daily
+  ceiling — but only to your friends. Add someone in Friends first. The fee is
+  the sender's; your friend gets the whole amount.
+- **Account** changes your name and your PIN, with more to come.
+- Savings are not a hiding place: while a tax demand is outstanding you cannot
+  move money out of your main balance, only back into it.
+
+### BuckApp
+
+- Still works, and will through the next update. It now carries a banner
+  saying it is closing down, and a **Move to Foxy** button that opens the App
+  Browser.
+
+### The App Browser and the App Server
+
+- **Apps** is a new built-in app: a catalogue of optional apps that are not
+  part of the base phone. Installing one shows a filling bar and a tick that
+  draws itself; it then sits on your Home Screen like any other app.
+- Every byte comes from a **new App Server role**, never from the Bank. That
+  is the whole point of the machine: a busy download cannot slow banking down.
+  The Bank is asked exactly one question, once, when something is published.
+- A download is checked against the size and checksum the store advertised. A
+  damaged one is thrown away rather than run.
+- An app that crashes is caught: it says so and hands you back the phone.
+- The App Server ships with Foxy, so a fresh world has something to download
+  before anybody has written anything.
+
+### Dev Mode
+
+- **Dev Mode** in the Service Kiosk's settings. Entering it registers a
+  developer account against the kiosk's company owner and creates an `/apps/`
+  folder on that computer.
+- Drop a `.lua` file in there, open Dev Mode again, give it a name and a
+  description, and launch it. It appears in every PUMPE's App Browser.
+- Republishing the same file updates the app rather than making a second copy,
+  and it keeps its place and its download count.
+- An app belongs to whoever published it. Nobody else can overwrite or delete
+  it, and a developer can delete their own from the App Browser.
+- An app is one file returning one function. It is handed an `api` table and
+  nothing else: it can draw and it can make requests as the signed-in account,
+  but it never sees the session token or the device file.
+
+### Fixed on the way
+
+- Installing an app deleted the file it had just downloaded, so nothing was
+  ever really installed.
+- The Easy Deployment role list dropped whatever ran off the bottom of a
+  narrow screen. With the App Server added that was the App Server itself; the
+  list pages now.
+- The Service Kiosk's settings grid ran into its own footer once it had eight
+  entries.
+
 ## 8.2.0
 
 Proximity everywhere, a portable kiosk, and a government that can write to

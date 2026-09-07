@@ -311,6 +311,8 @@ update.PUBLISHED_OPTIONAL = {
     "ccg.lua",
     "gps_anchor.lua",
     "admin_terminal.lua",
+    "app_server.lua",
+    "foxy.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -331,11 +333,18 @@ local ROLE_PROGRAMS = {
     border = "border_controller.lua",
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
+    apps = "app_server.lua",
 }
 
 function update.roleProgram(role)
     return ROLE_PROGRAMS[string.lower(tostring(role or ""))]
 end
+
+-- A few roles carry a file that is not a program of their own. The App
+-- Server ships with Foxy so its catalogue is never empty on a fresh world.
+local ROLE_EXTRA_FILES = {
+    apps = { "foxy.lua" },
+}
 
 -- Every path a role installs, including its own copy of Easy Deployment.
 function update.rolePaths(role)
@@ -343,6 +352,9 @@ function update.rolePaths(role)
     if not program then return nil end
     local paths = { program, "startup.lua" }
     for _, path in ipairs(COMMON_ROLE_FILES) do paths[#paths + 1] = path end
+    for _, path in ipairs(ROLE_EXTRA_FILES[string.lower(tostring(role))] or {}) do
+        paths[#paths + 1] = path
+    end
     return paths
 end
 

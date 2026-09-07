@@ -88,6 +88,37 @@ local function pickBankServer(screenWidth, screenHeight, script)
         "the down arrow leads to every other role")
 end
 
+-- Every role must be reachable. A narrow screen cannot show them all at
+-- once, so the list pages instead of dropping the last one off the bottom.
+local function everyRoleReachable(screenWidth, screenHeight, script)
+    width, height = screenWidth, screenHeight
+    written, eventIndex = {}, 0
+    events = script
+    installer()
+    local screen = table.concat(written, "\n")
+    for _, label in ipairs({ "SERVICE KIOSK", "EVENT KIOSK",
+        "BORDER CONTROLLER", "BANK SERVER", "ADMIN TERMINAL",
+        "CCG BET CONSOLE", "GPS ANCHOR", "APP SERVER" }) do
+        assert(screen:find(label, 1, true), label .. " is not reachable")
+    end
+end
+
+-- Pocket screen: one column, so the list needs a second page.
+everyRoleReachable(26, 20, {
+    { "mouse_click", 1, 3, 19 },  -- v OTHER ROLES
+    { "mouse_click", 1, 12, 20 }, -- PAGE 2
+    { "mouse_click", 1, 12, 20 }, -- PAGE 1
+    { "mouse_click", 1, 3, 20 },  -- ^ BACK
+    { "mouse_click", 1, 2, 20 },  -- EXIT
+})
+
+-- Advanced Computer: two columns, so they all fit on one page.
+everyRoleReachable(51, 19, {
+    { "mouse_click", 1, 3, 18 },  -- v OTHER ROLES
+    { "mouse_click", 1, 3, 19 },  -- ^ BACK
+    { "mouse_click", 1, 2, 19 },  -- EXIT
+})
+
 -- Pocket-sized screen: the PUMPE panel first, then one column of roles.
 pickBankServer(26, 20, {
     { "mouse_click", 1, 3, 19 }, -- v OTHER ROLES

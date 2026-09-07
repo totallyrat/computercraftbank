@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "8.2.0",
+    version = "8.3.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -64,6 +64,22 @@ return {
     -- preserves every local setting and a retired placeholder would stay
     -- forever.
     config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY" },
+
+    -- Foxy. The new bank inside the PUMPE: sub-accounts you can split money
+    -- into, and Foxy Cash, an instant friends-only transfer with a flat fee
+    -- and no daily ceiling. BuckApp keeps working through the migration.
+    foxy_cash_fee_rate = 0.02,
+    max_pots_per_account = 8,
+
+    -- The App Server. Optional apps are downloaded from here rather than
+    -- from the Bank, so a busy download never slows banking down. Publishing
+    -- is the only thing that touches the Bank, and only to check the
+    -- developer is real.
+    app_protocol = "PUMPE_APPS_V1",
+    app_hostname = "APP_SERVER",
+    app_chunk_size = 6000,
+    max_app_bytes = 96 * 1024,
+    max_apps_installed = 12,
 
     -- All event dates use the Minecraft/ComputerCraft in-game day.
     clock_source = "ingame",

@@ -35,6 +35,11 @@ const extraReleaseFiles = [
 const forwardOptionalFiles = [
   "gps_anchor.lua",
   "admin_terminal.lua",
+  "app_server.lua",
+  // foxy.lua is a PUMPE app rather than a role. It ships here so an App
+  // Server can seed itself with Foxy on its first run instead of waiting for
+  // somebody to publish it by hand.
+  "foxy.lua",
 ];
 
 function checksum(buffer) {

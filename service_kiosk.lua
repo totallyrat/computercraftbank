@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.2.0"
+local PROGRAM_VERSION = "8.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -858,13 +858,172 @@ local function productManager()
     end
 end
 
+-- Dev Mode ------------------------------------------------------------------
+-- A shopkeeper who wants to write a PUMPE app becomes a developer here. The
+-- Bank issues the credentials, /apps/ is where the file goes, and the App
+-- Server is what everybody downloads from.
+
+local appStore = net.client({
+    protocol = config.app_protocol,
+    hostname = config.app_hostname,
+})
+local devDir = fs.combine(ROOT, "apps")
+
+local function devFiles()
+    if not fs.exists(devDir) or not fs.isDir(devDir) then return {} end
+    local found = {}
+    for _, name in ipairs(fs.list(devDir)) do
+        local path = fs.combine(devDir, name)
+        if not fs.isDir(path) and name:sub(-4) == ".lua" then
+            found[#found + 1] = { name = name, path = path,
+                size = fs.getSize(path) }
+        end
+    end
+    table.sort(found, function(a, b) return a.name < b.name end)
+    return found
+end
+
+local function storeRequest(action, payload, silent)
+    local result, err, code = appStore:request(action, payload or {})
+    if not result and not silent then
+        ui.message(target, "error", "APP SERVER OFFLINE",
+            err or "Nobody is hosting apps", 1.8)
+    end
+    return result, err, code
+end
+
+local function becomeDeveloper()
+    local pin = ui.pin(target, "OWNER PIN TO REGISTER", true)
+    if not pin then return false end
+    local registered, err = request("DEV_REGISTER", { pin = pin }, true)
+    if not registered then
+        ui.message(target, "error", "NOT REGISTERED", err, 2)
+        return false
+    end
+    kiosk.developer_id = registered.developer_id
+    kiosk.developer_token = registered.developer_token
+    saveKiosk()
+    if not fs.exists(devDir) then fs.makeDir(devDir) end
+    ui.message(target, "success",
+        registered.existing and "WELCOME BACK" or "DEVELOPER ACCOUNT",
+        "Put your app in " .. devDir, 2.2)
+    return true
+end
+
+local function publishApp(file)
+    local body = util.readFile(file.path)
+    if not body then
+        ui.message(target, "error", "COULD NOT READ IT", file.name, 1.6)
+        return false
+    end
+    local name = ui.input(target, "APP NAME", {
+        hint = "Shown in the App Browser", maxLength = 18,
+        allowSpace = true, minLength = 2,
+    })
+    if not name then return false end
+    local description = ui.input(target, "DESCRIPTION", {
+        hint = "One line about it", maxLength = 80,
+        allowSpace = true, minLength = 0,
+    })
+    if not description then return false end
+    -- Republishing a file this kiosk already launched is an update rather
+    -- than a second copy, so the app keeps its place and its downloads.
+    kiosk.published = kiosk.published or {}
+    local existingId = kiosk.published[file.name]
+    local width = target.getSize()
+    ui.clear(target)
+    ui.header(target, "LAUNCHING", name, util.formatClock())
+    local barWidth = width - 6
+    for step = 1, barWidth do
+        ui.fill(target, 4, 10, barWidth, 1, ui.theme.panel)
+        ui.fill(target, 4, 10, step, 1, colors.purple)
+        sleep(0.008)
+    end
+    local published, err = storeRequest("APP_PUBLISH", {
+        developer_id = kiosk.developer_id,
+        developer_token = kiosk.developer_token,
+        app_id = existingId,
+        name = name,
+        description = description,
+        body = body,
+    }, true)
+    if not published then
+        ui.message(target, "error", "NOT LAUNCHED", err, 2.2)
+        return false
+    end
+    kiosk.published[file.name] = published.app.app_id
+    saveKiosk()
+    ui.message(target, "success", "LIVE IN THE APP BROWSER",
+        name .. "  v" .. published.app.version, 2)
+    return true
+end
+
+local function devMode()
+    while running do
+        if not kiosk.developer_id then
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "DEV MODE", "Write apps for the PUMPE",
+                util.formatClock())
+            ui.card(target, 2, 5, width - 2, 8, colors.purple)
+            ui.wrappedText(target, 4, 6,
+                "A developer account lets you publish apps to the App"
+                    .. " Browser. It uses this kiosk's company owner.",
+                width - 6, 5, ui.theme.muted, ui.theme.panel)
+            local scene = ui.scene(target)
+            scene:button("register", 2, 14, width - 2, 3,
+                "ENTER DEV MODE", { background = colors.purple, shadow = true })
+            scene:button("back", 1, height, 8, 1, "< BACK",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return end
+            if action == "register" then becomeDeveloper() end
+        else
+            local files = devFiles()
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "DEV MODE", #files .. " file(s) in /apps",
+                util.formatClock())
+            local scene = ui.scene(target)
+            if #files == 0 then
+                ui.center(target, 8, "NOTHING IN " .. devDir, ui.theme.warning)
+                ui.wrappedText(target, 2, 10,
+                    "Put a .lua file there. It must return one function,"
+                        .. " which the PUMPE calls with its api table.",
+                    width - 2, 4, ui.theme.muted)
+            end
+            for index, file in ipairs(files) do
+                if index <= 4 then
+                    scene:button("file:" .. file.name, 2,
+                        5 + (index - 1) * 3, width - 2, 2,
+                        file.name .. "\n"
+                            .. math.ceil(file.size / 1024) .. " KiB",
+                        { background = ui.theme.panel })
+                end
+            end
+            ui.text(target, 2, height - 2,
+                ui.truncate("DEV " .. tostring(kiosk.developer_id), width - 3),
+                ui.theme.muted)
+            scene:button("back", 1, height, 8, 1, "< BACK",
+                { background = ui.theme.panel })
+            local action = scene:wait({ tickRate = 3 })
+            if action == "back" or action == "__terminate" then return end
+            local name = action and action:match("^file:(.+)$")
+            for _, file in ipairs(files) do
+                if file.name == name then publishApp(file) end
+            end
+        end
+    end
+end
+
 local function settingsScreen()
     while true do
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "POS SETTINGS", merchantName(), util.formatClock())
         local scene = ui.scene(target)
-        local buttonWidth = math.floor((width - 5) / 2)
+        -- Three columns: eight entries ran the last row into the footer.
+        local buttonWidth = math.floor((width - 6) / 3)
         local entries = {
             { "balance", "BALANCE", ui.theme.success },
             { "withdraw", "WITHDRAW", ui.theme.accentDark },
@@ -874,11 +1033,13 @@ local function settingsScreen()
             { "portable", kiosk.portable and "PORTABLE MODE ON"
                 or "PORTABLE MODE OFF",
                 kiosk.portable and colors.cyan or ui.theme.panel },
+            { "dev", kiosk.developer_id and "DEV MODE" or "ENTER DEV MODE",
+                colors.purple },
             { "close", "CLOSE KIOSK", ui.theme.danger },
         }
         for index, entry in ipairs(entries) do
-            local column = (index - 1) % 2
-            local row = math.floor((index - 1) / 2)
+            local column = (index - 1) % 3
+            local row = math.floor((index - 1) / 3)
             scene:button(entry[1], 2 + column * (buttonWidth + 1),
                 5 + row * 4, buttonWidth, 3, entry[2], {
                     background = entry[3],
@@ -907,6 +1068,9 @@ local function settingsScreen()
             ui.message(target, customerMonitor and "success" or "warning",
                 customerMonitor and "DISPLAY CONNECTED" or "NO DISPLAY FOUND",
                 customerMonitorName or "Attach an advanced monitor", 0.9)
+        elseif action == "dev" then
+            ui.wipe(target, "DEV MODE")
+            devMode()
         elseif action == "portable" then
             kiosk.portable = not kiosk.portable
             saveKiosk()

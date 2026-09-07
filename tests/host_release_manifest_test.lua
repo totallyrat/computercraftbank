@@ -56,7 +56,8 @@ local expectedFiles = {
 -- already know, so nothing new may ever join this array.
 local expectedExtra = { "border_controller.lua", "ccg.lua" }
 -- Everything added since. Older updaters never read this array at all.
-local expectedForward = { "gps_anchor.lua", "admin_terminal.lua" }
+local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
+    "app_server.lua", "foxy.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

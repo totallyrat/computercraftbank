@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.2.0"
+local PROGRAM_VERSION = "8.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -41,6 +41,8 @@ RELEASE.local_files = {
     "border_controller.lua",
     "ccg.lua",
     "gps_anchor.lua",
+    "app_server.lua",
+    "foxy.lua",
     "startup.lua",
     "config.lua",
     "lib/net.lua",
@@ -61,6 +63,8 @@ RELEASE.depot_files = {
     "border_controller.lua",
     "ccg.lua",
     "gps_anchor.lua",
+    "app_server.lua",
+    "foxy.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -92,6 +96,8 @@ RELEASE.optional = {
     "ccg.lua",
     "gps_anchor.lua",
     "admin_terminal.lua",
+    "app_server.lua",
+    "foxy.lua",
 }
 
 RELEASE.programs = {
@@ -104,6 +110,7 @@ RELEASE.programs = {
     border = "border_controller.lua",
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
+    apps = "app_server.lua",
 }
 
 -- lib/update.lua is included for every role: without it a client cannot load
@@ -132,6 +139,11 @@ local function deploymentFilesForRole(role)
     }
     for _, file in ipairs(RELEASE.common) do
         files[#files + 1] = { path = file.path, source = file.source }
+    end
+    -- The App Server ships with Foxy so a fresh world has something to
+    -- download the moment the store is up.
+    if role == "apps" then
+        files[#files + 1] = { path = "foxy.lua", source = "foxy.lua" }
     end
     files[#files + 1] = { path = mainFile, source = mainFile }
     return files
@@ -476,6 +488,7 @@ local function blankState()
         conversations = {},
         direct_conversations = {},
         proximity_offers = {},
+        developers = {},
         announcements = {},
         settings = { account_approval = false },
         tax_revenue = 0,
@@ -642,6 +655,8 @@ local prefixes = {
     conversation = { "CHAT", 8 },
     proximity = { "NEAR", 8 },
     scan = { "SCAN", 8 },
+    pot = { "POT", 8 },
+    developer = { "DEV", 6 },
     announcement = { "ANN", 8 },
 }
 
@@ -3199,6 +3214,261 @@ function actions.PROXIMITY_DECLINE(payload)
     end
     save()
     return { offer = publicOffer(offer) }
+end
+
+-- Foxy ------------------------------------------------------------------------
+-- The account you already have, split into pots you name yourself. The main
+-- balance is still the one every other part of the system spends from; a pot
+-- is money set aside, and moving between them never leaves the account.
+
+local foxy = {}
+
+function foxy.account(account)
+    account.pots = account.pots or {}
+    account.pot_order = account.pot_order or {}
+    return account
+end
+
+function foxy.potList(account)
+    foxy.account(account)
+    local list = {}
+    for _, potId in ipairs(account.pot_order) do
+        local pot = account.pots[potId]
+        if pot then
+            list[#list + 1] = {
+                pot_id = potId, name = pot.name, balance = pot.balance,
+            }
+        end
+    end
+    return list
+end
+
+function foxy.saved(account)
+    local total = 0
+    for _, pot in pairs(foxy.account(account).pots) do
+        total = total + (pot.balance or 0)
+    end
+    return util.roundMoney(total)
+end
+
+-- "main" is the ordinary balance; anything else is a pot the holder made.
+function foxy.balanceOf(account, potId)
+    if potId == nil or potId == "main" then return account.balance end
+    local pot = foxy.account(account).pots[potId]
+    need(pot, "POT_NOT_FOUND", "That account is not there any more")
+    return pot.balance
+end
+
+function foxy.adjust(account, potId, delta)
+    if potId == nil or potId == "main" then
+        account.balance = util.roundMoney(account.balance + delta)
+        return
+    end
+    local pot = foxy.account(account).pots[potId]
+    need(pot, "POT_NOT_FOUND", "That account is not there any more")
+    pot.balance = util.roundMoney(pot.balance + delta)
+end
+
+function actions.FOXY_OVERVIEW(payload)
+    local account = requireSession(payload)
+    return {
+        name = account.name,
+        card_id = account.card_id,
+        personal_number = account.personal_number,
+        balance = account.balance,
+        saved = foxy.saved(account),
+        pots = foxy.potList(account),
+        max_pots = tonumber(config.max_pots_per_account) or 8,
+        fee_rate = tonumber(config.foxy_cash_fee_rate) or 0.02,
+        tax_demand = account.tax_demand
+            and util.copy(account.tax_demand) or nil,
+    }
+end
+
+function actions.FOXY_POT_CREATE(payload)
+    local account = foxy.account(requireSession(payload))
+    local name = util.safeText(util.trim(payload.name or ""), 18)
+    need(#name >= 2, "INVALID_NAME", "Give the account a name")
+    need(#account.pot_order < (tonumber(config.max_pots_per_account) or 8),
+        "TOO_MANY_POTS", "You already have as many accounts as you can hold")
+    local potId = nextId("pot")
+    account.pots[potId] = { pot_id = potId, name = name, balance = 0,
+        created_day = util.ingameDay() }
+    account.pot_order[#account.pot_order + 1] = potId
+    save()
+    return { pots = foxy.potList(account), balance = account.balance }
+end
+
+function actions.FOXY_POT_MOVE(payload)
+    local account = foxy.account(requireSession(payload))
+    local from = payload.from_pot or "main"
+    local to = payload.to_pot or "main"
+    need(from ~= to, "SAME_ACCOUNT", "Pick two different accounts")
+    local amount = validateAmount(payload.amount)
+    -- Moving out of the main balance is spending as far as a tax demand is
+    -- concerned; a fine cannot be dodged by tucking the money into savings.
+    if from == "main" then checkNoTaxDemand(account) end
+    need(foxy.balanceOf(account, from) >= amount, "INSUFFICIENT_FUNDS",
+        "Not enough money in that account")
+    foxy.adjust(account, from, -amount)
+    foxy.adjust(account, to, amount)
+    save()
+    return {
+        pots = foxy.potList(account),
+        balance = account.balance,
+        saved = foxy.saved(account),
+    }
+end
+
+function actions.FOXY_POT_CLOSE(payload)
+    local account = foxy.account(requireSession(payload))
+    local pot = account.pots[payload.pot_id]
+    need(pot, "POT_NOT_FOUND", "That account is not there any more")
+    account.balance = util.roundMoney(account.balance + (pot.balance or 0))
+    account.pots[payload.pot_id] = nil
+    for index = #account.pot_order, 1, -1 do
+        if account.pot_order[index] == payload.pot_id then
+            table.remove(account.pot_order, index)
+        end
+    end
+    save()
+    return { pots = foxy.potList(account), balance = account.balance }
+end
+
+-- Foxy Cash. Instant, friends only, a flat fee and no daily ceiling. The
+-- ceiling is what the friendship replaces: you cannot reach a stranger.
+function actions.FOXY_CASH_QUOTE(payload)
+    local account = requireSpender(payload)
+    local friend = requireFriend(socialAccount(account), payload.account_id)
+    local amount = validateAmount(payload.amount)
+    local rate = tonumber(config.foxy_cash_fee_rate) or 0.02
+    local fee = util.roundMoney(amount * rate)
+    return {
+        recipient = friend.name,
+        amount = amount,
+        fee = fee,
+        total = util.roundMoney(amount + fee),
+        fee_rate = rate,
+        balance = account.balance,
+    }
+end
+
+function actions.FOXY_CASH_SEND(payload)
+    local account = requireSpender(payload)
+    local friend = requireFriend(socialAccount(account), payload.account_id)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local amount = validateAmount(payload.amount)
+    local rate = tonumber(config.foxy_cash_fee_rate) or 0.02
+    local fee = util.roundMoney(amount * rate)
+    local total = util.roundMoney(amount + fee)
+    need(account.balance >= total, "INSUFFICIENT_FUNDS",
+        "Not enough money including the Foxy Cash fee")
+    account.balance = util.roundMoney(account.balance - total)
+    friend.balance = util.roundMoney(friend.balance + amount)
+    state.processing_fee_revenue = util.roundMoney(
+        (state.processing_fee_revenue or 0) + fee)
+    transaction(account, "foxy_cash_out", -amount, friend.name,
+        "Foxy Cash to " .. friend.name)
+    if fee > 0 then
+        transaction(account, "processing_fee", -fee, "Foxy",
+            "Foxy Cash fee")
+    end
+    transaction(friend, "foxy_cash_in", amount, account.name,
+        "Foxy Cash from " .. account.name)
+    notification(friend, "Foxy Cash received",
+        account.name .. " sent you " .. util.money(amount, config.currency),
+        "money")
+    save()
+    logActivity("Foxy Cash " .. util.money(amount, config.currency) .. " "
+        .. account.name .. " > " .. friend.name, colors.lime)
+    return { amount = amount, fee = fee, total = total,
+        recipient = friend.name, balance = account.balance }
+end
+
+function actions.FOXY_SET_ACCOUNT(payload)
+    local account = requireSession(payload)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    if payload.name and util.trim(payload.name) ~= "" then
+        local name = util.safeText(util.trim(payload.name), 20)
+        need(name:match("^[%w_ %-]+$") and #name >= 2,
+            "INVALID_NAME", "Use 2-20 letters, numbers, spaces, _ or -")
+        local taken = accountByName(name)
+        need(not taken or taken.account_id == account.account_id,
+            "NAME_TAKEN", "That account name is taken")
+        state.account_names[util.normalName(account.name)] = nil
+        account.name = name
+        state.account_names[util.normalName(name)] = account.account_id
+    end
+    if payload.new_pin and payload.new_pin ~= "" then
+        need(util.validPin(payload.new_pin), "INVALID_PIN",
+            "PIN must be four digits")
+        account.pin_hash = util.hashPin(payload.new_pin)
+    end
+    if payload.gender then
+        account.gender = util.safeText(payload.gender, 20)
+    end
+    save()
+    return { account = publicAccount(account) }
+end
+
+-- Developer accounts ----------------------------------------------------------
+-- A Service Kiosk owner can become a developer and publish apps. The App
+-- Server checks the token here once, when something is published; every
+-- download after that never touches the Bank at all.
+
+function actions.DEV_REGISTER(payload)
+    local terminal = requireTerminal(payload)
+    local _, owner = companyOwner(terminal)
+    need(owner, "NO_COMPANY", "Link this kiosk to a company first")
+    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect owner PIN")
+    state.developers = state.developers or {}
+    local existing = state.developers[owner.account_id]
+    if existing then
+        return { developer_id = existing.developer_id,
+            developer_token = existing.developer_token,
+            name = owner.name, existing = true }
+    end
+    local developer = {
+        developer_id = nextId("developer"),
+        developer_token = util.token("DEV"),
+        account_id = owner.account_id,
+        name = owner.name,
+        created_day = util.ingameDay(),
+    }
+    state.developers[owner.account_id] = developer
+    save()
+    logActivity("Developer account: " .. owner.name, colors.purple)
+    return { developer_id = developer.developer_id,
+        developer_token = developer.developer_token,
+        name = owner.name, existing = false }
+end
+
+-- A signed-in PUMPE asking whether it is a developer, so the App Browser can
+-- offer to delete the apps this account published and nobody else's.
+function actions.DEV_MINE(payload)
+    local account = requireSession(payload)
+    local developer = (state.developers or {})[account.account_id]
+    if not developer then return { developer_id = nil } end
+    return {
+        developer_id = developer.developer_id,
+        developer_token = developer.developer_token,
+        name = developer.name,
+    }
+end
+
+-- Asked by the App Server, never by a PUMPE.
+function actions.DEV_VERIFY(payload)
+    for _, developer in pairs(state.developers or {}) do
+        if developer.developer_id == payload.developer_id
+            and developer.developer_token == payload.developer_token then
+            local account = state.accounts[developer.account_id]
+            need(account and not account.banned, "DEV_BANNED",
+                "That developer account is not active")
+            return { name = developer.name,
+                account_id = developer.account_id }
+        end
+    end
+    need(false, "DEV_UNKNOWN", "That developer is not registered")
 end
 
 -- Proximity scanning ---------------------------------------------------------

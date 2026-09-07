@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "8.2.0"
+local INSTALLER_VERSION = "8.3.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -50,6 +50,7 @@ local roles = {
     { id = "tax", label = "TAX CONTROLLER", detail = "Retired", protected = true, hidden = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
     { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
+    { id = "apps", label = "APP SERVER", detail = "Hosts optional apps" },
 }
 
 local rolePrograms = {
@@ -62,6 +63,7 @@ local rolePrograms = {
     border = "border_controller.lua",
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
+    apps = "app_server.lua",
 }
 
 local function roleById(id)
@@ -490,20 +492,33 @@ local function pumpeScreen(installed)
 end
 
 -- Everything that is not a PUMPE, behind the down arrow.
+local rolePage = 1
 local function rolesScreen(installed)
     local width, height = target.getSize()
     clear()
-    header("OTHER ROLES", "What is this computer?")
-    local buttons = {}
-    local visible = {}
+    local all = {}
     for _, role in ipairs(roles) do
         if not role.hidden and role.id ~= "pumpe" then
-            visible[#visible + 1] = role
+            all[#all + 1] = role
         end
     end
     local columns = width >= 40 and 2 or 1
-    local rows = math.ceil(#visible / columns)
     local top, bottom = 5, height - 2
+    -- A narrow screen fits fewer entries than there are roles, so the list
+    -- pages rather than quietly dropping the ones off the bottom.
+    local perPage = math.max(1, math.floor((bottom - top + 1) / 2)) * columns
+    local pages = math.max(1, math.ceil(#all / perPage))
+    rolePage = math.max(1, math.min(rolePage, pages))
+    local visible = {}
+    for index = (rolePage - 1) * perPage + 1,
+        math.min(#all, rolePage * perPage) do
+        visible[#visible + 1] = all[index]
+    end
+    header("OTHER ROLES", pages > 1
+        and ("What is this computer?  " .. rolePage .. "/" .. pages)
+        or "What is this computer?")
+    local buttons = {}
+    local rows = math.max(1, math.ceil(#visible / columns))
     local cardHeight = math.max(2, math.floor((bottom - top + 1) / rows))
     local cardWidth = math.floor((width - 2 - (columns - 1)) / columns)
     for index, role in ipairs(visible) do
@@ -534,18 +549,30 @@ local function rolesScreen(installed)
     writeAt(2, height - 1, truncate(footer, width - 2), theme.muted,
         theme.background)
     button(buttons, "back", 2, height, 8, 1, "^ BACK", theme.accentDark)
-    button(buttons, "exit", math.floor(width / 2) - 2, height, 6, 1,
-        "EXIT", theme.panel)
+    if pages > 1 then
+        button(buttons, "more", math.floor(width / 2) - 4, height, 9, 1,
+            "PAGE " .. (rolePage % pages + 1), theme.panel)
+    else
+        button(buttons, "exit", math.floor(width / 2) - 2, height, 6, 1,
+            "EXIT", theme.panel)
+    end
     if installed and installed ~= "pumpe" then
         button(buttons, "start", width - 8, height, 7, 1, "START",
             theme.success, colors.black)
+    elseif pages > 1 then
+        button(buttons, "exit", width - 7, height, 6, 1, "EXIT", theme.panel)
     end
     local bindings = {}
     for index, role in ipairs(visible) do
         bindings[tostring(index)] = "role:" .. role.id
     end
     if type(keys) == "table" and keys.up then bindings[keys.up] = "back" end
-    return waitForButton(buttons, bindings)
+    local action = waitForButton(buttons, bindings)
+    if action == "more" then
+        rolePage = rolePage % pages + 1
+        return "__page"
+    end
+    return action
 end
 
 local function roleMenu()
@@ -558,6 +585,8 @@ local function roleMenu()
             running = false
             return nil
         elseif action == "more" then
+            screen = "roles"
+        elseif action == "__page" then
             screen = "roles"
         elseif action == "back" then
             screen = "pumpe"

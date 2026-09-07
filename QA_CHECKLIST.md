@@ -32,6 +32,7 @@ Run this after installing into a ComputerCraft world.
 - [ ] Install **CCG Bet Console** and confirm `ccg.lua`, config, installer, and all required `lib/` files arrive under `/pumpe` and CCG starts after reboot.
 - [ ] Restart after installation and confirm the selected role starts automatically.
 - [ ] Enter a wrong protected code and confirm Bank Server and Admin Terminal downloads are denied.
+- [ ] On a 26x20 pocket screen, page through the other roles and confirm every one is reachable, **APP SERVER** included.
 - [ ] Enter `4040` and confirm a protected role downloads successfully.
 - [ ] Interrupt a download and confirm existing installed scripts remain unchanged.
 - [ ] Confirm an unrelated existing `/startup.lua` is preserved.
@@ -175,6 +176,38 @@ Run this after installing into a ComputerCraft world.
 - [ ] Leave a call unanswered for 30 seconds and confirm both sides get a missed-call alert.
 - [ ] Start a call, restart the Bank Server, and confirm the call ends rather than hanging.
 - [ ] Confirm a second call is refused while one is already open.
+
+## Foxy
+
+- [ ] Install the **App Server** role, confirm it starts and reports Foxy already in its catalogue.
+- [ ] On a PUMPE open **Apps**, confirm Foxy is listed, install it, and confirm the bar fills and the tick draws before it lands on the Home Screen.
+- [ ] Open Foxy and confirm the wordmark sweeps in, then the home page offers **Bank** and **Account**.
+- [ ] In Bank, confirm the card shows your name and a grouped card number, that the light band sweeps across it once, and that your balance is underneath.
+- [ ] Tap `+ New account`, name it, and confirm it appears under the balance with a zero balance.
+- [ ] Move money from Main into it and confirm both balances change by the same amount and the total is unchanged.
+- [ ] Move it back, then close the account, and confirm the money returns to Main.
+- [ ] Scroll to **Foxy Cash**. With no friends, confirm it says so rather than offering a broken send.
+- [ ] Add a friend, send them money, and confirm the fee is 2%, that they receive the whole amount, and that the sender pays amount + fee.
+- [ ] Confirm Foxy Cash refuses somebody who is not a friend.
+- [ ] Send more than the old `send_money_daily_limit` in one go and confirm Foxy Cash has no ceiling.
+- [ ] Change your name in **Account**, confirm the old name frees up and the new one can be paid.
+- [ ] Change your PIN and confirm the old one stops working everywhere.
+- [ ] Issue a tax demand and confirm Foxy Cash and moving money out of Main are both refused, while moving savings back into Main still works.
+
+## The App Browser and Dev Mode
+
+- [ ] With the App Server stopped, open **Apps** and confirm it says the server is offline rather than hanging.
+- [ ] Watch the Bank's dashboard while a PUMPE downloads an app and confirm the Bank is not involved.
+- [ ] In POS Settings tap **ENTER DEV MODE**, enter the company owner's PIN, and confirm `/apps/` is created.
+- [ ] Confirm a kiosk with no company linked is told to link one first.
+- [ ] Put a `.lua` file in `/apps/`, publish it with a name and description, and confirm it appears in every PUMPE's App Browser.
+- [ ] Install it on a PUMPE, open it from the Home Screen, and confirm it runs.
+- [ ] Edit the file, publish again, and confirm the App Browser offers **Update** and the version number rises rather than a second copy appearing.
+- [ ] Publish something that is not valid Lua and confirm the App Server refuses it before any PUMPE sees it.
+- [ ] Publish an app that errors on purpose and confirm the PUMPE reports it and returns to the Home Screen instead of crashing.
+- [ ] Delete your own app from the App Browser and confirm it leaves the catalogue; confirm somebody else's cannot be deleted.
+- [ ] **Remove from PUMPE** an installed app and confirm it leaves the Home Screen but stays in the store.
+- [ ] Open **BuckApp** and confirm the closing-down banner and that **Move to Foxy** opens the App Browser.
 
 ## Proximity Ticket Scanning
 

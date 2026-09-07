@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.2.0"
+local PROGRAM_VERSION = "8.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -25,11 +25,21 @@ local device = util.loadTable(deviceFile, {
 })
 if device.onboarding_complete == nil then device.onboarding_complete = false end
 
+-- Optional apps live beside the phone rather than inside it: one file each
+-- under /pumpe/apps, downloaded from the App Server, listed here.
+local appsDir = fs.combine(ROOT, "apps")
+local appsFile = fs.combine(ROOT, "pumpe_apps.dat")
+local installed = util.loadTable(appsFile, { list = {} })
+installed.list = installed.list or {}
+
 ui.usePhoneStyle(true)
 
 local disableDeviceLock
 -- Settings opens the dock picker, which is defined with the Home Screen.
 local favouritesPicker
+-- BuckApp's migration banner points at the App Browser, which is defined
+-- with the optional apps further down.
+local appBrowser
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -3234,29 +3244,38 @@ local function buckApp()
         local width, height = target.getSize()
         local summary = refreshSummary(true)
         ui.clear(target)
-        ui.header(target, "BuckApp", "Foxy Account", util.formatClock(blink))
-        ui.card(target, 2, 4, width - 2, 4, ui.theme.success)
-        ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 5, money(account.balance), ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 6, "Daily sent " .. money(account.daily_sent or 0),
+        ui.header(target, "BuckApp", "Closing down", util.formatClock(blink))
+        -- BuckApp still works, but it is on the way out. The banner is the
+        -- warning; Foxy in the App Browser is where it is going.
+        ui.fill(target, 1, 4, width, 2, ui.theme.warning)
+        ui.text(target, 2, 4, "BuckApp is closing down",
+            colors.black, ui.theme.warning)
+        ui.text(target, 2, 5, "Get Foxy from Apps",
+            colors.black, ui.theme.warning)
+        ui.card(target, 2, 6, width - 2, 3, ui.theme.success)
+        ui.text(target, 4, 6, "AVAILABLE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 7, money(account.balance), ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 8, "Daily sent " .. money(account.daily_sent or 0),
             ui.theme.muted, ui.theme.panel)
 
         local demand = request("TAX_DEMAND_STATUS", {}, true)
         demand = demand and demand.demand or nil
         local scene = ui.scene(target)
         if demand then
-            scene:button("demand", 2, 9, width - 2, 3,
+            scene:button("demand", 2, 10, width - 2, 3,
                 "Tax demand " .. money(demand.amount),
                 { background = ui.theme.warning, foreground = colors.black })
         else
-            scene:button("pay", 2, 9, width - 2, 3, "Continue",
+            scene:button("pay", 2, 10, width - 2, 3, "Continue",
                 { background = ui.theme.accentDark, shadow = true })
         end
         local half = math.floor((width - 3) / 2)
-        scene:button("wallet", 2, 13, half, 3, "Bet\nWallet",
+        scene:button("wallet", 2, 14, half, 3, "Bet\nWallet",
             { background = colors.purple })
-        scene:button("activity", 2 + half + 1, 13, width - 3 - half, 3,
+        scene:button("activity", 2 + half + 1, 14, width - 3 - half, 3,
             "Activity", { background = ui.theme.panel })
+        scene:button("foxy", 2, 18, width - 2, 2, "Move to Foxy",
+            { background = colors.orange, foreground = colors.black })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
@@ -3265,7 +3284,8 @@ local function buckApp()
         elseif action == "pay" then payMenu()
         elseif action == "demand" then taxDemandScreen(demand)
         elseif action == "wallet" then betWalletScreen()
-        elseif action == "activity" then historyScreen() end
+        elseif action == "activity" then historyScreen()
+        elseif action == "foxy" then appBrowser() end
         if summary == nil and not sessionToken then return end
     end
 end
@@ -3344,6 +3364,293 @@ local function customsApp()
     end
 end
 
+-- Optional apps ---------------------------------------------------------------
+-- An app is one file returning one function. It is handed an `api` table and
+-- nothing else: it can draw, and it can make requests as the signed-in
+-- account, but it never sees the session token or the device file.
+
+local function saveApps()
+    util.saveTable(appsFile, installed)
+end
+
+local function appPath(appId)
+    return fs.combine(appsDir, appId .. ".lua")
+end
+
+local function installedApp(appId)
+    for _, entry in ipairs(installed.list) do
+        if entry.app_id == appId then return entry end
+    end
+    return nil
+end
+
+-- Drops the catalogue entry only. Reinstalling an app rewrites its file
+-- first and then replaces the entry, so deleting the file here would wipe
+-- the download that just landed.
+local function forgetApp(appId)
+    for index = #installed.list, 1, -1 do
+        if installed.list[index].app_id == appId then
+            table.remove(installed.list, index)
+        end
+    end
+    saveApps()
+end
+
+local function removeApp(appId)
+    forgetApp(appId)
+    if fs.exists(appPath(appId)) then pcall(fs.delete, appPath(appId)) end
+end
+
+local function runInstalledApp(entry)
+    local loader, loadError = loadfile(appPath(entry.app_id))
+    if not loader then
+        ui.message(target, "error", entry.name .. " is damaged",
+            "Reinstall it from the App Browser", 2)
+        return
+    end
+    local built, factory = pcall(loader)
+    if not built or type(factory) ~= "function" then
+        ui.message(target, "error", entry.name .. " will not start",
+            "That app is not built for this PUMPE", 2)
+        return
+    end
+    local ok, err = pcall(factory, {
+        ui = ui, util = util, target = target, config = config,
+        colors = colors, money = money,
+        request = function(action, payload, silent)
+            return request(action, payload, silent)
+        end,
+        account = function() return account end,
+        refresh = function() return refreshSummary(true) end,
+        running = function() return running and sessionToken ~= nil end,
+    })
+    if not ok then
+        ui.message(target, "error", entry.name .. " stopped",
+            ui.truncate(tostring(err), 60), 2.2)
+    end
+    refreshSummary(true)
+end
+
+-- The App Browser ---------------------------------------------------------
+-- Everything here goes to the App Server, never to the Bank, so a download
+-- never slows banking down.
+
+local appClient
+
+local function appServer()
+    if not appClient then
+        appClient = net.client({
+            protocol = config.app_protocol,
+            hostname = config.app_hostname,
+        })
+    end
+    return appClient
+end
+
+local function storeRequest(action, payload, silent)
+    local result, err, code = appServer():request(action, payload or {})
+    if not result and not silent then
+        ui.message(target, "error", "App Server offline",
+            err or "Nobody is hosting apps", 1.8)
+    end
+    return result, err, code
+end
+
+-- A bar that fills as the chunks land, then a tick that draws itself.
+local function installApp(app)
+    local width, height = target.getSize()
+    if #installed.list >= (tonumber(config.max_apps_installed) or 12)
+        and not installedApp(app.app_id) then
+        ui.message(target, "warning", "No room for it",
+            "Remove an app first", 1.8)
+        return false
+    end
+    if not fs.exists(appsDir) then fs.makeDir(appsDir) end
+    local chunks, offset = {}, 0
+    ui.clear(target)
+    ui.header(target, "Installing", app.name, util.formatClock())
+    local barWidth = width - 6
+    while offset < app.size do
+        local chunk, err = storeRequest("APP_CHUNK", {
+            app_id = app.app_id, offset = offset,
+            limit = config.app_chunk_size,
+        }, true)
+        if not chunk or type(chunk.data) ~= "string" or #chunk.data == 0 then
+            ui.message(target, "error", "Download stopped",
+                err or "The App Server went quiet", 1.8)
+            return false
+        end
+        chunks[#chunks + 1] = chunk.data
+        offset = chunk.next_offset
+        local filled = math.floor(barWidth * offset / math.max(1, app.size))
+        ui.fill(target, 4, 11, barWidth, 1, ui.theme.panel)
+        ui.fill(target, 4, 11, math.max(0, filled), 1, ui.theme.accent)
+        ui.center(target, 9, math.floor(offset / math.max(1, app.size) * 100)
+            .. "%", ui.theme.ink)
+        util.cooperativeYield()
+    end
+    local body = table.concat(chunks)
+    if #body ~= app.size or util.checksum(body) ~= app.checksum then
+        ui.message(target, "error", "Download was damaged",
+            "Nothing was installed", 1.8)
+        return false
+    end
+    local wrote = pcall(util.writeFile, appPath(app.app_id), body)
+    if not wrote then
+        ui.message(target, "error", "No room on this PUMPE",
+            "Remove something first", 1.8)
+        return false
+    end
+    forgetApp(app.app_id)
+    installed.list[#installed.list + 1] = {
+        app_id = app.app_id, name = app.name, version = app.version,
+        author = app.author, description = app.description,
+    }
+    saveApps()
+    -- The tick draws itself, one stroke at a time.
+    ui.clear(target)
+    ui.header(target, "Installed", app.name, util.formatClock())
+    local midX, midY = math.floor(width / 2) - 2, 10
+    for step = 1, 5 do
+        if step <= 2 then
+            ui.fill(target, midX + step - 1, midY + step - 1, 1, 1,
+                ui.theme.success)
+        else
+            ui.fill(target, midX + step - 1, midY + 4 - step, 1, 1,
+                ui.theme.success)
+        end
+        sleep(0.07)
+    end
+    ui.center(target, midY + 4, "Ready on your Home Screen", ui.theme.muted)
+    sleep(0.8)
+    return true
+end
+
+local function appDetail(app, mine)
+    while running do
+        local width, height = target.getSize()
+        local here = installedApp(app.app_id)
+        ui.clear(target)
+        ui.header(target, app.name, "by " .. (app.author or "Unknown"),
+            util.formatClock())
+        ui.card(target, 2, 5, width - 2, 8, ui.theme.accent)
+        ui.wrappedText(target, 4, 6, app.description or "No description",
+            width - 6, 4, ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 11, "v" .. tostring(app.version) .. "  "
+            .. math.ceil((app.size or 0) / 1024) .. " KiB",
+            ui.theme.muted, ui.theme.panel, width - 6)
+        local scene = ui.scene(target)
+        if here and here.version == app.version then
+            scene:button("open", 2, 14, width - 2, 2, "Open",
+                { background = ui.theme.success,
+                    foreground = colors.black })
+            scene:button("remove", 2, 16, width - 2, 2, "Remove from PUMPE",
+                { background = ui.theme.panel })
+        else
+            scene:button("get", 2, 14, width - 2, 3,
+                here and "Update" or "Get", { background = ui.theme.accentDark,
+                    shadow = true })
+        end
+        if mine then
+            scene:button("unpublish", 2, height - 2, width - 2, 2,
+                "Delete from the store", { background = ui.theme.danger })
+        end
+        scene:button("back", 1, height, 8, 1, "< Apps",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "get" then
+            if installApp(app) then return true end
+        elseif action == "open" then
+            runInstalledApp(here)
+        elseif action == "remove" then
+            if ui.confirm(target, "Remove " .. app.name,
+                "It stays in the store.", "Remove", "Keep") then
+                removeApp(app.app_id)
+                return true
+            end
+        elseif action == "unpublish" then
+            if ui.confirm(target, "Delete " .. app.name,
+                "Nobody will be able to download it.", "Delete", "Keep") then
+                local gone, err = storeRequest("APP_DELETE", {
+                    app_id = app.app_id,
+                    developer_id = mine.developer_id,
+                    developer_token = mine.developer_token,
+                }, true)
+                if gone then
+                    removeApp(app.app_id)
+                    ui.message(target, "success", "Deleted", app.name, 1.2)
+                    return true
+                end
+                ui.message(target, "error", "Not deleted", err, 1.8)
+            end
+        end
+    end
+end
+
+appBrowser = function()
+    -- Only a developer sees the delete button, and only on their own apps.
+    local mine = request("DEV_MINE", {}, true)
+    local page, reload = 1, true
+    local apps = {}
+    while running do
+        if reload then
+            local listed = storeRequest("APP_LIST", {}, true)
+            apps = listed and listed.apps or {}
+            reload = false
+        end
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "App Browser", #apps .. " available",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local shown, actualPage, pages = util.page(apps, page, 4)
+        page = actualPage
+        if #apps == 0 then
+            ui.center(target, 9, "Nothing published yet", ui.theme.ink)
+            ui.wrappedText(target, 2, 11,
+                "Apps come from the App Server. Ask a shopkeeper to publish"
+                    .. " one from Dev Mode.", width - 2, 4, ui.theme.muted)
+        end
+        for index, app in ipairs(shown) do
+            local here = installedApp(app.app_id)
+            local mark = here and (here.version == app.version and "*" or "^")
+                or "+"
+            scene:button("open:" .. app.app_id, 2, 4 + (index - 1) * 3,
+                width - 2, 2,
+                mark .. " " .. ui.truncate(app.name, width - 6) .. "\n"
+                    .. ui.truncate(app.description or "", width - 6),
+                { background = here and ui.theme.accentDark or ui.theme.panel })
+        end
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        scene:button("refresh", math.floor(width / 2) - 4, height, 9, 1,
+            "Refresh", { background = ui.theme.panel })
+        if pages > 1 then
+            scene:button("prev", width - 8, height, 3, 1, "<",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            scene:button("next", width - 4, height, 3, 1, ">",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "refresh" then reload = true
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local id = action and action:match("^open:(.+)$")
+            for _, app in ipairs(apps) do
+                if app.app_id == id then
+                    local developer = mine and mine.developer_id
+                        and app.author == account.name and mine or nil
+                    if appDetail(app, developer) then reload = true end
+                    break
+                end
+            end
+        end
+    end
+end
+
 -- The app catalogue the Home Screen, the dock and the picker share.
 local APPS = {
     buck = { name = "BuckApp", glyph = "$", color = colors.green,
@@ -3357,11 +3664,41 @@ local APPS = {
     bet = { name = "Bet", glyph = "?", color = colors.magenta },
     tax = { name = "Tax", glyph = "%", color = colors.orange },
     subs = { name = "Subs", glyph = "~", color = colors.magenta },
+    browser = { name = "Apps", glyph = "+", color = colors.blue },
     settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
-    "buck", "friends", "tickets", "customs", "bet", "tax", "subs", "settings",
+    "buck", "friends", "tickets", "customs", "bet", "tax", "subs",
+    "browser", "settings",
 }
+
+-- Anything installed from the App Browser joins the Home Screen beside the
+-- built-in apps, under an id of its own so a favourite survives a restart.
+local EXTRA_COLORS = {
+    colors.orange, colors.purple, colors.lime, colors.pink,
+    colors.lightBlue, colors.yellow,
+}
+
+local function refreshInstalledApps()
+    for id in pairs(APPS) do
+        if id:sub(1, 4) == "ext:" then APPS[id] = nil end
+    end
+    for index = #APP_ORDER, 1, -1 do
+        if APP_ORDER[index]:sub(1, 4) == "ext:" then
+            table.remove(APP_ORDER, index)
+        end
+    end
+    for index, entry in ipairs(installed.list) do
+        local id = "ext:" .. entry.app_id
+        APPS[id] = {
+            name = entry.name,
+            glyph = string.upper(entry.name:sub(1, 1)),
+            color = EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
+            open = function() runInstalledApp(entry) end,
+        }
+        table.insert(APP_ORDER, #APP_ORDER - 1, id)
+    end
+end
 local DOCK_SLOTS = 4
 
 local function appBadge(id, poll)
@@ -3572,6 +3909,8 @@ local function mainMenu()
     APPS.tax.open = taxScreen
     APPS.subs.open = subscriptionsScreen
     APPS.settings.open = settingsScreen
+    APPS.browser.open = appBrowser
+    refreshInstalledApps()
 
     local blink, tick, page, alertOffset = true, 0, 1, 0
     local poll = request("PUMPE_POLL", {}, true) or {}
@@ -3667,6 +4006,7 @@ local function mainMenu()
             elseif id and APPS[id] and APPS[id].open then
                 phoneTransition(APPS[id].name, APPS[id].color)
                 APPS[id].open()
+                refreshInstalledApps()
                 refreshSummary(true)
             end
         end
