@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "8.3.0",
+    version = "8.4.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -75,6 +75,12 @@ return {
     -- from the Bank, so a busy download never slows banking down. Publishing
     -- is the only thing that touches the Bank, and only to check the
     -- developer is real.
+    -- What an installed app is allowed to keep on the Bank. Records are
+    -- small on purpose: an app store is not a place to put a database.
+    max_app_records = 200,
+    max_app_record_bytes = 400,
+    max_app_reactions = 60,
+
     app_protocol = "PUMPE_APPS_V1",
     app_hostname = "APP_SERVER",
     app_chunk_size = 6000,

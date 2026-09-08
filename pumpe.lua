@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.3.0"
+local PROGRAM_VERSION = "8.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -38,8 +38,10 @@ local disableDeviceLock
 -- Settings opens the dock picker, which is defined with the Home Screen.
 local favouritesPicker
 -- BuckApp's migration banner points at the App Browser, which is defined
--- with the optional apps further down.
+-- with the optional apps further down, and Settings lists what FoxyLogin
+-- has signed you into.
 local appBrowser
+local connectedApps
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -3204,9 +3206,11 @@ local function settingsScreen()
             { background = ui.theme.accentDark })
         scene:button("dock", 2, 13, width - 2, 2, "Edit Your Dock",
             { background = ui.theme.panel })
-        scene:button("logout", 2, 15, width - 2, 2, "Sign Out",
+        scene:button("connected", 2, 15, width - 2, 2, "Connected Apps",
+            { background = ui.theme.panel })
+        scene:button("logout", 2, 17, width - 2, 1, "Sign Out",
             { background = ui.theme.danger })
-        scene:button("close", 2, 17, width - 2, 2, "Close PUMPE",
+        scene:button("close", 2, 18, width - 2, 1, "Close PUMPE",
             { background = ui.theme.panel })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
@@ -3215,6 +3219,8 @@ local function settingsScreen()
             guideScreen(true)
         elseif action == "dock" then
             favouritesPicker()
+        elseif action == "connected" then
+            connectedApps()
         elseif action == "logout" then
             if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
                 "Sign Out", "Back") then
@@ -3401,6 +3407,130 @@ local function removeApp(appId)
     if fs.exists(appPath(appId)) then pcall(fs.delete, appPath(appId)) end
 end
 
+-- FoxyLogin ---------------------------------------------------------------
+-- The one line an app needs to know who is using it. It says what it wants
+-- to see, the phone shows that list in Foxy's colours, and one tap approves
+-- it for good. The app receives a profile with exactly those fields and
+-- never the session token.
+
+local SCOPE_LABELS = {
+    name = "Your account name",
+    number = "Your personal number",
+    friends = "Who your friends are",
+    balance = "Your balance",
+}
+
+local function loginConsent(appName, scopes)
+    local width, height = target.getSize()
+    -- The Foxy sheet slides up from the bottom, the way a sign-in sheet does.
+    for row = height, 5, -1 do
+        ui.fill(target, 1, row, width, 1, colors.brown)
+        sleep(0.012)
+    end
+    while running and sessionToken do
+        ui.clear(target)
+        ui.header(target, "Sign in", "with Foxy", util.formatClock())
+        ui.fill(target, 1, 4, width, height - 3, colors.brown)
+        ui.text(target, 2, 5, "FOXY", colors.orange, colors.brown)
+        ui.wrappedText(target, 2, 7, appName .. " wants to use your Foxy"
+            .. " Account.", width - 2, 3, colors.white, colors.brown)
+        ui.text(target, 2, 11, "IT WILL SEE", colors.lightGray, colors.brown)
+        local row = 12
+        for _, scope in ipairs(scopes) do
+            if row <= height - 6 then
+                ui.text(target, 2, row,
+                    ui.truncate("- " .. (SCOPE_LABELS[scope] or scope),
+                        width - 3), colors.white, colors.brown)
+                row = row + 1
+            end
+        end
+        local scene = ui.scene(target)
+        scene:button("yes", 2, height - 4, width - 2, 2, "Continue as "
+            .. ui.truncate(account.name, width - 16),
+            { background = colors.orange, foreground = colors.black })
+        scene:button("no", 2, height - 1, width - 2, 1, "Not now",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "yes" then return true end
+        if action == "no" or action == "__terminate" then return false end
+    end
+    return false
+end
+
+-- Returns the profile the app is allowed to see, or nil when it is refused.
+local function foxyLogin(appId, spec)
+    spec = type(spec) == "table" and spec or {}
+    local scopes = { "name" }
+    local seen = { name = true }
+    for _, scope in ipairs(type(spec.scopes) == "table" and spec.scopes or {}) do
+        if SCOPE_LABELS[scope] and not seen[scope] then
+            seen[scope] = true
+            scopes[#scopes + 1] = scope
+        end
+    end
+    local appName = ui.truncate(tostring(spec.name or appId), 18)
+    local status = request("FOXY_LOGIN_STATUS", { app_id = appId }, true)
+    -- Already approved with the same list: straight in, no second question.
+    if status and status.approved and #(status.scopes or {}) == #scopes then
+        local same = true
+        for index, scope in ipairs(scopes) do
+            if status.scopes[index] ~= scope then same = false end
+        end
+        if same then return status.profile end
+    end
+    if not loginConsent(appName, scopes) then return nil end
+    local approved, err = request("FOXY_LOGIN_APPROVE", {
+        app_id = appId, app_name = appName, scopes = scopes,
+    }, true)
+    if not approved then
+        ui.message(target, "error", "Could not sign in", err, 1.8)
+        return nil
+    end
+    ui.message(target, "success", "Signed in", appName, 0.9)
+    return approved.profile
+end
+
+-- What you have signed into, and how to take it back.
+connectedApps = function()
+    while running and sessionToken do
+        local width, height = target.getSize()
+        local listed = request("FOXY_LOGIN_LIST", {}, true)
+        local apps = listed and listed.apps or {}
+        ui.clear(target)
+        ui.header(target, "Connected Apps", #apps .. " signed in",
+            util.formatClock())
+        local scene = ui.scene(target)
+        if #apps == 0 then
+            ui.center(target, 9, "Nothing signed in", ui.theme.ink)
+            ui.wrappedText(target, 2, 11,
+                "Apps you sign into with Foxy appear here, with what they"
+                    .. " can see.", width - 2, 4, ui.theme.muted)
+        end
+        for index, app in ipairs(apps) do
+            if index <= 4 then
+                scene:button("revoke:" .. app.app_id, 2, 4 + (index - 1) * 3,
+                    width - 2, 2,
+                    app.app_name .. "\n" .. #app.scopes .. " things shared",
+                    { background = ui.theme.panel })
+            end
+        end
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        local appId = action and action:match("^revoke:(.+)$")
+        if appId then
+            for _, app in ipairs(apps) do
+                if app.app_id == appId and ui.confirm(target,
+                    "Sign out of " .. app.app_name,
+                    "It will ask again next time.", "Sign out", "Keep") then
+                    request("FOXY_LOGIN_REVOKE", { app_id = appId }, true)
+                end
+            end
+        end
+    end
+end
+
 local function runInstalledApp(entry)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
@@ -3423,6 +3553,10 @@ local function runInstalledApp(entry)
         account = function() return account end,
         refresh = function() return refreshSummary(true) end,
         running = function() return running and sessionToken ~= nil end,
+        -- FoxyLogin. The app id comes from the install rather than the app,
+        -- so nothing can ask for somebody else's grant.
+        login = function(spec) return foxyLogin(entry.app_id, spec) end,
+        app_id = entry.app_id,
     })
     if not ok then
         ui.message(target, "error", entry.name .. " stopped",

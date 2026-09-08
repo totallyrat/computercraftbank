@@ -1,5 +1,62 @@
 # Changelog
 
+## 8.4.0
+
+FoxyLogin, a store apps can keep things in, and the first real app written
+against both.
+
+### FoxyLogin
+
+- One line is the whole integration:
+
+  ```lua
+  local me = api.login({ name = "Yap", scopes = { "friends" } })
+  if not me then return end
+  ```
+
+- The phone slides up a Foxy sheet naming the app and listing exactly what it
+  will see, and waits for a tap. Approve once and it never asks again — the
+  second time is straight through, the way a quick sign-in should be.
+- The app is handed a profile with **only** the fields it asked for. Scopes
+  are `name` (always), `number`, `friends` and `balance`; anything else is
+  dropped rather than honoured.
+- The app id comes from the install, not from the app's own code, so nothing
+  can ask for another app's grant.
+- **Settings -> Connected Apps** lists what you have signed into and what each
+  one can see, and takes it back.
+
+### A store for apps
+
+- A signed-in app gets a small store on the Bank: `APP_DATA_PUT`,
+  `APP_DATA_LIST`, `APP_DATA_DELETE` and `APP_DATA_REACT`. The Bank has no
+  idea what any of it means.
+- Records are owned by whoever wrote them. Reactions are the one thing anybody
+  can add to somebody else's record, which is enough to build likes on.
+- Collections are per app, so one app can never read another's.
+- Records are small on purpose and the oldest fall off the end. `config.lua`
+  holds the limits. This is a notice board, not a database.
+
+### apps/
+
+- A new folder in the repository where apps are written. Nothing in it is part
+  of a release: the manifest does not carry it and the App Server does not
+  ship it. Copy a file onto a kiosk's `/apps/`, publish it from Dev Mode, and
+  it appears in every App Browser.
+- `apps/README.md` documents the whole app contract: what `api` gives you,
+  FoxyLogin, the data store, and the 26x20 screen every app has to fit.
+
+### Yap
+
+- The first real app. A text social network: post, like, reply.
+- The feed puts **your friends first**, then everybody else, each newest
+  first. A friend's post carries a `*` and their name in green.
+- Scrolling is two tall buttons down the **right-hand edge**, so the posts
+  never run under them. `+` at the bottom writes one.
+- Tap a post for the whole thing, its replies, and Like. Your own posts can be
+  deleted.
+- It is deliberately **not published**: `apps/yap.lua` is yours to install and
+  publish from your own company.
+
 ## 8.3.0
 
 Foxy, an App Browser, an App Server, and a way for anyone to write apps for

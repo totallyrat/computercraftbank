@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.3.0"
+local PROGRAM_VERSION = "8.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -3409,6 +3409,274 @@ function actions.FOXY_SET_ACCOUNT(payload)
     end
     save()
     return { account = publicAccount(account) }
+end
+
+-- FoxyLogin and app storage ----------------------------------------------------
+-- An installed app never sees the session token, so it cannot act as you by
+-- accident. FoxyLogin is how it asks: it says what it wants to see, you
+-- approve once, and it gets a profile with exactly that and nothing else.
+-- The same grant is what lets it keep records here.
+
+local appstore = {}
+
+appstore.SCOPES = {
+    name = "Your account name",
+    number = "Your personal number",
+    friends = "Who your friends are",
+    balance = "Your balance",
+}
+
+function appstore.grants(account)
+    account.app_grants = account.app_grants or {}
+    return account.app_grants
+end
+
+function appstore.cleanScopes(requested)
+    local scopes, seen = {}, { name = true }
+    scopes[1] = "name"
+    for _, scope in ipairs(type(requested) == "table" and requested or {}) do
+        if appstore.SCOPES[scope] and not seen[scope] then
+            seen[scope] = true
+            scopes[#scopes + 1] = scope
+        end
+    end
+    return scopes
+end
+
+function appstore.appId(payload)
+    local appId = util.safeText(util.trim(tostring(payload.app_id or "")), 24)
+    need(appId:match("^[%w_%-]+$"), "APP_REQUIRED", "That app has no id")
+    return appId
+end
+
+function appstore.profile(account, scopes)
+    local allowed = {}
+    for _, scope in ipairs(scopes) do allowed[scope] = true end
+    local profile = {
+        account_id = account.account_id,
+        name = account.name,
+        scopes = scopes,
+    }
+    if allowed.number then profile.personal_number = account.personal_number end
+    if allowed.balance then profile.balance = account.balance end
+    if allowed.friends then
+        local friends = {}
+        for friendId in pairs(socialAccount(account).friends) do
+            local friend = state.accounts[friendId]
+            if friend then
+                friends[#friends + 1] = { account_id = friendId,
+                    name = friend.name }
+            end
+        end
+        table.sort(friends, function(a, b) return a.name < b.name end)
+        profile.friends = friends
+    end
+    return profile
+end
+
+function actions.FOXY_LOGIN_STATUS(payload)
+    local account = requireSession(payload)
+    local grant = appstore.grants(account)[appstore.appId(payload)]
+    if not grant then return { approved = false } end
+    return {
+        approved = true,
+        app_name = grant.app_name,
+        scopes = grant.scopes,
+        profile = appstore.profile(account, grant.scopes),
+    }
+end
+
+function actions.FOXY_LOGIN_APPROVE(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    local scopes = appstore.cleanScopes(payload.scopes)
+    appstore.grants(account)[appId] = {
+        app_id = appId,
+        app_name = util.safeText(util.trim(payload.app_name or appId), 18),
+        scopes = scopes,
+        approved_day = util.ingameDay(),
+    }
+    save()
+    return { approved = true, profile = appstore.profile(account, scopes) }
+end
+
+function actions.FOXY_LOGIN_REVOKE(payload)
+    local account = requireSession(payload)
+    appstore.grants(account)[appstore.appId(payload)] = nil
+    save()
+    return { approved = false }
+end
+
+function actions.FOXY_LOGIN_LIST(payload)
+    local account = requireSession(payload)
+    local list = {}
+    for _, grant in pairs(appstore.grants(account)) do
+        list[#list + 1] = {
+            app_id = grant.app_id, app_name = grant.app_name,
+            scopes = grant.scopes, approved_day = grant.approved_day,
+        }
+    end
+    table.sort(list, function(a, b) return a.app_name < b.app_name end)
+    return { apps = list }
+end
+
+-- App records. A small shared store so an app can keep posts, comments or
+-- anything else without the Bank knowing what any of it means. Records are
+-- owned by whoever wrote them; reactions are the one thing anybody can add.
+
+function appstore.collection(appId, name)
+    state.app_data = state.app_data or {}
+    state.app_data[appId] = state.app_data[appId] or {}
+    local key = util.safeText(util.trim(tostring(name or "")), 20)
+    need(key:match("^[%w_%-]+$"), "BAD_COLLECTION", "That collection has no name")
+    state.app_data[appId][key] = state.app_data[appId][key]
+        or { items = {}, sequence = 0 }
+    return state.app_data[appId][key]
+end
+
+-- Measured rather than serialised: it bounds depth as well as length, so a
+-- deeply nested record cannot slip past on size alone.
+function appstore.dataSize(value, depth)
+    depth = (depth or 0) + 1
+    if depth > 4 then return math.huge end
+    local kind = type(value)
+    if kind == "string" then return #value + 2 end
+    if kind ~= "table" then return 8 end
+    local total = 2
+    for key, item in pairs(value) do
+        total = total + appstore.dataSize(key, depth)
+            + appstore.dataSize(item, depth)
+    end
+    return total
+end
+
+function appstore.requireGrant(account, appId)
+    local grant = appstore.grants(account)[appId]
+    need(grant, "NOT_SIGNED_IN", "Sign in to that app first")
+    return grant
+end
+
+function appstore.publicRecord(record, accountId)
+    local reactions, mine = 0, false
+    for reactorId in pairs(record.reactions or {}) do
+        reactions = reactions + 1
+        if reactorId == accountId then mine = true end
+    end
+    return {
+        id = record.id,
+        parent = record.parent,
+        data = util.copy(record.data),
+        author_id = record.author_id,
+        author_name = record.author_name,
+        created_day = record.created_day,
+        created_time = record.created_time,
+        created_at = record.created_at,
+        reactions = reactions,
+        reacted = mine,
+        mine = record.author_id == accountId,
+    }
+end
+
+function actions.APP_DATA_PUT(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local collection = appstore.collection(appId, payload.collection)
+    need(appstore.dataSize(payload.data or {})
+        <= (tonumber(config.max_app_record_bytes) or 400),
+        "RECORD_TOO_BIG", "That is more than an app record can hold")
+    local record
+    if payload.id then
+        for _, item in ipairs(collection.items) do
+            if item.id == payload.id then record = item end
+        end
+        need(record, "NOT_FOUND", "That record is gone")
+        need(record.author_id == account.account_id, "NOT_YOURS",
+            "That record belongs to somebody else")
+        record.data = util.copy(payload.data or {})
+    else
+        collection.sequence = collection.sequence + 1
+        record = {
+            id = string.format("%s%06d", appId:sub(1, 3):upper(),
+                collection.sequence),
+            parent = payload.parent and util.safeText(payload.parent, 24) or nil,
+            data = util.copy(payload.data or {}),
+            author_id = account.account_id,
+            author_name = account.name,
+            created_day = util.ingameDay(),
+            created_time = util.formatClock(),
+            created_at = util.nowMs(),
+            reactions = {},
+        }
+        table.insert(collection.items, 1, record)
+        local limit = tonumber(config.max_app_records) or 200
+        while #collection.items > limit do table.remove(collection.items) end
+    end
+    save()
+    return { record = appstore.publicRecord(record, account.account_id) }
+end
+
+function actions.APP_DATA_LIST(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local collection = appstore.collection(appId, payload.collection)
+    local parent = payload.parent
+    local limit = math.max(1, math.min(60,
+        math.floor(tonumber(payload.limit) or 40)))
+    local out = {}
+    for _, record in ipairs(collection.items) do
+        if not parent or record.parent == parent then
+            out[#out + 1] = appstore.publicRecord(record, account.account_id)
+            if #out >= limit then break end
+        end
+    end
+    return { records = out, total = #collection.items }
+end
+
+function actions.APP_DATA_DELETE(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local collection = appstore.collection(appId, payload.collection)
+    for index = #collection.items, 1, -1 do
+        local record = collection.items[index]
+        if record.id == payload.id then
+            need(record.author_id == account.account_id, "NOT_YOURS",
+                "That record belongs to somebody else")
+            table.remove(collection.items, index)
+            save()
+            return { removed = payload.id }
+        end
+    end
+    need(false, "NOT_FOUND", "That record is gone")
+end
+
+-- The one thing anybody can add to somebody else's record.
+function actions.APP_DATA_REACT(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local collection = appstore.collection(appId, payload.collection)
+    for _, record in ipairs(collection.items) do
+        if record.id == payload.id then
+            record.reactions = record.reactions or {}
+            if payload.on == false then
+                record.reactions[account.account_id] = nil
+            else
+                local count = 0
+                for _ in pairs(record.reactions) do count = count + 1 end
+                need(count < (tonumber(config.max_app_reactions) or 60)
+                    or record.reactions[account.account_id],
+                    "TOO_MANY", "That record cannot hold more reactions")
+                record.reactions[account.account_id] = true
+            end
+            save()
+            return { record = appstore.publicRecord(record,
+                account.account_id) }
+        end
+    end
+    need(false, "NOT_FOUND", "That record is gone")
 end
 
 -- Developer accounts ----------------------------------------------------------

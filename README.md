@@ -16,6 +16,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
 | `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
+| `apps/` | Written here, published from inside the game | Apps that are not part of a release. `yap.lua` is a text social network |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.
@@ -163,6 +164,21 @@ Savings are not a hiding place. While a tax demand is outstanding you cannot mov
 **Apps** on the Home Screen lists everything the App Server is offering. Installing one downloads it in verified chunks and puts it on your Home Screen beside the built-in apps; a download whose size or checksum does not match what was advertised is thrown away rather than run, and an app that crashes is caught and hands you back the phone.
 
 Every byte comes from the App Server, never from the Bank — that is what the machine is for. The Bank is asked one question, once, when something is published: is this developer real.
+
+### FoxyLogin
+
+An app knows who is using it with one line:
+
+```lua
+local me = api.login({ name = "Yap", scopes = { "friends" } })
+if not me then return end          -- they said no
+```
+
+The phone slides up a Foxy sheet naming the app and listing exactly what it will see, and waits for a tap. Approve once and it never asks again. The app receives a profile with only the fields it asked for — `name` always, then any of `number`, `friends` and `balance` — and never the session token. The app id comes from the install rather than the app's own code, so nothing can ask for another app's grant.
+
+**Settings → Connected Apps** lists what you have signed into, what each one can see, and takes it back.
+
+Signed-in apps also get a small store on the Bank for posts, comments or anything else: records are owned by whoever wrote them, reactions are the one thing anybody can add to somebody else's, and collections are per app. `apps/README.md` has the full contract.
 
 ### Dev Mode: writing your own app
 

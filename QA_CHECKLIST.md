@@ -209,6 +209,22 @@ Run this after installing into a ComputerCraft world.
 - [ ] **Remove from PUMPE** an installed app and confirm it leaves the Home Screen but stays in the store.
 - [ ] Open **BuckApp** and confirm the closing-down banner and that **Move to Foxy** opens the App Browser.
 
+## FoxyLogin and Yap
+
+- [ ] Publish `apps/yap.lua` from Dev Mode and install it on a PUMPE.
+- [ ] Open it and confirm the Foxy sheet slides up, names Yap, and lists your account name and who your friends are — and nothing else.
+- [ ] Tap **Not now** and confirm the app closes without signing in.
+- [ ] Open it again, approve, and confirm it goes straight in the next time with no second question.
+- [ ] Confirm **Settings → Connected Apps** lists Yap, and that signing out of it there makes the app ask again.
+- [ ] Post something and confirm it appears at the top of your own feed.
+- [ ] From a friend's PUMPE, confirm your post is marked with `*` and sits above every stranger's, even one posted more recently.
+- [ ] Like a post from another PUMPE and confirm the count rises on both; unlike it and confirm it falls.
+- [ ] Like the same post twice and confirm it stays at one.
+- [ ] Reply to a post and confirm the reply shows under it for everybody.
+- [ ] Confirm you can delete your own post and cannot delete somebody else's.
+- [ ] Scroll with the two buttons on the right edge and confirm the posts never draw underneath them.
+- [ ] Post the longest text the composer allows and confirm the feed truncates it with `..` rather than overflowing.
+
 ## Proximity Ticket Scanning
 
 - [ ] With four GPS anchors up, open a ticket on a PUMPE, turn on **PROXIMITY SCAN** at the Event Kiosk, and confirm the holder is asked and not somebody standing closer without a ticket.
