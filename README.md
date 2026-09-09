@@ -16,7 +16,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
 | `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
-| `apps/` | Written here, published from inside the game | Apps that are not part of a release. `yap.lua` is a text social network |
+| `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.
@@ -178,7 +178,21 @@ The phone slides up a Foxy sheet naming the app and listing exactly what it will
 
 **Settings → Connected Apps** lists what you have signed into, what each one can see, and takes it back.
 
-Signed-in apps also get a small store on the Bank for posts, comments or anything else: records are owned by whoever wrote them, reactions are the one thing anybody can add to somebody else's, and collections are per app. `apps/README.md` has the full contract.
+Signed-in apps also get a small store on the Bank for posts, comments or anything else: records are owned by whoever wrote them, reactions are the one thing anybody can add to somebody else's, and collections are per app. A record can also name an **audience**, which makes it private to those people, and be given a life in days that starts the moment somebody reads it — that is what makes a message disappear.
+
+### What else an app can ask for
+
+Three more APIs, each a single call, and each one where the owner rather than the app has the last word.
+
+**The Pin API.** `api.pin("Unlock Yap Chat")` puts the PUMPE's own PIN pad up and hands the app back true or false. The app never sees the PIN.
+
+**The Notification API.** `api.notifications.ask()` asks once and remembers the answer, a refusal included, so an app cannot put the question up every time it starts. `api.notifications.send{ ... }` then sends a banner — or a fullscreen alert, but only where the owner allowed one. Across accounts it works between friends only, with a daily budget.
+
+**The Urgent Contact API.** `api.call{ account_id = ..., name = ... }` raises the same fullscreen ring the PUMPE raises for Urgent Contact. The ring says which app is calling and who is, both labels coming from the install rather than the app.
+
+**Settings → App Settings** lists every app that has ever asked for a permission, whatever the answer was, and is where you change your mind. **Fullscreen notifications are switched on there and nowhere else**: an app cannot ask for them, and blocking notifications takes fullscreen with it.
+
+`apps/README.md` has the full contract.
 
 ### Dev Mode: writing your own app
 

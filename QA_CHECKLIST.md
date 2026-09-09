@@ -225,6 +225,36 @@ Run this after installing into a ComputerCraft world.
 - [ ] Scroll with the two buttons on the right edge and confirm the posts never draw underneath them.
 - [ ] Post the longest text the composer allows and confirm the feed truncates it with `..` rather than overflowing.
 
+## App permissions and App Settings
+
+- [ ] Publish `apps/yapchat.lua` from Dev Mode and install it on two PUMPEs whose owners are Foxy friends.
+- [ ] Open it and confirm the notifications question comes up **before** the Foxy sign-in sheet.
+- [ ] Tap **Not now**, then reopen the app, and confirm it does not ask again.
+- [ ] Confirm **Settings → App Settings** lists Yap Chat as blocked, and that allowing it there makes notifications work without the app asking again.
+- [ ] With notifications blocked, send a message from the other PUMPE and confirm nothing arrives and the sender is told why.
+- [ ] Turn **Fullscreen: on** in App Settings, send a message, and confirm the recipient gets the fullscreen alert with Yap Chat's name on it.
+- [ ] Block notifications again and confirm **Fullscreen** goes off with them, and that re-allowing notifications leaves fullscreen off.
+- [ ] Confirm an app banner shows the app's name beside the title, so it is not mistaken for the Bank's own.
+- [ ] Tap **Forget this app** and confirm it disappears from App Settings and asks from scratch next time.
+
+## Yap Chat
+
+- [ ] Open the app and confirm it asks for your PIN before showing any message.
+- [ ] Enter the wrong PIN and confirm it refuses and closes rather than opening the inbox.
+- [ ] Enter the wrong PIN five times and confirm the app is locked out for a couple of minutes, then works again.
+- [ ] Send a message and confirm it arrives on the friend's PUMPE and nowhere else — check a third PUMPE cannot see it.
+- [ ] Confirm the conversation opens at the newest message rather than the oldest.
+- [ ] Read a message, wait one in-game day, reopen the conversation on **both** PUMPEs, and confirm it is gone from each.
+- [ ] Leave a message unread, wait three in-game days, and confirm it is still there.
+- [ ] Tap **Call** in a conversation and confirm the other PUMPE rings fullscreen, saying **YAP CHAT CALL** and who is calling.
+- [ ] Accept the call and confirm it behaves exactly like an Urgent Contact.
+- [ ] Confirm the chat list shows an unread count for a friend who has messaged you.
+- [ ] Send the longest message the composer allows and confirm the conversation truncates rather than overflowing.
+
+## Regression: an app can write at all
+
+- [ ] In Yap, post something, like a post and reply to one, and confirm none of them reports **That app has no id** — that was the 8.4.0 bug.
+
 ## Proximity Ticket Scanning
 
 - [ ] With four GPS anchors up, open a ticket on a PUMPE, turn on **PROXIMITY SCAN** at the Event Kiosk, and confirm the holder is asked and not somebody standing closer without a ticket.

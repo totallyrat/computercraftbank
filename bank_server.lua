@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.4.0"
+local PROGRAM_VERSION = "8.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -801,7 +801,7 @@ local function requireCCGConsole(payload)
     return console
 end
 
-local function notification(account, title, body, kind)
+local function notification(account, title, body, kind, extra)
     local item = {
         notification_id = nextId("notification"),
         title = util.safeText(title, 40),
@@ -811,6 +811,11 @@ local function notification(account, title, body, kind)
         created_time = util.formatClock(),
         read = false,
     }
+    -- An app notification carries the app that sent it and how loudly it may
+    -- arrive. Everything the PUMPE itself raises leaves both unset.
+    for key, value in pairs(extra or {}) do
+        if item[key] == nil then item[key] = value end
+    end
     table.insert(account.notifications, 1, item)
     while #account.notifications > 50 do table.remove(account.notifications) end
     return item
@@ -2178,6 +2183,10 @@ local urgentCalls = {}
 -- deliberately not persisted: a Bank restart drops a half-finished door check
 -- the way a dropped connection would.
 local scans = { requests = {}, kinds = { ticket = true, visa = true } }
+-- Declared here rather than beside its own section below: Urgent
+-- Contact reaches into it, and a local declared further down the file
+-- is a nil global at any use site above it.
+local appstore = {}
 
 local function socialAccount(account)
     account.friends = account.friends or {}
@@ -2766,6 +2775,7 @@ local function publicCall(call, accountId)
         i_saved = call.save_votes[accountId] == true,
         ended_reason = call.ended_reason,
         next_seq = call.next_seq,
+        app_name = call.app_name,
     }
 end
 
@@ -2781,9 +2791,18 @@ function actions.URGENT_RING(payload)
 end
 
 function actions.URGENT_CALL(payload)
-    local account = socialAccount(requireSession(payload))
+    local session = requireSession(payload)
+    local account = socialAccount(session)
     cleanupUrgentCalls()
     local other = requireFriend(account, payload.account_id)
+    -- The Urgent Contact API. A messaging app can raise the same alert the
+    -- PUMPE raises, but it has to be signed in, and the name on the alert
+    -- comes from the grant rather than from the app asking.
+    local appName
+    if payload.app_id then
+        appName = appstore.requireGrant(session,
+            appstore.appId(payload)).app_name
+    end
     need(not busyCall(account.account_id), "CALL_BUSY",
         "You already have an Urgent Contact open")
     need(not busyCall(other.account_id), "CALL_BUSY",
@@ -2800,12 +2819,14 @@ function actions.URGENT_CALL(payload)
         messages = {},
         next_seq = 1,
         save_votes = {},
+        app_name = appName,
     }
     urgentCalls[call.call_id] = call
-    notification(other, "Urgent Contact",
-        account.name .. " is reaching you right now", "urgent")
-    logActivity("Urgent Contact " .. account.name .. " > " .. other.name,
-        colors.orange)
+    notification(other, appName and (appName .. " call") or "Urgent Contact",
+        account.name .. " is reaching you right now"
+            .. (appName and (" on " .. appName) or ""), "urgent")
+    logActivity("Urgent Contact " .. account.name .. " > " .. other.name
+        .. (appName and (" via " .. appName) or ""), colors.orange)
     return { call = publicCall(call, account.account_id) }
 end
 
@@ -3417,8 +3438,6 @@ end
 -- approve once, and it gets a profile with exactly that and nothing else.
 -- The same grant is what lets it keep records here.
 
-local appstore = {}
-
 appstore.SCOPES = {
     name = "Your account name",
     number = "Your personal number",
@@ -3529,8 +3548,28 @@ function appstore.collection(appId, name)
     state.app_data[appId] = state.app_data[appId] or {}
     local key = util.safeText(util.trim(tostring(name or "")), 20)
     need(key:match("^[%w_%-]+$"), "BAD_COLLECTION", "That collection has no name")
-    state.app_data[appId][key] = state.app_data[appId][key]
-        or { items = {}, sequence = 0 }
+    local existing = state.app_data[appId][key]
+    if existing then return existing end
+
+    -- Opening a new collection is the only thing that is capped. An app that
+    -- keeps one per conversation would otherwise be able to fill the Bank's
+    -- disk a conversation at a time, and the disk is the scarce thing here.
+    -- Emptied collections are swept first, so a chat whose messages have all
+    -- expired gives its slot back rather than holding it forever.
+    local limit = tonumber(config.max_app_collections) or 40
+    local count = 0
+    for _ in pairs(state.app_data[appId]) do count = count + 1 end
+    if count >= limit then
+        for otherKey, collection in pairs(state.app_data[appId]) do
+            if #collection.items == 0 then
+                state.app_data[appId][otherKey] = nil
+                count = count - 1
+            end
+        end
+        need(count < limit, "TOO_MANY",
+            "That app is holding as much as it is allowed to")
+    end
+    state.app_data[appId][key] = { items = {}, sequence = 0 }
     return state.app_data[appId][key]
 end
 
@@ -3550,10 +3589,224 @@ function appstore.dataSize(value, depth)
     return total
 end
 
+-- The Pin API. An app can ask the owner to prove it is really them before it
+-- opens something sensitive, without ever seeing the PIN: the PUMPE collects
+-- it and only the answer comes back. A wrong-guess counter is here because
+-- the app is the thing being defended against -- it stops a hostile app
+-- grinding the PIN through the API it was handed.
+function actions.PIN_CHECK(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    account.pin_check_fails = account.pin_check_fails or 0
+    if account.pin_check_fails >= 5 then
+        local since = util.nowMs() - (account.pin_check_at or 0)
+        local cool = (tonumber(config.pin_check_lockout_seconds) or 120) * 1000
+        if since < cool then
+            need(false, "TOO_MANY",
+                "Too many wrong PINs. Try again in "
+                    .. math.ceil((cool - since) / 1000) .. "s")
+        end
+        account.pin_check_fails = 0
+    end
+    if not verifyAccount(account, payload.pin) then
+        account.pin_check_fails = account.pin_check_fails + 1
+        account.pin_check_at = util.nowMs()
+        save()
+        need(false, "BAD_PIN", "Incorrect PIN")
+    end
+    account.pin_check_fails = 0
+    save()
+    return { ok = true }
+end
+
+-- Permissions. Signing in is one decision; letting an app interrupt you is
+-- another, so it is asked for separately and kept where the owner can revisit
+-- it. An app that has ever asked is listed, whatever the answer was.
+
+function appstore.permissions(account)
+    account.app_permissions = account.app_permissions or {}
+    return account.app_permissions
+end
+
+function appstore.permission(account, appId, appName)
+    local all = appstore.permissions(account)
+    all[appId] = all[appId] or {
+        app_id = appId,
+        app_name = util.safeText(util.trim(tostring(appName or appId)), 18),
+        notifications = "unset",
+        fullscreen = false,
+        asked_day = util.ingameDay(),
+    }
+    if appName then
+        all[appId].app_name =
+            util.safeText(util.trim(tostring(appName)), 18)
+    end
+    return all[appId]
+end
+
+function appstore.publicPermission(entry)
+    return {
+        app_id = entry.app_id,
+        app_name = entry.app_name,
+        notifications = entry.notifications,
+        fullscreen = entry.fullscreen == true,
+        asked_day = entry.asked_day,
+    }
+end
+
+-- The app asks; the answer comes from the PUMPE, which is what actually put
+-- the question to the owner. Asking again after a "no" only re-reads it: an
+-- app cannot nag its way to a yes it was already refused.
+function actions.APP_PERMISSION_ASK(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    -- Deliberately no grant check. An app should be able to ask this before
+    -- it asks for your account, and recording the answer exposes nothing.
+    -- APP_NOTIFY is where the grant is required, so a "yes" here is worth
+    -- nothing on its own.
+    local entry = appstore.permission(account, appId, payload.app_name)
+    if entry.notifications == "unset" and payload.allow ~= nil then
+        entry.notifications = payload.allow == true and "granted" or "denied"
+        entry.asked_day = util.ingameDay()
+        save()
+    end
+    return { permission = appstore.publicPermission(entry) }
+end
+
+function actions.APP_PERMISSION_LIST(payload)
+    local account = requireSession(payload)
+    local list = {}
+    for _, entry in pairs(appstore.permissions(account)) do
+        list[#list + 1] = appstore.publicPermission(entry)
+    end
+    table.sort(list, function(a, b) return a.app_name < b.app_name end)
+    return { apps = list }
+end
+
+-- App Settings on the PUMPE. Fullscreen is only ever turned on from here,
+-- never by the app, and it cannot outlive the notifications permission.
+function actions.APP_PERMISSION_SET(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    local entry = appstore.permissions(account)[appId]
+    need(entry, "NOT_FOUND", "That app has not asked for anything")
+    if payload.notifications ~= nil then
+        entry.notifications = payload.notifications == true
+            and "granted" or "denied"
+    end
+    if payload.fullscreen ~= nil then
+        entry.fullscreen = payload.fullscreen == true
+    end
+    if entry.notifications ~= "granted" then entry.fullscreen = false end
+    save()
+    return { permission = appstore.publicPermission(entry) }
+end
+
+function actions.APP_PERMISSION_FORGET(payload)
+    local account = requireSession(payload)
+    appstore.permissions(account)[appstore.appId(payload)] = nil
+    save()
+    return { ok = true }
+end
+
+-- An app notification. The recipient's own permission decides whether it
+-- arrives at all and how loudly, so a sender cannot make its own alert
+-- louder than the person allowed.
+function actions.APP_NOTIFY(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    local grant = appstore.requireGrant(account, appId)
+    -- "target" means a screen everywhere else in this file; this one is a
+    -- person.
+    local recipient = account
+    local wantedId = payload.account_id
+        and util.trim(tostring(payload.account_id))
+    if wantedId and wantedId ~= "" and wantedId ~= account.account_id then
+        recipient = state.accounts[wantedId]
+        need(recipient, "ACCOUNT_NOT_FOUND", "Nobody has that account")
+        -- An app can only reach across accounts between friends. Without
+        -- this, one grant would be a licence to alert the whole server.
+        need(socialAccount(account).friends[wantedId], "NOT_FRIENDS",
+            "You can only reach a friend that way")
+    end
+    local entry = appstore.permissions(recipient)[appId]
+    need(entry and entry.notifications == "granted", "NO_PERMISSION",
+        recipient == account and "Allow notifications for that app first"
+            or (recipient.name .. " has not allowed that app to notify them"))
+    -- Fullscreen is the owner's setting, not the sender's request.
+    local style = payload.style == "fullscreen" and entry.fullscreen == true
+        and "fullscreen" or "banner"
+    appstore.rateLimit(account, appId)
+    local item = notification(recipient,
+        util.safeText(util.trim(tostring(payload.title or grant.app_name)), 40),
+        util.safeText(util.trim(tostring(payload.body or "")), 120),
+        "app", { app_name = entry.app_name, style = style })
+    save()
+    return { sent = true, style = style, notification_id = item.notification_id }
+end
+
+-- A sender gets a small budget of alerts per in-game day, per app. It is
+-- generous for a chat app and useless for a spammer.
+function appstore.rateLimit(account, appId)
+    account.app_notify_count = account.app_notify_count or {}
+    local today = util.ingameDay()
+    local bucket = account.app_notify_count[appId]
+    if not bucket or bucket.day ~= today then
+        bucket = { day = today, count = 0 }
+        account.app_notify_count[appId] = bucket
+    end
+    need(bucket.count < (tonumber(config.max_app_notifications_per_day) or 60),
+        "TOO_MANY", "That app has sent all the alerts it can today")
+    bucket.count = bucket.count + 1
+end
+
 function appstore.requireGrant(account, appId)
     local grant = appstore.grants(account)[appId]
     need(grant, "NOT_SIGNED_IN", "Sign in to that app first")
     return grant
+end
+
+-- A record with an audience is private to the author and the people named
+-- in it. One without is public to everybody using the app, which is what a
+-- feed wants. The Bank still has no idea what any of it means.
+function appstore.audience(payload)
+    local raw = payload.audience
+    if type(raw) ~= "table" or #raw == 0 then return nil end
+    local out, seen = {}, {}
+    for _, id in ipairs(raw) do
+        id = util.safeText(util.trim(tostring(id or "")), 24)
+        if id ~= "" and not seen[id] then
+            seen[id] = true
+            out[#out + 1] = id
+        end
+        if #out >= 8 then break end
+    end
+    if #out == 0 then return nil end
+    return out
+end
+
+function appstore.visible(record, accountId)
+    if not record.audience then return true end
+    if record.author_id == accountId then return true end
+    for _, id in ipairs(record.audience) do
+        if id == accountId then return true end
+    end
+    return false
+end
+
+-- Records can be told to go away. The clock only starts once the record has
+-- been read, so a message nobody opened is still there tomorrow.
+function appstore.prune(collection)
+    local today, removed = util.ingameDay(), 0
+    for index = #collection.items, 1, -1 do
+        local record = collection.items[index]
+        if record.expires_day and today >= record.expires_day then
+            table.remove(collection.items, index)
+            removed = removed + 1
+        end
+    end
+    return removed
 end
 
 function appstore.publicRecord(record, accountId)
@@ -3574,6 +3827,10 @@ function appstore.publicRecord(record, accountId)
         reactions = reactions,
         reacted = mine,
         mine = record.author_id == accountId,
+        private = record.audience ~= nil,
+        read = record.read_by ~= nil and record.read_by[accountId] == true,
+        seen = record.read_by ~= nil and next(record.read_by) ~= nil,
+        expires_day = record.expires_day,
     }
 end
 
@@ -3582,13 +3839,17 @@ function actions.APP_DATA_PUT(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
     local collection = appstore.collection(appId, payload.collection)
+    appstore.prune(collection)
     need(appstore.dataSize(payload.data or {})
         <= (tonumber(config.max_app_record_bytes) or 400),
         "RECORD_TOO_BIG", "That is more than an app record can hold")
     local record
     if payload.id then
         for _, item in ipairs(collection.items) do
-            if item.id == payload.id then record = item end
+            if item.id == payload.id
+                and appstore.visible(item, account.account_id) then
+                record = item
+            end
         end
         need(record, "NOT_FOUND", "That record is gone")
         need(record.author_id == account.account_id, "NOT_YOURS",
@@ -3607,6 +3868,11 @@ function actions.APP_DATA_PUT(payload)
             created_time = util.formatClock(),
             created_at = util.nowMs(),
             reactions = {},
+            audience = appstore.audience(payload),
+            expire_after_days = payload.expire_after_days
+                and math.max(1, math.min(30,
+                    math.floor(tonumber(payload.expire_after_days) or 1)))
+                or nil,
         }
         table.insert(collection.items, 1, record)
         local limit = tonumber(config.max_app_records) or 200
@@ -3621,17 +3887,21 @@ function actions.APP_DATA_LIST(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
     local collection = appstore.collection(appId, payload.collection)
+    if appstore.prune(collection) > 0 then save() end
     local parent = payload.parent
     local limit = math.max(1, math.min(60,
         math.floor(tonumber(payload.limit) or 40)))
-    local out = {}
+    local out, visible = {}, 0
     for _, record in ipairs(collection.items) do
-        if not parent or record.parent == parent then
-            out[#out + 1] = appstore.publicRecord(record, account.account_id)
-            if #out >= limit then break end
+        if appstore.visible(record, account.account_id) then
+            visible = visible + 1
+            if (not parent or record.parent == parent) and #out < limit then
+                out[#out + 1] = appstore.publicRecord(record,
+                    account.account_id)
+            end
         end
     end
-    return { records = out, total = #collection.items }
+    return { records = out, total = visible }
 end
 
 function actions.APP_DATA_DELETE(payload)
@@ -3641,7 +3911,8 @@ function actions.APP_DATA_DELETE(payload)
     local collection = appstore.collection(appId, payload.collection)
     for index = #collection.items, 1, -1 do
         local record = collection.items[index]
-        if record.id == payload.id then
+        if record.id == payload.id
+            and appstore.visible(record, account.account_id) then
             need(record.author_id == account.account_id, "NOT_YOURS",
                 "That record belongs to somebody else")
             table.remove(collection.items, index)
@@ -3652,6 +3923,42 @@ function actions.APP_DATA_DELETE(payload)
     need(false, "NOT_FOUND", "That record is gone")
 end
 
+-- Reading a record is what starts its clock. An app that asked for an
+-- expiry gets disappearing records for free, and one that did not is
+-- simply told who has seen what.
+function actions.APP_DATA_READ(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local collection = appstore.collection(appId, payload.collection)
+    appstore.prune(collection)
+    local marked = {}
+    local wanted = {}
+    if type(payload.ids) == "table" then
+        for _, id in ipairs(payload.ids) do wanted[tostring(id)] = true end
+    end
+    if payload.id then wanted[tostring(payload.id)] = true end
+    for _, record in ipairs(collection.items) do
+        if wanted[record.id]
+            and appstore.visible(record, account.account_id)
+            -- The author reading their own record back is not a read
+            -- receipt, or every message would expire the moment it was sent.
+            and record.author_id ~= account.account_id then
+            record.read_by = record.read_by or {}
+            if not record.read_by[account.account_id] then
+                record.read_by[account.account_id] = true
+                if record.expire_after_days and not record.expires_day then
+                    record.expires_day = util.ingameDay()
+                        + record.expire_after_days
+                end
+            end
+            marked[#marked + 1] = record.id
+        end
+    end
+    save()
+    return { read = marked }
+end
+
 -- The one thing anybody can add to somebody else's record.
 function actions.APP_DATA_REACT(payload)
     local account = requireSession(payload)
@@ -3659,7 +3966,8 @@ function actions.APP_DATA_REACT(payload)
     appstore.requireGrant(account, appId)
     local collection = appstore.collection(appId, payload.collection)
     for _, record in ipairs(collection.items) do
-        if record.id == payload.id then
+        if record.id == payload.id
+            and appstore.visible(record, account.account_id) then
             record.reactions = record.reactions or {}
             if payload.on == false then
                 record.reactions[account.account_id] = nil
@@ -4382,6 +4690,8 @@ function actions.PUMPE_POLL(payload)
             title = latest.title,
             body = latest.body,
             kind = latest.kind,
+            app_name = latest.app_name,
+            style = latest.style,
         } or nil,
     }
 end

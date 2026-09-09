@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.4.0"
+local PROGRAM_VERSION = "8.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -42,6 +42,7 @@ local favouritesPicker
 -- has signed you into.
 local appBrowser
 local connectedApps
+local appSettingsScreen
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -2069,6 +2070,7 @@ end
 local conversationScreen
 
 local urgentCallScreen
+local appUrgentCall
 local inCall = false
 local lastBannerId
 
@@ -2081,9 +2083,41 @@ local function showBanner(item)
         or item.kind == "money" and ui.theme.success
         or ui.theme.accent
     ui.fill(target, 1, 1, width, 3, color)
-    ui.text(target, 2, 1, ui.truncate(item.title, width - 2), colors.black, color)
+    -- An app alert says which app, so a banner is never mistaken for the
+    -- Bank's own.
+    local title = item.app_name
+        and (ui.truncate(item.app_name, 10) .. "  " .. item.title)
+        or item.title
+    ui.text(target, 2, 1, ui.truncate(title, width - 2), colors.black, color)
     ui.wrappedText(target, 2, 2, item.body, width - 2, 2, colors.black, color)
     sleep(1.6)
+end
+
+-- The loud half of the Notification API. An app never gets here on its own:
+-- the Bank downgrades a fullscreen request to a banner unless the owner
+-- switched fullscreen on for that app in App Settings.
+local function showFullscreenAlert(item)
+    local shown = 0
+    while running and shown < 8 do
+        local width, height = target.getSize()
+        ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
+        ui.center(target, 3, ui.truncate(
+            tostring(item.app_name or "Notification"):upper(), width - 2),
+            colors.white, ui.theme.accentDark)
+        ui.wrappedText(target, 2, 5, item.title, width - 2, 2,
+            colors.white, ui.theme.accentDark)
+        -- The Bank stores up to 120 characters of body. Wrapping wastes a
+        -- few columns per line, so give it every row down to the button
+        -- rather than the five that fit only if nothing wraps badly.
+        ui.wrappedText(target, 2, 8, item.body, width - 2, height - 11,
+            colors.white, ui.theme.accentDark)
+        local scene = ui.scene(target)
+        scene:button("ok", 2, height - 2, width - 2, 2, "Got it",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 1 })
+        shown = shown + 1
+        if action == "ok" or action == "__terminate" then return end
+    end
 end
 
 local function socialAmount(title)
@@ -2751,12 +2785,16 @@ local function incomingCallScreen(call)
     while running do
         local width, height = target.getSize()
         ui.fill(target, 1, 1, width, height, ui.theme.danger)
-        ui.center(target, 4, "URGENT CONTACT", colors.white, ui.theme.danger)
+        ui.center(target, 4, call.app_name and ui.truncate(
+            call.app_name:upper() .. " CALL", width - 2) or "URGENT CONTACT",
+            colors.white, ui.theme.danger)
         ui.center(target, 6, frame % 2 == 0 and "* * *" or "  *  ",
             colors.white, ui.theme.danger)
         ui.wrappedText(target, 2, 9, call.other_name, width - 2, 3,
             colors.white, ui.theme.danger)
-        ui.center(target, 13, "wants to reach you", colors.white, ui.theme.danger)
+        ui.center(target, 13, call.app_name and ("is calling on "
+            .. ui.truncate(call.app_name, width - 16)) or "wants to reach you",
+            colors.white, ui.theme.danger)
         local scene = ui.scene(target)
         scene:button("accept", 2, height - 5, width - 2, 2, "Accept",
             { background = ui.theme.success, foreground = colors.black })
@@ -2788,13 +2826,11 @@ local function incomingCallScreen(call)
     inCall = false
 end
 
-local function urgentScreen()
-    local overview = request("FRIEND_OVERVIEW")
-    if not overview then return end
-    local friend = pickFriend("Urgent Contact", overview.friends,
-        "Reach a friend now")
-    if not friend then return end
-    local started = request("URGENT_CALL", { account_id = friend.account_id })
+-- Placing a call and waiting on it. Shared by Urgent Contact and by the
+-- Urgent Contact API, so an app's call behaves exactly like the PUMPE's own.
+local function placeUrgentCall(name, accountId, appId)
+    local started = request("URGENT_CALL",
+        { account_id = accountId, app_id = appId })
     if not started then return end
     local call = started.call
     inCall = true
@@ -2802,8 +2838,8 @@ local function urgentScreen()
     while running do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "Reaching", friend.name, util.formatClock())
-        ui.center(target, 8, friend.name, ui.theme.ink)
+        ui.header(target, "Reaching", name, util.formatClock())
+        ui.center(target, 8, name, ui.theme.ink)
         ui.center(target, 10, string.rep(".", frame % 4 + 1), ui.theme.accent)
         ui.center(target, 12, "Waiting for an answer", ui.theme.muted)
         local scene = ui.scene(target)
@@ -2818,7 +2854,7 @@ local function urgentScreen()
         end
         local update = request("URGENT_STATE", { call_id = call.call_id }, true)
         if not update then
-            ui.message(target, "warning", "No answer", friend.name, 1.2)
+            ui.message(target, "warning", "No answer", name, 1.2)
             inCall = false
             return
         end
@@ -2830,12 +2866,21 @@ local function urgentScreen()
         elseif call.status ~= "ringing" then
             ui.message(target, "info",
                 call.status == "declined" and "Declined" or "No answer",
-                friend.name, 1.3)
+                name, 1.3)
             inCall = false
             return
         end
     end
     inCall = false
+end
+
+local function urgentScreen()
+    local overview = request("FRIEND_OVERVIEW")
+    if not overview then return end
+    local friend = pickFriend("Urgent Contact", overview.friends,
+        "Reach a friend now")
+    if not friend then return end
+    return placeUrgentCall(friend.name, friend.account_id)
 end
 
 -- Polled from every screen so a call reaches the user wherever they are.
@@ -3183,6 +3228,10 @@ watchForUrgentCalls = function()
     end
     if latest and latest.notification_id ~= lastBannerId then
         lastBannerId = latest.notification_id
+        if latest.style == "fullscreen" then
+            showFullscreenAlert(latest)
+            return true
+        end
         showBanner(latest)
     end
     return false
@@ -3193,7 +3242,7 @@ local function settingsScreen()
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "Settings", account.name, util.formatClock())
-        ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
+        ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
         ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 6, ui.truncate(account.name, width - 6),
             ui.theme.ink, ui.theme.panel)
@@ -3202,15 +3251,17 @@ local function settingsScreen()
         ui.text(target, 4, 9, "NO  " .. tostring(account.personal_number),
             ui.theme.muted, ui.theme.panel)
         local scene = ui.scene(target)
-        scene:button("guide", 2, 11, width - 2, 2, "How PUMPE Works",
+        scene:button("guide", 2, 10, width - 2, 2, "How PUMPE Works",
             { background = ui.theme.accentDark })
-        scene:button("dock", 2, 13, width - 2, 2, "Edit Your Dock",
+        scene:button("dock", 2, 12, width - 2, 2, "Edit Your Dock",
             { background = ui.theme.panel })
-        scene:button("connected", 2, 15, width - 2, 2, "Connected Apps",
+        scene:button("connected", 2, 14, width - 2, 2, "Connected Apps",
             { background = ui.theme.panel })
-        scene:button("logout", 2, 17, width - 2, 1, "Sign Out",
+        scene:button("apps", 2, 16, width - 2, 2, "App Settings",
+            { background = ui.theme.panel })
+        scene:button("logout", 2, 18, width - 2, 1, "Sign Out",
             { background = ui.theme.danger })
-        scene:button("close", 2, 18, width - 2, 1, "Close PUMPE",
+        scene:button("close", 2, 19, width - 2, 1, "Close PUMPE",
             { background = ui.theme.panel })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
@@ -3221,6 +3272,8 @@ local function settingsScreen()
             favouritesPicker()
         elseif action == "connected" then
             connectedApps()
+        elseif action == "apps" then
+            appSettingsScreen()
         elseif action == "logout" then
             if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
                 "Sign Out", "Back") then
@@ -3531,6 +3584,201 @@ connectedApps = function()
     end
 end
 
+-- The Pin API ---------------------------------------------------------------
+-- An app that holds something private can ask for the owner's PIN before it
+-- opens it. The PUMPE collects the PIN and only ever hands the app the
+-- answer, so an app cannot read, store or replay it.
+local function appPin(appId, reason)
+    local pin = ui.pin(target, ui.truncate(tostring(reason or "Confirm"), 22),
+        true)
+    if not pin then return false end
+    local ok, err = request("PIN_CHECK", { app_id = appId, pin = pin }, true)
+    if not ok then
+        ui.message(target, "error", "Not unlocked", err or "Incorrect PIN", 1.4)
+        return false
+    end
+    return true
+end
+
+-- The Notification API ------------------------------------------------------
+-- Interrupting somebody is a separate question from signing them in, so it
+-- is asked separately and the answer lives in App Settings. Fullscreen is
+-- never granted here: the owner turns it on themselves, or it stays a banner.
+local function notificationConsent(appName)
+    appName = ui.truncate(tostring(appName or "That app"), 18)
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Notifications", appName, util.formatClock())
+        ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
+        ui.wrappedText(target, 4, 6, appName
+            .. " wants to send you notifications.", width - 6, 3,
+            ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 4, 10, "Banners only. Fullscreen is off"
+            .. " until you turn it on in App Settings.", width - 6, 4,
+            ui.theme.muted, ui.theme.panel)
+        local scene = ui.scene(target)
+        scene:button("yes", 2, height - 5, width - 2, 2, "Allow",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("no", 2, height - 2, width - 2, 2, "Not now",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "yes" then return true end
+        if action == "no" or action == "__terminate" then return false end
+    end
+    return false
+end
+
+-- Asks once and remembers. A refusal is remembered too, so an app cannot put
+-- the question up again every time it starts.
+local function appNotifyPermission(appId, appName, ask)
+    local current = request("APP_PERMISSION_ASK",
+        { app_id = appId, app_name = appName }, true)
+    local decided = current and current.permission
+    if decided and decided.notifications ~= "unset" then
+        return decided.notifications == "granted", decided
+    end
+    if not ask then return false, decided end
+    local allow = notificationConsent(appName)
+    local answered = request("APP_PERMISSION_ASK", {
+        app_id = appId, app_name = appName, allow = allow,
+    }, true)
+    return allow, answered and answered.permission
+end
+
+-- The Urgent Contact API ----------------------------------------------------
+-- A third-party messaging or calling app raises the same fullscreen alert
+-- the PUMPE raises for Urgent Contact. The alert says which app is calling
+-- and who is; the app never gets to write either label itself.
+appUrgentCall = function(entry, spec)
+    spec = type(spec) == "table" and spec or {}
+    local accountId = spec.account_id and tostring(spec.account_id) or nil
+    if not accountId or accountId == "" then
+        ui.message(target, "warning", "Nobody to call",
+            "That app did not say who", 1.4)
+        return false
+    end
+    placeUrgentCall(ui.truncate(tostring(spec.name or "Contact"), 18),
+        accountId, entry.app_id)
+    return true
+end
+
+-- App Settings --------------------------------------------------------------
+-- Every app that has ever asked for a permission is listed here, whatever
+-- the answer was, so a "no" can be changed to a "yes" later. Fullscreen
+-- notifications exist only here: an app cannot ask for them.
+local function appPermissionScreen(app)
+    local current = app
+    while running and sessionToken do
+        local width, height = target.getSize()
+        local allowed = current.notifications == "granted"
+        ui.clear(target)
+        ui.header(target, current.app_name, "Permissions", util.formatClock())
+        ui.card(target, 2, 5, width - 2, 4, allowed and ui.theme.success
+            or ui.theme.panel)
+        ui.text(target, 4, 5, "NOTIFICATIONS", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, allowed and "Allowed" or "Blocked",
+            ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 4, 7, allowed
+            and (current.fullscreen and "Banners and fullscreen"
+                or "Banners only")
+            or "This app cannot interrupt you", width - 6, 2,
+            ui.theme.muted, ui.theme.panel)
+        local scene = ui.scene(target)
+        scene:button("notify", 2, 10, width - 2, 2,
+            allowed and "Block notifications" or "Allow notifications",
+            { background = allowed and ui.theme.danger or ui.theme.success,
+              foreground = allowed and colors.white or colors.black })
+        scene:button("full", 2, 13, width - 2, 2,
+            current.fullscreen and "Fullscreen: on" or "Fullscreen: off",
+            { background = current.fullscreen and ui.theme.accentDark
+                or ui.theme.panel, disabled = not allowed })
+        if not allowed then
+            ui.text(target, 2, 15, "Allow notifications first", ui.theme.muted)
+        end
+        scene:button("forget", 2, height - 2, width - 2, 2, "Forget this app",
+            { background = ui.theme.panel })
+        scene:button("back", 1, height, 8, 1, "< Apps",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "notify" then
+            local set = request("APP_PERMISSION_SET", {
+                app_id = current.app_id, notifications = not allowed,
+            }, true)
+            if set then current = set.permission end
+        elseif action == "full" then
+            local set = request("APP_PERMISSION_SET", {
+                app_id = current.app_id, fullscreen = not current.fullscreen,
+            }, true)
+            if set then current = set.permission end
+        elseif action == "forget" then
+            if ui.confirm(target, "Forget " .. current.app_name,
+                "It will ask again next time.", "Forget", "Keep") then
+                request("APP_PERMISSION_FORGET",
+                    { app_id = current.app_id }, true)
+                return
+            end
+        end
+    end
+end
+
+appSettingsScreen = function()
+    local page = 1
+    while running and sessionToken do
+        local width, height = target.getSize()
+        local listed = request("APP_PERMISSION_LIST", {}, true)
+        local apps = listed and listed.apps or {}
+        local perPage = 4
+        local pages = math.max(1, math.ceil(#apps / perPage))
+        page = math.max(1, math.min(page, pages))
+        ui.clear(target)
+        ui.header(target, "App Settings",
+            #apps == 0 and "Nothing yet" or (#apps .. " apps"),
+            util.formatClock())
+        local scene = ui.scene(target)
+        if #apps == 0 then
+            ui.center(target, 9, "No app has asked", ui.theme.ink)
+            ui.wrappedText(target, 2, 11,
+                "When an app asks to send you notifications it appears here,"
+                    .. " and you can change your mind at any time.",
+                width - 2, 5, ui.theme.muted)
+        end
+        for slot = 1, perPage do
+            local app = apps[(page - 1) * perPage + slot]
+            if not app then break end
+            local allowed = app.notifications == "granted"
+            scene:button("open:" .. app.app_id, 2, 4 + (slot - 1) * 3,
+                width - 2, 2, app.app_name .. "\n" .. (allowed
+                    and (app.fullscreen and "Banners + fullscreen"
+                        or "Banners only")
+                    or (app.notifications == "denied" and "Blocked"
+                        or "Not answered")),
+                { background = allowed and ui.theme.accentDark
+                    or ui.theme.panel })
+        end
+        if pages > 1 then
+            scene:button("prev", 2, height - 2, 8, 2, "<",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            ui.center(target, height - 1, page .. "/" .. pages, ui.theme.muted)
+            scene:button("next", width - 7, height - 2, 8, 2, ">",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local appId = action and action:match("^open:(.+)$")
+            for _, app in ipairs(apps) do
+                if app.app_id == appId then appPermissionScreen(app) end
+            end
+        end
+    end
+end
+
 local function runInstalledApp(entry)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
@@ -3547,8 +3795,16 @@ local function runInstalledApp(entry)
     local ok, err = pcall(factory, {
         ui = ui, util = util, target = target, config = config,
         colors = colors, money = money,
+        -- Every Bank call an app makes is stamped with the id it was
+        -- installed under. Copied rather than mutated so the app cannot
+        -- name itself, and so it never sees the session token either.
         request = function(action, payload, silent)
-            return request(action, payload, silent)
+            local scoped = {}
+            for key, value in pairs(type(payload) == "table" and payload or {}) do
+                scoped[key] = value
+            end
+            scoped.app_id = entry.app_id
+            return request(action, scoped, silent)
         end,
         account = function() return account end,
         refresh = function() return refreshSummary(true) end,
@@ -3556,6 +3812,29 @@ local function runInstalledApp(entry)
         -- FoxyLogin. The app id comes from the install rather than the app,
         -- so nothing can ask for somebody else's grant.
         login = function(spec) return foxyLogin(entry.app_id, spec) end,
+        -- Ask for the owner's PIN before opening something private.
+        pin = function(reason) return appPin(entry.app_id, reason) end,
+        -- Notifications: ask once, then send banners. Fullscreen only lands
+        -- if the owner turned it on for this app in App Settings.
+        notifications = {
+            ask = function()
+                return (appNotifyPermission(entry.app_id, entry.name, true))
+            end,
+            allowed = function()
+                return (appNotifyPermission(entry.app_id, entry.name, false))
+            end,
+            send = function(spec)
+                spec = type(spec) == "table" and spec or {}
+                return request("APP_NOTIFY", {
+                    app_id = entry.app_id,
+                    account_id = spec.account_id,
+                    title = spec.title, body = spec.body,
+                    style = spec.style,
+                }, true)
+            end,
+        },
+        -- Raise the PUMPE's own fullscreen Urgent Contact alert.
+        call = function(spec) return appUrgentCall(entry, spec) end,
         app_id = entry.app_id,
     })
     if not ok then

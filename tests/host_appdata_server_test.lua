@@ -187,6 +187,194 @@ rejected(actions.APP_DATA_PUT, "BAD_COLLECTION", as(ana, {
     app_id = "yap", collection = "not a name", data = {},
 }))
 
+-- Private records ------------------------------------------------------------
+-- A record with an audience is visible to the author and the people named in
+-- it, and to nobody else -- not even by asking for it by id.
+
+local secret = actions.APP_DATA_PUT(as(ana, {
+    app_id = "yap", collection = "dm", data = { body = "just for you" },
+    audience = { ana.account.account_id, bo.account.account_id },
+    expire_after_days = 1,
+})).record
+assert(secret.private, "a record with an audience says so")
+
+assert(#actions.APP_DATA_LIST(as(bo, {
+    app_id = "yap", collection = "dm",
+})).records == 1, "somebody in the audience sees it")
+assert(#actions.APP_DATA_LIST(as(cy, {
+    app_id = "yap", collection = "dm",
+})).records == 0, "somebody outside it does not")
+
+-- Nor can an outsider reach it by id.
+rejected(actions.APP_DATA_DELETE, "NOT_FOUND", as(cy, {
+    app_id = "yap", collection = "dm", id = secret.id,
+}))
+rejected(actions.APP_DATA_REACT, "NOT_FOUND", as(cy, {
+    app_id = "yap", collection = "dm", id = secret.id, on = true,
+}))
+rejected(actions.APP_DATA_PUT, "NOT_FOUND", as(cy, {
+    app_id = "yap", collection = "dm", id = secret.id, data = { body = "no" },
+}))
+
+-- Reading is what starts the clock. The author reading it back is not a
+-- read receipt, or a message would expire the moment it was sent.
+assert(#actions.APP_DATA_READ(as(ana, {
+    app_id = "yap", collection = "dm", id = secret.id,
+})).read == 0, "reading your own record back does not count")
+assert(actions.APP_DATA_LIST(as(ana, {
+    app_id = "yap", collection = "dm",
+})).records[1].expires_day == nil, "so nothing is scheduled to go yet")
+
+assert(#actions.APP_DATA_READ(as(bo, {
+    app_id = "yap", collection = "dm", ids = { secret.id },
+})).read == 1)
+local afterRead = actions.APP_DATA_LIST(as(ana, {
+    app_id = "yap", collection = "dm",
+})).records[1]
+assert(afterRead.expires_day == currentDay + 1,
+    "read on day " .. currentDay .. " means gone on day " .. (currentDay + 1))
+assert(afterRead.seen, "the sender can tell it was read")
+
+-- And a day later it really is gone, for both of them.
+currentDay = currentDay + 1
+assert(#actions.APP_DATA_LIST(as(ana, {
+    app_id = "yap", collection = "dm",
+})).records == 0, "the sender's copy went too")
+assert(#actions.APP_DATA_LIST(as(bo, {
+    app_id = "yap", collection = "dm",
+})).records == 0)
+
+-- An unread message is still there tomorrow.
+local unread = actions.APP_DATA_PUT(as(ana, {
+    app_id = "yap", collection = "dm", data = { body = "unopened" },
+    audience = { ana.account.account_id, bo.account.account_id },
+    expire_after_days = 1,
+})).record
+currentDay = currentDay + 3
+assert(#actions.APP_DATA_LIST(as(bo, {
+    app_id = "yap", collection = "dm",
+})).records == 1, "nothing expires until it has been read")
+actions.APP_DATA_READ(as(bo, {
+    app_id = "yap", collection = "dm", id = unread.id,
+}))
+currentDay = currentDay + 1
+assert(#actions.APP_DATA_LIST(as(bo, {
+    app_id = "yap", collection = "dm",
+})).records == 0)
+
+-- Permissions and notifications ------------------------------------------------
+
+-- Asking is deliberately possible before signing in: it exposes nothing, and
+-- sending is what needs the grant.
+local asked = actions.APP_PERMISSION_ASK(as(bo, {
+    app_id = "chat", app_name = "Yap Chat",
+})).permission
+assert(asked.notifications == "unset" and asked.fullscreen == false)
+
+-- An app that was refused cannot nag its way to a yes.
+actions.APP_PERMISSION_ASK(as(bo, {
+    app_id = "chat", app_name = "Yap Chat", allow = false,
+}))
+assert(actions.APP_PERMISSION_ASK(as(bo, {
+    app_id = "chat", app_name = "Yap Chat", allow = true,
+})).permission.notifications == "denied", "the first answer stands")
+
+-- The owner can change their mind, which is what App Settings is for.
+assert(actions.APP_PERMISSION_SET(as(bo, {
+    app_id = "chat", notifications = true,
+})).permission.notifications == "granted")
+
+-- Fullscreen is the owner's switch and nothing else's.
+assert(actions.APP_PERMISSION_SET(as(bo, {
+    app_id = "chat", fullscreen = true,
+})).permission.fullscreen == true)
+
+actions.FOXY_LOGIN_APPROVE(as(ana, { app_id = "chat", app_name = "Yap Chat" }))
+actions.FOXY_LOGIN_APPROVE(as(bo, { app_id = "chat", app_name = "Yap Chat" }))
+actions.FOXY_LOGIN_APPROVE(as(cy, { app_id = "chat", app_name = "Yap Chat" }))
+
+local sent = actions.APP_NOTIFY(as(ana, {
+    app_id = "chat", account_id = bo.account.account_id,
+    title = "Ana Fox", body = "you there?", style = "fullscreen",
+}))
+assert(sent.sent and sent.style == "fullscreen",
+    "bo turned fullscreen on, so it arrives that way")
+
+-- Turning notifications off takes fullscreen with it.
+actions.APP_PERMISSION_SET(as(bo, { app_id = "chat", notifications = false }))
+assert(actions.APP_PERMISSION_LIST(as(bo)).apps[1].fullscreen == false)
+rejected(actions.APP_NOTIFY, "NO_PERMISSION", as(ana, {
+    app_id = "chat", account_id = bo.account.account_id, body = "hello",
+}))
+
+-- Back on, but banners only: the sender does not get to be louder than the
+-- recipient allowed.
+actions.APP_PERMISSION_SET(as(bo, { app_id = "chat", notifications = true }))
+assert(actions.APP_NOTIFY(as(ana, {
+    app_id = "chat", account_id = bo.account.account_id,
+    body = "hello", style = "fullscreen",
+})).style == "banner", "fullscreen is the owner's setting, not the sender's")
+
+-- One grant is not a licence to alert the whole server. Cy allows the app
+-- and is still out of reach, because Cy is not Ana's friend.
+actions.APP_PERMISSION_ASK(as(cy, {
+    app_id = "chat", app_name = "Yap Chat", allow = true,
+}))
+rejected(actions.APP_NOTIFY, "NOT_FRIENDS", as(ana, {
+    app_id = "chat", account_id = cy.account.account_id, body = "hi",
+}))
+
+-- The alert says which app it came from.
+local inbox = bank.state.accounts[bo.account.account_id].notifications
+assert(inbox[1].app_name == "Yap Chat" and inbox[1].kind == "app")
+
+-- The Pin API ------------------------------------------------------------------
+
+assert(actions.PIN_CHECK(as(ana, { app_id = "chat", pin = "1234" })).ok)
+rejected(actions.PIN_CHECK, "BAD_PIN", as(ana, { app_id = "chat", pin = "9999" }))
+-- An app that has not been signed into cannot use it to grind at the PIN.
+rejected(actions.PIN_CHECK, "NOT_SIGNED_IN",
+    as(ana, { app_id = "nobody", pin = "1234" }))
+-- Nor can one that has: five wrong guesses and it is shut for a while.
+for _ = 1, 5 do
+    pcall(actions.PIN_CHECK, as(cy, { app_id = "chat", pin = "0000" }))
+end
+rejected(actions.PIN_CHECK, "TOO_MANY", as(cy, { app_id = "chat", pin = "1234" }))
+
+-- An app cannot fill the Bank a collection at a time -------------------------
+-- A chat app keeps one collection per conversation, so this is the limit
+-- that actually bites. Emptied collections give their slot back.
+
+local limit = config.max_app_collections
+for index = 1, limit do
+    actions.APP_DATA_PUT(as(ana, {
+        app_id = "notes", collection = "box" .. index,
+        data = { body = "x" },
+    }))
+end
+rejected(actions.APP_DATA_PUT, "TOO_MANY", as(ana, {
+    app_id = "notes", collection = "onemore", data = { body = "x" },
+}))
+
+-- An existing one still works while the app is at its limit.
+assert(actions.APP_DATA_PUT(as(ana, {
+    app_id = "notes", collection = "box1", data = { body = "still fine" },
+})).record ~= nil, "being full does not break the collections you have")
+
+-- Empty one out and the slot comes back, which is what makes disappearing
+-- messages sustainable.
+local box = actions.APP_DATA_LIST(as(ana, {
+    app_id = "notes", collection = "box2",
+})).records
+for _, record in ipairs(box) do
+    actions.APP_DATA_DELETE(as(ana, {
+        app_id = "notes", collection = "box2", id = record.id,
+    }))
+end
+assert(actions.APP_DATA_PUT(as(ana, {
+    app_id = "notes", collection = "onemore", data = { body = "x" },
+})).record ~= nil, "an emptied collection gives its slot back")
+
 -- Revoking closes the door again.
 actions.FOXY_LOGIN_REVOKE(as(ana, { app_id = "yap" }))
 assert(actions.FOXY_LOGIN_STATUS(as(ana, { app_id = "yap" })).approved == false)

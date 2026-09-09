@@ -107,6 +107,20 @@ local client = {
     discover = function() return true end,
     request = function(_, action, payload)
         requests[#requests + 1] = action
+        -- The real Bank rejects any app request that does not carry the id
+        -- the app was installed under. Yap shipped in 8.4.0 unable to post
+        -- because the runtime never stamped it; the stub said yes and the
+        -- server said "That app has no id". A stub more permissive than the
+        -- server is a test that cannot fail.
+        -- The two account-wide lists are the PUMPE's own screens asking
+        -- about every app at once, so they carry no id.
+        if (action:find("^APP_") or action:find("^FOXY_LOGIN_")
+            or action == "PIN_CHECK")
+            and action ~= "FOXY_LOGIN_LIST"
+            and action ~= "APP_PERMISSION_LIST" then
+            assert(payload.app_id == "YAP", action
+                .. " reached the Bank without the app id")
+        end
         if action == "LOGIN" then
             return { account = account, session_token = "S" }
         elseif action == "ACCOUNT_SUMMARY" then

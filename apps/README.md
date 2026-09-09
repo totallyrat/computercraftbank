@@ -13,6 +13,7 @@ the App Server does not ship them. To put one on your network:
 | App | What it is |
 | --- | --- |
 | `yap.lua` | A text social network: posts, likes, replies. Friends float to the top of the feed. |
+| `yapchat.lua` | Private messages between Foxy friends, behind your PIN, gone a day after you read them. Uses all three of the APIs below. |
 
 ## Writing one
 
@@ -45,7 +46,13 @@ end
 | `api.running()` | False once the PUMPE is shutting down — check it in every loop |
 | `api.request(action, payload, silent)` | A Bank request, made as the signed-in account |
 | `api.login(spec)` | FoxyLogin. See below |
+| `api.pin(reason)` | Ask for the owner's PIN. See **The Pin API** |
+| `api.notifications` | `.ask()`, `.allowed()`, `.send(spec)`. See **The Notification API** |
+| `api.call(spec)` | Raise the PUMPE's Urgent Contact ring. See **The Urgent Contact API** |
 | `api.app_id` | This app's id, assigned when it was published |
+
+`api.request` stamps your app id onto every call it makes, so you never pass
+`app_id` yourself — and cannot pass somebody else's.
 
 Return from the function to go back to the Home Screen. If your app errors,
 the phone catches it, says so, and hands the user back their PUMPE.
@@ -104,6 +111,81 @@ Limits live in `config.lua`: `max_app_records` per collection,
 `max_app_record_bytes` per record, `max_app_reactions` per record. Oldest
 records fall off the end when a collection is full. This is a notice board,
 not a database.
+
+### Private records, and ones that go away
+
+A record written with an `audience` is visible to its author and to the
+people named in it, and to nobody else — not even by asking for it by id.
+One written with `expire_after_days` disappears that many days after
+somebody **reads** it, on every phone at once. A record nobody opened is
+still there tomorrow.
+
+```lua
+api.request("APP_DATA_PUT", {
+    collection = thread,
+    data = { body = text },
+    audience = { me.account_id, friend.account_id },  -- these two, nobody else
+    expire_after_days = 1,                            -- a day after it is read
+})
+
+-- Reading is what starts the clock. Your own records do not count.
+api.request("APP_DATA_READ", { collection = thread, ids = { id1, id2 } })
+```
+
+Such a record also carries `private`, `read` (have you), `seen` (has anybody)
+and `expires_day`.
+
+## The Pin API
+
+For anything the owner would not want a passer-by to read:
+
+```lua
+if not api.pin("Unlock Yap Chat") then return end
+```
+
+The phone collects the PIN and checks it with the Bank. Your app is handed
+`true` or `false` and never sees the PIN itself, so it cannot store or replay
+one. Five wrong guesses and the API shuts for a couple of minutes — the app
+holding it is the thing being defended against.
+
+## The Notification API
+
+Interrupting somebody is a separate question from signing them in, so it is
+asked separately:
+
+```lua
+api.notifications.ask()        -- puts the question up once, remembers the answer
+api.notifications.allowed()    -- true if they said yes, without asking again
+
+api.notifications.send({
+    account_id = friend.account_id,   -- omit to notify the owner
+    title = me.name,
+    body = "you there?",
+    style = "fullscreen",             -- a request, not a decision
+})
+```
+
+A refusal is remembered too: an app cannot put the question up again every
+time it starts. The owner can revisit it in **Settings → App Settings**,
+where every app that has ever asked is listed.
+
+**Fullscreen is the owner's switch, not yours.** `style = "fullscreen"`
+arrives as a banner unless they turned fullscreen on for your app in App
+Settings, and turning notifications off takes fullscreen with it. Sending
+across accounts only works between friends, and there is a daily budget per
+app per sender.
+
+## The Urgent Contact API
+
+The same fullscreen ring the PUMPE raises for Urgent Contact, from your app:
+
+```lua
+api.call({ account_id = friend.account_id, name = friend.name })
+```
+
+Their screen says which app is calling and who is. Both labels come from the
+install and the Bank rather than from your code, so an app cannot pass its
+call off as the PUMPE's own.
 
 ## Fitting the screen
 

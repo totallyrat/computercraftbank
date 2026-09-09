@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "8.4.0",
+    version = "8.5.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
     data_file = "bank_data_v5.dat",
@@ -80,6 +80,14 @@ return {
     max_app_records = 200,
     max_app_record_bytes = 400,
     max_app_reactions = 60,
+
+    -- What an app is allowed to do to your attention. The alert budget is
+    -- per sender, per app, per in-game day: generous for a chat app and
+    -- useless for a spammer. The PIN lockout defends the Pin API against
+    -- the app holding it rather than against a person.
+    max_app_collections = 40,
+    max_app_notifications_per_day = 60,
+    pin_check_lockout_seconds = 120,
 
     app_protocol = "PUMPE_APPS_V1",
     app_hostname = "APP_SERVER",

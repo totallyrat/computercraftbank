@@ -1,5 +1,90 @@
 # Changelog
 
+## 8.5.0
+
+Three APIs any app can use, the App Settings screen that governs them, and
+Yap Chat, which uses all three. Also the fix for Yap not being able to post.
+
+### Fixed: an app could not write anything
+
+- Every app request reached the Bank without the id the app was installed
+  under, so posting, liking, replying and deleting all came back **"That app
+  has no id"**. Yap shipped in 8.4.0 unable to post.
+- `api.request` now stamps the app id onto every call. It is copied onto a
+  fresh payload rather than into the app's own table, so an app still cannot
+  name itself, or reach another app's data by claiming its id.
+- The test that missed this was the cause: its fake Bank accepted a request
+  the real Bank rejects. It now enforces the id, and fails against the 8.4.0
+  code.
+
+### The Pin API
+
+- `api.pin("Unlock Yap Chat")` puts the PUMPE's own PIN pad up and returns
+  true or false. The app never sees the PIN, so it cannot store or replay
+  one.
+- Five wrong guesses shut the API for a couple of minutes. The app holding it
+  is the thing being defended against, not the person typing.
+
+### The Notification API
+
+- `api.notifications.ask()` asks once and remembers the answer — including a
+  refusal, so an app cannot put the question up again every time it starts.
+- `api.notifications.send{ account_id =, title =, body =, style = }` sends a
+  banner, or a fullscreen alert where that is allowed. Across accounts it
+  only works between friends, with a daily budget per app per sender.
+- Every app alert says which app it came from, on the banner and in the
+  notification centre, so one is never mistaken for the Bank's own.
+
+### App Settings
+
+- **Settings -> App Settings** lists every app that has ever asked for a
+  permission, whatever the answer was, so a "no" can become a "yes" later.
+- **Fullscreen notifications are turned on here and nowhere else.** An app
+  cannot ask for them; `style = "fullscreen"` arrives as a banner until the
+  owner switches it on. Blocking notifications takes fullscreen with it, and
+  allowing them again does not quietly bring it back.
+
+### The Urgent Contact API
+
+- `api.call{ account_id =, name = }` raises the same fullscreen ring the
+  PUMPE raises for Urgent Contact.
+- The ring says which app is calling and who is. Both labels come from the
+  install and from the Bank rather than from the app, so an app cannot pass
+  its call off as the PUMPE's own.
+- The PUMPE's own Urgent Contact and an app's call now run the same code
+  rather than two copies that drift.
+
+### Private and disappearing records
+
+- A record written with an `audience` is visible to its author and the people
+  named in it, and to nobody else — not by listing, and not by asking for it
+  by id.
+- A record written with `expire_after_days` goes that many days after
+  somebody **reads** it, on every phone at once. `APP_DATA_READ` is what
+  starts that clock; reading your own record back does not count, or a
+  message would expire the moment it was sent. Nobody opened it, it is still
+  there tomorrow.
+
+### Yap Chat
+
+- Private messages between Foxy friends, and the app that uses all three new
+  APIs.
+- Notifications are asked for before the app is told a single thing about the
+  account.
+- The whole app sits behind your PIN, so a phone left on a desk is not an
+  open inbox.
+- A message you have read is gone a day later, on both phones.
+- A call button in every conversation.
+- Like Yap, it is **not** published: it lives in `apps/` for you to install
+  and publish from your own company in the game.
+
+### Also
+
+- A new host test refuses a local that is used above its own declaration.
+  That mistake compiles, passes every other test, and only fails in the
+  world as "attempt to call a nil value" — it had already shipped twice.
+  It caught a third instance in this release before it left the repository.
+
 ## 8.4.0
 
 FoxyLogin, a store apps can keep things in, and the first real app written
