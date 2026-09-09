@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "8.5.0"
+local INSTALLER_VERSION = "9.0.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -43,7 +43,7 @@ local roles = {
     { id = "service", label = "SERVICE KIOSK", detail = "Shop checkout" },
     { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
-    { id = "bank", label = "BANK SERVER", detail = "Bank operator", protected = true },
+    { id = "bank", label = "BANK SERVER", detail = "Foxy or a 3rd party" },
     { id = "admin", label = "ADMIN TERMINAL", detail = "Government use", protected = true },
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
     -- so instead of failing with an unknown role.
@@ -55,6 +55,7 @@ local roles = {
 
 local rolePrograms = {
     bank = "bank_server.lua",
+    tpbank = "bank_app_server.lua",
     pumpe = "pumpe.lua",
     service = "service_kiosk.lua",
     event = "event_kiosk.lua",
@@ -1314,6 +1315,35 @@ local function successScreen(role, manifest, startupMessage)
     end
 end
 
+-- A Bank Server is two different machines since 9.0. Foxy's is the one that
+-- holds the economy, and still wants the operator code; a 3rd Party Bank
+-- Server hosts somebody's own bank app, which is public by design and has
+-- nothing to lock.
+local function bankKind()
+    local width, height = target.getSize()
+    while true do
+        clear()
+        header("BANK SERVER", "Which kind of bank is this?")
+        local buttons = {}
+        local top = 6
+        button(buttons, "foxy", 2, top, width - 2, 4,
+            "1  FOXY BANK SERVER\nThe economy itself. Needs the code.",
+            theme.accent, colors.black)
+        button(buttons, "third", 2, top + 5, width - 2, 4,
+            "2  3RD PARTY BANK SERVER\nHosts a Bank App. No code needed.",
+            theme.panel)
+        button(buttons, "back", 2, height - 2, 12, 2, "BACK", theme.panel)
+        -- Keys as well as taps: a Bank Server is often set up on a computer
+        -- nobody is clicking on.
+        local action = waitForButton(buttons, {
+            ["1"] = "foxy", ["2"] = "third", ["f"] = "foxy",
+            ["t"] = "third", ["b"] = "back",
+        })
+        if action == "foxy" or action == "third" then return action end
+        if action == "back" or action == "__terminate" then return nil end
+    end
+end
+
 local function installRole(role, automatic)
     progressChrome = nil
     local accessCode
@@ -1322,6 +1352,26 @@ local function installRole(role, automatic)
         if not accessCode then return end
         if accessCode ~= PROTECTED_CODE then
             message("error", "ACCESS DENIED", "The download code is incorrect", 1.2)
+            return
+        end
+    end
+
+    if role.id == "bank" and not automatic then
+        local kind = bankKind()
+        if not kind then return end
+        if kind == "third" then
+            -- Installed and launched like any other role, with no code:
+            -- there is nothing here that could reach the Foxy ledger.
+            local thirdParty = { id = "tpbank",
+                label = "3RD PARTY BANK SERVER",
+                detail = "Hosts a Bank App" }
+            return installRole(thirdParty, false)
+        end
+        accessCode = protectedCode()
+        if not accessCode then return end
+        if accessCode ~= PROTECTED_CODE then
+            message("error", "ACCESS DENIED",
+                "The download code is incorrect", 1.2)
             return
         end
     end

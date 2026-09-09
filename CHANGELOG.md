@@ -1,5 +1,98 @@
 # Changelog
 
+## 9.0.0
+
+The Bank can run on two computers, banks other than Foxy can exist, and money
+moves between them.
+
+### Pair Mode: two computers, one bank
+
+- A Bank Server asks **Solo** or **Pair** the first time it starts. A Bank
+  that has already been answered comes straight up the way it was left.
+- In Pair Mode both servers show a six-digit code and both can type the
+  other's. Whichever way round you do it, they pair.
+- **The split is not down the middle, on purpose.** Everyday banking is a hot
+  path where a second radio hop would be felt on every balance check, so the
+  Core keeps all of it. What moves to the Vault is the heavy, cold work: the
+  update depot and the app record store. That is what was actually crowding
+  the Bank's disk and making banking queue behind file transfers.
+- Which half is which is decided by **where the data already is**: the server
+  holding the accounts stays the Core, whoever typed. A fresh computer can
+  never demote a live ledger to a Vault.
+- Clients never learn any of this. The depot answers from a different
+  computer, which rednet already resolves by name, and app records reach the
+  Vault through the Core.
+- A Vault only answers the Core it is paired to.
+
+### Banks that are not Foxy
+
+- **Bank Servers are no longer locked.** Pressing one asks which kind it is.
+  Foxy's still wants `4040`; a 3rd Party Bank Server does not, because there
+  is nothing behind it that could reach the Foxy ledger.
+- A 3rd Party Bank Server asks the App Server which **Bank Apps** exist and
+  hosts the one you choose. An app declares itself a bank in its own first
+  lines -- `-- PUMPE BANK APP: BuckApp` -- and that is the whole
+  registration.
+- Third-party banks have **their own logins**. A Foxy Account is not an
+  account there, and a Foxy session is refused. They also mint no money: an
+  account opens empty and everything in it arrived from somewhere.
+
+### The Account ID, and Bank Transfer
+
+- Every account at every bank now has a **sixteen-digit Account ID**, the
+  first four digits naming the bank that holds it. It is the one thing every
+  bank on the network agrees on, and it is enough on its own to find where
+  money lives.
+- **Bank Transfer** moves everything you have to any Account ID. Your bank
+  account here closes behind it, so the Bank tab will not open, and the same
+  feature from the other bank brings it home -- money arriving is what
+  reopens an account.
+- A transfer is done in three steps, each safe to repeat: the money leaves
+  the balance into a pending record, the far bank is asked to credit it under
+  an id it will only honour once, and only an acknowledged credit clears the
+  record.
+- **An unanswered transfer is never given back on a guess.** A refusal
+  carries a code, so nothing was applied and the money returns. Silence
+  carries none, so the money stays parked and is settled later by asking the
+  far bank whether it ever saw the id. Refunding on silence is how a transfer
+  creates money out of nothing, and an earlier draft of this code did exactly
+  that until the test caught it.
+- Money that lands in a closed account follows it. About twenty places in the
+  Bank credit an account, and sealing every one of them is the kind of change
+  that misses one, so anything that arrives is forwarded instead.
+
+### BuckApp is a bank now
+
+- BuckApp is **no longer preinstalled**. It left the home screen to become a
+  bank of its own, installable from the App Browser, running on the new bank
+  infrastructure.
+- What is built into the phone in its place is simply your Foxy bank account,
+  under the name **Bank**. It stays built in because paying somebody, the Bet
+  Wallet and your activity live nowhere else, and a phone that had to
+  download an app before it could pay anyone would be a worse phone.
+
+### The new Settings app
+
+- Settings is a paged list now. 9.0 added enough to it that the old fixed
+  layout stopped fitting a 20-row pocket screen.
+- **Network.** Turn the modem off and the PUMPE leaves the bank network:
+  everything that needs the Bank stops, and what is already on the phone
+  still opens. The switch is on the client itself, so signing in and the lock
+  screen are covered too rather than only the screens that went through one
+  wrapper.
+- **Storage.** What is free, and what the phone is holding, app by app.
+- **Updates.** Turn automatic updates off and this PUMPE stays on the version
+  it has. Kept on the device rather than in `config.lua`, which an update
+  rewrites.
+
+### Also
+
+- `lib/util.lua` gained the Account ID format and the apply-once rule,
+  shared by Foxy and every third-party bank. It went there rather than into a
+  library of its own because a brand new `lib/` file would be downloaded by
+  nobody: an updater fetches the shared files it was built knowing about, so
+  a Bank updating into 9.0 would have landed without it and failed to load.
+
 ## 8.5.0
 
 Three APIs any app can use, the App Settings screen that governs them, and

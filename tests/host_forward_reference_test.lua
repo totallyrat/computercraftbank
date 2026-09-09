@@ -17,7 +17,8 @@ local PROGRAMS = {
     "bank_server.lua", "pumpe.lua", "installer.lua", "startup.lua",
     "service_kiosk.lua", "event_kiosk.lua", "border_controller.lua",
     "admin_terminal.lua", "ccg.lua", "gps_anchor.lua", "tax_controller.lua",
-    "launcher.lua", "foxy.lua", "app_server.lua",
+    "launcher.lua", "foxy.lua", "app_server.lua", "bank_app_server.lua",
+    "buckapp.lua",
     "lib/net.lua", "lib/ui.lua", "lib/update.lua", "lib/util.lua",
 }
 

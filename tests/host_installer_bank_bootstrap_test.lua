@@ -111,6 +111,8 @@ os.epoch = function() return 12345 end
 local events = {
     { "char", "m" },
     { "char", "4" },
+    -- Since 9.0 a Bank Server asks which kind it is first. 1 is Foxy's.
+    { "char", "1" },
     { "char", "4" }, { "char", "0" },
     { "char", "4" }, { "char", "0" },
 }

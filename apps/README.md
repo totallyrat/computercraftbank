@@ -49,6 +49,7 @@ end
 | `api.pin(reason)` | Ask for the owner's PIN. See **The Pin API** |
 | `api.notifications` | `.ask()`, `.allowed()`, `.send(spec)`. See **The Notification API** |
 | `api.call(spec)` | Raise the PUMPE's Urgent Contact ring. See **The Urgent Contact API** |
+| `api.bank(action, payload)` | For a **bank app**: talk to the 3rd Party Bank Server hosting it. See below |
 | `api.app_id` | This app's id, assigned when it was published |
 
 `api.request` stamps your app id onto every call it makes, so you never pass
@@ -186,6 +187,44 @@ api.call({ account_id = friend.account_id, name = friend.name })
 Their screen says which app is calling and who is. Both labels come from the
 install and the Bank rather than from your code, so an app cannot pass its
 call off as the PUMPE's own.
+
+## Writing a bank
+
+An app can be a bank. Say so in its first lines:
+
+```lua
+-- PUMPE BANK APP: BuckApp
+```
+
+That is the whole registration. A **3rd Party Bank Server** (Easy Deployment
+→ BANK SERVER → 3RD PARTY, no code needed) lists every published app that
+declares itself this way and hosts the one it is told to. Your app then talks
+to that server:
+
+```lua
+local info = api.bank("TPB_INFO")                        -- who is hosting us
+local me   = api.bank("TPB_REGISTER", { name = n, pin = p })
+local out  = api.bank("TPB_SEND", { session_token = s, recipient = who,
+                                    amount = 10, pin = p })
+```
+
+`api.bank` can only reach the server hosting *this* app — the hostname is
+built from the id the app was installed under — so an app cannot address
+another bank, or the Foxy Bank, through it.
+
+A third-party bank has **its own logins**. A Foxy Account is not an account
+at your bank, and a Foxy session token is refused there. It also mints no
+money: an account opens empty, and everything in it arrived from somewhere.
+
+### The Account ID
+
+Every bank on the network shares one thing: a sixteen-digit Account ID, the
+first four digits naming the bank that holds it. It is what a transfer is
+addressed to, and it is enough on its own to find the bank holding the money.
+
+`TPB_TRANSFER_QUOTE` and `TPB_TRANSFER_CONFIRM` move everything in an account
+to any Account ID anywhere — including back to Foxy, which is how somebody
+goes home. `buckapp.lua` in this repository is a complete worked example.
 
 ## Fitting the screen
 

@@ -6,13 +6,13 @@
 local actions = {
     "create",                                        -- new account
     "next", "next", "next", "next", "next", "next",  -- the six guide steps
-    "edit", "pick:buck", "pick:friends", "back",     -- fill the dock
-    "open:buck",                                     -- BuckApp from the dock
+    "edit", "pick:bank", "pick:friends", "back",     -- fill the dock
+    "open:bank",                                     -- the Bank tab from the dock
     "pay", "code", "send", "back", "back",           -- payments behind Continue
-    "activity", "back",                              -- activity inside BuckApp
+    "activity", "back",                              -- activity inside the Bank tab
     "wallet", "holding", "back", "activity", "back",
-    "add", "withdraw", "back",                       -- Bet Wallet inside BuckApp
-    "back",                                          -- leave BuckApp
+    "add", "withdraw", "back",                       -- Bet Wallet inside the Bank tab
+    "back",                                          -- leave the Bank tab
     "open:tickets", "browse", "event:EVT000001", "back", "back",
     "mine", "back", "back",                          -- Tickets hub
     "open:customs",
@@ -706,12 +706,12 @@ assert(find(drawnText, "SUBSCRIPTION ACTIVE"))
 for _, glyph in ipairs({ "$", "@", "#", "=", "?", "%", "~", "*" }) do
     assert(find(buttonLabels, glyph), "missing app icon " .. glyph)
 end
-for _, name in ipairs({ "BuckApp", "Friends", "Tickets", "Customs",
+for _, name in ipairs({ "Bank", "Friends", "Tickets", "Customs",
     "Bet", "Tax", "Subs", "Settings" }) do
     assert(find(drawnText, name), "missing app caption " .. name)
 end
-assert(not find(buttonLabels, "$\nBuckApp"), "old two-line tiles are gone")
--- Payments, the Bet Wallet and activity all live inside BuckApp now.
+assert(not find(buttonLabels, "$\nBank"), "old two-line tiles are gone")
+-- Payments, the Bet Wallet and activity all live inside the Bank tab.
 assert(find(buttonLabels, "Continue"))
 assert(find(buttonLabels, "Bet\nWallet"))
 assert(not find(buttonLabels, "$\nBet Wallet"),

@@ -313,6 +313,8 @@ update.PUBLISHED_OPTIONAL = {
     "admin_terminal.lua",
     "app_server.lua",
     "foxy.lua",
+    "bank_app_server.lua",
+    "buckapp.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -334,6 +336,7 @@ local ROLE_PROGRAMS = {
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
+    tpbank = "bank_app_server.lua",
 }
 
 function update.roleProgram(role)
@@ -343,7 +346,7 @@ end
 -- A few roles carry a file that is not a program of their own. The App
 -- Server ships with Foxy so its catalogue is never empty on a fresh world.
 local ROLE_EXTRA_FILES = {
-    apps = { "foxy.lua" },
+    apps = { "foxy.lua", "buckapp.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

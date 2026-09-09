@@ -19,6 +19,29 @@ function net.openModems()
     return opened
 end
 
+-- Turning the radio off. Settings on the PUMPE uses this to take the device
+-- off the network entirely: everything that needs the Bank stops, and
+-- nothing on the network can see the device either.
+function net.closeModems()
+    local closed = {}
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "modem" and rednet.isOpen(name) then
+            rednet.close(name)
+            closed[#closed + 1] = name
+        end
+    end
+    return closed
+end
+
+function net.modemsOpen()
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "modem" and rednet.isOpen(name) then
+            return true
+        end
+    end
+    return false
+end
+
 function net.host(protocol, hostname)
     net.openModems()
     pcall(rednet.unhost, protocol)

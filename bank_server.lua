@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.5.0"
+local PROGRAM_VERSION = "9.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -31,6 +31,31 @@ local DEPLOY = {
     cache_stamp = fs.combine("/updates", ".cache_version"),
 }
 local RELEASE = {}
+
+-- Banking between banks -----------------------------------------------------
+-- Every bank on the network shares one thing: the Account ID. Sixteen
+-- digits, the first four naming the bank that holds it and the last twelve
+-- unique inside it, so an ID is enough on its own to find where the money
+-- lives. Foxy is bank 0001; a third-party bank picks its own four when its
+-- server is set up. Declared here rather than beside its own section because
+-- registration mints one, and that runs a thousand lines above.
+-- The Account ID and the apply-once rule are shared with every third-party
+-- bank, so they live in util. What is not shared is debiting and crediting:
+-- an account here has tax demands, pots and a bet wallet, and an account at
+-- a third-party bank has a balance and nothing else.
+local ledger = setmetatable({}, { __index = util.ledger })
+
+-- Pair Mode. A second Bank Server takes the update depot and the app record
+-- store off the Core, so banking never queues behind a file transfer. Both
+-- halves run this same program and agree which is which when they pair.
+local pair = {
+    role = "solo",              -- "solo", "core" or "vault"
+    code = nil,                 -- the six digits this server is showing
+    partner = nil,              -- the other server's computer id
+    partner_code = nil,
+    since = nil,
+    file = fs.combine(ROOT, "bank_pair_v1.dat"),
+}
 RELEASE.local_files = {
     "bank_server.lua",
     "pumpe.lua",
@@ -56,6 +81,7 @@ RELEASE.local_files = {
 -- directly from ROOT, avoiding a second copy of the largest runtime files.
 RELEASE.depot_files = {
     "pumpe.lua",
+    "bank_app_server.lua",
     "service_kiosk.lua",
     "event_kiosk.lua",
     "tax_controller.lua",
@@ -98,6 +124,8 @@ RELEASE.optional = {
     "admin_terminal.lua",
     "app_server.lua",
     "foxy.lua",
+    "bank_app_server.lua",
+    "buckapp.lua",
 }
 
 RELEASE.programs = {
@@ -111,6 +139,7 @@ RELEASE.programs = {
     ccg = "ccg.lua",
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
+    tpbank = "bank_app_server.lua",
 }
 
 -- lib/update.lua is included for every role: without it a client cannot load
@@ -465,6 +494,9 @@ local function blankState()
         },
         accounts = {},
         account_names = {},
+        -- Account ID -> account_id. The index behind the one address every
+        -- bank on the network shares.
+        bank_account_ids = {},
         companies = {},
         terminals = {},
         events = {},
@@ -671,6 +703,39 @@ local function accountByName(name)
     return id and state.accounts[id] or nil
 end
 
+-- The Account ID -------------------------------------------------------------
+-- Sixteen digits: four naming the bank, twelve naming the account inside it.
+-- It is the one thing every bank on the network agrees on, so it is what a
+-- transfer is addressed to and what an account is known by anywhere else.
+
+function ledger.bankCode()
+    local code = tostring(state.bank_code or config.foxy_bank_code or "0001")
+    return code:match("^%d%d%d%d$") and code or "0001"
+end
+
+function ledger.mint()
+    state.bank_account_ids = state.bank_account_ids or {}
+    return ledger.newId(ledger.bankCode(), state.bank_account_ids)
+end
+
+-- Every account has one, including every account made before 9.0. Minting
+-- them lazily rather than in a migration keeps a Bank with a large ledger
+-- from doing all the work at once on the first boot after the update.
+function ledger.idFor(account)
+    if account.bank_account_id then return account.bank_account_id end
+    account.bank_account_id = ledger.mint()
+    state.bank_account_ids = state.bank_account_ids or {}
+    state.bank_account_ids[account.bank_account_id] = account.account_id
+    return account.bank_account_id
+end
+
+function ledger.byBankId(bankAccountId)
+    bankAccountId = ledger.clean(bankAccountId)
+    state.bank_account_ids = state.bank_account_ids or {}
+    local accountId = state.bank_account_ids[bankAccountId]
+    return accountId and state.accounts[accountId] or nil
+end
+
 local function publicAccount(account)
     return {
         account_id = account.account_id,
@@ -683,6 +748,12 @@ local function publicAccount(account)
         smart_declaration_lifetime = account.smart_declaration_lifetime,
         daily_spent = account.daily_spent,
         daily_sent = account.daily_sent,
+        -- The one address every bank on the network understands, and
+        -- whether the money is still here to be addressed.
+        bank_account_id = ledger.idFor(account),
+        bank_name = config.bank_name or "Foxy",
+        bank_closed = account.bank_closed == true,
+        moved_to = account.moved_to,
     }
 end
 
@@ -699,8 +770,16 @@ local function verifyAccount(account, pin)
     return account and account.pin_hash == util.hashPin(pin)
 end
 
-local function checkAccountActive(account)
+-- `receiving` is passed at the one place money is credited to somebody else,
+-- so a send to an account that has moved its money away is refused rather
+-- than left sitting somewhere it cannot be spent.
+local function checkAccountActive(account, receiving)
     need(account, "ACCOUNT_NOT_FOUND", "Account not found")
+    if receiving then
+        need(not (account and account.bank_closed), "RECIPIENT_CLOSED",
+            (account and account.name or "That account")
+                .. " has moved to another bank")
+    end
     need(not account.banned, "ACCOUNT_BANNED", "This account is banned")
     need(account.approved ~= false, "ACCOUNT_PENDING",
         "This account is waiting for government approval")
@@ -734,10 +813,20 @@ local function requireSession(payload)
     return account
 end
 
+-- An account whose money has moved to another bank keeps its Foxy identity,
+-- its friends and its apps -- but the money is not here any more, so nothing
+-- that spends it can work until it is transferred back.
+local function checkBankOpen(account)
+    need(not account.bank_closed, "BANK_CLOSED",
+        "Your money is at " .. tostring(account.moved_to_name or "another bank")
+            .. ". Transfer it back to use it here.")
+end
+
 -- Every route that moves money out of an account. requireSession alone is not
 -- enough: a new spending action must be added here on purpose.
 local function requireSpender(payload)
     local account = requireSession(payload)
+    checkBankOpen(account)
     checkNoTaxDemand(account)
     return account
 end
@@ -1036,6 +1125,113 @@ local function transaction(account, kind, amount, counterparty, description, ext
     return item
 end
 
+-- Settling between banks -----------------------------------------------------
+-- A transfer crosses two servers, and a lost reply must never mean money
+-- created or destroyed. So it is done in three steps, each one safe to
+-- repeat: the money is taken out of the balance and parked in a pending
+-- record, the far bank is asked to credit it under a transfer id it will
+-- only honour once, and only an acknowledged credit clears the record. A
+-- transfer that never gets its answer stays parked, and is retried or given
+-- back -- it is never simply gone.
+
+function ledger.reach(bankCode)
+    return net.client({
+        protocol = config.ledger_protocol or "PUMPE_LEDGER_V1",
+        hostname = ledger.hostFor(bankCode),
+    })
+end
+
+function ledger.ask(bankCode, action, payload, timeout)
+    if bankCode == ledger.bankCode() then
+        -- Both accounts are here. No radio involved.
+        local handler = ledger.actions[action]
+        if not handler then return nil, "Unknown ledger action" end
+        local ok, result = pcall(handler, payload or {})
+        if ok then return result end
+        if type(result) == "table" and result.pumpe then
+            return nil, result.message, result.code
+        end
+        return nil, "Ledger error"
+    end
+    return ledger.reach(bankCode):request(action, payload, timeout or 6)
+end
+
+function ledger.pending(account)
+    account.pending_transfers = account.pending_transfers or {}
+    return account.pending_transfers
+end
+
+-- Everything a bank will say about one of its accounts to another bank:
+-- enough to show who the money is going to, and nothing else.
+ledger.actions = {}
+
+function ledger.actions.LEDGER_LOOKUP(payload)
+    local account = ledger.byBankId(payload.bank_account_id)
+    need(account, "NO_SUCH_ACCOUNT", "No account has that Account ID")
+    need(not account.banned, "ACCOUNT_BANNED", "That account is banned")
+    return {
+        bank_account_id = ledger.idFor(account),
+        name = account.name,
+        bank_name = config.bank_name or "Foxy",
+        bank_code = ledger.bankCode(),
+        -- A closed account still takes money: arriving money is exactly
+        -- what reopens it, and is how somebody moves back here. Only an
+        -- account nobody may pay at all is not accepting.
+        accepting = not account.banned,
+        closed = account.bank_closed == true,
+    }
+end
+
+-- Applied at most once, however many times it arrives.
+function ledger.actions.LEDGER_STATUS(payload)
+    state.applied_transfers = state.applied_transfers or {}
+    local applied = ledger.applied(state.applied_transfers,
+        util.safeText(tostring(payload.transfer_id or ""), 32))
+    return { applied = applied ~= nil, amount = applied and applied.amount }
+end
+
+function ledger.actions.LEDGER_CREDIT(payload)
+    local account = ledger.byBankId(payload.bank_account_id)
+    need(account, "NO_SUCH_ACCOUNT", "No account has that Account ID")
+    need(not account.banned, "ACCOUNT_BANNED", "That account is banned")
+    local amount = math.floor(tonumber(payload.amount) or 0)
+    need(amount > 0, "BAD_AMOUNT", "A transfer has to be worth something")
+    local transferId = util.safeText(tostring(payload.transfer_id or ""), 32)
+    need(#transferId >= 8, "BAD_TRANSFER", "That transfer has no id")
+
+    state.applied_transfers = state.applied_transfers or {}
+    local credited, repeated = ledger.applyOnce(state.applied_transfers,
+        transferId, amount, function()
+            account.balance = account.balance + amount
+            -- Money arriving is how an account comes home. A player who
+            -- moved to a third-party bank transfers back to this Account ID,
+            -- and the bank account it closed opens again with the money in
+            -- it.
+            if account.bank_closed then
+                account.bank_closed = nil
+                account.moved_to = nil
+                account.moved_to_name = nil
+                notification(account, "Your bank account reopened",
+                    "Your money is back at "
+                        .. tostring(config.bank_name or "Foxy"), "success")
+            end
+        end)
+    if repeated then
+        -- The credit landed; only the answer was lost. Say yes again.
+        return { credited = credited, balance = account.balance,
+                 repeated = true }
+    end
+    ledger.forget(state.applied_transfers)
+    transaction(account, "bank_transfer_in", amount,
+        util.safeText(tostring(payload.from_bank_name or "Another bank"), 20),
+        "Transferred in from " .. tostring(payload.from_name or "another bank"))
+    notification(account, "Money arrived",
+        util.money(amount, config.currency) .. " transferred in from "
+            .. tostring(payload.from_bank_name or "another bank"), "money")
+    save()
+    return { credited = amount, balance = account.balance }
+end
+
 local function companyOwner(terminal)
     local company = terminal.company_id and state.companies[terminal.company_id] or nil
     local owner = company and state.accounts[company.owner_account_id] or nil
@@ -1131,6 +1327,199 @@ end
 
 local actions = {}
 
+-- Sending money out, with the one distinction that matters --------------------
+-- A transfer that comes back with a code was refused by the far bank, and
+-- nothing was applied: the money can safely go back. A transfer that just
+-- never answers might have been applied or might not, and refunding it on a
+-- guess is how money gets created. So that case is parked and reconciled
+-- later by asking the far bank whether it ever saw the id.
+--
+-- Returns "sent", "refused" or "unknown".
+function ledger.settle(account, targetId, amount, transferId, extra)
+    local bankCode = ledger.bankOf(targetId)
+    account.balance = util.roundMoney((account.balance or 0) - amount)
+    ledger.pending(account)[transferId] = {
+        transfer_id = transferId, amount = amount,
+        to = targetId, to_bank = bankCode, at = util.nowMs(),
+    }
+    save()
+
+    local payload = {
+        bank_account_id = targetId,
+        amount = amount,
+        transfer_id = transferId,
+        from_name = account.name,
+        from_bank_name = config.bank_name or "Foxy",
+        from_bank_account_id = ledger.idFor(account),
+    }
+    for key, value in pairs(extra or {}) do payload[key] = value end
+    local outcome, err, code = ledger.outcome(ledger.ask(bankCode,
+        "LEDGER_CREDIT", payload, 8))
+    if outcome == "sent" then
+        ledger.pending(account)[transferId] = nil
+        save()
+        return "sent"
+    end
+    if outcome == "refused" then
+        -- The far bank answered and said no, so nothing was applied there.
+        account.balance = util.roundMoney((account.balance or 0) + amount)
+        ledger.pending(account)[transferId] = nil
+        save()
+        return "refused", err, code
+    end
+    -- Nobody answered. The money stays parked until ledger.reconcile can
+    -- find out which way it went.
+    return "unknown", err
+end
+
+-- Parked transfers, resolved by asking rather than assuming.
+function ledger.reconcile()
+    for _, account in pairs(state.accounts) do
+        for transferId, parked in pairs(ledger.pending(account)) do
+            local answer = ledger.ask(ledger.bankOf(parked.to),
+                "LEDGER_STATUS", { transfer_id = transferId }, 6)
+            if answer then
+                if answer.applied then
+                    -- It did land. The debit stands.
+                    ledger.pending(account)[transferId] = nil
+                    transaction(account, "bank_transfer_out", parked.amount,
+                        account.moved_to_name or "Another bank",
+                        "Transfer confirmed")
+                else
+                    -- It never landed, and now we know it.
+                    account.balance = util.roundMoney(
+                        (account.balance or 0) + parked.amount)
+                    ledger.pending(account)[transferId] = nil
+                    notification(account, "Transfer came back",
+                        util.money(parked.amount, config.currency)
+                            .. " could not be delivered", "warning")
+                end
+                save()
+            end
+        end
+    end
+end
+
+-- Money that lands in a closed account follows it -------------------------------
+-- There are about twenty places in this file that credit an account, and
+-- sealing every one of them against a closed account is the kind of change
+-- that misses one. So instead of trying to keep money out, anything that
+-- does arrive is forwarded to the bank the account moved to. Nothing is
+-- stranded even if a door was left open.
+function ledger.sweep()
+    for _, account in pairs(state.accounts) do
+        if account.bank_closed and account.moved_to
+            and (account.balance or 0) > 0 then
+            local amount = math.floor(account.balance)
+            if ledger.settle(account, account.moved_to, amount,
+                util.token("SWEEP")) == "sent" then
+                transaction(account, "bank_transfer_out", amount,
+                    account.moved_to_name or "Another bank",
+                    "Followed your money to " .. tostring(
+                        account.moved_to_name or "your new bank"))
+                save()
+            end
+        end
+    end
+end
+
+-- Bank Transfer --------------------------------------------------------------
+-- Moving your money to another bank, and the account here closing behind it.
+-- Everything the player sees of this is two questions: where to, and are you
+-- sure.
+
+function actions.BANK_TRANSFER_QUOTE(payload)
+    local account = requireSession(payload)
+    checkBankOpen(account)
+    checkNoTaxDemand(account)
+    local wanted = ledger.clean(payload.bank_account_id)
+    need(#wanted == 16, "BAD_ACCOUNT_ID", "An Account ID is sixteen digits")
+    need(wanted ~= ledger.idFor(account), "SAME_ACCOUNT",
+        "That is this account")
+    local bankCode = ledger.bankOf(wanted)
+    local found, err, code = ledger.ask(bankCode, "LEDGER_LOOKUP",
+        { bank_account_id = wanted })
+    if not found then
+        need(false, code or "BANK_UNREACHABLE",
+            err or ("Bank " .. tostring(bankCode) .. " did not answer"))
+    end
+    need(found.accepting, "BANK_CLOSED",
+        "That account has moved its own money elsewhere")
+    return {
+        bank_account_id = wanted,
+        formatted = ledger.format(wanted),
+        name = found.name,
+        bank_name = found.bank_name,
+        amount = account.balance,
+    }
+end
+
+function actions.BANK_TRANSFER_CONFIRM(payload)
+    local account = requireSession(payload)
+    checkBankOpen(account)
+    checkNoTaxDemand(account)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local wanted = ledger.clean(payload.bank_account_id)
+    need(#wanted == 16, "BAD_ACCOUNT_ID", "An Account ID is sixteen digits")
+    need(wanted ~= ledger.idFor(account), "SAME_ACCOUNT", "That is this account")
+    local amount = math.floor(account.balance or 0)
+    need(amount > 0, "NOTHING_TO_MOVE", "There is nothing here to transfer")
+
+    local bankCode = ledger.bankOf(wanted)
+    local found, lookupErr, lookupCode = ledger.ask(bankCode, "LEDGER_LOOKUP",
+        { bank_account_id = wanted })
+    if not found then
+        need(false, lookupCode or "BANK_UNREACHABLE",
+            lookupErr or "That bank did not answer")
+    end
+
+    local outcome, err, code = ledger.settle(account, wanted, amount,
+        util.token("XFER"))
+    if outcome == "refused" then
+        need(false, code or "TRANSFER_FAILED",
+            err or "That bank would not take the transfer")
+    elseif outcome == "unknown" then
+        -- The money is parked, not lost. Calling this a failure would be a
+        -- lie, and giving it back on a guess is how money gets created.
+        need(false, "TRANSFER_PENDING",
+            "That bank did not answer. Your money is held and will finish"
+                .. " moving, or come back, on its own.")
+    end
+
+    account.bank_closed = true
+    account.moved_to = wanted
+    account.moved_to_name = found.bank_name
+    transaction(account, "bank_transfer_out", amount, found.bank_name,
+        "Transferred to " .. found.bank_name .. " " .. ledger.format(wanted))
+    notification(account, "Your money moved",
+        util.money(amount, config.currency) .. " went to " .. found.bank_name
+            .. ". Your Foxy bank account is closed.", "warning")
+    logActivity("Bank transfer " .. account.name .. " > " .. found.bank_name,
+        colors.orange)
+    save()
+    return {
+        moved = amount,
+        bank_name = found.bank_name,
+        bank_account_id = wanted,
+    }
+end
+
+-- Your own Account ID, and what to do if the money is elsewhere. The one
+-- screen that still works when the bank account is closed.
+function actions.BANK_IDENTITY(payload)
+    local account = requireSession(payload)
+    local id = ledger.idFor(account)
+    return {
+        bank_account_id = id,
+        formatted = ledger.format(id),
+        bank_name = config.bank_name or "Foxy",
+        bank_closed = account.bank_closed == true,
+        moved_to = account.moved_to,
+        moved_to_name = account.moved_to_name,
+        balance = account.balance,
+    }
+end
+
 function actions.PING()
     return {
         version = config.version,
@@ -1157,6 +1546,7 @@ function actions.REGISTER(payload)
 
     local account = {
         account_id = accountId,
+        bank_account_id = ledger.mint(),
         name = name,
         pin_hash = util.hashPin(payload.pin),
         gender = util.safeText(payload.gender or "Not set", 20),
@@ -1179,6 +1569,8 @@ function actions.REGISTER(payload)
     end
     state.accounts[accountId] = account
     state.account_names[util.normalName(name)] = accountId
+    state.bank_account_ids = state.bank_account_ids or {}
+    state.bank_account_ids[account.bank_account_id] = accountId
     notification(account, "Welcome to your Foxy Account",
         "Your PUMPE starts with " .. util.money(config.starting_balance, config.currency),
         "success")
@@ -1222,7 +1614,7 @@ end
 
 local function buildSendMoneyQuote(sender, payload)
     local recipient = accountByName(payload.recipient)
-    checkAccountActive(recipient)
+    checkAccountActive(recipient, true)
     need(recipient.account_id ~= sender.account_id,
         "INVALID_RECIPIENT", "You cannot send money to yourself")
     local amount = validateAmount(payload.amount)
@@ -3834,10 +4226,38 @@ function appstore.publicRecord(record, accountId)
     }
 end
 
+-- Where the records actually live ---------------------------------------------
+-- The Core decides who you are and what you are allowed to touch; the store
+-- itself is just data, and in Pair Mode it lives on the Vault. Splitting the
+-- handlers here rather than duplicating them means there is exactly one
+-- implementation of what an app record means, wherever it is kept.
+appstore.ops = {}
+
+function appstore.dispatch(op, account, appId, payload)
+    if not pair.isCore() or not pair.paired() then
+        return appstore.ops[op](account, appId, payload)
+    end
+    local result, err, code = pair.ask("VAULT_APP_DATA", {
+        op = op, app_id = appId, payload = payload,
+        -- The Core has already established this. The Vault holds no
+        -- accounts and takes the Core's word for who is asking.
+        caller = { account_id = account.account_id, name = account.name },
+    })
+    if not result then
+        need(false, code or "VAULT_OFFLINE",
+            err or "The Vault is not answering")
+    end
+    return result
+end
+
 function actions.APP_DATA_PUT(payload)
     local account = requireSession(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
+    return appstore.dispatch("put", account, appId, payload)
+end
+
+function appstore.ops.put(account, appId, payload)
     local collection = appstore.collection(appId, payload.collection)
     appstore.prune(collection)
     need(appstore.dataSize(payload.data or {})
@@ -3886,6 +4306,10 @@ function actions.APP_DATA_LIST(payload)
     local account = requireSession(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
+    return appstore.dispatch("list", account, appId, payload)
+end
+
+function appstore.ops.list(account, appId, payload)
     local collection = appstore.collection(appId, payload.collection)
     if appstore.prune(collection) > 0 then save() end
     local parent = payload.parent
@@ -3908,6 +4332,10 @@ function actions.APP_DATA_DELETE(payload)
     local account = requireSession(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
+    return appstore.dispatch("delete", account, appId, payload)
+end
+
+function appstore.ops.delete(account, appId, payload)
     local collection = appstore.collection(appId, payload.collection)
     for index = #collection.items, 1, -1 do
         local record = collection.items[index]
@@ -3930,6 +4358,10 @@ function actions.APP_DATA_READ(payload)
     local account = requireSession(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
+    return appstore.dispatch("read", account, appId, payload)
+end
+
+function appstore.ops.read(account, appId, payload)
     local collection = appstore.collection(appId, payload.collection)
     appstore.prune(collection)
     local marked = {}
@@ -3964,6 +4396,10 @@ function actions.APP_DATA_REACT(payload)
     local account = requireSession(payload)
     local appId = appstore.appId(payload)
     appstore.requireGrant(account, appId)
+    return appstore.dispatch("react", account, appId, payload)
+end
+
+function appstore.ops.react(account, appId, payload)
     local collection = appstore.collection(appId, payload.collection)
     for _, record in ipairs(collection.items) do
         if record.id == payload.id
@@ -6690,11 +7126,42 @@ local function deploymentLoop()
     end
 end
 
+local function ledgerLoop()
+    local protocol = config.ledger_protocol or "PUMPE_LEDGER_V1"
+    while running do
+        local sender, message = rednet.receive(protocol, 1)
+        if sender and type(message) == "table" and message.kind == "request"
+            and type(message.action) == "string" then
+            local handler = ledger.actions[message.action]
+            if not handler then
+                net.reply(sender, protocol, message.request_id, false, nil,
+                    "Unknown ledger action", "UNKNOWN_ACTION")
+            else
+                local ok, result = pcall(handler, message.payload or {})
+                if ok then
+                    net.reply(sender, protocol, message.request_id, true,
+                        result)
+                elseif type(result) == "table" and result.pumpe then
+                    net.reply(sender, protocol, message.request_id, false,
+                        nil, result.message, result.code)
+                else
+                    logActivity("Ledger error: " .. tostring(result),
+                        colors.red)
+                    net.reply(sender, protocol, message.request_id, false,
+                        nil, "Ledger failed", "LEDGER_ERROR")
+                end
+            end
+        end
+    end
+end
+
 local function schedulerLoop()
     while running do
         cleanupEphemeral()
         processSubscriptions()
         processBetHolds()
+        pcall(ledger.reconcile)
+        pcall(ledger.sweep)
         sleep(10)
     end
 end
@@ -6783,6 +7250,177 @@ local function dashboardLoop()
     end
 end
 
+-- Pair Mode -------------------------------------------------------------------
+-- Two Bank Servers, one bank. The split is deliberately not down the middle:
+-- everyday banking is a hot path where a second radio hop would be felt on
+-- every balance check, so the Core keeps all of it. What moves to the Vault
+-- is the heavy, cold work -- serving update downloads, and holding the app
+-- record store -- which is what was actually crowding the Core's disk and
+-- making banking queue behind file transfers.
+--
+-- Clients never learn any of this. The depot simply answers from a different
+-- computer, which rednet already resolves by name, and app records reach the
+-- Vault through the Core.
+
+function pair.load()
+    local saved = util.loadTable(pair.file, {})
+    if saved.role == "core" or saved.role == "vault" then
+        pair.role = saved.role
+        pair.partner = saved.partner
+        pair.partner_code = saved.partner_code
+        pair.since = saved.since
+    end
+end
+
+function pair.store()
+    pcall(util.saveTable, pair.file, {
+        role = pair.role, partner = pair.partner,
+        partner_code = pair.partner_code, since = pair.since,
+    })
+end
+
+function pair.newCode()
+    pair.code = util.randomString(6, "0123456789")
+    return pair.code
+end
+
+function pair.isVault() return pair.role == "vault" end
+function pair.isCore() return pair.role == "core" end
+function pair.paired() return pair.partner ~= nil end
+
+-- What a Vault answers. Everything the Core hands over lives behind this one
+-- protocol, so nothing else on the network can reach it.
+pair.actions = {}
+
+function pair.actions.PAIR_HELLO(payload, sender)
+    return {
+        computer = os.getComputerID(),
+        code = pair.code,
+        accounts = mapCount(state.accounts),
+        version = config.version,
+    }
+end
+
+-- Claiming is what pairs them. The server whose code was entered decides
+-- which half is which, and it protects data: whichever side already has
+-- accounts stays the Core, so pairing can never strand a live ledger behind
+-- a Vault that does no banking.
+function pair.actions.PAIR_CLAIM(payload, sender)
+    need(pair.role ~= "vault", "ALREADY_VAULT", "This server is already a Vault")
+    need(not pair.paired(), "ALREADY_PAIRED", "This server is already paired")
+    need(tostring(payload.code or "") == tostring(pair.code or ""),
+        "BAD_CODE", "That is not this server's code")
+    local mine = mapCount(state.accounts)
+    local theirs = math.floor(tonumber(payload.accounts) or 0)
+    -- A tie goes to the server that was already here: the one being claimed.
+    local iAmCore = mine >= theirs
+    pair.role = iAmCore and "core" or "vault"
+    pair.partner = sender
+    pair.partner_code = payload.code_of_theirs
+    pair.since = util.nowMs()
+    pair.store()
+    logActivity("Paired with computer #" .. tostring(sender) .. " as "
+        .. string.upper(pair.role), colors.lime)
+    return {
+        paired = true,
+        their_role = iAmCore and "vault" or "core",
+        computer = os.getComputerID(),
+        accounts = mine,
+    }
+end
+
+-- The app record store, once it lives on the Vault. The Core forwards the
+-- whole action rather than reaching into the data, so there is exactly one
+-- implementation of what an app record means.
+function pair.actions.VAULT_APP_DATA(payload, sender)
+    -- Only the Core this Vault is paired to. Rednet ids are as strong as
+    -- anything else on this network, and without the check any computer
+    -- could read every app's records by asking nicely.
+    need(sender == pair.partner, "NOT_MY_CORE",
+        "This Vault is paired to another server")
+    local handler = appstore.ops[tostring(payload.op or "")]
+    need(handler, "NOT_VAULT_WORK", "The Vault does not do that")
+    local caller = type(payload.caller) == "table" and payload.caller or {}
+    need(type(caller.account_id) == "string", "NO_CALLER",
+        "The Core did not say who is asking")
+    return handler(caller, payload.app_id, payload.payload or {})
+end
+
+function pair.reach()
+    if not pair.partner then return nil end
+    local client = net.client({
+        protocol = config.pair_protocol or "PUMPE_PAIR_V1",
+        hostname = config.pair_hostname or "BANK_VAULT",
+    })
+    client.serverId = pair.partner
+    return client
+end
+
+function pair.ask(action, payload, timeout)
+    local client = pair.reach()
+    if not client then return nil, "No Vault is paired" end
+    return client:request(action, payload, timeout or 6)
+end
+
+function pair.loop()
+    local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
+    while running do
+        local sender, message = rednet.receive(protocol, 1)
+        if sender and type(message) == "table" and message.kind == "request"
+            and type(message.action) == "string" then
+            local handler = pair.actions[message.action]
+            if not handler then
+                net.reply(sender, protocol, message.request_id, false, nil,
+                    "Unknown pair action", "UNKNOWN_ACTION")
+            else
+                local ok, result = pcall(handler, message.payload or {},
+                    sender)
+                if ok then
+                    net.reply(sender, protocol, message.request_id, true,
+                        result)
+                elseif type(result) == "table" and result.pumpe then
+                    net.reply(sender, protocol, message.request_id, false,
+                        nil, result.message, result.code)
+                else
+                    logActivity("Pair error: " .. tostring(result), colors.red)
+                    net.reply(sender, protocol, message.request_id, false,
+                        nil, "Pair request failed", "PAIR_ERROR")
+                end
+            end
+        end
+    end
+end
+
+-- Entering the other server's code. A code is a rednet hostname while it is
+-- being shown, so finding the other half is the same lookup everything else
+-- on this network uses rather than a broadcast nobody can debug.
+function pair.claim(code)
+    code = tostring(code or ""):gsub("%D", "")
+    if #code ~= 6 then return nil, "A pairing code is six digits" end
+    if code == pair.code then return nil, "That is this server's own code" end
+    local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
+    local other = rednet.lookup(protocol, "PAIRING_" .. code)
+    if not other then return nil, "No server is showing that code" end
+    local client = net.client({ protocol = protocol,
+        hostname = "PAIRING_" .. code })
+    client.serverId = other
+    local claimed, err = client:request("PAIR_CLAIM", {
+        code = code,
+        code_of_theirs = pair.code,
+        accounts = mapCount(state.accounts),
+    }, 8)
+    if not claimed then return nil, err or "That server did not answer" end
+    pair.role = claimed.their_role
+    pair.partner = other
+    pair.partner_code = code
+    pair.since = util.nowMs()
+    pair.store()
+    logActivity("Paired with computer #" .. tostring(other) .. " as "
+        .. string.upper(pair.role), colors.lime)
+    return true
+end
+
+
 if TEST_MODE then
     return {
         actions = actions,
@@ -6799,12 +7437,170 @@ if TEST_MODE then
         deployment_fetch = fetchDepotFile,
         drop_stale_cache = dropStaleDepotCache,
         urgent_calls = urgentCalls,
+        ledger = ledger,
+        pair = pair,
     }
 end
 
+-- The launch question, asked once. A Bank that has already been paired or
+-- has already been told to stay solo never asks again.
+function pair.chooseMode(target)
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PUMPE BANK SERVER", "v" .. config.version,
+            util.formatClock())
+        ui.center(target, 5, "HOW SHOULD THIS BANK RUN?", colors.white)
+        local half = math.floor((width - 3) / 2)
+        ui.card(target, 2, 7, half, 6, colors.cyan)
+        ui.text(target, 4, 8, "SOLO", colors.white, colors.gray)
+        ui.wrappedText(target, 4, 9, "One computer does everything. This is"
+            .. " how every Bank before 9.0 ran.", half - 3, 4,
+            colors.lightGray, colors.gray)
+        ui.card(target, 3 + half, 7, width - 3 - half, 6, colors.lime)
+        ui.text(target, 5 + half, 8, "PAIR", colors.white, colors.gray)
+        ui.wrappedText(target, 5 + half, 9, "Two computers share the work."
+            .. " Downloads and app data move off the banking computer.",
+            width - 6 - half, 4, colors.lightGray, colors.gray)
+        local scene = ui.scene(target)
+        scene:button("solo", 2, 14, half, 3, "SOLO MODE",
+            { background = colors.cyan, foreground = colors.black })
+        scene:button("pair", 3 + half, 14, width - 3 - half, 3, "PAIR MODE",
+            { background = colors.lime, foreground = colors.black })
+        local action = scene:wait({ tickRate = 5, flash = false })
+        if action == "solo" then return "solo" end
+        if action == "pair" then return "pair" end
+        if action == "__terminate" then return "solo" end
+    end
+end
+
+-- Showing a code and being able to type the other one. Both servers show
+-- both, which is what makes it not matter which computer you walk to first.
+function pair.pairingScreen(target)
+    local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
+    pair.newCode()
+    net.openModems()
+    pcall(rednet.unhost, protocol)
+    rednet.host(protocol, "PAIRING_" .. pair.code)
+    local message, messageColor = nil, colors.lightGray
+
+    -- Answering PAIR_CLAIM while the code is on screen is what lets the
+    -- other server pair with this one without anybody touching this
+    -- keyboard.
+    local function listen()
+        while not pair.paired() do
+            local sender, packet = rednet.receive(protocol, 0.4)
+            if sender and type(packet) == "table"
+                and packet.kind == "request" then
+                local handler = pair.actions[packet.action]
+                if handler then
+                    local ok, result = pcall(handler, packet.payload or {},
+                        sender)
+                    if ok then
+                        net.reply(sender, protocol, packet.request_id, true,
+                            result)
+                    else
+                        net.reply(sender, protocol, packet.request_id, false,
+                            nil, type(result) == "table" and result.message
+                                or "Pairing failed",
+                            type(result) == "table" and result.code or nil)
+                    end
+                end
+            end
+        end
+    end
+
+    local function draw()
+        while not pair.paired() do
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "PAIR MODE", "Waiting for the other server",
+                util.formatClock())
+            ui.card(target, 2, 5, width - 2, 5, colors.lime)
+            ui.text(target, 4, 6, "THIS SERVER'S CODE", colors.lightGray,
+                colors.gray)
+            ui.center(target, 8, pair.code, colors.white, colors.gray)
+            ui.wrappedText(target, 2, 11, "Open a second Bank Server, choose"
+                .. " PAIR MODE, and type this code into it -- or type its"
+                .. " code in here. Either way round works.",
+                width - 2, 4, colors.lightGray)
+            if message then
+                ui.text(target, 2, height - 4,
+                    ui.truncate(message, width - 2), messageColor)
+            end
+            local scene = ui.scene(target)
+            scene:button("enter", 2, height - 2, 22, 2, "ENTER THEIR CODE",
+                { background = colors.blue })
+            scene:button("solo", width - 11, height - 2, 10, 2, "GO SOLO",
+                { background = colors.gray })
+            local action = scene:wait({ tickRate = 0.4, flash = false })
+            if action == "solo" or action == "__terminate" then
+                pair.role = "solo"
+                return
+            elseif action == "enter" then
+                local typed = ui.input(target, "THEIR CODE", {
+                    hint = "Six digits from the other server",
+                    mode = "number", maxLength = 6,
+                })
+                if typed then
+                    local ok, err = pair.claim(typed)
+                    if not ok then
+                        message, messageColor = err, colors.orange
+                    end
+                end
+            end
+        end
+    end
+
+    parallel.waitForAny(listen, draw)
+    pcall(rednet.unhost, protocol)
+    return pair.role
+end
+
 ui.boot(term.current(), "PUMPE BANK", "SECURE ECONOMY CORE")
-net.host(config.protocol, config.hostname)
-rednet.host(DEPLOY.protocol, DEPLOY.hostname)
+
+-- Solo or Pair, asked once. A Bank that was already answered -- paired, or
+-- told to stay solo -- comes straight up the way it was left.
+pair.load()
+if pair.role == "solo" or not pair.role then
+    if not fs.exists(pair.file) then
+        if pair.chooseMode(term.current()) == "pair" then
+            pair.pairingScreen(term.current())
+        else
+            pair.role = "solo"
+        end
+        pair.store()
+    else
+        pair.role = "solo"
+    end
+end
+
+net.openModems()
+if pair.isVault() then
+    -- The Vault does no banking. It serves downloads and holds the app
+    -- record store, and it is the only half that hosts the depot, so a
+    -- client looking for updates simply resolves a different computer.
+    rednet.host(config.pair_protocol or "PUMPE_PAIR_V1",
+        config.pair_hostname or "BANK_VAULT")
+    rednet.host(DEPLOY.protocol, DEPLOY.hostname)
+    logActivity("Vault online for computer #" .. tostring(pair.partner),
+        colors.lime)
+else
+    net.host(config.protocol, config.hostname)
+    if pair.isCore() then
+        -- The depot belongs to the Vault now. Not hosting it here is what
+        -- takes file transfers off the banking computer.
+        logActivity("Core online, Vault is computer #"
+            .. tostring(pair.partner), colors.lime)
+    else
+        rednet.host(DEPLOY.protocol, DEPLOY.hostname)
+    end
+end
+-- Every bank answers to LEDGER_<its four digits>, which is how an Account ID
+-- is enough on its own to find the bank holding it.
+state.bank_code = state.bank_code or config.foxy_bank_code or "0001"
+rednet.host(config.ledger_protocol or "PUMPE_LEDGER_V1",
+    "LEDGER_" .. ledger.bankCode())
 logActivity("Server online on computer #" .. os.getComputerID(), colors.lime)
 local depotMissing = updateDepotMissingFiles()
 if #depotMissing == 0 then
@@ -6817,9 +7613,16 @@ else
 end
 save()
 
-parallel.waitForAny(serverLoop, deploymentLoop, schedulerLoop,
-    ccgGameLoop, onlineUpdateLoop, dashboardLoop)
+if pair.isVault() then
+    -- Everything the Vault is for, and nothing else.
+    parallel.waitForAny(deploymentLoop, pair.loop, dashboardLoop)
+else
+    parallel.waitForAny(serverLoop, deploymentLoop, ledgerLoop, pair.loop,
+        schedulerLoop, ccgGameLoop, onlineUpdateLoop, dashboardLoop)
+end
 pcall(rednet.unhost, config.protocol)
 pcall(rednet.unhost, DEPLOY.protocol)
+pcall(rednet.unhost, config.ledger_protocol or "PUMPE_LEDGER_V1")
+pcall(rednet.unhost, config.pair_protocol or "PUMPE_PAIR_V1")
 ui.clear(term.current())
 print("PUMPE Bank Server stopped safely.")

@@ -32,7 +32,7 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - Up to four favourites live in **the dock**, under every app page rather than on a page of their own. An empty dock slot opens the picker, and so does **Edit Your Dock** in Settings.
 - Unread counts appear as a badge in an icon's corner.
-- **BuckApp** holds the balance, payments behind **Continue**, the Bet Wallet and Activity.
+- **Bank** holds the balance, payments behind **Continue**, the Bet Wallet, Activity and your Account ID. (This was BuckApp until 9.0, when that name left to become a bank of its own.)
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
 - **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
 - Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
@@ -146,11 +146,46 @@ Two confirmations replace the customer display: one to take the sale, one to pay
 
 Opening a ticket or a travel document is what makes a PUMPE findable. The claim lapses `present_max_age_ms` after that screen last checked in, so closing it stops you being scanned.
 
+## Two computers, and banks that are not Foxy
+
+### Pair Mode
+
+A Bank Server asks **Solo** or **Pair** the first time it starts. In Pair Mode both servers show a six-digit code and either can type the other's; when the codes match they pair and split the work.
+
+The split is deliberately uneven. Everyday banking is a hot path — a second radio hop would be felt on every balance check — so the **Core** keeps all of it. The **Vault** takes the heavy, cold work: serving update downloads, and holding the app record store. That is what was crowding the Bank's disk and making banking queue behind file transfers.
+
+Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever typed the code. Clients never learn any of this — the depot simply answers from a different computer.
+
+### Third-party banks
+
+Bank Servers are no longer locked. Pressing one asks which kind it is:
+
+| | Needs `4040` | What it is |
+| --- | --- | --- |
+| **Foxy Bank Server** | yes | The economy itself |
+| **3rd Party Bank Server** | no | Hosts somebody's own Bank App |
+
+A 3rd Party Bank Server asks the App Server which apps declare themselves banks and hosts the one you choose. An app declares itself in its own first lines:
+
+```lua
+-- PUMPE BANK APP: BuckApp
+```
+
+Third-party banks have their own logins — a Foxy Account is not an account there — and mint no money: an account opens empty.
+
+### The Account ID
+
+Every account at every bank has a sixteen-digit **Account ID**, the first four digits naming the bank holding it. It is the one thing every bank agrees on, and enough on its own to find where money lives.
+
+**Bank Transfer** (Settings → Account ID, or the Bank tab) moves everything you have to any Account ID. Your account here closes behind it — the Bank tab will not open — and the same feature from the other bank brings it home. Money arriving is what reopens an account.
+
+A transfer never gives money back on a guess. A bank that *refuses* answers with a code, so nothing was applied and the money returns. A bank that says *nothing* might have applied it or not, so the money stays parked and is settled later by asking whether that transfer id was ever seen.
+
 ## Foxy, the App Browser and the App Server
 
 ### Foxy
 
-Foxy is the Foxy Account and the bank behind it, and it is **not** built into the phone — you get it from the App Browser. BuckApp still works and carries a banner saying it is closing down.
+Foxy is the Foxy Account and the bank behind it, and it is **not** built into the phone — you get it from the App Browser. Since 9.0 **BuckApp is not preinstalled either**: it became a bank of its own, installable from the App Browser and hosted on a 3rd Party Bank Server.
 
 - **Bank** opens on your card, drawn on screen with your name across the front, and your balance underneath.
 - Under the balance are **your accounts**. `+ New account` opens another one — Savings, Rent, Holiday — and opening one lets you move money to any of your others. It never leaves your account, and closing an account hands its money straight back.
@@ -236,7 +271,7 @@ Only the first Bank Server needs the complete release copied locally. Every othe
 
 1. Keep `startup.lua` beside the complete release on the one authoritative Bank Server.
 2. Edit the local `config.lua` and change `government_key`.
-3. Run `startup`, choose **Bank Server**, and enter `4040`.
+3. Run `startup`, choose **Bank Server**, then **Foxy Bank Server**, and enter `4040`. (A **3rd Party Bank Server** is the other choice and needs no code.)
 4. Easy Deployment verifies the complete local bundle, moves same-drive files directly into the compact Bank layout, writes an installer-based `/startup.lua`, and launches `bank_server.lua` immediately. It never tries to discover a Bank Server that does not exist yet.
 5. `/pumpe` keeps only the Bank runtime, installer, config, and shared libraries. `/updates` keeps one copy of each role-specific program plus the sanitized public client config; shared runtime files are served directly without duplication.
 

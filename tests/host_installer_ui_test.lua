@@ -70,8 +70,14 @@ local function pickBankServer(screenWidth, screenHeight, script)
     installer()
     assert(eventIndex == #events, "the scripted run did not finish")
     local screen = table.concat(written, "\n")
+    -- 9.0: a Bank Server is two machines. The button asks which, and only
+    -- Foxy's is behind the code.
+    -- Truncated on a 26-wide pocket screen, so match what survives it.
+    assert(screen:find("FOXY BANK SERVER", 1, true)
+        and screen:find("3RD PARTY BANK", 1, true),
+        "the Bank Server entry asks which kind of bank this is")
     assert(screen:find("PROTECTED DOWNLOAD", 1, true),
-        "the Bank Server entry must ask for the protected download code")
+        "and Foxy's still asks for the protected download code")
     assert(screen:find("LOCAL BANK FILES MISSING", 1, true),
         "a Bank without local release files must say so")
     assert(screen:find("Nothing installed yet", 1, true),
@@ -123,6 +129,7 @@ everyRoleReachable(51, 19, {
 pickBankServer(26, 20, {
     { "mouse_click", 1, 3, 19 }, -- v OTHER ROLES
     { "mouse_click", 1, 5, 11 }, -- Bank Server, fourth row
+    { "mouse_click", 1, 4, 7 }, -- FOXY BANK SERVER, the new type menu
     { "mouse_click", 1, 4, 13 }, -- 4
     { "mouse_click", 1, 11, 17 }, -- 0
     { "mouse_click", 1, 4, 13 }, -- 4
@@ -134,12 +141,29 @@ pickBankServer(26, 20, {
 pickBankServer(51, 19, {
     { "mouse_click", 1, 3, 18 }, -- v OTHER ROLES
     { "mouse_click", 1, 30, 9 }, -- Bank Server, right column, second row
+    { "mouse_click", 1, 4, 7 }, -- FOXY BANK SERVER, the new type menu
     { "mouse_click", 1, 12, 12 }, -- 4
     { "mouse_click", 1, 22, 16 }, -- 0
     { "mouse_click", 1, 12, 12 }, -- 4
     { "mouse_click", 1, 22, 16 }, -- 0
     { "mouse_click", 1, 2, 19 }, -- EXIT, back on the PUMPE panel
 })
+
+-- A 3rd Party Bank Server takes no code at all: it hosts somebody's own
+-- bank app, and there is nothing behind it that could reach the Foxy ledger.
+width, height = 26, 20
+written, eventIndex = {}, 0
+events = {
+    { "mouse_click", 1, 3, 19 }, -- v OTHER ROLES
+    { "mouse_click", 1, 5, 11 }, -- Bank Server
+    { "mouse_click", 1, 4, 12 }, -- 3RD PARTY BANK SERVER
+    { "mouse_click", 1, 2, 20 }, -- EXIT
+}
+installer()
+local thirdPartyScreen = table.concat(written, "\n")
+assert(not thirdPartyScreen:find("PROTECTED DOWNLOAD", 1, true),
+    "a 3rd Party Bank Server never asks for the operator code")
+assert(thirdPartyScreen:find("3RD PARTY BANK", 1, true))
 
 -- Automatic checks stay quiet when the Bank Server is offline and return to
 -- the direct role boot instead of opening the role picker.

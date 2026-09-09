@@ -40,6 +40,12 @@ const forwardOptionalFiles = [
   // Server can seed itself with Foxy on its first run instead of waiting for
   // somebody to publish it by hand.
   "foxy.lua",
+  // A 3rd Party Bank Server: the machine that hosts a bank which is not
+  // Foxy. New in 9.0.
+  "bank_app_server.lua",
+  // BuckApp is a PUMPE app rather than a role, and ships for the same reason
+  // foxy.lua does: so an App Server has it to offer on a fresh world.
+  "buckapp.lua",
 ];
 
 function checksum(buffer) {

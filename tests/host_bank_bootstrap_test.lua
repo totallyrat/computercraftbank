@@ -82,6 +82,17 @@ os.day = function() return 7 end
 os.time = function() return 12 end
 os.epoch = function() return 1000 end
 os.getComputerID = function() return 11 end
+-- Since 9.0 a Bank with no pairing file asks Solo or Pair before it does
+-- anything else, so booting one means answering that. The script taps SOLO.
+os.startTimer = function() return 1 end
+os.queueEvent = function() end
+local scriptedTaps = {}
+os.pullEvent = function()
+    local tap = table.remove(scriptedTaps, 1)
+    if tap then return "mouse_click", 1, tap[1], tap[2] end
+    return "timer", 1
+end
+function scriptTaps(taps) scriptedTaps = taps end
 rednet = { host = function() end, unhost = function() end,
     isOpen = function() return true end, open = function() end }
 peripheral = { getNames = function() return {} end,
@@ -102,14 +113,19 @@ textutils = {
 }
 package.loaded["lib.net"] = {
     host = function() end, unhost = function() end,
+    openModems = function() return { "modem" } end,
     receive = function() return nil end,
     reply = function() end, send = function() end,
+    client = function() return { discover = function() return nil end,
+        request = function() return nil, "offline" end } end,
 }
 -- The Bank runs forever once it is up; stop it the moment it gets there.
 parallel = { waitForAny = function() error("__BANK_STARTED__", 0) end }
 
 local function loadBank()
     drawn = {}
+    -- The SOLO button on the launch screen, at the coordinates it is drawn.
+    scriptTaps({ { 4, 15 } })
     local ok, err = pcall(assert(loadfile("../bank_server.lua")))
     assert(not ok, "the Bank should have reached its main loop")
     assert(tostring(err) == "__BANK_STARTED__",
@@ -140,6 +156,13 @@ assert(files["/updates/ccg.lua"] == nil)
 -- Reaching the main loop at all is the assertion: a non-empty drop calls
 -- logActivity, which is what "attempt to call a nil value" died on.
 assert(#drawn > 0, "the Bank draws its boot screen")
+
+-- The launch question is part of booting a fresh Bank since 9.0. Without
+-- this the scripted tap above could stop matching and nobody would notice:
+-- the Bank would just take the timeout branch and still reach its loop.
+local screen = table.concat(drawn, " ")
+assert(screen:find("SOLO", 1, true) and screen:find("PAIR", 1, true),
+    "a Bank with no pairing file asks Solo or Pair before it starts")
 assert(files["/updates/public/config.lua"],
     "the sanitized client config is written at bootstrap")
 assert(files["/startup.lua"] and

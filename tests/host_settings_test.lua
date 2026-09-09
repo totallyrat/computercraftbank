@@ -1,9 +1,14 @@
--- The App Browser and an installed app, on the PUMPE's native 26x20 screen.
--- Foxy is loaded here exactly as the phone loads it: one file returning one
--- function, handed an api table and nothing else.
+-- The 9.0 Settings app, driven through the phone exactly as it runs:
+--
+--   * the modem switch that takes the phone off the network
+--   * what the phone is holding
+--   * whether it updates itself
+--
+-- Every draw is bounds checked at 26x20.
 
 local WIDTH, HEIGHT = 26, 20
-buttonLabels, drawnText, requests, storeCalls = {}, {}, {}, {}
+savedDevice, deviceSaves, requestsAtModemOff = {}, {}, 0
+buttonLabels, drawnText, requests = {}, {}, {}
 
 colors = {
     white = 1, orange = 2, magenta = 4, lightBlue = 8,
@@ -30,45 +35,59 @@ fs = {
 shell = { getRunningProgram = function() return "/pumpe/pumpe.lua" end }
 sleep = function() end
 
--- The phone loads an app off its own disk; here that disk is the repository.
+-- The phone loads an app off its own disk; here that disk is apps/.
 local realLoadfile = loadfile
 loadfile = function(path)
-    if tostring(path):find("FOXY", 1, true) then
-        return realLoadfile("../foxy.lua")
+    if tostring(path):find("YAPCHAT", 1, true) then
+        return realLoadfile("../apps/yapchat.lua")
     end
     return realLoadfile(path)
 end
 
 local account = {
-    account_id = "ACC000001", name = "FoxyUser",
+    account_id = "ACC000001", name = "Ana Fox",
     balance = 500, personal_number = "12345", daily_sent = 0,
 }
 
 package.loaded.config = {
-    version = "8.3.0", currency = "$",
+    version = "8.5.0", currency = "$",
     send_money_daily_limit = 2000, send_money_fee_rate = 0.10,
     pumpe_lock_seconds = 60, pumpe_pin_seconds = 120,
     urgent_ring_poll_seconds = 3, bet_maximum = 10000,
     app_protocol = "PUMPE_APPS_V1", app_hostname = "APP_SERVER",
     app_chunk_size = 6000, max_apps_installed = 12,
-    foxy_cash_fee_rate = 0.02,
 }
 package.loaded["lib.util"] = {
     loadTable = function(path, fallback)
-        -- Foxy is already installed, so the Home Screen carries it.
         if tostring(path):find("apps", 1, true) then
-            return { list = { { app_id = "FOXY", name = "Foxy", version = 1,
-                author = "PUMPE", description = "Your Foxy Account" } } }
+            return { list = { { app_id = "YAPCHAT", name = "Yap Chat",
+                version = 1, author = "Ana Fox",
+                description = "Private messages" } } }
         end
         return fallback
     end,
-    saveTable = function() end,
+    saveTable = function(path, value)
+        -- Settings live on the device file, and that is the point: an
+        -- update rewrites config.lua and would take the choice with it.
+        -- Every save is snapshotted, not merged, so a later save cannot
+        -- cover for an earlier one that never happened.
+        if tostring(path):find("device", 1, true) then
+            local snapshot = {}
+            for key, item in pairs(value) do
+                savedDevice[key] = item
+                snapshot[key] = item
+            end
+            deviceSaves[#deviceSaves + 1] = snapshot
+        end
+    end,
     writeFile = function(path, body) written[path] = body end,
     readFile = function(path) return written[path] end,
     checksum = function(body)
+        -- Enough of a hash for the test: the two sides of a
+        -- conversation must land on the same collection name.
         local hash = 5381
-        for index = 1, #body do
-            hash = (hash * 33 + body:byte(index)) % 4294967296
+        for index = 1, #tostring(body) do
+            hash = (hash * 33 + tostring(body):byte(index)) % 4294967296
         end
         return string.format("%08x", hash)
     end,
@@ -89,8 +108,11 @@ package.loaded["lib.util"] = {
     end,
 }
 
-local POTS = { { pot_id = "POT00000001", name = "Savings", balance = 120 } }
-local bankClient = {
+local closedModems, openedModems = 0, 0
+package.loaded["lib.net"] = nil
+
+local requests = requests or {}
+local client = {
     discover = function() return true end,
     request = function(_, action, payload)
         requests[#requests + 1] = action
@@ -100,67 +122,29 @@ local bankClient = {
             return { account = account }
         elseif action == "PUMPE_POLL" then
             return { balance = account.balance }
-        elseif action == "DEV_MINE" then
-            return { developer_id = nil }
-        elseif action == "FOXY_OVERVIEW" then
-            return { name = account.name, card_id = "PUMPE_ACC000001",
-                personal_number = "12345", balance = account.balance,
-                saved = 120, pots = POTS, max_pots = 8, fee_rate = 0.02 }
-        elseif action == "FOXY_POT_CREATE" then
-            POTS[#POTS + 1] = { pot_id = "POT00000002",
-                name = payload.name, balance = 0 }
-            return { pots = POTS, balance = account.balance }
-        elseif action == "FOXY_POT_MOVE" then
-            return { pots = POTS, balance = account.balance, saved = 120 }
-        elseif action == "FRIEND_OVERVIEW" then
-            return { friends = { { account_id = "ACC000002",
-                name = "Best Mate" } } }
-        elseif action == "FOXY_CASH_QUOTE" then
-            return { recipient = "Best Mate", amount = 100, fee = 2,
-                total = 102, fee_rate = 0.02, balance = account.balance }
-        elseif action == "FOXY_CASH_SEND" then
-            return { amount = 100, fee = 2, total = 102,
-                recipient = "Best Mate", balance = 398 }
+        elseif action == "BANK_IDENTITY" then
+            return { bank_account_id = "0001222233334444",
+                formatted = "0001 2222 3333 4444", bank_name = "Foxy",
+                bank_closed = false, balance = account.balance }
+        elseif action == "APP_PERMISSION_LIST" then
+            return { apps = {} }
+        elseif action == "FOXY_LOGIN_LIST" then
+            return { apps = {} }
         end
         return { ok = true }
     end,
 }
-local APP = { app_id = "NOTES", name = "Notes", version = 1,
-    author = "Shop Owner", description = "Jot things down",
-    size = 20, checksum = nil }
-local BODY = "return function() end\n"
-APP.size = #BODY
--- Advertised one way, served another: a download the PUMPE must refuse.
-local ROTTEN = { app_id = "ROTTEN", name = "Rotten", version = 1,
-    author = "Shop Owner", description = "Arrives damaged",
-    size = #BODY, checksum = "deadbeef" }
-local storeClient = {
-    discover = function() return true end,
-    request = function(_, action, payload)
-        storeCalls[#storeCalls + 1] = action
-        if action == "APP_LIST" then
-            return { apps = {
-                { app_id = "FOXY", name = "Foxy", version = 1,
-                  author = "PUMPE", description = "Your Foxy Account",
-                  size = 10, checksum = "0" },
-                APP, ROTTEN,
-            } }
-        elseif action == "APP_CHUNK" then
-            local body = payload.app_id == "ROTTEN" and BODY or BODY
-            return { app_id = payload.app_id, offset = 0, data = body,
-                next_offset = #body, total_size = #body, done = true }
-        end
-        return { ok = true }
-    end,
-}
-APP.checksum = package.loaded["lib.util"].checksum(BODY)
 package.loaded["lib.net"] = {
-    client = function(config)
-        if config.protocol == "PUMPE_APPS_V1" then return storeClient end
-        return bankClient
-    end,
+    client = function() return client end,
     autoUpdate = function() end,
     locate = function() return nil end,
+    openModems = function() openedModems = openedModems + 1 return { "m" } end,
+    closeModems = function()
+        closedModems = closedModems + 1
+        requestsAtModemOff = #requests
+        return { "m" }
+    end,
+    modemsOpen = function() return true end,
 }
 
 local function assertBox(label, x, y, width, height)
@@ -179,7 +163,8 @@ function ui.usePhoneStyle() end
 function ui.noteActivity() end
 function ui.idleForMs() return 0 end
 function ui.setIdleLock() end
-function ui.setBackgroundTask() end
+local ringHandler
+function ui.setBackgroundTask(_, handler) ringHandler = handler end
 function ui.clear() end
 function ui.boot() end
 function ui.splash() end
@@ -220,6 +205,7 @@ function ui.wrappedText(_, x, y, value, width, maxLines)
     local lines = ui.wrap(value, width)
     assert(#lines <= maxLines, "wrapped text loses lines: " .. tostring(value))
     for index, line in ipairs(lines) do ui.text(nil, x, y + index - 1, line) end
+    return #lines
 end
 function ui.header(_, title, subtitle)
     assert(#tostring(title or "") <= WIDTH - 3, "header title is clipped")
@@ -234,27 +220,37 @@ function ui.message(_, _, title, body)
 end
 function ui.confirm() return true end
 function ui.pin() return "1234" end
-inputs = { "FoxyUser", "Holiday", "60", "100" }
+-- In the order the script reaches them: sign in, the reply, then the post.
+inputs = { "Ana Fox", "nice one back", "hello world this is my yap" }
 function ui.input() return table.remove(inputs, 1) end
 function ui.networkError(_, err) error("network error: " .. tostring(err)) end
 
+-- In the order the script reaches them: the PUMPE login, then the message.
+inputs = { "Ana Fox", "see you in a bit" }
+function ui.input() return table.remove(inputs, 1) end
+function ui.networkError(_, err) error("network error: " .. tostring(err)) end
+
+local pinPrompts = {}
+function ui.pin(_, prompt)
+    pinPrompts[#pinPrompts + 1] = tostring(prompt or "")
+    return "1234"
+end
+
+-- Two sign-ins: the one at the start, and the one attempted after the modem
+-- has been turned off.
+inputs = { "Ana Fox", "Ana Fox" }
+function ui.input() return table.remove(inputs, 1) end
+function ui.networkError(_, err) error("network error: " .. tostring(err)) end
+function ui.pin() return "1234" end
+function ui.confirm() return true end
+
 actions = {
     "login",
-    "open:browser",                      -- the App Browser
-    "open:NOTES", "get",                 -- install one; that closes it
-    "open:ROTTEN", "get", "back",        -- one that arrives damaged
-    "back",                              -- leave the browser
-    "open:ext:FOXY",                     -- the installed app
-    "bank",                              -- the card, balance and accounts
-    "new",                               -- open another account
-    "down", "up",                        -- scroll the account column
-    "pot:POT00000001", "move", "pick:main",
-    "down", "down",                      -- Foxy Cash sits under the accounts
-    "cash", "pick:ACC000002", "send",
-    "back",                              -- leave the bank
-    "account", "back",                   -- the account section
-    "back",                              -- leave Foxy
-    "open:bank", "back",                 -- the Foxy Bank tab
+    "next", "open:settings",           -- Settings is on page two
+    "storage", "back",                 -- what the phone is holding
+    "updates", "toggle", "back",       -- turn auto updates off
+    "network", "toggle",               -- turn the modem off: signs out
+    "login",                           -- and try to use the network anyway
     "__terminate",
 }
 local index = 0
@@ -276,6 +272,13 @@ function ui.scene()
     function scene:wait()
         index = index + 1
         local action = actions[index]
+        local wake = action and action:match("^__wake:(.+)$")
+        if wake then
+            pendingPoll = assert(ALERTS[wake], "unknown scripted alert")
+            assert(ringHandler, "the OS watcher was never armed")
+            wokeWith[#wokeWith + 1] = { name = wake, took = ringHandler() }
+            return "__wake"
+        end
         assert(action, "PUMPE asked for more actions than the script has")
         if not action:match("^__") then
             assert(live[action], "tapped '" .. action
@@ -290,6 +293,7 @@ package.loaded["lib.ui"] = ui
 local ok, err = pcall(assert(loadfile("../pumpe.lua")))
 assert(ok or tostring(err):find("more actions", 1, true), tostring(err))
 
+
 local function drew(text)
     for _, item in ipairs(drawnText) do
         if item:find(text, 1, true) then return true end
@@ -302,62 +306,59 @@ local function pressed(text)
     end
     return false
 end
-local function asked(list, action)
-    for _, item in ipairs(list) do
-        if item == action then return true end
+
+assert(not drew("stopped"), "the PUMPE must not have crashed")
+
+-- Everything reachable from one list -------------------------------------------
+-- 9.0 added enough to Settings that the old fixed layout stopped fitting a
+-- 20-row screen. The list pages instead, and every entry keeps its name on
+-- its own button rather than being drawn over a blank one.
+for _, label in ipairs({ "Network", "Storage", "Updates", "Account ID",
+    "App Settings", "Connected Apps", "How PUMPE Works", "Edit Your Dock",
+    "Sign Out", "Close PUMPE" }) do
+    assert(pressed(label), "Settings is missing " .. label)
+end
+
+-- Storage ------------------------------------------------------------------------
+
+assert(drew("FREE SPACE"), "storage says what is free")
+assert(drew("WHAT IS ON THIS PUMPE"), "and what the phone is holding")
+
+-- Updates ------------------------------------------------------------------------
+
+assert(drew("AUTOMATIC UPDATES"))
+-- Saved when the switch was flipped, not incidentally by a later save.
+local savedOnItsOwn = false
+for _, snapshot in ipairs(deviceSaves) do
+    if snapshot.auto_update == false and snapshot.modem_on ~= false then
+        savedOnItsOwn = true
     end
-    return false
 end
+assert(savedOnItsOwn,
+    "turning updates off is remembered on the device the moment it is"
+        .. " turned off, and on the device rather than in config.lua, which"
+        .. " an update rewrites")
+assert(require("config").auto_update == false,
+    "and it reaches the config table net.autoUpdate actually reads")
+assert(pressed("Turn updates on"),
+    "and the switch reads the other way once it is off")
 
--- The App Browser talks to the App Server, never to the Bank.
-assert(drew("App Browser"))
-assert(asked(storeCalls, "APP_LIST") and asked(storeCalls, "APP_CHUNK"))
-assert(not asked(requests, "APP_LIST") and not asked(requests, "APP_CHUNK"),
-    "app downloads must not touch the Bank")
-assert(written["/pumpe/apps/NOTES.lua"] == BODY,
-    "the downloaded app lands on disk verified")
--- A download whose checksum does not match what was advertised is thrown
--- away rather than run.
-assert(drew("Download was damaged"), "a bad download is refused")
-assert(written["/pumpe/apps/ROTTEN.lua"] == nil,
-    "and nothing of it is kept")
+-- The modem --------------------------------------------------------------------
+-- Turning the radio off is the one setting that changes what the rest of the
+-- phone can do, so it is the one worth checking end to end.
 
--- An installed app sits on the Home Screen beside the built-in ones.
-assert(pressed("F"), "Foxy has an icon of its own")
-assert(drew("Foxy"))
+assert(drew("MODEM"))
+assert(closedModems == 1, "the radio was actually closed, not just recorded")
+assert(savedDevice.modem_on == false, "and the choice was remembered")
 
--- Foxy: the card, the balance, the accounts, and Foxy Cash under them.
-assert(drew("Foxy Bank"))
-local grouped = false
-for _, item in ipairs(drawnText) do
-    if item:match("^%d%d%d%d %d%d%d%d %d%d%d%d$") then grouped = true end
-end
-assert(grouped, "the card shows a grouped number")
-assert(drew("FOXYUSER"), "and the holder's name across the front")
-assert(drew("BALANCE") and drew("$500"))
-assert(pressed("Savings"), "your accounts are listed under the balance")
-assert(pressed("New account"))
-assert(pressed("Foxy Cash"))
-assert(asked(requests, "FOXY_POT_CREATE") and asked(requests, "FOXY_POT_MOVE"))
-assert(asked(requests, "FOXY_CASH_QUOTE") and asked(requests, "FOXY_CASH_SEND"))
-assert(drew("2%") or pressed("2%"), "the fee is shown before sending")
+-- With the radio off a request must not go out at all. Letting it through
+-- would mean every screen waiting out a five second timeout to discover
+-- what the phone already knows.
+local afterOff = 0
+for index = requestsAtModemOff + 1, #requests do afterOff = afterOff + 1 end
+assert(afterOff == 0,
+    "nothing reached the network after the modem was turned off, but "
+        .. afterOff .. " request(s) did")
+assert(drew("Modem is off"), "and the phone says why rather than hanging")
 
--- And the account section it shares the home page with.
-assert(drew("Your Account"))
-assert(pressed("Change your name") and pressed("Change your PIN"))
-
--- The app ran to the end. runInstalledApp catches a crash so a bad app
--- cannot take the phone down with it, which would otherwise hide a failure
--- in here as a quiet error message.
-assert(not drew("stopped"), "the app must not have crashed")
-assert(not drew("will not start"), "the app must have loaded")
-
--- 9.0: BuckApp left the home screen to become a bank of its own, and what
--- is built in is simply the Foxy bank account.
-assert(not drew("BuckApp"), "BuckApp is no longer preinstalled")
-assert(not pressed("Move to Foxy"),
-    "and the migration banner that pointed at Foxy has gone with it")
-assert(pressed("Account ID + Transfer"),
-    "what is there instead is the Account ID every bank understands")
-
-print("host_pumpe_apps_test: OK")
+print("host_settings_test: OK")

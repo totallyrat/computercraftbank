@@ -204,6 +204,9 @@ end
 local PICK_BANK = {
     { "char", "m" },
     { "char", "4" },
+    -- Since 9.0 a Bank Server asks which kind it is before it asks for the
+    -- code. 1 is Foxy's.
+    { "char", "1" },
     { "char", "4" }, { "char", "0" },
     { "char", "4" }, { "char", "0" },
 }

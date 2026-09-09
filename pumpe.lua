@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.5.0"
+local PROGRAM_VERSION = "9.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -22,8 +22,33 @@ local deviceFile = fs.combine(ROOT, "pumpe_device.dat")
 local device = util.loadTable(deviceFile, {
     last_name = "",
     onboarding_complete = false,
+    -- Settings, kept on the device rather than in config.lua: they belong to
+    -- this phone, and an update rewrites config.
+    modem_on = true,
+    auto_update = true,
 })
 if device.onboarding_complete == nil then device.onboarding_complete = false end
+if device.modem_on == nil then device.modem_on = true end
+if device.auto_update == nil then device.auto_update = true end
+-- Turning auto updates off is a setting, and net.autoUpdate reads it from
+-- the config table it is handed.
+if device.auto_update == false then config.auto_update = false end
+
+-- Every Bank call goes through here, whichever path made it. Gating the one
+-- wrapper below would have missed signing in and the lock screen, which both
+-- reach the client directly.
+do
+    local realRequest = client.request
+    -- Set on this client rather than on the shared Client metatable: this
+    -- phone's switch is not every client's business, and a stubbed client
+    -- in the host tests has no metatable to reach into.
+    client.request = function(self, action, payload, timeout)
+        if device.modem_on == false then
+            return nil, "Modem is off", "MODEM_OFF"
+        end
+        return realRequest(self, action, payload, timeout)
+    end
+end
 
 -- Optional apps live beside the phone rather than inside it: one file each
 -- under /pumpe/apps, downloaded from the App Server, listed here.
@@ -43,6 +68,7 @@ local favouritesPicker
 local appBrowser
 local connectedApps
 local appSettingsScreen
+local accountIdScreen
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -51,6 +77,13 @@ local function request(action, payload, silent)
     end
     local result, err, code = client:request(action, payload)
     if not result and not silent then
+        if code == "MODEM_OFF" then
+            -- Said plainly rather than as a network error: the phone is off
+            -- the network because somebody turned it off.
+            ui.message(target, "warning", "Modem is off",
+                "Turn it on in Settings", 1.4)
+            return result, err, code
+        end
         if code == "SESSION_EXPIRED" then
             sessionToken, betAccessToken, account = nil, nil, nil
             disableDeviceLock()
@@ -3237,43 +3270,241 @@ watchForUrgentCalls = function()
     return false
 end
 
+-- Settings ------------------------------------------------------------------
+-- The three things a phone should be able to tell you about itself: whether
+-- it is on the network, what it is holding, and whether it updates itself.
+
+local function networkScreen()
+    while running do
+        local width, height = target.getSize()
+        local on = device.modem_on ~= false
+        ui.clear(target)
+        ui.header(target, "Network", on and "Connected" or "Off",
+            util.formatClock())
+        ui.card(target, 2, 5, width - 2, 5, on and ui.theme.success
+            or ui.theme.danger)
+        ui.text(target, 4, 5, "MODEM", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, on and "On" or "Off", ui.theme.ink,
+            ui.theme.panel)
+        ui.wrappedText(target, 4, 8, on and "On the bank network."
+            or "Nothing needing the Bank works.", width - 6, 2,
+            ui.theme.muted, ui.theme.panel)
+        ui.wrappedText(target, 2, 11, "With the modem off your money, your"
+            .. " messages and every app that needs the network stop. What is"
+            .. " already on the phone still opens.", width - 2, 7,
+            ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("toggle", 2, height - 4, width - 2, 2,
+            on and "Turn the modem off" or "Turn the modem on",
+            { background = on and ui.theme.danger or ui.theme.success,
+              foreground = on and colors.white or colors.black })
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "toggle" then
+            if on then
+                if ui.confirm(target, "Turn the modem off",
+                    "You will be signed out of the Bank.", "Turn off",
+                    "Keep on") then
+                    device.modem_on = false
+                    saveDevice()
+                    net.closeModems()
+                    -- The session lives on the Bank, and the Bank is now
+                    -- unreachable. Holding a token that cannot be used would
+                    -- only look like being signed in.
+                    sessionToken, betAccessToken, account = nil, nil, nil
+                    disableDeviceLock()
+                    ui.message(target, "warning", "Modem off",
+                        "This PUMPE is off the network", 1.4)
+                    return
+                end
+            else
+                device.modem_on = true
+                saveDevice()
+                local ok = pcall(net.openModems)
+                if not ok then
+                    device.modem_on = false
+                    saveDevice()
+                    ui.message(target, "error", "No modem",
+                        "Attach a wireless or Ender modem", 1.8)
+                else
+                    client:discover()
+                    ui.message(target, "success", "Modem on",
+                        "Back on the network", 1.2)
+                end
+            end
+        end
+    end
+end
+
+local function storageScreen()
+    while running do
+        local width, height = target.getSize()
+        local free = type(fs.getFreeSpace) == "function"
+            and fs.getFreeSpace(ROOT) or nil
+        local appBytes = 0
+        for _, entry in ipairs(installed.list) do
+            local path = fs.combine(appsDir, entry.app_id .. ".lua")
+            if fs.exists(path) then appBytes = appBytes + fs.getSize(path) end
+        end
+        local function kb(bytes)
+            if type(bytes) ~= "number" then return "?" end
+            return math.floor(bytes / 1024) .. " KB"
+        end
+        ui.clear(target)
+        ui.header(target, "Storage", kb(free) .. " free", util.formatClock())
+        ui.card(target, 2, 5, width - 2, 4, ui.theme.accent)
+        ui.text(target, 4, 5, "FREE SPACE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, kb(free), ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 7, ui.truncate(type(free) == "number"
+            and (math.floor(free / 10240) .. "% of a computer free")
+            or "Not reported here", width - 6),
+            ui.theme.muted, ui.theme.panel, width - 6)
+        ui.text(target, 2, 10, "WHAT IS ON THIS PUMPE", ui.theme.muted)
+        ui.text(target, 2, 11, #installed.list .. " installed app"
+            .. (#installed.list == 1 and "" or "s") .. "   " .. kb(appBytes),
+            ui.theme.ink)
+        local row = 13
+        for index, entry in ipairs(installed.list) do
+            if row > height - 4 then break end
+            local path = fs.combine(appsDir, entry.app_id .. ".lua")
+            local size = fs.exists(path) and fs.getSize(path) or 0
+            ui.text(target, 2, row,
+                ui.truncate(entry.name, width - 11), ui.theme.muted)
+            ui.text(target, width - 8, row, kb(size), ui.theme.muted)
+            row = row + 1
+        end
+        if #installed.list == 0 then
+            ui.wrappedText(target, 2, 13, "Nothing installed from the App"
+                .. " Browser yet.", width - 2, 2, ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        if scene:wait({ tickRate = 5 }) then return end
+    end
+end
+
+local function updatesScreen()
+    while running do
+        local width, height = target.getSize()
+        local on = device.auto_update ~= false
+        ui.clear(target)
+        ui.header(target, "Updates", "v" .. tostring(config.version),
+            util.formatClock())
+        ui.card(target, 2, 5, width - 2, 5, on and ui.theme.success
+            or ui.theme.panel)
+        ui.text(target, 4, 5, "AUTOMATIC UPDATES", ui.theme.muted,
+            ui.theme.panel)
+        ui.text(target, 4, 6, on and "On" or "Off", ui.theme.ink,
+            ui.theme.panel)
+        ui.wrappedText(target, 4, 8, on and "New releases install themselves."
+            or "Staying on this version.", width - 6, 2,
+            ui.theme.muted, ui.theme.panel)
+        ui.wrappedText(target, 2, 11, "With updates off this PUMPE keeps the"
+            .. " version it has until you turn them back on. The rest of the"
+            .. " network carries on updating.", width - 2, 6, ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("toggle", 2, height - 4, width - 2, 2,
+            on and "Turn updates off" or "Turn updates on",
+            { background = on and ui.theme.warning or ui.theme.success,
+              foreground = colors.black })
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "toggle" then
+            device.auto_update = not on
+            saveDevice()
+            config.auto_update = device.auto_update
+            ui.message(target, "info",
+                device.auto_update and "Updates on" or "Updates off",
+                device.auto_update and "New releases install themselves"
+                    or "This PUMPE stays put", 1.2)
+        end
+    end
+end
+
+-- Settings is a list now rather than a handful of buttons: 9.0 added
+-- enough to it that a fixed layout stopped fitting a 20-row pocket screen,
+-- and paging works on any size rather than only the two I happened to try.
 local function settingsScreen()
+    local page = 1
     while running and sessionToken do
         local width, height = target.getSize()
+        local entries = {
+            { id = "network", label = "Network",
+              value = device.modem_on == false and "Off" or "On",
+              warn = device.modem_on == false },
+            { id = "storage", label = "Storage", value = "" },
+            { id = "updates", label = "Updates",
+              value = device.auto_update == false and "Off" or "Auto",
+              warn = device.auto_update == false },
+            { id = "id", label = "Account ID", value = "" },
+            { id = "apps", label = "App Settings", value = "" },
+            { id = "connected", label = "Connected Apps", value = "" },
+            { id = "guide", label = "How PUMPE Works", value = "" },
+            { id = "dock", label = "Edit Your Dock", value = "" },
+            { id = "logout", label = "Sign Out", value = "" },
+            { id = "close", label = "Close PUMPE", value = "" },
+        }
         ui.clear(target)
         ui.header(target, "Settings", account.name, util.formatClock())
-        ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
+        ui.card(target, 2, 5, width - 2, 3, ui.theme.accent)
         ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 6, ui.truncate(account.name, width - 6),
             ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 8, "ID  " .. tostring(account.account_id),
+        ui.text(target, 4, 7, ui.truncate("NO " .. tostring(
+            account.personal_number), width - 6),
             ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 9, "NO  " .. tostring(account.personal_number),
-            ui.theme.muted, ui.theme.panel)
+
+        local top = 9
+        local bottom = height - 2
+        local perPage = math.max(1, bottom - top + 1)
+        local pages = math.max(1, math.ceil(#entries / perPage))
+        page = math.max(1, math.min(page, pages))
         local scene = ui.scene(target)
-        scene:button("guide", 2, 10, width - 2, 2, "How PUMPE Works",
-            { background = ui.theme.accentDark })
-        scene:button("dock", 2, 12, width - 2, 2, "Edit Your Dock",
-            { background = ui.theme.panel })
-        scene:button("connected", 2, 14, width - 2, 2, "Connected Apps",
-            { background = ui.theme.panel })
-        scene:button("apps", 2, 16, width - 2, 2, "App Settings",
-            { background = ui.theme.panel })
-        scene:button("logout", 2, 18, width - 2, 1, "Sign Out",
-            { background = ui.theme.danger })
-        scene:button("close", 2, 19, width - 2, 1, "Close PUMPE",
-            { background = ui.theme.panel })
+        for slot = 1, perPage do
+            local entry = entries[(page - 1) * perPage + slot]
+            if not entry then break end
+            local y = top + slot - 1
+            -- The label goes on the button rather than being drawn over an
+            -- empty one: a button nobody can read the name of is a button
+            -- nobody can find, and it is what these rows are called.
+            local background = entry.id == "logout" and ui.theme.danger
+                or ui.theme.panel
+            scene:button(entry.id, 2, y, width - 2, 1, entry.label,
+                { background = background })
+            if entry.value ~= "" then
+                ui.text(target, width - #entry.value, y, entry.value,
+                    entry.warn and ui.theme.warning or ui.theme.muted,
+                    background)
+            end
+        end
+        if pages > 1 then
+            scene:button("prev", width - 8, height, 3, 1, "^",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            scene:button("next", width - 4, height, 3, 1, "v",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
+
         local action = scene:wait()
-        if action == "guide" then
-            guideScreen(true)
-        elseif action == "dock" then
-            favouritesPicker()
-        elseif action == "connected" then
-            connectedApps()
-        elseif action == "apps" then
-            appSettingsScreen()
+        if action == "back" or action == "__terminate" then return end
+        if action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        elseif action == "network" then
+            networkScreen()
+            if not sessionToken then return end
+        elseif action == "storage" then storageScreen()
+        elseif action == "updates" then updatesScreen()
+        elseif action == "id" then accountIdScreen()
+        elseif action == "apps" then appSettingsScreen()
+        elseif action == "connected" then connectedApps()
+        elseif action == "guide" then guideScreen(true)
+        elseif action == "dock" then favouritesPicker()
         elseif action == "logout" then
             if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
                 "Sign Out", "Back") then
@@ -3287,8 +3518,6 @@ local function settingsScreen()
                 running = false
                 return
             end
-        else
-            return
         end
     end
 end
@@ -3297,24 +3526,144 @@ end
 
 -- BuckApp gathers everything to do with money: the balance you see first,
 -- payments behind Continue, the Bet Wallet, and your activity.
-local function buckApp()
+-- The Account ID, and moving your money to another bank -----------------------
+-- Sixteen digits is the whole of what one bank needs to know about another.
+-- It is shown here so it can be read out, and typed here to send everything
+-- somewhere else.
+
+local function bankTransferScreen(identity)
+    local typed = ui.input(target, "Their Account ID", {
+        hint = "16 digits from the other bank",
+        mode = "number", maxLength = 19, allowSpace = true,
+    })
+    if not typed then return false end
+    local quote, err = request("BANK_TRANSFER_QUOTE",
+        { bank_account_id = typed }, true)
+    if not quote then
+        ui.message(target, "error", "Cannot send there", err, 2)
+        return false
+    end
+
+    -- Everything moves, and this account closes behind it. Said plainly,
+    -- before the PIN rather than after.
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, "Move your money", quote.bank_name, util.formatClock())
+    ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
+    ui.text(target, 4, 5, "TO", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 6, ui.truncate(quote.name, width - 6),
+        ui.theme.ink, ui.theme.panel)
+    ui.text(target, 4, 7, ui.truncate(quote.bank_name, width - 6),
+        ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 9, "AMOUNT", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 10, money(quote.amount), ui.theme.ink, ui.theme.panel)
+    ui.wrappedText(target, 2, 13, "All of it goes, and your Bank here closes"
+        .. " until you transfer money back.", width - 2, 3, ui.theme.muted)
+    local scene = ui.scene(target)
+    scene:button("go", 2, height - 5, width - 2, 2, "Move it all",
+        { background = ui.theme.danger })
+    scene:button("no", 2, height - 2, width - 2, 2, "Keep it here",
+        { background = ui.theme.panel })
+    if scene:wait({ tickRate = 5 }) ~= "go" then return false end
+
+    local pin = ui.pin(target, "Confirm with PIN", true)
+    if not pin then return false end
+    local moved, moveError, code = request("BANK_TRANSFER_CONFIRM", {
+        bank_account_id = quote.bank_account_id, pin = pin,
+    }, true)
+    if not moved then
+        ui.message(target, code == "TRANSFER_PENDING" and "warning" or "error",
+            code == "TRANSFER_PENDING" and "Held safely" or "Not moved",
+            moveError, 2.4)
+        return false
+    end
+    ui.message(target, "success", "Moved to " .. moved.bank_name,
+        money(moved.moved) .. " transferred", 2)
+    refreshSummary(true)
+    return true
+end
+
+accountIdScreen = function()
+    while running and sessionToken do
+        local width, height = target.getSize()
+        local identity = request("BANK_IDENTITY", {}, true)
+        if not identity then return end
+        ui.clear(target)
+        ui.header(target, "Account ID", identity.bank_name,
+            util.formatClock())
+        ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
+        ui.text(target, 4, 5, "YOUR ACCOUNT ID", ui.theme.muted,
+            ui.theme.panel)
+        -- Two halves on a narrow screen, so all sixteen digits are readable
+        -- rather than trailing off into an ellipsis.
+        ui.text(target, 4, 7, identity.formatted:sub(1, 9),
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 8, identity.formatted:sub(11),
+            ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 2, 11, "Give this to another bank to have"
+            .. " money sent here. It works at every bank on the network.",
+            width - 2, 4, ui.theme.muted)
+        local scene = ui.scene(target)
+        if identity.bank_closed then
+            ui.wrappedText(target, 2, 15, "Your money is at "
+                .. tostring(identity.moved_to_name or "another bank")
+                .. ". Transfer it back from there.", width - 2, 3,
+                ui.theme.warning)
+        else
+            scene:button("move", 2, height - 5, width - 2, 2,
+                "Move my money to another bank",
+                { background = ui.theme.warning, foreground = colors.black })
+        end
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "move" then
+            if bankTransferScreen(identity) then return end
+        end
+    end
+end
+
+-- The Foxy bank account, built into the phone. BuckApp used to be the icon
+-- here; in 9.0 that brand left to become a bank of its own, and what is left
+-- is simply your Foxy money. It stays built in because paying somebody, the
+-- Bet Wallet and your activity live nowhere else -- a phone that had to
+-- download an app before it could pay anyone would be a worse phone.
+local function bankApp()
     local blink = true
     while running and sessionToken do
         local width, height = target.getSize()
         local summary = refreshSummary(true)
+        -- Money that has moved to another bank is not here to be spent, and
+        -- says where it went instead of showing an empty account.
+        if account.bank_closed then
+            ui.clear(target)
+            ui.header(target, "Bank", "Closed", util.formatClock())
+            ui.card(target, 2, 5, width - 2, 6, ui.theme.warning)
+            ui.wrappedText(target, 4, 6, "Your money is at "
+                .. tostring(account.moved_to_name or "another bank") .. ".",
+                width - 6, 3, ui.theme.ink, ui.theme.panel)
+            ui.wrappedText(target, 4, 9, "Transfer it back from there to use"
+                .. " this account again.", width - 6, 2, ui.theme.muted,
+                ui.theme.panel)
+            local closedScene = ui.scene(target)
+            closedScene:button("id", 2, height - 5, width - 2, 2,
+                "Show my Account ID", { background = ui.theme.panel })
+            closedScene:button("back", 1, height, 8, 1, "< Home",
+                { background = ui.theme.panel })
+            local closedAction = closedScene:wait({ tickRate = 5 })
+            if closedAction == "id" then accountIdScreen() else return end
+        else
         ui.clear(target)
-        ui.header(target, "BuckApp", "Closing down", util.formatClock(blink))
-        -- BuckApp still works, but it is on the way out. The banner is the
-        -- warning; Foxy in the App Browser is where it is going.
-        ui.fill(target, 1, 4, width, 2, ui.theme.warning)
-        ui.text(target, 2, 4, "BuckApp is closing down",
-            colors.black, ui.theme.warning)
-        ui.text(target, 2, 5, "Get Foxy from Apps",
-            colors.black, ui.theme.warning)
-        ui.card(target, 2, 6, width - 2, 3, ui.theme.success)
-        ui.text(target, 4, 6, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 7, money(account.balance), ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 8, "Daily sent " .. money(account.daily_sent or 0),
+        ui.header(target, "Bank", account.name, util.formatClock(blink))
+        ui.card(target, 2, 5, width - 2, 4, ui.theme.success)
+        ui.text(target, 4, 5, "AVAILABLE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, money(account.balance), ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 7, "Daily sent " .. money(account.daily_sent or 0),
+            ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 8, ui.truncate("ID " .. tostring(
+            account.bank_account_id and util.ledger.format(
+                account.bank_account_id) or "-"), width - 6),
             ui.theme.muted, ui.theme.panel)
 
         local demand = request("TAX_DEMAND_STATUS", {}, true)
@@ -3333,8 +3682,8 @@ local function buckApp()
             { background = colors.purple })
         scene:button("activity", 2 + half + 1, 14, width - 3 - half, 3,
             "Activity", { background = ui.theme.panel })
-        scene:button("foxy", 2, 18, width - 2, 2, "Move to Foxy",
-            { background = colors.orange, foreground = colors.black })
+        scene:button("id", 2, 18, width - 2, 2, "Account ID + Transfer",
+            { background = ui.theme.accentDark })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
@@ -3344,8 +3693,9 @@ local function buckApp()
         elseif action == "demand" then taxDemandScreen(demand)
         elseif action == "wallet" then betWalletScreen()
         elseif action == "activity" then historyScreen()
-        elseif action == "foxy" then appBrowser() end
+        elseif action == "id" then accountIdScreen() end
         if summary == nil and not sessionToken then return end
+        end
     end
 end
 
@@ -3835,6 +4185,17 @@ local function runInstalledApp(entry)
         },
         -- Raise the PUMPE's own fullscreen Urgent Contact alert.
         call = function(spec) return appUrgentCall(entry, spec) end,
+        -- Bank Infrastructure for Apps. A bank app talks to the 3rd Party
+        -- Bank Server hosting it, and only to that one: the hostname is
+        -- built from the id the app was installed under, so an app cannot
+        -- address somebody else's bank, or the Foxy Bank, through here.
+        bank = function(action, payload)
+            local client = net.client({
+                protocol = config.tpb_protocol or "PUMPE_TPB_V1",
+                hostname = "TPBANK_" .. entry.app_id,
+            })
+            return client:request(tostring(action), payload or {}, 6)
+        end,
         app_id = entry.app_id,
     })
     if not ok then
@@ -4066,8 +4427,8 @@ end
 
 -- The app catalogue the Home Screen, the dock and the picker share.
 local APPS = {
-    buck = { name = "BuckApp", glyph = "$", color = colors.green,
-        open = buckApp },
+    bank = { name = "Bank", glyph = "$", color = colors.green,
+        open = bankApp },
     friends = { name = "Friends", glyph = "@", color = colors.cyan,
         open = friendsApp },
     tickets = { name = "Tickets", glyph = "#", color = colors.orange,
@@ -4081,7 +4442,7 @@ local APPS = {
     settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
-    "buck", "friends", "tickets", "customs", "bet", "tax", "subs",
+    "bank", "friends", "tickets", "customs", "bet", "tax", "subs",
     "browser", "settings",
 }
 

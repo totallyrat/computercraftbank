@@ -225,6 +225,51 @@ Run this after installing into a ComputerCraft world.
 - [ ] Scroll with the two buttons on the right edge and confirm the posts never draw underneath them.
 - [ ] Post the longest text the composer allows and confirm the feed truncates it with `..` rather than overflowing.
 
+## Pair Mode
+
+- [ ] On a fresh Bank Server confirm it asks **SOLO** or **PAIR** before it starts, and that choosing SOLO behaves exactly like every Bank before 9.0.
+- [ ] Choose PAIR on a Bank that already has accounts, open a second Bank Server, choose PAIR there, and type the first one's code into it. Confirm they pair.
+- [ ] Confirm the server holding the accounts became the **Core** and the new one the **Vault**.
+- [ ] Repeat the other way round — type the *empty* server's code into the *live* one — and confirm the live one is still the Core. A fresh computer must never demote a live ledger.
+- [ ] With the pair up, install a role from Easy Deployment and confirm the download is served by the Vault, not the Core.
+- [ ] Open an app that keeps records (Yap) and confirm posting works, then confirm the Core's `/pumpe` holds no app data.
+- [ ] Stop the Vault and confirm app records report the Vault is offline rather than appearing empty.
+- [ ] Restart both and confirm they come back paired without asking again.
+- [ ] Confirm banking (balance, Send Money, Pay) is unaffected by stopping the Vault.
+
+## Third-party banks
+
+- [ ] Press **BANK SERVER** in Easy Deployment and confirm it asks which kind before anything else.
+- [ ] Confirm **FOXY BANK SERVER** still asks for `4040` and **3RD PARTY BANK SERVER** asks for nothing.
+- [ ] With no Bank Apps published, confirm the 3rd Party server explains what a Bank App is instead of showing an empty list.
+- [ ] Install **BuckApp** from the App Browser on a PUMPE, open it with no BuckApp server running, and confirm it says so rather than hanging.
+- [ ] Start a 3rd Party Bank Server, choose BuckApp, and confirm the PUMPE app finds it.
+- [ ] Open a BuckApp account and confirm it opens **empty** — a third-party bank mints no money.
+- [ ] Confirm your Foxy name and PIN do **not** sign you in to BuckApp.
+- [ ] Confirm BuckApp is no longer on the home screen of a fresh PUMPE, and that the built-in **Bank** tab still has Continue, Bet Wallet and Activity.
+
+## Bank Transfer
+
+- [ ] Confirm your Account ID is sixteen digits and is shown in the Bank tab and under Settings → Account ID.
+- [ ] Transfer everything from Foxy to your BuckApp Account ID. Confirm the amount arrives, and that the total money across both banks is unchanged.
+- [ ] Confirm the Foxy **Bank tab no longer opens** and says where the money went.
+- [ ] Confirm Send Money, Pay and every other spending feature refuse while the money is elsewhere.
+- [ ] Confirm somebody sending you money is told your account has moved rather than the money vanishing into it.
+- [ ] Transfer back from BuckApp to your Foxy Account ID and confirm the Bank tab reopens with the money in it.
+- [ ] Type an Account ID at a bank that is not running and confirm it says so and takes nothing.
+- [ ] Enter the wrong PIN and confirm nothing leaves the account.
+- [ ] Stop the receiving Bank Server *mid-transfer* and confirm the money is reported as held rather than lost, and that it settles or returns on its own within a minute.
+
+## Settings
+
+- [ ] Confirm Settings lists Network, Storage, Updates, Account ID, App Settings, Connected Apps, How PUMPE Works, Edit Your Dock, Sign Out and Close PUMPE, paging if the screen is short.
+- [ ] Turn the **modem off** and confirm the PUMPE signs out and says the modem is off rather than hanging on every screen.
+- [ ] With the modem off, confirm signing in fails immediately rather than after a pause.
+- [ ] Turn the modem back on and confirm banking works again.
+- [ ] Open **Storage** and confirm it reports free space and lists each installed app with its size.
+- [ ] Turn **Updates** off, publish a newer release, and confirm this PUMPE stays on its version while another updates.
+- [ ] Turn Updates back on and confirm it updates.
+
 ## App permissions and App Settings
 
 - [ ] Publish `apps/yapchat.lua` from Dev Mode and install it on two PUMPEs whose owners are Foxy friends.

@@ -293,4 +293,101 @@ function util.page(items, page, pageSize)
     return output, page, pages
 end
 
+-- The Account ID, and the one rule that keeps a transfer between banks safe.
+-- This lives in util rather than a library of its own because every bank on
+-- the network needs it -- Foxy and every third-party bank -- and a brand new
+-- lib/ file would be downloaded by nobody: an updater fetches the shared
+-- files it was built knowing about, so a Bank updating into 9.0 would land
+-- without it and fail to load. Two implementations of "apply this transfer
+-- once" is two chances to create money out of nothing, so there is one.
+util.ledger = {}
+
+-- Sixteen digits: four naming the bank, twelve naming the account in it.
+util.ledger.LENGTH = 16
+util.ledger.BANK_DIGITS = 4
+
+function util.ledger.clean(value)
+    return (tostring(value or ""):gsub("%D", ""))
+end
+
+function util.ledger.valid(accountId)
+    accountId = util.ledger.clean(accountId)
+    return #accountId == util.ledger.LENGTH and accountId or nil
+end
+
+-- Shown in groups so it can be read off one screen and typed into another.
+function util.ledger.format(accountId)
+    accountId = tostring(accountId or "")
+    if #accountId ~= util.ledger.LENGTH then return accountId end
+    return accountId:sub(1, 4) .. " " .. accountId:sub(5, 8) .. " "
+        .. accountId:sub(9, 12) .. " " .. accountId:sub(13, 16)
+end
+
+function util.ledger.bankOf(accountId)
+    accountId = util.ledger.valid(accountId)
+    return accountId and accountId:sub(1, util.ledger.BANK_DIGITS) or nil
+end
+
+function util.ledger.hostFor(bankCode)
+    return "LEDGER_" .. tostring(bankCode)
+end
+
+-- A bank's four digits, derived from its name so the same bank always gets
+-- the same code without anybody having to keep a register. 0001 is Foxy's
+-- and is never handed out to anybody else.
+function util.ledger.codeFor(name)
+    local hash = tonumber(util.checksum(tostring(name or "")):sub(1, 6), 16)
+    local code = string.format("%04d", (hash or 0) % 10000)
+    if code == "0001" then code = "0002" end
+    return code
+end
+
+function util.ledger.newId(bankCode, taken)
+    local id
+    repeat
+        id = tostring(bankCode) .. util.randomString(12, "0123456789")
+    until not (taken or {})[id]
+    return id
+end
+
+-- Apply once, however many times it arrives ------------------------------------
+-- A transfer that is retried after a lost reply must not be credited twice,
+-- and one that never arrived must not be silently assumed. Both banks keep
+-- the same record and answer the same question about it.
+
+function util.ledger.applied(store, transferId)
+    return store[tostring(transferId or "")]
+end
+
+-- Runs `apply` only the first time this id is seen, and returns what
+-- happened along with whether it had already been done.
+function util.ledger.applyOnce(store, transferId, amount, apply, now)
+    transferId = tostring(transferId or "")
+    local already = store[transferId]
+    if already then return already.amount, true end
+    apply()
+    store[transferId] = { amount = amount, at = now or util.nowMs() }
+    return amount, false
+end
+
+-- The record only has to outlive the sender's retries.
+function util.ledger.forget(store, olderThanMs, now)
+    local cutoff = (now or util.nowMs()) - (olderThanMs or 24 * 60 * 60 * 1000)
+    for id, entry in pairs(store) do
+        if (entry.at or 0) < cutoff then store[id] = nil end
+    end
+end
+
+-- What an unanswered transfer means -------------------------------------------
+-- A reply carrying a code means the far bank spoke and refused, so nothing
+-- was applied there and the money can safely go back. No code means nobody
+-- answered, and the transfer might have landed or might not: giving the
+-- money back on that guess is exactly how it gets created twice over. That
+-- case is parked and settled later by asking.
+function util.ledger.outcome(credited, err, code)
+    if credited then return "sent" end
+    if code then return "refused", err, code end
+    return "unknown", err
+end
+
 return util

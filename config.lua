@@ -2,9 +2,29 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "8.5.0",
+    version = "9.0.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
+
+    -- Every bank on the network, Foxy and third-party alike, speaks this one
+    -- protocol for settling between them. It is deliberately separate from
+    -- the banking protocol above: a transfer between two banks must not
+    -- queue behind everyday banking, and a third-party bank has no business
+    -- on Foxy's own channel.
+    ledger_protocol = "PUMPE_LEDGER_V1",
+    -- A third-party bank's own protocol. Its clients are the Bank App on
+    -- each PUMPE, and nothing else on the network speaks it.
+    tpb_protocol = "PUMPE_TPB_V1",
+    -- Foxy is bank 0001. A third-party bank picks its own four digits when
+    -- its server is set up, and hosts LEDGER_<code> under the protocol above.
+    foxy_bank_code = "0001",
+    bank_name = "Foxy",
+
+    -- Pair Mode. Two Bank Servers split the work: the Core keeps banking on
+    -- the hot path, the Vault takes the update depot and app records off it.
+    pair_protocol = "PUMPE_PAIR_V1",
+    pair_hostname = "BANK_VAULT",
+    pair_code_seconds = 600,
     data_file = "bank_data_v5.dat",
 
     currency = "$",

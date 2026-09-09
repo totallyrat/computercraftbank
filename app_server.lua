@@ -56,9 +56,22 @@ local function need(condition, code, message)
     if not condition then reject(code, message) end
 end
 
+-- A bank app declares itself in its own header:
+--
+--     -- PUMPE BANK APP: BuckApp
+--
+-- That is the whole registration. A 3rd Party Bank Server lists the apps
+-- that say this and hosts the one it is told to.
+local function declaredBank(body)
+    local name = tostring(body or ""):match(
+        "%-%-%s*PUMPE BANK APP:%s*([^\r\n]+)")
+    return name and util.safeText(util.trim(name), 20) or nil
+end
+
 local function publicApp(app)
     return {
         app_id = app.app_id,
+        bank_name = app.bank_name,
         name = app.name,
         description = app.description,
         author = app.author,
@@ -70,11 +83,13 @@ local function publicApp(app)
     }
 end
 
-local function catalogue()
+local function catalogue(banksOnly)
     local list = {}
     for _, appId in ipairs(state.order) do
         local app = state.apps[appId]
-        if app then list[#list + 1] = publicApp(app) end
+        if app and (not banksOnly or app.bank_name) then
+            list[#list + 1] = publicApp(app)
+        end
     end
     return list
 end
@@ -100,6 +115,8 @@ local function seedShippedApps()
     for _, shipped in ipairs({
         { file = "foxy.lua", id = "FOXY", name = "Foxy",
           description = "Your Foxy Account and the bank behind it." },
+        { file = "buckapp.lua", id = "BUCK", name = "BuckApp",
+          description = "A bank of its own. Needs a 3rd Party Bank Server." },
     }) do
         local body = util.readFile(fs.combine(ROOT, shipped.file))
         local existing = state.apps[shipped.id]
@@ -118,6 +135,7 @@ local function seedShippedApps()
                 checksum = sum,
                 published_day = util.ingameDay(),
                 downloads = existing and existing.downloads or 0,
+                bank_name = declaredBank(body),
             }
             if not existing then
                 table.insert(state.order, 1, shipped.id)
@@ -130,6 +148,12 @@ local function seedShippedApps()
 end
 
 local actions = {}
+
+-- A 3rd Party Bank Server asks for this, so it can show which banks it
+-- could host.
+function actions.APP_BANKS()
+    return { apps = catalogue(true) }
+end
 
 function actions.APP_LIST()
     return { apps = catalogue(), server_version = config.version }
@@ -204,6 +228,7 @@ function actions.APP_PUBLISH(payload)
         checksum = util.checksum(body),
         published_day = util.ingameDay(),
         downloads = existing and existing.downloads or 0,
+        bank_name = declaredBank(body),
     }
     if not fs.exists(appsDir) then fs.makeDir(appsDir) end
     util.writeFile(appPath(appId), body)
