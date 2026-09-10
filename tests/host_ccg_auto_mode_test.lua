@@ -120,8 +120,15 @@ local client = {
         error("Unexpected CCG request: " .. tostring(action))
     end,
 }
+local askedFor
 package.loaded["lib.net"] = {
-    client = function() return client end,
+    -- Since 9.1 the console talks to the CCG Server, not the Bank. A stub
+    -- that hands back the same fake whatever it is asked for would pass
+    -- even if the console were pointed at the wrong computer.
+    client = function(spec)
+        askedFor = spec
+        return client
+    end,
     autoUpdate = function() end,
     locate = function() return nil end,
 }
@@ -300,3 +307,11 @@ assert(count(requests, "CCG_START") == 1,
     "the retried lobby still starts on its own")
 
 print("host_ccg_auto_mode_test: OK")
+
+-- The stubbed config above carries no CCG settings, so the console has to
+-- be falling back to the same defaults the CCG Server hosts under.
+assert(askedFor and askedFor.protocol == "PUMPE_CCG_V1"
+    and askedFor.hostname == "CCG_SERVER",
+    "the console must reach the CCG Server, not the Bank: asked for "
+        .. tostring(askedFor and askedFor.protocol) .. "/"
+        .. tostring(askedFor and askedFor.hostname))

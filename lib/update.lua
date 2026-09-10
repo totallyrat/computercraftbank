@@ -315,6 +315,7 @@ update.PUBLISHED_OPTIONAL = {
     "foxy.lua",
     "bank_app_server.lua",
     "buckapp.lua",
+    "ccg_server.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -337,6 +338,7 @@ local ROLE_PROGRAMS = {
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
     tpbank = "bank_app_server.lua",
+    ccgserver = "ccg_server.lua",
 }
 
 function update.roleProgram(role)

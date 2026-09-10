@@ -46,6 +46,8 @@ const forwardOptionalFiles = [
   // BuckApp is a PUMPE app rather than a role, and ships for the same reason
   // foxy.lua does: so an App Server has it to offer on a fresh world.
   "buckapp.lua",
+  // ComputerCraftGaming, on its own computer since 9.1.
+  "ccg_server.lua",
 ];
 
 function checksum(buffer) {

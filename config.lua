@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "9.0.1",
+    version = "9.1.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
 
@@ -15,6 +15,15 @@ return {
     -- A third-party bank's own protocol. Its clients are the Bank App on
     -- each PUMPE, and nothing else on the network speaks it.
     tpb_protocol = "PUMPE_TPB_V1",
+
+    -- ComputerCraftGaming runs on its own computer since 9.1. The Bank keeps
+    -- the Bet Wallet and the money in play; this is where the games are.
+    ccg_protocol = "PUMPE_CCG_V1",
+    ccg_hostname = "CCG_SERVER",
+    -- How long the Bank holds a wager for a lobby before giving it back on
+    -- its own. It only has to outlast a game, so a CCG Server that is
+    -- switched off mid-round cannot strand anybody's money.
+    ccg_escrow_hours = 2,
     -- Foxy is bank 0001. A third-party bank picks its own four digits when
     -- its server is set up, and hosts LEDGER_<code> under the protocol above.
     foxy_bank_code = "0001",

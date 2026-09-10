@@ -9,13 +9,18 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.0.1"
+local PROGRAM_VERSION = "9.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
 local ui = require("lib.ui")
 
-local client = net.client(config)
+-- Since 9.1 the games live on their own computer. The console talks to the
+-- CCG Server; the Bank is not in this path at all.
+local client = net.client({
+    protocol = config.ccg_protocol or "PUMPE_CCG_V1",
+    hostname = config.ccg_hostname or "CCG_SERVER",
+})
 local devicePath = fs.combine(ROOT, "ccg_device.dat")
 local device = util.loadTable(devicePath, {
     console_id = nil,

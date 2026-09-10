@@ -1,5 +1,54 @@
 # Changelog
 
+## 9.1.0
+
+ComputerCraftGaming moved to its own computer, which is what gives the Bank
+room to grow again.
+
+### CCG runs on a CCG Server now
+
+- Lobbies, games, outcomes and the Survivor simulation all live in
+  `ccg_server.lua`. Install it from Easy Deployment as **CCG SERVER**.
+- It was a tenth of `bank_server.lua`, a file that had reached **849 KiB of
+  the 850 KiB** a ComputerCraft computer can update itself through. The Bank
+  is now at **823 KiB**, and any Bank change is possible again.
+- The CCG console and the PUMPE's betting screens talk to the new server.
+  The **Bet Wallet stays on the Bank**, because it is money.
+
+### The Bank still owns every penny
+
+The split is drawn so that the worst a rogue, broken or switched-off CCG
+Server can do is freeze wagers and choose the wrong winner:
+
+- A wager goes into **escrow on the Bank**. The CCG Server can put money in,
+  and can say who won, and that is all it can do.
+- **It never names an amount.** A settle carries only the winners; the Bank
+  multiplies the stake it is already holding by its own copy of the game's
+  multiplier. A server asking for a payout of its own choosing is ignored.
+- A CCG Server proves itself once with the **operator code** -- the same code
+  that installs a Bank -- before the Bank will settle anything for it.
+- **Escrow nobody comes back for is refunded by the Bank**, on its own, after
+  two hours. Switching the CCG Server off mid-round can no longer strand
+  anybody's money.
+- A settle the Bank does not answer leaves the lobby open and is retried,
+  rather than being marked done while the money is still in escrow.
+
+### Updating into it
+
+- A wager sitting in a lobby when the Bank updates is **given back once**, on
+  the first load that finds the old tables. Lobbies were a Bank record before
+  9.1 and they are gone.
+- Bet Wallets, holds and activity are untouched.
+
+### Also
+
+- The installer test picked roles by tapping a coordinate, so adding the CCG
+  Server silently moved the target and it started tapping a different role.
+  It picks by the on-screen number now, which does not move.
+- The two console tests handed back the same fake server whatever they were
+  asked for, so they would have passed with the console still pointed at the
+  Bank. They check now.
+
 ## 9.0.1
 
 A Bank in Pair Mode would not start.

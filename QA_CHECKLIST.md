@@ -225,6 +225,21 @@ Run this after installing into a ComputerCraft world.
 - [ ] Scroll with the two buttons on the right edge and confirm the posts never draw underneath them.
 - [ ] Post the longest text the composer allows and confirm the feed truncates it with `..` rather than overflowing.
 
+## CCG Server
+
+- [ ] Install **CCG SERVER** from Easy Deployment and confirm it asks for the operator code once, then comes up without asking again.
+- [ ] Enter the wrong code and confirm it refuses.
+- [ ] With no CCG Server running, open Bet on a PUMPE and confirm it says no CCG Server is running rather than hanging.
+- [ ] Start the CCG Server, register a console, and run a full Heads or Tails round: join, wager, start, settle. Confirm the winner's payout is exactly the wager times two.
+- [ ] Run a Race round and confirm the payout is the wager times three.
+- [ ] Run a Survivor round with two players and confirm it settles on a winner.
+- [ ] Confirm the Bet Wallet still deposits and withdraws from the **Bank**, with the CCG Server switched off.
+- [ ] Leave a lobby after wagering and confirm the stake returns to the Bet Wallet.
+- [ ] Cancel a lobby from the console and confirm every wager returns.
+- [ ] **Switch the CCG Server off with wagers in an open lobby.** Confirm the money is not in the wallet yet, wait two in-game hours, and confirm the Bank gives it back on its own.
+- [ ] Restart the CCG Server during a Survivor round and confirm everyone is refunded rather than a winner being guessed.
+- [ ] Update a Bank that had a lobby open at 9.0 and confirm the wagers are returned once, with a line in the activity feed.
+
 ## Pair Mode
 
 - [ ] On a fresh Bank Server confirm it asks **SOLO** or **PAIR** before it starts, and that choosing SOLO behaves exactly like every Bank before 9.0.

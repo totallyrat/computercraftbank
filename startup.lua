@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "9.0.1"
+local INSTALLER_VERSION = "9.1.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -49,6 +49,7 @@ local roles = {
     -- so instead of failing with an unknown role.
     { id = "tax", label = "TAX CONTROLLER", detail = "Retired", protected = true, hidden = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
+    { id = "ccgserver", label = "CCG SERVER", detail = "Runs the games" },
     { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
     { id = "apps", label = "APP SERVER", detail = "Hosts optional apps" },
 }
@@ -63,6 +64,7 @@ local rolePrograms = {
     admin = "admin_terminal.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    ccgserver = "ccg_server.lua",
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
 }

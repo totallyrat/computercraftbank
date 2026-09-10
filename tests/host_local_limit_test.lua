@@ -42,7 +42,7 @@ local PROGRAMS = {
     "service_kiosk.lua", "event_kiosk.lua", "border_controller.lua",
     "admin_terminal.lua", "ccg.lua", "gps_anchor.lua", "tax_controller.lua",
     "launcher.lua", "lib/net.lua", "lib/ui.lua", "lib/update.lua",
-    "lib/util.lua", "bank_app_server.lua",
+    "lib/util.lua", "bank_app_server.lua", "ccg_server.lua",
 }
 
 local worst, worstFile = 0, nil

@@ -92,6 +92,8 @@ local function pickBankServer(screenWidth, screenHeight, script)
         "the PUMPE panel installs straight from its own button")
     assert(screen:find("OTHER ROLES", 1, true),
         "the down arrow leads to every other role")
+    assert(screen:find("CCG SERVER", 1, true),
+        "9.1 added the CCG Server to the roles")
 end
 
 -- Every role must be reachable. A narrow screen cannot show them all at
@@ -127,8 +129,8 @@ everyRoleReachable(51, 19, {
 
 -- Pocket-sized screen: the PUMPE panel first, then one column of roles.
 pickBankServer(26, 20, {
-    { "mouse_click", 1, 3, 19 }, -- v OTHER ROLES
-    { "mouse_click", 1, 5, 11 }, -- Bank Server, fourth row
+    { "char", "m" },             -- v OTHER ROLES
+    { "char", "4" },             -- Bank Server, fourth in the list
     { "mouse_click", 1, 4, 7 }, -- FOXY BANK SERVER, the new type menu
     { "mouse_click", 1, 4, 13 }, -- 4
     { "mouse_click", 1, 11, 17 }, -- 0
@@ -139,8 +141,8 @@ pickBankServer(26, 20, {
 
 -- Advanced Computer: two columns of role cards with room for the detail line.
 pickBankServer(51, 19, {
-    { "mouse_click", 1, 3, 18 }, -- v OTHER ROLES
-    { "mouse_click", 1, 30, 9 }, -- Bank Server, right column, second row
+    { "char", "m" },             -- v OTHER ROLES
+    { "char", "4" },             -- Bank Server
     { "mouse_click", 1, 4, 7 }, -- FOXY BANK SERVER, the new type menu
     { "mouse_click", 1, 12, 12 }, -- 4
     { "mouse_click", 1, 22, 16 }, -- 0
@@ -154,8 +156,8 @@ pickBankServer(51, 19, {
 width, height = 26, 20
 written, eventIndex = {}, 0
 events = {
-    { "mouse_click", 1, 3, 19 }, -- v OTHER ROLES
-    { "mouse_click", 1, 5, 11 }, -- Bank Server
+    { "char", "m" },             -- v OTHER ROLES
+    { "char", "4" },             -- Bank Server
     { "mouse_click", 1, 4, 12 }, -- 3RD PARTY BANK SERVER
     { "mouse_click", 1, 2, 20 }, -- EXIT
 }

@@ -88,7 +88,11 @@ Three games are included:
 2. **Race** — pick one of six red, orange, yellow, green, blue, or purple cars. The six-lane animated race has a server-random winner and pays `3×`.
 3. **Survivor** — use the PUMPE touch joystick to move and **PUSH** nearby players from a shrinking circular platform. The last player standing receives `3×` their wager.
 
-The Bank Server is authoritative. It generates chance-game outcomes, reserves wagers, simulates Survivor positions and pushes, decides the winner, and settles each lobby once. A modified PUMPE or CCG console cannot submit its preferred result. Waiting lobbies expire after five minutes and return every reserved wager; a Bank restart during an active Survivor round also refunds everyone rather than guessing a winner.
+Since 9.1 the games run on their own computer — a **CCG Server** — while the money stays on the Bank. The CCG Server generates chance-game outcomes, simulates Survivor, decides the winner and settles each lobby once; a modified PUMPE or CCG console still cannot submit its preferred result.
+
+What it cannot do is touch money. A wager sits in **escrow on the Bank**, and a settle carries only the list of winners — the Bank multiplies the stake it is already holding by its own copy of the game's multiplier, so a CCG Server can pick the wrong winner but cannot invent a payout. It registers with the Bank once using the operator code before the Bank will settle for it at all.
+
+Waiting lobbies expire after five minutes and return every reserved wager, and a CCG Server restart during an active Survivor round refunds everyone rather than guessing a winner. If a CCG Server is switched off holding wagers, the Bank refunds that escrow itself after two hours.
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 

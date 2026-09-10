@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.0.1"
+local PROGRAM_VERSION = "9.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1652,10 +1652,36 @@ local betColors = {
     purple = colors.purple,
 }
 
+-- Betting is two servers since 9.1: the Bet Wallet is money and stays on the
+-- Bank, while lobbies and games are on the CCG Server. The wallet actions go
+-- one way and everything about a game goes the other, so a screen never has
+-- to know which is which.
+local ccgClient
 local function betRequest(action, payload, silent)
     payload = payload or {}
     payload.bet_token = betAccessToken
-    return request(action, payload, silent)
+    if action:find("^BET_WALLET") or action == "BET_UNLOCK" then
+        return request(action, payload, silent)
+    end
+    if device.modem_on == false then
+        if not silent then
+            ui.message(target, "warning", "Modem is off",
+                "Turn it on in Settings", 1.4)
+        end
+        return nil, "Modem is off", "MODEM_OFF"
+    end
+    ccgClient = ccgClient or net.client({
+        protocol = config.ccg_protocol or "PUMPE_CCG_V1",
+        hostname = config.ccg_hostname or "CCG_SERVER",
+    })
+    if sessionToken then payload.session_token = sessionToken end
+    local result, err, code = ccgClient:request(action, payload)
+    if not result and not silent then
+        ui.message(target, "error", "CCG unavailable",
+            code == "BANK_OFFLINE" and err
+                or (err or "No CCG Server is running"), 1.8)
+    end
+    return result, err, code
 end
 
 local function heldReleaseText(hold)
