@@ -1,5 +1,30 @@
 # Changelog
 
+## 9.2.2
+
+Easy Deployment can no longer strand a computer on a role it does not know.
+
+- It **updates itself on every boot**, not only the Bank's. A computer whose
+  role was added to a release after its own copy was installed had no other
+  way to learn about that role: the lookup failed, and the update that would
+  have fixed it never ran because it only ran for the Bank.
+- A boot marker naming an unknown role now **opens the role picker** instead
+  of printing UNKNOWN ROLE and stopping. A computer always has somewhere to
+  go.
+- Together these are why a 3rd Party Bank Server installed before 9.2.1
+  stayed broken after the Bank updated: the fix reached the network, but not
+  the one computer that needed it. It heals itself now.
+
+### Recovering a computer that is already stuck
+
+A 3rd Party Bank Server sitting on the UNKNOWN ROLE screen predates this
+fix, so it cannot fetch it. On that computer:
+
+```
+wget https://raw.githubusercontent.com/totallyrat/computercraftbank/main/startup.lua /pumpe/installer.lua
+reboot
+```
+
 ## 9.2.1
 
 A 3rd Party Bank Server would not start after it was installed.

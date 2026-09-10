@@ -61,6 +61,20 @@ for _, id in ipairs({ "tpbank", "ccgserver", "apps", "anchor", "admin" }) do
         id .. " must be both offered and installable")
 end
 
+-- A computer whose boot marker names a role this Easy Deployment does not
+-- know must not be stranded. Before 9.2.2 it printed UNKNOWN ROLE and
+-- returned, and because the installer only updated itself when booting the
+-- Bank, that computer could never learn the role either -- it needed a file
+-- copied onto it by hand.
+local bootBlock = source:match("\nif bootRoleId then selfUpdateInstaller.-\nif bootRoleId then")
+assert(bootBlock,
+    "the installer must update itself on every boot, not only the Bank's,"
+        .. " or a computer running an older copy can never learn a role"
+        .. " added after it was installed")
+assert(bootBlock:match("bootRoleId = nil"),
+    "an unknown role must fall through to the role picker rather than"
+        .. " returning, so the computer always has somewhere to go")
+
 -- startup.lua is the same file, so it cannot drift from installer.lua.
 assert(readFile("../startup.lua") == source,
     "startup.lua and installer.lua must stay identical")

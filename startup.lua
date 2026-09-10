@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "9.2.1"
+local INSTALLER_VERSION = "9.2.2"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -1499,17 +1499,24 @@ local function updateCheckScreen()
     sleep(0.7)
 end
 
-if bootRoleId == "bank" then
-    selfUpdateInstaller()
-    repairInstalledBankRuntime()
+-- Easy Deployment keeps itself current on every boot, not only the Bank's.
+-- A computer whose role was added to a release after its own copy was
+-- installed has no other way to learn about that role: the lookup below
+-- fails, and until 9.2.2 that was a dead end with the very update that
+-- would have fixed it never running.
+if bootRoleId then selfUpdateInstaller() end
+if bootRoleId == "bank" then repairInstalledBankRuntime() end
+
+if bootRoleId and not roleById(bootRoleId) then
+    -- Still unknown, even on the newest Easy Deployment there is. Open the
+    -- role picker rather than leaving the computer with nowhere to go.
+    message("error", "UNKNOWN ROLE",
+        tostring(bootRoleId) .. " - pick a role instead", 2.2)
+    bootRoleId = nil
 end
 
 if bootRoleId then
     local role = roleById(bootRoleId)
-    if not role then
-        message("error", "UNKNOWN ROLE", bootRoleId, 1.4)
-        return
-    end
     -- A standalone copy dropped at the computer root seeds the permanent
     -- boot manager. When it is already the installed one, skip the rewrite.
     local runningPath = shell.getRunningProgram()
