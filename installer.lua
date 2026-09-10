@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "9.2.0"
+local INSTALLER_VERSION = "9.2.1"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -48,6 +48,11 @@ local roles = {
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
     -- so instead of failing with an unknown role.
     { id = "tax", label = "TAX CONTROLLER", detail = "Retired", protected = true, hidden = true },
+    -- Reached through the BANK SERVER menu rather than the role list, but it
+    -- has to be here all the same: a boot marker is written with this id,
+    -- and a role the installer cannot find is one it refuses to start.
+    { id = "tpbank", label = "3RD PARTY BANK SERVER",
+      detail = "Hosts a Bank App", hidden = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
     { id = "ccgserver", label = "CCG SERVER", detail = "Runs the games" },
     { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
@@ -1364,10 +1369,7 @@ local function installRole(role, automatic)
         if kind == "third" then
             -- Installed and launched like any other role, with no code:
             -- there is nothing here that could reach the Foxy ledger.
-            local thirdParty = { id = "tpbank",
-                label = "3RD PARTY BANK SERVER",
-                detail = "Hosts a Bank App" }
-            return installRole(thirdParty, false)
+            return installRole(roleById("tpbank"), false)
         end
         accessCode = protectedCode()
         if not accessCode then return end

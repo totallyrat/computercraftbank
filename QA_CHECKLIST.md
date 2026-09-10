@@ -296,6 +296,8 @@ Run this after installing into a ComputerCraft world.
 - [ ] With no Bank Apps published, confirm the 3rd Party server explains what a Bank App is instead of showing an empty list.
 - [ ] Install **BuckApp** from the App Browser on a PUMPE, open it with no BuckApp server running, and confirm it says so rather than hanging.
 - [ ] Start a 3rd Party Bank Server, choose BuckApp, and confirm the PUMPE app finds it.
+- [ ] **Reboot that computer** and confirm it comes straight back up rather than reporting UNKNOWN ROLE. That was broken from 9.0 to 9.2.0.
+- [ ] Publish a newer release and confirm the 3rd Party Bank Server auto-updates like every other role.
 - [ ] Open a BuckApp account and confirm it opens **empty** — a third-party bank mints no money.
 - [ ] Confirm your Foxy name and PIN do **not** sign you in to BuckApp.
 - [ ] Confirm BuckApp is no longer on the home screen of a fresh PUMPE, and that the built-in **Bank** tab still has Continue, Bet Wallet and Activity.

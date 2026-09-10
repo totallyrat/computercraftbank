@@ -1,5 +1,24 @@
 # Changelog
 
+## 9.2.1
+
+A 3rd Party Bank Server would not start after it was installed.
+
+- Installing a role writes a boot marker naming it, and on the next reboot
+  the installer looks that name up. `tpbank` was built as a role table
+  inline at the point of install and never added to the role list, so the
+  lookup failed and the computer refused to start with **UNKNOWN ROLE
+  tpbank**.
+- The same gap stopped it auto-updating: that path looks the name up too,
+  and silently did nothing when it came back nil.
+- It is a real, hidden role now -- hidden because it is reached through the
+  BANK SERVER menu rather than the role list, not because it is any less of
+  a role. There is one definition of it rather than two.
+- `host_installer_roles_test` now checks that every role the installer can
+  install is one it can find again, reading the installer's own tables so a
+  role added in future is covered without anybody remembering to. It fails
+  against the 9.2.0 file.
+
 ## 9.2.0
 
 Apps can sell things, and there is a second third-party bank worth banking
