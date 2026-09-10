@@ -1,5 +1,25 @@
 # Changelog
 
+## 9.2.3
+
+The 3rd Party Bank Server and the CCG Server never updated themselves.
+
+- **Neither called `net.autoUpdate`.** Every other role on the network keeps
+  itself current; these two stayed on whatever release installed them. A 3rd
+  Party Bank Server set up in 9.0 was still running the 9.0 file three
+  releases later, and nothing on the network could move it. Both update
+  themselves now, like everything else.
+- **The builder stamped `PROGRAM_VERSION` from a list kept by hand**, and no
+  program written after 9.0 was ever added to it, so `bank_app_server.lua`
+  shipped for three releases calling itself 9.0.0 even where the bytes were
+  current. The list is derived from what is actually published now.
+- Both servers show the version they are running on their own dashboard. It
+  was invisible on both, which is how one three releases behind looked fine.
+- `host_program_version_test` checks that every published program carries the
+  release it belongs to, and that every installable role calls
+  `net.autoUpdate`. It reads the manifest and the installer rather than a
+  list of its own, and fails against the 9.2.2 files.
+
 ## 9.2.2
 
 Easy Deployment can no longer strand a computer on a role it does not know.

@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "9.2.0"
+local PROGRAM_VERSION = "9.2.3"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -772,12 +772,20 @@ local function gameLoop()
     end
 end
 
+local function updateLoop()
+    while running do
+        net.autoUpdate(config, "ccgserver", ROOT, nil,
+            { programVersion = PROGRAM_VERSION })
+        sleep(10)
+    end
+end
+
 local function dashboardLoop()
     local blink = true
     while running do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "PUMPE CCG SERVER", "v" .. config.version,
+        ui.header(target, "PUMPE CCG SERVER", "v" .. PROGRAM_VERSION,
             util.formatClock(blink))
         local open, running_count, players = 0, 0, 0
         for _, lobby in pairs(state.lobbies) do
@@ -882,7 +890,7 @@ net.host(config.ccg_protocol or "PUMPE_CCG_V1",
 logActivity("CCG Server online on computer #" .. os.getComputerID(),
     colors.lime)
 
-parallel.waitForAny(serverLoop, gameLoop, dashboardLoop)
+parallel.waitForAny(serverLoop, gameLoop, updateLoop, dashboardLoop)
 pcall(rednet.unhost, config.ccg_protocol or "PUMPE_CCG_V1")
 save()
 ui.clear(target)

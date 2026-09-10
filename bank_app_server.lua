@@ -16,7 +16,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- is public, its accounts are opened by whoever wants one, and there is
 -- nothing here that could compromise the Foxy ledger.
 
-local PROGRAM_VERSION = "9.0.0"
+local PROGRAM_VERSION = "9.2.3"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -744,13 +744,22 @@ local function schedulerLoop()
     end
 end
 
+local function updateLoop()
+    while running do
+        net.autoUpdate(config, "tpbank", ROOT, nil,
+            { programVersion = PROGRAM_VERSION })
+        sleep(10)
+    end
+end
+
 local function dashboardLoop()
     local blink = true
     while running do
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, state.bank_name or "3RD PARTY BANK",
-            "Bank " .. tostring(state.bank_code), util.formatClock(blink))
+            "Bank " .. tostring(state.bank_code) .. "  v" .. PROGRAM_VERSION,
+            util.formatClock(blink))
         local count, held = 0, 0
         for _, account in pairs(state.accounts) do
             count = count + 1
@@ -818,7 +827,7 @@ rednet.host(config.ledger_protocol or "PUMPE_LEDGER_V1",
 logActivity(state.bank_name .. " online on computer #"
     .. os.getComputerID(), colors.lime)
 
-parallel.waitForAny(bankLoop, ledgerLoop, schedulerLoop, dashboardLoop)
+parallel.waitForAny(bankLoop, ledgerLoop, schedulerLoop, updateLoop, dashboardLoop)
 pcall(rednet.unhost, config.tpb_protocol or "PUMPE_TPB_V1")
 pcall(rednet.unhost, config.ledger_protocol or "PUMPE_LEDGER_V1")
 save()

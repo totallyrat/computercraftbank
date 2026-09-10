@@ -79,17 +79,22 @@ if (!stampedStartup.includes(`INSTALLER_VERSION = "${versionMatch[1]}"`)) {
 }
 if (stampedStartup !== startupSource) fs.writeFileSync(startupPath, stampedStartup);
 
-// Stamp each role program with the release it belongs to, so a device can
-// tell at startup that it is running a program from a different release than
-// its config.lua - a partial install that used to go unnoticed.
-const rolePrograms = [
-  "bank_server.lua", "pumpe.lua", "service_kiosk.lua", "event_kiosk.lua",
-  "tax_controller.lua", "border_controller.lua", "ccg.lua",
-  "gps_anchor.lua", "admin_terminal.lua",
-];
-for (const program of rolePrograms) {
+// Stamp each program with the release it belongs to, so a device can tell at
+// startup that it is running a program from a different release than its
+// config.lua - a partial install that used to go unnoticed.
+//
+// Derived from what is actually published rather than a list kept by hand.
+// The hand-kept version missed every program added after 9.0, so a 3rd Party
+// Bank Server shipped for three releases still calling itself 9.0.0.
+const publishedPrograms = [
+  ...releaseFiles, ...extraReleaseFiles, ...forwardOptionalFiles,
+].filter((relativePath) => relativePath.endsWith(".lua")
+  && !relativePath.startsWith("lib/"));
+let stampedCount = 0;
+for (const program of publishedPrograms) {
   const file = path.join(projectRoot, program);
   const source = fs.readFileSync(file, "utf8");
+  if (!/local PROGRAM_VERSION = "\d+\.\d+\.\d+"/.test(source)) continue;
   const stamped = source.replace(
     /local PROGRAM_VERSION = "\d+\.\d+\.\d+"/,
     `local PROGRAM_VERSION = "${versionMatch[1]}"`,
@@ -98,6 +103,7 @@ for (const program of rolePrograms) {
     throw new Error(`Could not stamp PROGRAM_VERSION into ${program}`);
   }
   if (stamped !== source) fs.writeFileSync(file, stamped);
+  stampedCount += 1;
 }
 
 // Keep both public one-file entry points identical. startup.lua starts
@@ -180,6 +186,7 @@ console.log(
     + `${manifest.extra_files.length} legacy-optional and `
     + `${manifest.optional_files.length} forward-optional files`,
 );
+console.log(`Stamped ${stampedCount} programs with v${versionMatch[1]}`);
 console.log(
   `Bank footprint: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `
     + `${Math.ceil(compactBankBytes / 1024)} KiB compact`,
