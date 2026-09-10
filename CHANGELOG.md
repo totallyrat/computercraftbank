@@ -1,5 +1,24 @@
 # Changelog
 
+## 9.0.1
+
+A Bank in Pair Mode would not start.
+
+- Both halves of a pair are one bank, so they share one bank code -- and the
+  ledger hostname was claimed outside the Core/Vault branch, so **both**
+  claimed `LEDGER_0001`. Whichever started second died with **"Hostname in
+  use"**, which in practice was the server that typed the other's code.
+- The name is now claimed only by the half that runs `ledgerLoop`. Even
+  without the clash a Vault holding it would have been a black hole: a name
+  answered by nobody, so transfers into the bank would have gone nowhere.
+- The reason this shipped: `host_pair_mode_test` loads both Banks in test
+  mode, which returns before any hosting happens, and `host_bank_bootstrap_test`
+  stubbed `rednet.host` as a no-op that could never fail. Nothing exercised
+  the startup block against ComputerCraft's actual rule. `host_pair_hosting_test`
+  now boots both halves on one network with a rednet that throws
+  "Hostname in use" the way the real one does, and it fails against the
+  9.0.0 file.
+
 ## 9.0.0
 
 The Bank can run on two computers, banks other than Foxy can exist, and money

@@ -235,6 +235,8 @@ Run this after installing into a ComputerCraft world.
 - [ ] Open an app that keeps records (Yap) and confirm posting works, then confirm the Core's `/pumpe` holds no app data.
 - [ ] Stop the Vault and confirm app records report the Vault is offline rather than appearing empty.
 - [ ] Restart both and confirm they come back paired without asking again.
+- [ ] Confirm **both** halves actually start. 9.0.0 killed whichever started second with "Hostname in use" because both claimed the ledger name.
+- [ ] Confirm a Bank Transfer *into* this bank still works with the pair up, which is what proves the ledger name is held by the Core rather than by nobody.
 - [ ] Confirm banking (balance, Send Money, Pay) is unaffected by stopping the Vault.
 
 ## Third-party banks

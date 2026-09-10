@@ -1,44 +1,44 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "9.0.0",
+  "version": "9.0.1",
   "notes": "PUMPE + ComputerCraftGaming automatic internet release",
   "files": [
     {
       "path": "bank_server.lua",
       "source": "bank_server.lua",
-      "size": 298408,
-      "checksum": "88e86aa2"
+      "size": 298572,
+      "checksum": "05c1ad97"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
       "size": 202916,
-      "checksum": "b51e768d"
+      "checksum": "45e931ce"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
       "size": 56321,
-      "checksum": "2460ac8f"
+      "checksum": "b8567370"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
       "size": 22620,
-      "checksum": "7c8737a6"
+      "checksum": "5105b9e7"
     },
     {
       "path": "tax_controller.lua",
       "source": "tax_controller.lua",
       "size": 1741,
-      "checksum": "0772a067"
+      "checksum": "8f0276a8"
     },
     {
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 59738,
-      "checksum": "b5686ce7"
+      "checksum": "22316c48"
     },
     {
       "path": "launcher.lua",
@@ -50,7 +50,7 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 5429,
-      "checksum": "9aa78499"
+      "checksum": "5da8e4fa"
     },
     {
       "path": "lib/net.lua",
@@ -82,13 +82,13 @@
       "path": "border_controller.lua",
       "source": "border_controller.lua",
       "size": 18918,
-      "checksum": "c15dfa12"
+      "checksum": "2eb43193"
     },
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
       "size": 26897,
-      "checksum": "1079164b"
+      "checksum": "418b3eac"
     }
   ],
   "optional_files": [
@@ -96,13 +96,13 @@
       "path": "gps_anchor.lua",
       "source": "gps_anchor.lua",
       "size": 5415,
-      "checksum": "af0b8fd9"
+      "checksum": "66a5639a"
     },
     {
       "path": "admin_terminal.lua",
       "source": "admin_terminal.lua",
       "size": 35127,
-      "checksum": "2d88fd4e"
+      "checksum": "c02daeef"
     },
     {
       "path": "app_server.lua",

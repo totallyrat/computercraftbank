@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.0.0"
+local PROGRAM_VERSION = "9.0.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -7595,12 +7595,14 @@ else
     else
         rednet.host(DEPLOY.protocol, DEPLOY.hostname)
     end
+    -- Every bank answers to LEDGER_<its four digits>. Claimed only by the
+    -- half that runs ledgerLoop: both halves of a pair share one bank code,
+    -- so a Vault claiming it took the name its own Core needed and killed
+    -- whichever started second with "Hostname in use".
+    state.bank_code = state.bank_code or config.foxy_bank_code or "0001"
+    rednet.host(config.ledger_protocol or "PUMPE_LEDGER_V1",
+        "LEDGER_" .. ledger.bankCode())
 end
--- Every bank answers to LEDGER_<its four digits>, which is how an Account ID
--- is enough on its own to find the bank holding it.
-state.bank_code = state.bank_code or config.foxy_bank_code or "0001"
-rednet.host(config.ledger_protocol or "PUMPE_LEDGER_V1",
-    "LEDGER_" .. ledger.bankCode())
 logActivity("Server online on computer #" .. os.getComputerID(), colors.lime)
 local depotMissing = updateDepotMissingFiles()
 if #depotMissing == 0 then
