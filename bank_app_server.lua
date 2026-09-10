@@ -60,8 +60,65 @@ end
 
 local sessions = {}
 
+-- Money that has arrived but not cleared. A bank with a clearing time takes
+-- the money out of the sender at once -- it is gone from them either way --
+-- and holds it here until the hour is up.
+local function pendingIn(account)
+    account.pending_in = account.pending_in or {}
+    return account.pending_in
+end
+
+local function clearPending(account)
+    local now = util.ingameMoment()
+    local cleared = 0
+    for index = #pendingIn(account), 1, -1 do
+        local item = account.pending_in[index]
+        if (item.clears_at or 0) <= now then
+            account.balance = util.roundMoney(account.balance + item.amount)
+            cleared = cleared + item.amount
+            table.remove(account.pending_in, index)
+        end
+    end
+    return util.roundMoney(cleared)
+end
+
+local function clearAll()
+    local changed = false
+    for _, account in pairs(state.accounts) do
+        if clearPending(account) > 0 then changed = true end
+    end
+    if changed then save() end
+    return changed
+end
+
+-- Either straight into the balance, or into the queue with a time on it.
+local function deliver(account, amount, description)
+    if (state.clearing_hours or 0) <= 0 then
+        account.balance = util.roundMoney(account.balance + amount)
+        return nil
+    end
+    local clearsAt = util.ingameMoment() + state.clearing_hours
+    local day, time = util.formatIngameMoment(clearsAt)
+    table.insert(pendingIn(account), {
+        amount = util.roundMoney(amount),
+        description = util.safeText(description, 40),
+        clears_at = clearsAt, clears_day = day, clears_time = time,
+    })
+    return { day = day, time = time }
+end
+
 local function publicAccount(account)
+    local pending, count = 0, 0
+    for _, item in ipairs(pendingIn(account)) do
+        pending = util.roundMoney(pending + item.amount)
+        count = count + 1
+    end
     return {
+        pending = pending,
+        pending_count = count,
+        pending_items = util.copy(account.pending_in or {}),
+        clearing_hours = state.clearing_hours or 0,
+        fee_rate = state.fee_rate or 0,
         account_id = account.account_id,
         bank_account_id = account.bank_account_id,
         formatted = ledger.format(account.bank_account_id),
@@ -150,6 +207,7 @@ end
 
 function actions.TPB_SUMMARY(payload)
     local account = requireSession(payload)
+    if clearPending(account) > 0 then save() end
     return { account = publicAccount(account) }
 end
 
@@ -180,13 +238,182 @@ function actions.TPB_SEND(payload)
     local amount = math.floor(tonumber(payload.amount) or 0)
     need(amount > 0, "BAD_AMOUNT", "Enter an amount")
     need(sender.balance >= amount, "INSUFFICIENT_FUNDS", "Not enough money")
-    sender.balance = util.roundMoney(sender.balance - amount)
-    recipient.balance = util.roundMoney(recipient.balance + amount)
+    local fee = util.roundMoney(amount * (state.fee_rate or 0))
+    need(sender.balance >= amount + fee, "INSUFFICIENT_FUNDS",
+        "Not enough money including the fee")
+    sender.balance = util.roundMoney(sender.balance - amount - fee)
+    local held = deliver(recipient, amount, "From " .. sender.name)
     transaction(sender, "transfer_out", -amount, recipient.name, "Money sent")
+    if fee > 0 then
+        state.fees_taken = util.roundMoney((state.fees_taken or 0) + fee)
+        transaction(sender, "fee", -fee, state.bank_name, "Sending fee")
+    end
     transaction(recipient, "transfer_in", amount, sender.name,
-        "Money received")
+        held and ("Clears day " .. held.day .. " " .. held.time)
+            or "Money received")
     save()
-    return { balance = sender.balance, sent = amount }
+    return { balance = sender.balance, sent = amount, fee = fee,
+        clears = held }
+end
+
+-- Proximity pay -----------------------------------------------------------------
+-- Taking a payment from somebody standing in front of you. The person being
+-- paid opens a charge; the person paying finds the nearest one and confirms
+-- it. Both are account holders here, so it costs whatever this bank charges
+-- to send -- which for a bank that declares no fee is nothing at all.
+
+local function charges()
+    state.charges = state.charges or {}
+    return state.charges
+end
+
+local function positionOf(payload)
+    local position = type(payload.position) == "table" and payload.position
+        or nil
+    if not position then return nil end
+    local x, y, z = tonumber(position.x), tonumber(position.y),
+        tonumber(position.z)
+    if not x or not y or not z then return nil end
+    return { x = x, y = y, z = z }
+end
+
+local function apart(a, b)
+    local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+    return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+local function publicCharge(charge, distance)
+    return {
+        charge_id = charge.charge_id,
+        amount = charge.amount,
+        to_name = charge.to_name,
+        note = charge.note,
+        status = charge.status,
+        paid_by = charge.paid_by_name,
+        distance = distance and math.floor(distance) or nil,
+        clears = charge.clears,
+    }
+end
+
+local function sweepCharges()
+    local now = util.nowMs()
+    for id, charge in pairs(charges()) do
+        if charge.status == "open"
+            and now - charge.created_at > (tonumber(
+                config.tpb_charge_ttl_ms) or 3 * 60 * 1000) then
+            charges()[id] = nil
+        end
+    end
+end
+
+function actions.TPB_CHARGE_OPEN(payload)
+    local account = requireSession(payload)
+    sweepCharges()
+    local amount = math.floor(tonumber(payload.amount) or 0)
+    need(amount > 0, "BAD_AMOUNT", "Enter an amount")
+    local position = positionOf(payload)
+    need(position, "NO_POSITION",
+        "This PUMPE cannot find itself. GPS anchors are needed for that.")
+    for _, charge in pairs(charges()) do
+        need(charge.to_account ~= account.account_id
+            or charge.status ~= "open",
+            "CHARGE_OPEN", "You already have a charge waiting")
+    end
+    local charge = {
+        charge_id = util.token("CHG"),
+        to_account = account.account_id,
+        to_name = account.name,
+        amount = amount,
+        note = util.safeText(util.trim(payload.note or ""), 30),
+        position = position,
+        status = "open",
+        created_at = util.nowMs(),
+    }
+    charges()[charge.charge_id] = charge
+    save()
+    return { charge = publicCharge(charge) }
+end
+
+function actions.TPB_CHARGE_CANCEL(payload)
+    local account = requireSession(payload)
+    local charge = charges()[payload.charge_id]
+    need(charge and charge.to_account == account.account_id,
+        "NOT_FOUND", "That charge is not yours")
+    charges()[charge.charge_id] = nil
+    save()
+    return { cancelled = true }
+end
+
+function actions.TPB_CHARGE_STATUS(payload)
+    local account = requireSession(payload)
+    sweepCharges()
+    local charge = charges()[payload.charge_id]
+    need(charge and charge.to_account == account.account_id,
+        "NOT_FOUND", "That charge is gone")
+    return { charge = publicCharge(charge) }
+end
+
+-- The nearest charge somebody else has open, within range.
+function actions.TPB_CHARGE_NEARBY(payload)
+    local account = requireSession(payload)
+    sweepCharges()
+    local position = positionOf(payload)
+    need(position, "NO_POSITION",
+        "This PUMPE cannot find itself. GPS anchors are needed for that.")
+    local range = tonumber(config.tpb_charge_range) or 12
+    local best, bestDistance
+    for _, charge in pairs(charges()) do
+        if charge.status == "open"
+            and charge.to_account ~= account.account_id then
+            local distance = apart(position, charge.position)
+            if distance <= range
+                and (not bestDistance or distance < bestDistance) then
+                best, bestDistance = charge, distance
+            end
+        end
+    end
+    if not best then return { charge = nil } end
+    return { charge = publicCharge(best, bestDistance) }
+end
+
+function actions.TPB_CHARGE_PAY(payload)
+    local payer = requireSession(payload)
+    need(payer.pin_hash == util.hashPin(payload.pin), "BAD_PIN",
+        "Incorrect PIN")
+    sweepCharges()
+    local charge = charges()[payload.charge_id]
+    need(charge and charge.status == "open", "NOT_FOUND",
+        "That charge is no longer waiting")
+    need(charge.to_account ~= payer.account_id, "OWN_CHARGE",
+        "That is your own charge")
+    clearPending(payer)
+    local fee = util.roundMoney(charge.amount * (state.fee_rate or 0))
+    need(payer.balance >= charge.amount + fee, "INSUFFICIENT_FUNDS",
+        "Not enough cleared money for that")
+    local merchant = state.accounts[charge.to_account]
+    need(merchant, "NO_SUCH_ACCOUNT", "That account is gone")
+
+    payer.balance = util.roundMoney(payer.balance - charge.amount - fee)
+    local held = deliver(merchant, charge.amount, "From " .. payer.name)
+    if fee > 0 then
+        state.fees_taken = util.roundMoney((state.fees_taken or 0) + fee)
+        transaction(payer, "fee", -fee, state.bank_name, "Payment fee")
+    end
+    transaction(payer, "proximity_pay", -charge.amount, merchant.name,
+        charge.note ~= "" and charge.note or "Paid in person")
+    transaction(merchant, "proximity_take", charge.amount, payer.name,
+        held and ("Clears day " .. held.day .. " " .. held.time)
+            or "Paid in person")
+    charge.status = "paid"
+    charge.paid_by_name = payer.name
+    charge.clears = held
+    save()
+    logActivity(payer.name .. " paid " .. merchant.name .. " "
+        .. util.money(charge.amount, config.currency), colors.lime)
+    return {
+        paid = charge.amount, fee = fee, clears = held,
+        account = publicAccount(payer),
+    }
 end
 
 -- Settling with other banks -----------------------------------------------------
@@ -237,9 +464,11 @@ function actions.LEDGER_CREDIT(payload)
     need(#transferId >= 8, "BAD_TRANSFER", "That transfer has no id")
 
     state.applied_transfers = state.applied_transfers or {}
+    local held
     local credited, repeated = util.ledger.applyOnce(state.applied_transfers,
         transferId, amount, function()
-            account.balance = util.roundMoney(account.balance + amount)
+            held = deliver(account, amount, util.safeText(
+                tostring(payload.from_bank_name or "Another bank"), 30))
         end)
     if repeated then
         return { credited = credited, balance = account.balance,
@@ -252,7 +481,7 @@ function actions.LEDGER_CREDIT(payload)
     save()
     logActivity(account.name .. " received "
         .. util.money(amount, config.currency), colors.lime)
-    return { credited = amount, balance = account.balance }
+    return { credited = amount, balance = account.balance, clears = held }
 end
 
 function actions.LEDGER_STATUS(payload)
@@ -349,8 +578,10 @@ function actions.TPB_TRANSFER_CONFIRM(payload)
     need(wanted, "BAD_ACCOUNT_ID", "An Account ID is sixteen digits")
     need(wanted ~= account.bank_account_id, "SAME_ACCOUNT",
         "That is this account")
+    clearPending(account)
     local amount = math.floor(account.balance or 0)
-    need(amount > 0, "NOTHING_TO_MOVE", "There is nothing here to transfer")
+    need(amount > 0, "NOTHING_TO_MOVE",
+        "There is nothing cleared here to transfer")
 
     local found, lookupErr, lookupCode = ask(ledger.bankOf(wanted),
         "LEDGER_LOOKUP", { bank_account_id = wanted })
@@ -452,6 +683,14 @@ local function adopt(bank)
     -- Derived from the name, so the same bank always answers to the same
     -- four digits without anybody keeping a register of them.
     state.bank_code = ledger.codeFor(bank.bank_name)
+    -- A bank sets its own terms, and its app declares them in its own first
+    -- lines. Clearing is in whole in-game hours; the fee is a fraction of
+    -- what is sent. A bank that says nothing charges nothing and clears at
+    -- once, which is how BuckApp has always behaved.
+    state.clearing_hours = math.max(0, math.min(24,
+        math.floor(tonumber(bank.clearing_hours) or 0)))
+    state.fee_rate = math.max(0, math.min(0.5,
+        tonumber(bank.fee_rate) or 0))
     save()
     logActivity("Hosting " .. bank.bank_name .. " as bank "
         .. state.bank_code, colors.lime)
@@ -500,6 +739,7 @@ end
 local function schedulerLoop()
     while running do
         pcall(reconcile)
+        pcall(clearAll)
         sleep(10)
     end
 end
@@ -553,7 +793,7 @@ if TEST_MODE then
     return {
         actions = actions, state = state, sessions = sessions,
         adopt = adopt, settle = settle, reconcile = reconcile,
-        ledger = ledger,
+        ledger = ledger, clear_all = clearAll,
     }
 end
 

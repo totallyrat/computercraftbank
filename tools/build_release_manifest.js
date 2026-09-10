@@ -48,6 +48,8 @@ const forwardOptionalFiles = [
   "buckapp.lua",
   // ComputerCraftGaming, on its own computer since 9.1.
   "ccg_server.lua",
+  // Revolution, the first third-party bank with terms of its own.
+  "revolution.lua",
 ];
 
 function checksum(buffer) {

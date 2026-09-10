@@ -56,7 +56,7 @@ package.loaded.config = {
 package.loaded["lib.util"] = {
     loadTable = function(path, fallback)
         if tostring(path):find("apps", 1, true) then
-            return { list = { { app_id = "YAP", name = "Yap", version = 1,
+            return { list = { { app_id = "YAP", name = "Yap Social", version = 1,
                 author = "Ana Fox", description = "Say something" } } }
         end
         return fallback
@@ -102,7 +102,20 @@ local POSTS = {
       created_day = 42, created_time = "12:01", reactions = 1,
       reacted = true, mine = true },
 }
-local approved, posted, liked, replied
+local approved, posted, liked, replied, purchased
+-- What the Bank already says this player has paid for, before the app even
+-- opens. One boost on a yap of their own, and one on a stranger's -- which
+-- must do nothing, or anybody could lift anybody's post by buying it.
+-- A boost already paid for on somebody else's yap. It must lift nothing --
+-- otherwise anybody could push anybody's post to the top for ten dollars.
+local entitlements = {
+    { product_id = "boost_post", name = "Yap Boost", amount = 10,
+      active = true, target = "YAP000004" },
+    -- A daily boost that was cancelled. The Bank still remembers it, so the
+    -- app has to read `active` rather than the product being present.
+    { product_id = "boost_all", name = "Yap Boost Daily", amount = 20,
+      active = false, period = "day" },
+}
 local client = {
     discover = function() return true end,
     request = function(_, action, payload)
@@ -147,6 +160,23 @@ local client = {
         elseif action == "APP_DATA_PUT" then
             if payload.parent then replied = payload else posted = payload end
             return { record = POSTS[1] }
+        elseif action == "APP_ENTITLEMENTS" then
+            return { entitlements = entitlements }
+        elseif action == "APP_PURCHASE_QUOTE" then
+            return { product_id = payload.product_id, name = payload.name,
+                amount = payload.amount, tax = payload.amount * 0.3,
+                to_seller = payload.amount * 0.7, seller = "Cy Hare",
+                period = payload.period, balance = 500 }
+        elseif action == "APP_PURCHASE" then
+            purchased = payload
+            entitlements[#entitlements + 1] = {
+                product_id = payload.product_id, name = payload.name,
+                amount = payload.amount, active = true,
+                period = payload.period, target = payload.target,
+                subscription = payload.period ~= nil,
+            }
+            return { bought = entitlements[#entitlements],
+                paid = payload.amount, tax = payload.amount * 0.3 }
         elseif action == "APP_DATA_REACT" then
             liked = payload
             local record = {}
@@ -247,6 +277,9 @@ actions = {
     "down", "up",                      -- the scroll buttons on the right
     "post:YAP000003",                  -- open a friend's post
     "like", "reply", "back",           -- like it, reply to it, come back
+    "post:YAP000001",                  -- open one of my own
+    "boost", "all", "buy",             -- Yap Boost, every yap, twenty a day
+                                       -- buying returns straight to the feed
     "new",                             -- write one
     "back",                            -- leave Yap
     "next",                            -- Settings moved to page two
@@ -307,7 +340,7 @@ assert(not drew("stopped") and not drew("will not start"),
 
 -- FoxyLogin asked before the app saw anything.
 assert(drew("Sign in") and drew("with Foxy"))
-assert(drewAt("Yap wants to use your Foxy Account"),
+assert(drewAt("Yap Social wants to use your Foxy Accou"),
     "the sheet names the app and what it is for")
 assert(drewAt("Who your friends are"),
     "and lists exactly what will be shared")
@@ -345,5 +378,54 @@ assert(drew("nice one"), "replies are listed under the post")
 
 -- And Settings can take the grant back.
 assert(drew("Connected Apps"))
+
+-- Yap Boost ---------------------------------------------------------------------
+-- The app does not decide that somebody has paid. It asks what the Bank
+-- recorded, and orders the feed by that.
+
+assert(pressed("Boost this yap"),
+    "a yap you wrote can be boosted from its own screen, and a cancelled"
+        .. " subscription does not count as boosting it")
+assert(drewAt("Yap Boost"), "and the sheet says what it is")
+assert(pressed("This yap\n$10 once"), "ten for one yap")
+assert(pressed("Every yap\n$20 a day"), "twenty a day for all of them")
+
+assert(purchased, "the purchase reached the phone's API")
+assert(purchased.product_id == "boost_all" and purchased.amount == 20,
+    "boosting everything is twenty")
+assert(purchased.period == "day",
+    "and it is a subscription, not a one-off charge")
+
+-- The purchase sheet is the phone's, not the app's: it prices it and shows
+-- what the government takes.
+assert(drew("Yap Boost"), "the phone names what is being bought")
+assert(drew("Tax "), "and shows the tax")
+
+-- A boosted yap rises above a friend's, which is the whole product. The
+-- last feed drawn is the one after the subscription was bought, so this
+-- reads the final positions rather than the first.
+-- The feed header says how many posts there are, so the last one of those
+-- marks where the final feed render begins. Names drawn on a post screen or
+-- a purchase sheet before it are not the feed.
+local feedStart = 0
+for position, item in ipairs(drawnText) do
+    if item:match("^%d+ posts$") then feedStart = position end
+end
+assert(feedStart > 0, "the feed was drawn")
+local at = {}
+for position = feedStart, #drawnText do
+    for _, who in ipairs({ "Ana Fox", "Bo Wolf", "Zed Stone" }) do
+        if drawnText[position] == who and not at[who] then
+            at[who] = position
+        end
+    end
+end
+assert(at["Ana Fox"] and at["Bo Wolf"] and at["Zed Stone"],
+    "every yap reached the screen")
+assert(at["Ana Fox"] < at["Bo Wolf"],
+    "a boosted yap of your own sits above a friend's")
+assert(at["Zed Stone"] > at["Bo Wolf"],
+    "but a boost bought on somebody else's yap lifts nothing -- otherwise"
+        .. " anybody could push anybody's post to the top for ten dollars")
 
 print("host_yap_app_test: OK")

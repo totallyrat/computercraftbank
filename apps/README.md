@@ -12,7 +12,7 @@ the App Server does not ship them. To put one on your network:
 
 | App | What it is |
 | --- | --- |
-| `yap.lua` | A text social network: posts, likes, replies. Friends float to the top of the feed. |
+| `yap.lua` | Yap Social: a text social network. Friends float to the top; **Yap Boost** puts your own above everything, and is the worked example of in-app purchases. |
 | `yapchat.lua` | Private messages between Foxy friends, behind your PIN, gone a day after you read them. Uses all three of the APIs below. |
 
 ## Writing one
@@ -50,6 +50,10 @@ end
 | `api.notifications` | `.ask()`, `.allowed()`, `.send(spec)`. See **The Notification API** |
 | `api.call(spec)` | Raise the PUMPE's Urgent Contact ring. See **The Urgent Contact API** |
 | `api.bank(action, payload)` | For a **bank app**: talk to the 3rd Party Bank Server hosting it. See below |
+| `api.position()` | Where the phone is, or nil when the network has no GPS anchors |
+| `api.purchase(spec)` | Sell something. See **In-app purchases** |
+| `api.entitlements()` | What the Bank says this player has paid you for |
+| `api.cancel(productId)` | Stop one of your subscriptions |
 | `api.app_id` | This app's id, assigned when it was published |
 
 `api.request` stamps your app id onto every call it makes, so you never pass
@@ -188,6 +192,39 @@ Their screen says which app is calling and who is. Both labels come from the
 install and the Bank rather than from your code, so an app cannot pass its
 call off as the PUMPE's own.
 
+## In-app purchases
+
+An app can sell things. The money goes to the account that published it — the
+company owner who made the developer account — less the government's 30%.
+
+```lua
+-- One-off. `target` is optional and is yours to interpret; Yap uses it to
+-- name the post a boost was bought for.
+api.purchase({ id = "boost_post", name = "Yap Boost", amount = 10,
+               target = post.id })
+
+-- Or a subscription, charged every in-game day until it is cancelled.
+api.purchase({ id = "boost_all", name = "Yap Boost Daily", amount = 20,
+               period = "day" })
+```
+
+The phone prices it, shows what the government takes and who gets the rest,
+and asks for the PIN. **Your app never sees money** and is never told a
+purchase went through by anything but the Bank:
+
+```lua
+for _, owned in ipairs(api.entitlements()) do
+    if owned.product_id == "boost_all" and owned.active then ... end
+end
+```
+
+Read `active` rather than the product simply being present: a cancelled or
+unpaid subscription is still remembered, and is not a licence. Entitlements
+are per app, so one app can neither see nor claim another's.
+
+A subscription that cannot be charged on a day stops rather than running up a
+debt, and the owner cancels it under **Settings → App Settings**.
+
 ## Writing a bank
 
 An app can be a bank. Say so in its first lines:
@@ -206,6 +243,27 @@ local info = api.bank("TPB_INFO")                        -- who is hosting us
 local me   = api.bank("TPB_REGISTER", { name = n, pin = p })
 local out  = api.bank("TPB_SEND", { session_token = s, recipient = who,
                                     amount = 10, pin = p })
+```
+
+### Terms of your own
+
+A bank sets its own terms in the same header, and its server enforces them:
+
+```lua
+-- PUMPE BANK APP: Revolution
+-- PUMPE BANK CLEARING: 1     -- in-game hours before money is spendable
+-- PUMPE BANK FEE: 0          -- percent taken from anything sent
+```
+
+Saying nothing means nothing: no wait and no fee, which is how BuckApp
+behaves. `revolution.lua` in this repository is the worked example — one hour
+to clear, no fee, and proximity pay built around taking money in person:
+
+```lua
+api.bank("TPB_CHARGE_OPEN",   { session_token = s, amount = 25,
+                                position = api.position() })
+api.bank("TPB_CHARGE_NEARBY", { session_token = s, position = api.position() })
+api.bank("TPB_CHARGE_PAY",    { session_token = s, charge_id = id, pin = p })
 ```
 
 `api.bank` can only reach the server hosting *this* app — the hostname is

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "8.3.0"
+local PROGRAM_VERSION = "9.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -68,10 +68,21 @@ local function declaredBank(body)
     return name and util.safeText(util.trim(name), 20) or nil
 end
 
+-- A bank sets its own terms in the same header. Clearing is whole in-game
+-- hours before money is spendable; the fee is a percentage of what is sent.
+-- Saying nothing means nothing: no wait and no fee.
+local function declaredTerms(body)
+    body = tostring(body or "")
+    return tonumber(body:match("%-%-%s*PUMPE BANK CLEARING:%s*([%d%.]+)")) or 0,
+        (tonumber(body:match("%-%-%s*PUMPE BANK FEE:%s*([%d%.]+)")) or 0) / 100
+end
+
 local function publicApp(app)
     return {
         app_id = app.app_id,
         bank_name = app.bank_name,
+        clearing_hours = app.clearing_hours,
+        fee_rate = app.fee_rate,
         name = app.name,
         description = app.description,
         author = app.author,
@@ -117,6 +128,8 @@ local function seedShippedApps()
           description = "Your Foxy Account and the bank behind it." },
         { file = "buckapp.lua", id = "BUCK", name = "BuckApp",
           description = "A bank of its own. Needs a 3rd Party Bank Server." },
+        { file = "revolution.lua", id = "REVO", name = "Revolution",
+          description = "0% fee proximity pay. One hour to clear." },
     }) do
         local body = util.readFile(fs.combine(ROOT, shipped.file))
         local existing = state.apps[shipped.id]
@@ -136,6 +149,8 @@ local function seedShippedApps()
                 published_day = util.ingameDay(),
                 downloads = existing and existing.downloads or 0,
                 bank_name = declaredBank(body),
+                clearing_hours = select(1, declaredTerms(body)),
+                fee_rate = select(2, declaredTerms(body)),
             }
             if not existing then
                 table.insert(state.order, 1, shipped.id)
@@ -229,10 +244,26 @@ function actions.APP_PUBLISH(payload)
         published_day = util.ingameDay(),
         downloads = existing and existing.downloads or 0,
         bank_name = declaredBank(body),
+        clearing_hours = select(1, declaredTerms(body)),
+        fee_rate = select(2, declaredTerms(body)),
     }
     if not fs.exists(appsDir) then fs.makeDir(appsDir) end
     util.writeFile(appPath(appId), body)
     save()
+    -- Publishing is the one moment anybody knows both the app id and the
+    -- developer behind it, so it is where the Bank is told who to pay for
+    -- anything the app sells.
+    local linked = bank:request("APP_OWNER_SET", {
+        app_id = appId, app_name = name,
+        developer_id = payload.developer_id,
+        developer_token = payload.developer_token,
+    }, 5)
+    if not linked then
+        -- The app is published either way, but nobody can be paid for what
+        -- it sells until this lands. Publishing again re-tries it.
+        logActivity("Bank did not record who owns " .. name
+            .. " -- publish again", colors.orange)
+    end
     logActivity((existing and "Updated " or "Published ") .. name
         .. " by " .. developer.name, colors.lime)
     return { app = publicApp(state.apps[appId]) }

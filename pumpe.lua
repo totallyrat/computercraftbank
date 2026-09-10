@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.1.0"
+local PROGRAM_VERSION = "9.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4155,6 +4155,80 @@ appSettingsScreen = function()
     end
 end
 
+-- The In-App Purchase API -----------------------------------------------------
+-- An app asks; the phone shows the price, what the government takes and who
+-- gets the rest, and takes the PIN. The app never sees money and is never
+-- asked whether a purchase went through -- it asks the Bank what the owner
+-- owns, and the Bank is what recorded the payment.
+
+local function purchaseSheet(quote, appName)
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, quote.period and "Subscribe" or "Buy", appName,
+            util.formatClock())
+        ui.card(target, 2, 5, width - 2, 7, ui.theme.accent)
+        ui.wrappedText(target, 4, 6, quote.name, width - 6, 2,
+            ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 9, money(quote.amount)
+            .. (quote.period == "day" and " a day" or ""),
+            ui.theme.ink, ui.theme.panel, width - 6)
+        ui.text(target, 4, 10, ui.truncate("To " .. quote.seller, width - 6),
+            ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 11, ui.truncate("Tax " .. money(quote.tax),
+            width - 6), ui.theme.muted, ui.theme.panel)
+        ui.wrappedText(target, 2, 13, quote.period == "day"
+            and "Charged every in-game day until you cancel it in Settings."
+            or "A one-off purchase.", width - 2, 3, ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("buy", 2, height - 5, width - 2, 2,
+            quote.period and "Subscribe" or "Buy",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("no", 2, height - 2, width - 2, 2, "Not now",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "buy" then return true end
+        if action == "no" or action == "__terminate" then return false end
+    end
+    return false
+end
+
+local function appPurchase(entry, spec)
+    spec = type(spec) == "table" and spec or {}
+    local productId = tostring(spec.id or spec.product_id or "")
+    if productId == "" then
+        ui.message(target, "warning", "Nothing to buy",
+            "That app did not say what", 1.4)
+        return false
+    end
+    local ask = {
+        app_id = entry.app_id,
+        product_id = productId,
+        name = spec.name or productId,
+        amount = spec.amount,
+        period = spec.period,
+        target = spec.target,
+    }
+    local quote, err = request("APP_PURCHASE_QUOTE", ask, true)
+    if not quote then
+        ui.message(target, "error", "Cannot buy that", err, 1.8)
+        return false
+    end
+    if not purchaseSheet(quote, entry.name) then return false end
+    local pin = ui.pin(target, "Confirm with PIN", true)
+    if not pin then return false end
+    ask.pin = pin
+    local bought, buyError = request("APP_PURCHASE", ask, true)
+    if not bought then
+        ui.message(target, "error", "Not bought", buyError, 2)
+        return false
+    end
+    ui.message(target, "success", quote.period and "Subscribed" or "Bought",
+        money(bought.paid) .. " paid", 1.2)
+    refreshSummary(true)
+    return true
+end
+
 local function runInstalledApp(entry)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
@@ -4211,6 +4285,24 @@ local function runInstalledApp(entry)
         },
         -- Raise the PUMPE's own fullscreen Urgent Contact alert.
         call = function(spec) return appUrgentCall(entry, spec) end,
+        -- Where the phone is, if the network has GPS anchors up. An app
+        -- that takes payments in person needs it; one that does not never
+        -- asks, and a world without anchors gets nil rather than a guess.
+        position = function() return net.locate(1) end,
+        -- In-app purchases. The app asks; the phone prices it, shows the
+        -- tax and who is paid, and takes the PIN. What the app gets back is
+        -- whether the Bank recorded a payment, never money.
+        purchase = function(spec) return appPurchase(entry, spec) end,
+        entitlements = function()
+            local owned = request("APP_ENTITLEMENTS",
+                { app_id = entry.app_id }, true)
+            return owned and owned.entitlements or {}
+        end,
+        cancel = function(productId)
+            return request("APP_SUBSCRIPTION_CANCEL", {
+                app_id = entry.app_id, product_id = tostring(productId or ""),
+            }, true) ~= nil
+        end,
         -- Bank Infrastructure for Apps. A bank app talks to the 3rd Party
         -- Bank Server hosting it, and only to that one: the hostname is
         -- built from the id the app was installed under, so an app cannot

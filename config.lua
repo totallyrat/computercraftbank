@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "9.1.0",
+    version = "9.2.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
 
@@ -24,6 +24,11 @@ return {
     -- its own. It only has to outlast a game, so a CCG Server that is
     -- switched off mid-round cannot strand anybody's money.
     ccg_escrow_hours = 2,
+
+    -- Proximity pay at a third-party bank: how far away a charge can be
+    -- picked up, and how long one waits before it lapses.
+    tpb_charge_range = 12,
+    tpb_charge_ttl_ms = 3 * 60 * 1000,
     -- Foxy is bank 0001. A third-party bank picks its own four digits when
     -- its server is set up, and hosts LEDGER_<code> under the protocol above.
     foxy_bank_code = "0001",
@@ -115,6 +120,10 @@ return {
     -- useless for a spammer. The PIN lockout defends the Pin API against
     -- the app holding it rather than against a person.
     max_app_collections = 40,
+    -- In-app purchases. The government's share of everything an app sells,
+    -- taken by the Bank rather than trusted to the app or the seller.
+    app_purchase_tax_rate = 0.30,
+    max_app_purchase = 5000,
     max_app_notifications_per_day = 60,
     pin_check_lockout_seconds = 120,
 

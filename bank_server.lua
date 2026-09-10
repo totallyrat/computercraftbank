@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.1.0"
+local PROGRAM_VERSION = "9.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -81,6 +81,7 @@ RELEASE.local_files = {
 -- directly from ROOT, avoiding a second copy of the largest runtime files.
 RELEASE.depot_files = {
     "pumpe.lua",
+    "revolution.lua",
     "bank_app_server.lua",
     "ccg_server.lua",
     "service_kiosk.lua",
@@ -128,6 +129,7 @@ RELEASE.optional = {
     "bank_app_server.lua",
     "buckapp.lua",
     "ccg_server.lua",
+    "revolution.lua",
 }
 
 RELEASE.programs = {
@@ -3768,6 +3770,230 @@ function appstore.rateLimit(account, appId)
     bucket.count = bucket.count + 1
 end
 
+-- In-app purchases --------------------------------------------------------------
+-- An app can sell things. The money goes to the account that published it --
+-- the company owner who made the developer account -- less the government's
+-- share, and the Bank records what was bought so the app cannot decide for
+-- itself that somebody has paid.
+--
+-- The app never handles money, names a recipient, or is asked whether a
+-- purchase went through. It asks the Bank what this player owns.
+
+function appstore.owners()
+    state.app_owners = state.app_owners or {}
+    return state.app_owners
+end
+
+-- Recorded by the App Server when an app is published, which is the only
+-- moment anybody knows both the app id and the developer behind it.
+function actions.APP_OWNER_SET(payload)
+    local appId = appstore.appId(payload)
+    for _, developer in pairs(state.developers or {}) do
+        if developer.developer_id == payload.developer_id
+            and developer.developer_token == payload.developer_token then
+            appstore.owners()[appId] = {
+                account_id = developer.account_id,
+                name = developer.name,
+                app_name = util.safeText(util.trim(payload.app_name or appId), 18),
+            }
+            save()
+            return { ok = true }
+        end
+    end
+    need(false, "DEV_UNKNOWN", "That developer is not registered")
+end
+
+function appstore.purchases(account, appId)
+    account.app_purchases = account.app_purchases or {}
+    account.app_purchases[appId] = account.app_purchases[appId] or {}
+    return account.app_purchases[appId]
+end
+
+function appstore.publicEntitlement(entry)
+    return {
+        product_id = entry.product_id,
+        name = entry.name,
+        amount = entry.amount,
+        bought_day = entry.bought_day,
+        subscription = entry.period ~= nil,
+        period = entry.period,
+        active = entry.active ~= false,
+        next_charge_day = entry.next_charge_day,
+        -- A one-off boost that only covers one thing carries what it was
+        -- bought for, so the app can tell them apart.
+        target = entry.target,
+    }
+end
+
+-- The split. Thirty per cent of everything an app sells is tax, taken here
+-- rather than trusted to the app or the seller.
+function appstore.splitPurchase(amount)
+    local rate = tonumber(config.app_purchase_tax_rate) or 0.30
+    local tax = util.roundMoney(amount * rate)
+    return util.roundMoney(amount - tax), tax
+end
+
+function appstore.priceOf(payload)
+    local amount = validateAmount(payload.amount,
+        tonumber(config.max_app_purchase) or 5000)
+    need(amount >= 1, "INVALID_AMOUNT", "A purchase has to cost something")
+    return amount
+end
+
+function actions.APP_PURCHASE_QUOTE(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local amount = appstore.priceOf(payload)
+    local toSeller, tax = appstore.splitPurchase(amount)
+    local owner = appstore.owners()[appId]
+    return {
+        product_id = util.safeText(util.trim(payload.product_id or ""), 24),
+        name = util.safeText(util.trim(payload.name or ""), 24),
+        amount = amount,
+        tax = tax,
+        to_seller = toSeller,
+        seller = owner and owner.name or "the developer",
+        period = payload.period == "day" and "day" or nil,
+        balance = account.balance,
+    }
+end
+
+function actions.APP_PURCHASE(payload)
+    -- A purchase is spending, so it is refused for the same reasons every
+    -- other payment is: a tax demand outstanding, or the money moved to
+    -- another bank.
+    local account = requireSpender(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local productId = util.safeText(util.trim(payload.product_id or ""), 24)
+    need(#productId >= 1, "NO_PRODUCT", "That purchase has no id")
+    local amount = appstore.priceOf(payload)
+    need(account.balance >= amount, "INSUFFICIENT_FUNDS",
+        "Not enough money for that")
+    local period = payload.period == "day" and "day" or nil
+    local owned = appstore.purchases(account, appId)
+    if period then
+        local existing = owned[productId]
+        need(not (existing and existing.period and existing.active ~= false),
+            "ALREADY_SUBSCRIBED", "That subscription is already running")
+    end
+
+    local toSeller, tax = appstore.splitPurchase(amount)
+    account.balance = util.roundMoney(account.balance - amount)
+    state.tax_revenue = util.roundMoney((state.tax_revenue or 0) + tax)
+    local owner = appstore.owners()[appId]
+    local seller = owner and state.accounts[owner.account_id]
+    local sellerName = owner and owner.name or "App developer"
+    if seller then
+        seller.balance = util.roundMoney(seller.balance + toSeller)
+        transaction(seller, "app_sale", toSeller, account.name,
+            (owner.app_name or appId) .. " sale")
+        notification(seller, "App sale",
+            util.money(toSeller, config.currency) .. " from "
+                .. (owner.app_name or appId), "money")
+    else
+        -- Nobody to pay: the developer's account is gone. The government
+        -- still takes its share and the rest is not conjured anywhere.
+        state.tax_revenue = util.roundMoney(state.tax_revenue + toSeller)
+    end
+    transaction(account, "app_purchase", -amount, sellerName,
+        util.safeText(util.trim(payload.name or productId), 40))
+
+    owned[productId] = {
+        product_id = productId,
+        name = util.safeText(util.trim(payload.name or productId), 24),
+        amount = amount,
+        period = period,
+        active = true,
+        bought_day = util.ingameDay(),
+        next_charge_day = period and (util.ingameDay() + 1) or nil,
+        target = payload.target
+            and util.safeText(util.trim(tostring(payload.target)), 24) or nil,
+    }
+    save()
+    logActivity(account.name .. " bought " .. owned[productId].name,
+        colors.purple)
+    return {
+        bought = appstore.publicEntitlement(owned[productId]),
+        paid = amount, tax = tax, balance = account.balance,
+    }
+end
+
+function actions.APP_ENTITLEMENTS(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local list = {}
+    for _, entry in pairs(appstore.purchases(account, appId)) do
+        list[#list + 1] = appstore.publicEntitlement(entry)
+    end
+    table.sort(list, function(a, b)
+        return (a.product_id or "") < (b.product_id or "")
+    end)
+    return { entitlements = list }
+end
+
+function actions.APP_SUBSCRIPTION_CANCEL(payload)
+    local account = requireSession(payload)
+    local appId = appstore.appId(payload)
+    appstore.requireGrant(account, appId)
+    local entry = appstore.purchases(account, appId)[
+        util.safeText(util.trim(payload.product_id or ""), 24)]
+    need(entry and entry.period, "NOT_SUBSCRIBED",
+        "That is not a subscription")
+    entry.active = false
+    entry.next_charge_day = nil
+    save()
+    return { cancelled = true }
+end
+
+-- Charged with the rest of the day's subscriptions. A day nobody could pay
+-- for ends the subscription rather than running up a debt.
+function appstore.chargeSubscriptions(today)
+    for _, account in pairs(state.accounts) do
+        for appId, owned in pairs(account.app_purchases or {}) do
+            for _, entry in pairs(owned) do
+                if entry.period and entry.active ~= false
+                    and (entry.next_charge_day or today) <= today then
+                    local owner = appstore.owners()[appId]
+                    local seller = owner and state.accounts[owner.account_id]
+                    if account.balance >= entry.amount
+                        and not account.frozen and not account.banned
+                        and not account.bank_closed then
+                        local toSeller, tax = appstore.splitPurchase(
+                            entry.amount)
+                        account.balance = util.roundMoney(
+                            account.balance - entry.amount)
+                        state.tax_revenue = util.roundMoney(
+                            (state.tax_revenue or 0) + tax)
+                        if seller then
+                            seller.balance = util.roundMoney(
+                                seller.balance + toSeller)
+                            transaction(seller, "app_sale", toSeller,
+                                account.name, entry.name .. " subscription")
+                        else
+                            state.tax_revenue = util.roundMoney(
+                                state.tax_revenue + toSeller)
+                        end
+                        transaction(account, "app_subscription",
+                            -entry.amount, owner and owner.name or "App",
+                            entry.name)
+                        entry.next_charge_day = today + 1
+                    else
+                        entry.active = false
+                        entry.next_charge_day = nil
+                        notification(account, "Subscription stopped",
+                            entry.name .. " could not be charged",
+                            "subscription")
+                    end
+                end
+            end
+        end
+    end
+end
+
 function appstore.requireGrant(account, appId)
     local grant = appstore.grants(account)[appId]
     need(grant, "NOT_SIGNED_IN", "Sign in to that app first")
@@ -6398,6 +6624,8 @@ local function processSubscriptions()
     if state.last_subscription_day == today then return end
     state.last_subscription_day = today
     local changed = false
+    -- App subscriptions are charged on the same daily pass as kiosk ones.
+    pcall(appstore.chargeSubscriptions, today)
     for _, account in pairs(state.accounts) do
         for _, subscription in pairs(account.subscriptions or {}) do
             if subscription.active and subscription.next_charge_day <= today then
@@ -7053,6 +7281,7 @@ if TEST_MODE then
         urgent_calls = urgentCalls,
         ledger = ledger,
         pair = pair,
+        appstore = appstore,
     }
 end
 

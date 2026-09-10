@@ -225,6 +225,41 @@ Run this after installing into a ComputerCraft world.
 - [ ] Scroll with the two buttons on the right edge and confirm the posts never draw underneath them.
 - [ ] Post the longest text the composer allows and confirm the feed truncates it with `..` rather than overflowing.
 
+## In-app purchases
+
+- [ ] Publish an app from a Dev Mode kiosk linked to a company, and confirm the Bank records who owns it (a second publish re-tries if the Bank was offline).
+- [ ] Buy something in an app and confirm the sheet names the app, the price, the tax and who is being paid **before** asking for the PIN.
+- [ ] Enter the wrong PIN and confirm nobody is charged.
+- [ ] Confirm the buyer is down the full price, the publisher is up 70%, and government revenue is up 30%.
+- [ ] Buy while a tax demand is outstanding and confirm it is refused like any other payment.
+- [ ] Start a subscription, wait an in-game day, and confirm it is charged again and split the same way.
+- [ ] Cancel it under **Settings → App Settings** and confirm it stops.
+- [ ] Let a subscription come due with too little money and confirm it stops rather than overdrawing.
+- [ ] Confirm one app cannot see another app's purchases.
+
+## Yap Boost
+
+- [ ] Open one of your own yaps and confirm **Boost this yap** is offered; open somebody else's and confirm it is not.
+- [ ] Buy the $10 boost and confirm that yap rises above your friends' in the feed, marked with `^`.
+- [ ] Confirm your **other** yaps did not rise — a one-off covers one yap.
+- [ ] Buy the $20 a day boost and confirm every yap you post rises.
+- [ ] Cancel it and confirm your yaps drop back.
+
+## Revolution
+
+- [ ] Install **Revolution** from the App Browser and host it on a 3rd Party Bank Server.
+- [ ] Confirm the server reports one hour of clearing and no fee.
+- [ ] Move money in from Foxy with your Account ID, and confirm it shows as **clearing** rather than available.
+- [ ] Confirm it cannot be spent or moved on until it clears.
+- [ ] Wait one in-game hour and confirm it becomes available.
+- [ ] Send money to another Revolution account and confirm **no fee** is taken, unlike Foxy's ten per cent.
+- [ ] Open a charge with **Take a payment**, stand next to another Revolution user, and confirm their **Pay** screen finds it.
+- [ ] Walk far away and confirm the charge is no longer found.
+- [ ] Pay it and confirm the payer is down exactly the price, and the taker sees it clearing.
+- [ ] Try to pay the same charge twice and confirm it is gone.
+- [ ] Try to pay your own charge and confirm it is refused.
+- [ ] With no GPS anchors on the network, confirm both screens say so rather than failing oddly.
+
 ## CCG Server
 
 - [ ] Install **CCG SERVER** from Easy Deployment and confirm it asks for the operator code once, then comes up without asking again.

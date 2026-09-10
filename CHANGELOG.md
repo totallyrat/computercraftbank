@@ -1,5 +1,64 @@
 # Changelog
 
+## 9.2.0
+
+Apps can sell things, and there is a second third-party bank worth banking
+with.
+
+### In-app purchases
+
+- `api.purchase{ id, name, amount }` sells something; add `period = "day"`
+  and it is a subscription charged every in-game day until it is cancelled.
+- The money goes to the account that published the app -- the company owner
+  behind its developer account -- less **30% to the government**, taken by
+  the Bank rather than trusted to the app or the seller.
+- **The app never sees money, and is never told a purchase went through by
+  anything but the Bank.** It reads `api.entitlements()`, which is the
+  Bank's own record. An app cannot decide for itself that somebody has paid,
+  and cannot see or claim another app's purchases.
+- The phone prices it, shows the tax and who is being paid, and takes the
+  PIN. A purchase is spending, so it is refused for the same reasons any
+  other payment is -- a tax demand outstanding, or the money moved to
+  another bank.
+- A subscription nobody can pay for on a given day **stops** rather than
+  running up a debt. Cancel one under Settings -> App Settings.
+- Publishing an app is when the Bank is told who owns it, because it is the
+  only moment anybody knows both the app id and the developer.
+
+### Yap Social, and Yap Boost
+
+- Yap is **Yap Social** now, and the first app with something to sell.
+- **Yap Boost** puts your yaps above everything else in everybody's feed.
+  Ten for one yap, or twenty a day for all of them.
+- A boost bought on one yap lifts **that yap and nothing else**, and only
+  your own -- otherwise anybody could push anybody's post to the top for ten
+  dollars.
+- A cancelled subscription stops boosting, because the app reads whether the
+  entitlement is active rather than whether it exists.
+
+### Revolution, and banks with terms of their own
+
+- A bank app declares its own terms in its header, and its server enforces
+  them:
+
+  ```lua
+  -- PUMPE BANK APP: Revolution
+  -- PUMPE BANK CLEARING: 1
+  -- PUMPE BANK FEE: 0
+  ```
+
+- **Revolution** is the first: no fee on anything, and one in-game hour
+  before money is spendable. Slower than Foxy on purpose, and free where
+  Foxy charges ten per cent.
+- **Proximity pay** is what it is built around. Open a charge, hold your
+  PUMPE out, and whoever is standing next to you pays it from theirs. No
+  kiosk, no fee.
+- Money that has not cleared cannot be spent or moved on, and a bank that
+  declares no terms behaves exactly as BuckApp always has: no wait, no fee.
+- Apps can ask the phone where it is with `api.position()`, which is what
+  proximity pay needs. A network without GPS anchors gets nil rather than a
+  guess.
+
 ## 9.1.0
 
 ComputerCraftGaming moved to its own computer, which is what gives the Bank

@@ -375,6 +375,124 @@ assert(actions.APP_DATA_PUT(as(ana, {
     app_id = "notes", collection = "onemore", data = { body = "x" },
 })).record ~= nil, "an emptied collection gives its slot back")
 
+-- In-app purchases ---------------------------------------------------------------
+-- What matters here is where the money goes: thirty per cent to the
+-- government, the rest to whoever published the app, and an entitlement the
+-- app cannot write for itself.
+
+-- Cy publishes an app, through a company they own. A developer account is
+-- made at a kiosk linked to that company, which is what ties an app to
+-- somebody who can be paid.
+local company = actions.CREATE_COMPANY({
+    owner_session = cy.session_token, company_name = "Cy Software",
+}).company
+local kiosk = actions.KIOSK_REGISTER({ name = "Cy Kiosk" })
+actions.LINK_TERMINAL({
+    terminal_id = kiosk.terminal_id, terminal_token = kiosk.terminal_token,
+    owner_session = cy.session_token, company_id = company.company_id,
+})
+local dev = actions.DEV_REGISTER({
+    terminal_id = kiosk.terminal_id, terminal_token = kiosk.terminal_token,
+    pin = "1234",
+})
+actions.APP_OWNER_SET({
+    app_id = "yap", app_name = "Yap",
+    developer_id = dev.developer_id, developer_token = dev.developer_token,
+})
+
+-- Somebody who has not signed into the app cannot buy anything in it.
+local stranger = register("Dee Lark")
+rejected(actions.APP_PURCHASE, "NOT_SIGNED_IN", as(stranger, {
+    app_id = "yap", product_id = "boost", name = "Boost", amount = 10,
+    pin = "1234",
+}))
+
+local quote = actions.APP_PURCHASE_QUOTE(as(bo, {
+    app_id = "yap", product_id = "boost", name = "Yap Boost", amount = 10,
+}))
+assert(quote.tax == 3 and quote.to_seller == 7,
+    "thirty per cent is tax: got tax " .. tostring(quote.tax))
+assert(quote.seller == "Cy Hare", "and the rest goes to who published it")
+
+local function money(who)
+    return bank.state.accounts[who.account.account_id].balance
+end
+local buyerBefore, sellerBefore = money(bo), money(cy)
+local taxBefore = bank.state.tax_revenue
+
+rejected(actions.APP_PURCHASE, "BAD_PIN", as(bo, {
+    app_id = "yap", product_id = "boost", name = "Yap Boost", amount = 10,
+    pin = "0000",
+}))
+assert(money(bo) == buyerBefore, "a wrong PIN pays nobody")
+
+local bought = actions.APP_PURCHASE(as(bo, {
+    app_id = "yap", product_id = "boost", name = "Yap Boost", amount = 10,
+    pin = "1234", target = "YAP000003",
+}))
+assert(bought.paid == 10 and bought.tax == 3)
+assert(money(bo) == buyerBefore - 10, "the buyer paid ten")
+assert(money(cy) == sellerBefore + 7, "the seller got seven")
+assert(bank.state.tax_revenue == taxBefore + 3,
+    "and the government got three")
+
+-- The entitlement is the Bank's record, and carries what it was bought for.
+local owned = actions.APP_ENTITLEMENTS(as(bo, { app_id = "yap" })).entitlements
+assert(#owned == 1 and owned[1].product_id == "boost")
+assert(owned[1].target == "YAP000003", "a one-off knows what it covers")
+assert(not owned[1].subscription)
+-- And it belongs to the app that sold it, not to every app.
+actions.FOXY_LOGIN_APPROVE(as(bo, { app_id = "other", app_name = "Other" }))
+assert(#actions.APP_ENTITLEMENTS(as(bo, { app_id = "other" })).entitlements == 0,
+    "one app cannot see, or claim, another's purchases")
+
+-- Subscriptions -------------------------------------------------------------------
+
+local subscribed = actions.APP_PURCHASE(as(bo, {
+    app_id = "yap", product_id = "boost_all", name = "Boost All",
+    amount = 20, period = "day", pin = "1234",
+}))
+assert(subscribed.bought.subscription and subscribed.bought.period == "day")
+rejected(actions.APP_PURCHASE, "ALREADY_SUBSCRIBED", as(bo, {
+    app_id = "yap", product_id = "boost_all", name = "Boost All",
+    amount = 20, period = "day", pin = "1234",
+}))
+
+-- A day passes and it is charged again, split the same way.
+local beforeDay, sellerDay = money(bo), money(cy)
+local taxDay = bank.state.tax_revenue
+currentDay = currentDay + 1
+bank.appstore.chargeSubscriptions(currentDay)
+assert(money(bo) == beforeDay - 20, "a day costs twenty")
+assert(money(cy) == sellerDay + 14 and bank.state.tax_revenue == taxDay + 6,
+    "split seventy thirty every day, not just the first")
+
+-- Cancelling stops it.
+actions.APP_SUBSCRIPTION_CANCEL(as(bo, {
+    app_id = "yap", product_id = "boost_all",
+}))
+local afterCancel = money(bo)
+currentDay = currentDay + 1
+bank.appstore.chargeSubscriptions(currentDay)
+assert(money(bo) == afterCancel, "a cancelled subscription is not charged")
+
+-- A subscription nobody can pay for stops rather than running up a debt.
+actions.APP_PURCHASE(as(bo, {
+    app_id = "yap", product_id = "boost_all", name = "Boost All",
+    amount = 20, period = "day", pin = "1234",
+}))
+bank.state.accounts[bo.account.account_id].balance = 5
+currentDay = currentDay + 1
+bank.appstore.chargeSubscriptions(currentDay)
+assert(bank.state.accounts[bo.account.account_id].balance == 5,
+    "it does not take what is not there")
+local after = actions.APP_ENTITLEMENTS(as(bo, { app_id = "yap" })).entitlements
+for _, entry in ipairs(after) do
+    if entry.product_id == "boost_all" then
+        assert(not entry.active, "and stops instead")
+    end
+end
+
 -- Revoking closes the door again.
 actions.FOXY_LOGIN_REVOKE(as(ana, { app_id = "yap" }))
 assert(actions.FOXY_LOGIN_STATUS(as(ana, { app_id = "yap" })).approved == false)

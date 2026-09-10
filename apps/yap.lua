@@ -1,7 +1,11 @@
--- PUMPE APP: Yap
+-- PUMPE APP: Yap Social
 -- A text social network. Posts, likes and comments, everybody signed in with
--- their Foxy Account. Friends float to the top of the feed; everyone else
--- follows, newest first.
+-- their Foxy Account. Boosted yaps sit above everything, then friends, then
+-- everyone else, newest first.
+--
+-- Yap Boost is what in-app purchases are for. Ten for one yap, or twenty a
+-- day for all of them. The app never decides that somebody has paid: it asks
+-- the phone what the Bank recorded.
 --
 -- Signing in is one call. Every app gets the same one:
 --
@@ -20,12 +24,32 @@ return function(api)
     local MAX_POST = 140
     local MAX_COMMENT = 100
 
-    local me = api.login({ name = "Yap", scopes = { "friends" } })
+    local me = api.login({ name = "Yap Social", scopes = { "friends" } })
     if not me then return end
 
     local friends = {}
     for _, friend in ipairs(me.friends or {}) do
         friends[friend.account_id] = true
+    end
+
+    -- What the Bank says has been paid for. Read fresh whenever it could
+    -- have changed, because the app is not the thing that decides it.
+    local boostAll, boostedPosts = false, {}
+    local function readBoosts()
+        boostAll, boostedPosts = false, {}
+        for _, entry in ipairs(api.entitlements()) do
+            if entry.product_id == "boost_all" and entry.active then
+                boostAll = true
+            elseif entry.product_id == "boost_post" and entry.target then
+                boostedPosts[entry.target] = true
+            end
+        end
+    end
+    readBoosts()
+
+    local function boosted(post)
+        if post.author_id ~= me.account_id then return false end
+        return boostAll or boostedPosts[post.id] == true
     end
 
     local function running()
@@ -69,20 +93,24 @@ return function(api)
         local listed = request("APP_DATA_LIST",
             { collection = "posts", limit = 40 }, true)
         local posts = listed and listed.records or {}
-        -- Friends first, then everybody else, each group newest first. The
-        -- Bank already hands them back newest first, so a stable split is
-        -- all this needs.
-        local mates, others = {}, {}
+        -- Boosted first, then friends, then everybody else, each group
+        -- newest first. The Bank already hands them back newest first, so a
+        -- stable split is all this needs.
+        local lifted, mates, others = {}, {}, {}
         for _, post in ipairs(posts) do
-            if friends[post.author_id] or post.author_id == me.account_id then
+            if boosted(post) then
+                lifted[#lifted + 1] = post
+            elseif friends[post.author_id]
+                or post.author_id == me.account_id then
                 mates[#mates + 1] = post
             else
                 others[#others + 1] = post
             end
         end
         local feed = {}
-        for _, post in ipairs(mates) do feed[#feed + 1] = post end
-        for _, post in ipairs(others) do feed[#feed + 1] = post end
+        for _, group in ipairs({ lifted, mates, others }) do
+            for _, post in ipairs(group) do feed[#feed + 1] = post end
+        end
         return feed
     end
 
@@ -136,6 +164,64 @@ return function(api)
             return false
         end
         return true
+    end
+
+    -- Yap Boost -----------------------------------------------------------------
+    -- Two ways to buy the same thing. The app prices them and says what they
+    -- cover; the phone takes the money and the Bank remembers.
+
+    local function boostScreen(post)
+        while running() do
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Yap Boost", boostAll and "On for everything"
+                or "Rise to the top", util.formatClock())
+            if boostAll then
+                ui.card(target, 2, 5, width - 2, 4, FRIEND)
+                ui.wrappedText(target, 4, 6, "Every yap you post is already"
+                    .. " boosted.", width - 6, 3, ui.theme.ink, ui.theme.panel)
+                ui.wrappedText(target, 2, 10, "Cancel it under Settings ->"
+                    .. " App Settings on your PUMPE.", width - 2, 3,
+                    ui.theme.muted)
+            elseif boostedPosts[post.id] then
+                ui.card(target, 2, 5, width - 2, 4, FRIEND)
+                ui.wrappedText(target, 4, 6, "This yap is boosted.",
+                    width - 6, 2, ui.theme.ink, ui.theme.panel)
+            else
+                ui.wrappedText(target, 2, 5, "Boosted yaps sit above"
+                    .. " everything else in everybody's feed.", width - 2, 3,
+                    ui.theme.muted)
+            end
+            local scene = ui.scene(target)
+            if not boostAll and not boostedPosts[post.id] then
+                scene:button("one", 2, 9, width - 2, 3,
+                    "This yap\n$10 once",
+                    { background = YAP, foreground = colors.black })
+            end
+            if not boostAll then
+                scene:button("all", 2, 13, width - 2, 3,
+                    "Every yap\n$20 a day",
+                    { background = colors.orange,
+                      foreground = colors.black })
+            end
+            scene:button("back", 1, height, 8, 1, "< Back",
+                { background = ui.theme.panel })
+            local action = scene:wait({ tickRate = 5 })
+            if action == "back" or action == "__terminate" then return end
+            if action == "one" then
+                if api.purchase({ id = "boost_post", name = "Yap Boost",
+                    amount = 10, target = post.id }) then
+                    readBoosts()
+                    return true
+                end
+            elseif action == "all" then
+                if api.purchase({ id = "boost_all", name = "Yap Boost Daily",
+                    amount = 20, period = "day" }) then
+                    readBoosts()
+                    return true
+                end
+            end
+        end
     end
 
     -- One post, in full ---------------------------------------------------------
@@ -198,6 +284,11 @@ return function(api)
             if post.mine then
                 scene:button("delete", math.floor(width / 2) - 3, height, 8, 1,
                     "Delete", { background = ui.theme.danger })
+                scene:button("boost", 2, height - 4, width - 2, 1,
+                    boosted(post) and "Boosted" or "Boost this yap",
+                    { background = boosted(post) and FRIEND
+                        or ui.theme.accentDark,
+                      foreground = boosted(post) and colors.black or nil })
             end
             local action = scene:wait({ tickRate = 5 })
             if action == "back" or action == "__terminate" then return true end
@@ -214,6 +305,8 @@ return function(api)
                 addComment(post)
             elseif action == "up" then offset = offset - 1
             elseif action == "down" then offset = offset + 1
+            elseif action == "boost" then
+                if boostScreen(post) then return true end
             elseif action == "delete" then
                 if ui.confirm(target, "Delete post",
                     "It goes for everybody.", "Delete", "Keep") then
@@ -232,8 +325,9 @@ return function(api)
 
     local function drawPost(post, y, width)
         local mate = friends[post.author_id]
-        ui.text(target, 2, y, mate and "*" or " ",
-            mate and FRIEND or ui.theme.muted)
+        local lifted = boosted(post)
+        ui.text(target, 2, y, lifted and "^" or (mate and "*" or " "),
+            lifted and colors.orange or (mate and FRIEND or ui.theme.muted))
         ui.text(target, 4, y, ui.truncate(post.author_name, width - 12),
             mate and FRIEND or ui.theme.ink)
         ui.text(target, width - 6, y,

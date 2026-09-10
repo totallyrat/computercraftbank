@@ -316,6 +316,7 @@ update.PUBLISHED_OPTIONAL = {
     "bank_app_server.lua",
     "buckapp.lua",
     "ccg_server.lua",
+    "revolution.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -348,7 +349,7 @@ end
 -- A few roles carry a file that is not a program of their own. The App
 -- Server ships with Foxy so its catalogue is never empty on a fresh world.
 local ROLE_EXTRA_FILES = {
-    apps = { "foxy.lua", "buckapp.lua" },
+    apps = { "foxy.lua", "buckapp.lua", "revolution.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

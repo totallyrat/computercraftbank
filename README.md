@@ -177,6 +177,8 @@ A 3rd Party Bank Server asks the App Server which apps declare themselves banks 
 
 Third-party banks have their own logins — a Foxy Account is not an account there — and mint no money: an account opens empty.
 
+Since 9.2 a bank also sets its own terms in the same header — `PUMPE BANK CLEARING` in in-game hours and `PUMPE BANK FEE` as a percentage — and its server enforces them. **Revolution** is the first to use them: no fee on anything, one hour to clear, and proximity pay built for taking money in person. Hold your PUMPE out and whoever is standing next to you pays from theirs.
+
 ### The Account ID
 
 Every account at every bank has a sixteen-digit **Account ID**, the first four digits naming the bank holding it. It is the one thing every bank agrees on, and enough on its own to find where money lives.
@@ -230,6 +232,12 @@ Three more APIs, each a single call, and each one where the owner rather than th
 **The Urgent Contact API.** `api.call{ account_id = ..., name = ... }` raises the same fullscreen ring the PUMPE raises for Urgent Contact. The ring says which app is calling and who is, both labels coming from the install rather than the app.
 
 **Settings → App Settings** lists every app that has ever asked for a permission, whatever the answer was, and is where you change your mind. **Fullscreen notifications are switched on there and nowhere else**: an app cannot ask for them, and blocking notifications takes fullscreen with it.
+
+### In-app purchases
+
+An app can sell things. The money goes to the account that published it, less **30% to the government**, and the Bank keeps the record — an app is never told it has been paid by anything but the Bank, so it cannot decide for itself. One-off purchases and daily subscriptions both work; a subscription that cannot be charged stops rather than running up a debt, and is cancelled under **Settings → App Settings**.
+
+**Yap Boost** is the first: ten dollars to lift one yap above everything in the feed, or twenty a day to lift them all.
 
 `apps/README.md` has the full contract.
 

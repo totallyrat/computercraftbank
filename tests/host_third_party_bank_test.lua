@@ -9,8 +9,9 @@
 package.path = "../?.lua;../?/init.lua;" .. package.path
 
 colors = setmetatable({}, { __index = function() return 1 end })
+local currentHour = 12
 os.day = function() return 500 end
-os.time = function() return 12 end
+os.time = function() return currentHour end
 os.epoch = function() return 20000000 end
 
 local wire = { hosts = {}, servers = {} }
@@ -275,5 +276,119 @@ assert(repeated.repeated and buck.state.accounts[bo.account.account_id]
     .balance == 150, "a retried credit is not applied twice")
 assert(buck.actions.LEDGER_STATUS({ transfer_id = "XFER_ONCE_ONLY" }).applied)
 assert(not buck.actions.LEDGER_STATUS({ transfer_id = "XFER_NEVER" }).applied)
+
+-- A bank with terms of its own -----------------------------------------------------
+-- Revolution declares one in-game hour of clearing and no fee. The server
+-- enforces both; the app only says what they are.
+
+local revo = environment(3)
+PUMPE_TEST_MODE = true
+local revolution = assert(loadfile("../bank_app_server.lua"))()
+PUMPE_TEST_MODE = nil
+wire.servers[3] = revolution
+revolution.adopt({ app_id = "APP00002", bank_name = "Revolution",
+    clearing_hours = 1, fee_rate = 0 })
+wire.host(3, foxyConfig.ledger_protocol,
+    revolution.ledger.hostFor(revolution.state.bank_code))
+
+assert(revolution.state.clearing_hours == 1 and revolution.state.fee_rate == 0,
+    "the terms the app declared are what the server runs on")
+
+local rvAna = revolution.actions.TPB_REGISTER({ name = "Ana", pin = "1111" })
+local rvBo = revolution.actions.TPB_REGISTER({ name = "Bo", pin = "2222" })
+revolution.state.accounts[rvAna.account.account_id].balance = 300
+
+-- Sending inside the bank: no fee, and the money is not there yet.
+local sent = revolution.actions.TPB_SEND({
+    session_token = rvAna.session_token, recipient = "Bo",
+    amount = 100, pin = "1111",
+})
+assert(sent.fee == 0, "Revolution takes nothing to send")
+assert(revolution.state.accounts[rvAna.account.account_id].balance == 200,
+    "the sender is down exactly what they sent")
+assert(revolution.state.accounts[rvBo.account.account_id].balance == 0,
+    "and the recipient has nothing spendable yet")
+local waiting = revolution.actions.TPB_SUMMARY({
+    session_token = rvBo.session_token }).account
+assert(waiting.pending == 100 and waiting.pending_count == 1,
+    "it is held, and the app can say when it clears")
+assert(waiting.clearing_hours == 1)
+
+-- Money that has not cleared cannot be moved on.
+rejected(revolution.actions.TPB_TRANSFER_CONFIRM, "NOTHING_TO_MOVE", {
+    session_token = rvBo.session_token, pin = "2222",
+    bank_account_id = anaFoxyId,
+})
+
+-- An hour later it is spendable.
+currentHour = currentHour + 1
+revolution.clear_all()
+assert(revolution.state.accounts[rvBo.account.account_id].balance == 100,
+    "an in-game hour later the money is there")
+assert(revolution.actions.TPB_SUMMARY({
+    session_token = rvBo.session_token }).account.pending == 0)
+
+-- Proximity pay ---------------------------------------------------------------------
+-- The reason for the app: hold your phone out and be paid.
+
+rejected(revolution.actions.TPB_CHARGE_OPEN, "NO_POSITION", {
+    session_token = rvBo.session_token, amount = 25,
+})
+local charge = revolution.actions.TPB_CHARGE_OPEN({
+    session_token = rvBo.session_token, amount = 25, note = "Coffee",
+    position = { x = 10, y = 64, z = 10 },
+}).charge
+assert(charge.amount == 25 and charge.status == "open")
+
+-- Somebody standing too far away sees nothing.
+assert(revolution.actions.TPB_CHARGE_NEARBY({
+    session_token = rvAna.session_token,
+    position = { x = 900, y = 64, z = 900 },
+}).charge == nil, "a charge across the world is not nearby")
+
+local near = revolution.actions.TPB_CHARGE_NEARBY({
+    session_token = rvAna.session_token,
+    position = { x = 12, y = 64, z = 10 },
+}).charge
+assert(near and near.charge_id == charge.charge_id and near.to_name == "Bo",
+    "standing next to somebody finds their charge")
+
+-- You cannot pay your own charge, and a wrong PIN pays nothing.
+rejected(revolution.actions.TPB_CHARGE_PAY, "OWN_CHARGE", {
+    session_token = rvBo.session_token, charge_id = charge.charge_id,
+    pin = "2222",
+})
+rejected(revolution.actions.TPB_CHARGE_PAY, "BAD_PIN", {
+    session_token = rvAna.session_token, charge_id = charge.charge_id,
+    pin = "0000",
+})
+
+local payerBefore = revolution.state.accounts[rvAna.account.account_id].balance
+local paid = revolution.actions.TPB_CHARGE_PAY({
+    session_token = rvAna.session_token, charge_id = charge.charge_id,
+    pin = "1111",
+})
+assert(paid.paid == 25 and paid.fee == 0,
+    "0% fee is the whole pitch: the payer is down exactly the price")
+assert(revolution.state.accounts[rvAna.account.account_id].balance
+    == payerBefore - 25)
+assert(paid.clears, "and the person taking it waits an hour like everything else")
+
+-- Paying it twice does nothing.
+rejected(revolution.actions.TPB_CHARGE_PAY, "NOT_FOUND", {
+    session_token = rvAna.session_token, charge_id = charge.charge_id,
+    pin = "1111",
+})
+
+-- A bank that declares nothing behaves as it always did: no wait, no fee.
+assert(buck.state.clearing_hours == 0 and buck.state.fee_rate == 0,
+    "BuckApp declared no terms, so it has none")
+local instant = buck.actions.TPB_REGISTER({ name = "Instant", pin = "4444" })
+buck.state.accounts[instant.account.account_id].balance = 50
+buck.actions.TPB_SEND({ session_token = instant.session_token,
+    recipient = "Bo Wolf", amount = 10, pin = "4444" })
+assert(buck.actions.TPB_SUMMARY({
+    session_token = bo.session_token }).account.pending == 0,
+    "money at a bank with no clearing time is spendable at once")
 
 print("host_third_party_bank_test: OK")

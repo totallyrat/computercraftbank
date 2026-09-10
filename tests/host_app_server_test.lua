@@ -59,8 +59,10 @@ util.loadTable = function(_, fallback) return util.copy(fallback) end
 util.saveTable = function() end
 package.loaded["lib.util"] = util
 
--- The only thing the App Server ever asks the Bank.
+-- The two things the App Server asks the Bank: who a developer is, and --
+-- since 9.2 -- who to pay for anything an app sells.
 local bankCalls = {}
+local ownerSet
 package.loaded["lib.net"] = {
     client = function()
         return {
@@ -73,6 +75,10 @@ package.loaded["lib.net"] = {
                             account_id = "ACC000004" }
                     end
                     return nil, "That developer is not registered"
+                end
+                if action == "APP_OWNER_SET" then
+                    ownerSet = payload
+                    return { ok = true }
                 end
                 error("the App Server must not ask the Bank for " .. action)
             end,
@@ -177,3 +183,11 @@ assert(#actions.APP_LIST().apps == 0, "and it leaves the catalogue")
 rejected(actions.APP_INFO, "NOT_FOUND", { app_id = updated.app_id })
 
 print("host_app_server_test: OK")
+
+-- 9.2: publishing is when the Bank is told who owns an app, because it is
+-- the only moment anybody knows both the app id and the developer. Without
+-- it an app can sell things and nobody is paid.
+assert(ownerSet and ownerSet.app_id and ownerSet.app_name,
+    "publishing tells the Bank who owns the app")
+assert(ownerSet.developer_token == "GOOD",
+    "and proves it with the developer's own token")
