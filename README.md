@@ -154,11 +154,22 @@ Opening a ticket or a travel document is what makes a PUMPE findable. The claim 
 
 ### Pair Mode
 
-A Bank Server asks **Solo** or **Pair** the first time it starts. In Pair Mode both servers show a six-digit code and either can type the other's; when the codes match they pair and split the work.
+A Bank is two computers joined by a **wired modem**. Put one on each Bank Server, run networking cable between them, and start them both: the pairing screen shuts the wireless modems, lists the Bank Servers answering on the cable, and pairs with the one you press. There is nothing to type — a code proves nothing the cable has not already proved.
 
-The split is deliberately uneven. Everyday banking is a hot path — a second radio hop would be felt on every balance check — so the **Core** keeps all of it. The **Vault** takes the heavy, cold work: serving update downloads, and holding the app record store. That is what was crowding the Bank's disk and making banking queue behind file transfers.
+Wireless pairing is refused on purpose. Since 9.3 the two halves answer parts of the same request, so the link between them sits on the path of a player's request rather than beside it, and a wireless modem shares the air with every pocket computer on the server and stops existing when the chunk unloads.
 
-Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever typed the code. Clients never learn any of this — the depot simply answers from a different computer.
+The split is by what a thing **is**, not by how busy it is:
+
+| | Holds |
+| --- | --- |
+| **Core** (`bank_server.lua`) | Anything where being wrong means money is wrong: balances, sessions, PINs, the ledger, tax, CCG escrow, pay codes, companies and kiosks. Plus Easy Deployment. |
+| **Vault** (`bank_vault.lua`) | Everything that is merely *about* an account: friends and conversations, Urgent Contact, territories and visas, border registers and scans, events and tickets, and the records apps keep. |
+
+Three rules make that safe. The Vault never touches a balance — when something it owns has to move money it asks the Core, under a move id that makes a lost reply harmless. The Vault never decides who is asking — the Core authenticates every request and passes down an identity, so session tokens and PINs never travel. And a Bank with no Vault still banks: the money keeps working, and the Vault's own features say so plainly until you pair one.
+
+Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever pressed the button. The one that becomes the Vault fetches `bank_vault.lua` over the cable and restarts into it by itself. Clients never learn any of this — a PUMPE asks the Bank, as it always has.
+
+If a Vault is destroyed or a cable is cut, the Bank Server's dashboard shows it, and its **PAIR** button pairs a replacement.
 
 ### Third-party banks
 

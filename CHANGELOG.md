@@ -1,5 +1,95 @@
 # Changelog
 
+## 9.3.0
+
+The Bank is two computers, joined by a cable, and half the size.
+
+**Why.** `bank_server.lua` had reached 287 KB. A ComputerCraft computer holds
+1000 KiB and an update needs room for the installed copy and the staged one at
+once, so the Bank was updating itself at 844 KiB of an 850 KiB ceiling: six
+kilobytes from being a program that could no longer be updated over the air.
+Pair Mode had existed since 9.0, but both halves ran this same file -- the
+Vault carried 287 KB to use about 25 KB of it -- so having a partner saved the
+Core nothing at all.
+
+**What moved.** The Vault now runs its own program, `bank_vault.lua`. It holds
+everything that is *about* an account without being its balance: friends and
+conversations, Urgent Contact, territories, visas, border registers and the
+scans people present to each other, events and tickets, and the records apps
+keep. The Core keeps anything where being wrong means money is wrong --
+balances, sessions, PINs, the ledger, tax, CCG escrow, pay codes, companies.
+
+- **The Bank updates itself at 715 KiB instead of 844 KiB.** Room for data
+  went from 156 KiB to 285 KiB.
+- **Clients did not change.** A PUMPE asks the Bank, as it always has, and the
+  Core answers or passes the question down the cable. Every action kept its
+  name, its payload and its refusal codes.
+
+**Pairing is wired, and there are no codes.**
+
+- Put a wired modem on both Bank Servers and run cable between them. The
+  pairing screen shuts the wireless modems, lists the Bank Servers answering
+  on the cable, and pairs with the one you press. There is nothing to type: a
+  code proves nothing the cable has not already proved.
+- **Wireless pairing is refused.** The two halves now answer parts of the same
+  request, so the link between them is on the path of a player's request
+  rather than beside it. A wireless modem shares the air with every pocket
+  computer on the server and stops existing when the chunk unloads.
+- Whichever half holds the accounts stays the Core, so pairing can never
+  strand a live ledger behind a half that does no banking. The computer that
+  becomes the Vault fetches `bank_vault.lua` over the cable and restarts into
+  it by itself.
+- The dashboard shows the link, and its PAIR button pairs a replacement Vault
+  if one is destroyed or a cable is cut.
+
+**Three rules hold the split together.**
+
+- **The Vault never touches a balance.** When something it owns has to move
+  money -- a ticket bought, a note paid in a conversation -- it asks the Core,
+  which does both sides of the move in one step under a move id. Asking twice
+  with the same id returns the first answer rather than moving the money
+  again, so a lost reply is harmless. A Vault that is broken, lying or
+  switched off cannot invent money or lose any.
+- **The Vault never decides who is asking.** The Core authenticates every
+  request and passes down an identity. Session tokens and PINs stop at the
+  Core and never travel.
+- **A Bank with no Vault still banks.** Balances, transfers, pots, pay codes,
+  the bet wallet and escrow all work with no Vault paired or with the cable
+  cut; the Vault's own features say so plainly instead of failing oddly.
+
+**The two hot paths never cross the cable.** `PUMPE_POLL` and
+`ACCOUNT_SUMMARY` are called by every phone several times a second. Unread
+counts, ringing calls and open scans are pushed up by the Vault as they
+change, and the Core answers polls out of its own memory. A pushed entry
+carries its own expiry, so a push that stops arriving cannot leave a phone
+ringing forever.
+
+**Easy Deployment moved back to the Core.** Through 9.2 the Vault held it, on
+the reasoning that a Vault was idle and the Core was not. Both halves of that
+died here: the Vault now answers player requests, and -- worse -- a Vault that
+holds the installer is a Vault you cannot reinstall once it breaks.
+
+**Upgrading.** A Bank arriving from 9.2 still holds every conversation,
+territory, visa, event and app record in its own state file. Pairing a Vault
+hands each table over and clears it, one at a time, acknowledged before the
+Core lets go, so an interrupted handover leaves the data on the Core rather
+than nowhere. It runs on every boot and is silent once there is nothing left
+to move.
+
+- `host_vault_split_test` checks that both halves agree on which routes the
+  Vault answers, that no route exists on both, that the Core keeps none of
+  what it handed over, that a PIN never crosses the cable and is checked
+  before anything is forwarded, that a replayed move id moves money once, and
+  that the poll asks the Vault nothing.
+- `host_vault_migration_test` checks the handover, including that an
+  interrupted one keeps the data and that the numbering counters travel --
+  without them the Vault would start at one and write a second
+  `CHAT00000001` over somebody's conversation.
+- `tests/bank_pair_harness.lua` stands up both real programs and wires their
+  two ends of the cable together. Every test of a moved feature runs through
+  it, because a stub Vault is always more forgiving than the real one, and
+  that is exactly how the "app has no id" bug reached a player.
+
 ## 9.2.3
 
 The 3rd Party Bank Server and the CCG Server never updated themselves.

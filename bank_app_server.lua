@@ -16,7 +16,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- is public, its accounts are opened by whoever wants one, and there is
 -- nothing here that could compromise the Foxy ledger.
 
-local PROGRAM_VERSION = "9.2.3"
+local PROGRAM_VERSION = "9.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")

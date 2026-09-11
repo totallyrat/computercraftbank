@@ -153,7 +153,8 @@ textutils = {
 parallel = { waitForAny = function() error("__BANK_STARTED__", 0) end }
 
 -- Boot one Bank Server as `computer`, with `pairing` already on its disk.
-local function boot(computer, pairing, taps)
+local function boot(computer, pairing, taps, options)
+    options = options or {}
     drawn = {}
     files, directories = {}, { ["/"] = true, ["/pumpe"] = true,
         ["/updates"] = true }
@@ -183,6 +184,10 @@ local function boot(computer, pairing, taps)
     end
     scriptedTaps, ticks = taps or {}, 0
     os.getComputerID = function() return computer end
+    -- A computer that has been made the Vault restarts into bank_vault.lua
+    -- rather than carrying on as a Bank Server, so a reboot here is an
+    -- outcome to assert rather than a crash.
+    os.reboot = function() error("__REBOOTED__", 0) end
     rednet = {
         host = function(protocol, hostname)
             net.claim(computer, protocol, hostname)
@@ -221,6 +226,12 @@ local function boot(computer, pairing, taps)
     }
     local ok, err = pcall(assert(loadfile("../bank_server.lua")))
     assert(not ok, "the Bank should have reached its main loop")
+    if options.expect_reboot then
+        assert(tostring(err) == "__REBOOTED__",
+            "computer #" .. computer .. " should have restarted into"
+                .. " bank_vault.lua, but got: " .. tostring(err))
+        return true
+    end
     if tostring(err) ~= "__BANK_STARTED__" then
         print("---- screen for #" .. computer .. " ----")
         print(table.concat(drawn, "|"))
@@ -237,12 +248,13 @@ local function has(computer, name)
     return false
 end
 
--- A solo Bank claims everything ------------------------------------------------
+-- A Bank with no Vault yet claims everything ------------------------------------
 
 net.reset()
--- Tapping SOLO on the launch screen.
-boot(11, nil, { { 4, 15 } })
-assert(has(11, "PUMPE_BANK_V5/BANK_SERVER"), "a solo Bank is the bank")
+-- Tapping BANK ONLY on the launch screen.
+boot(11, nil, { { 40, 17 } })
+assert(has(11, "PUMPE_BANK_V5/BANK_SERVER"),
+    "a Bank with no Vault is still the bank")
 assert(has(11, "PUMPE_DEPLOY_V5/PUMPE_UPDATES"), "and serves its own depot")
 assert(has(11, "PUMPE_LEDGER_V1/LEDGER_0001"),
     "and answers for bank 0001, so transfers can reach it")
@@ -255,33 +267,27 @@ assert(has(11, "PUMPE_BANK_V5/BANK_SERVER"), "the Core does the banking")
 assert(has(11, "PUMPE_LEDGER_V1/LEDGER_0001"),
     "and is the half that answers the ledger, because it is the half that"
         .. " runs ledgerLoop")
-assert(not has(11, "PUMPE_DEPLOY_V5/PUMPE_UPDATES"),
-    "the depot belongs to the Vault now")
+assert(has(11, "PUMPE_DEPLOY_V5/PUMPE_UPDATES"),
+    "Easy Deployment stays on the Core: a Vault that holds the installer is"
+        .. " a Vault you cannot reinstall once it breaks")
 
--- The Vault starts second, on the same network, and must not die.
-boot(22, { role = "vault", partner = "11" })
-assert(has(22, "PUMPE_PAIR_V1/BANK_VAULT"), "the Vault is reachable as one")
-assert(has(22, "PUMPE_DEPLOY_V5/PUMPE_UPDATES"), "and serves the depot")
-assert(not has(22, "PUMPE_BANK_V5/BANK_SERVER"), "it does no banking")
+-- A computer whose pairing file says it is a Vault is not running the right
+-- program. Since 9.3 a Vault runs bank_vault.lua, so bank_server.lua's job
+-- on such a computer is to fetch it, point startup at it and restart --
+-- never to come up as half a Bank Server and start claiming names.
+local becameVault = boot(22, { role = "vault", partner = "11" },
+    nil, { expect_reboot = true })
+assert(becameVault, "a Vault reboots into bank_vault.lua")
+assert(#net.claimedBy(22) == 0,
+    "and claims nothing on the way out: it is not the Bank, and a name it"
+        .. " held would be a name its own Core could not have")
 
--- The bug: both halves are one bank and share one bank code, so a Vault
--- claiming the ledger name took the one its own Core needed.
-for _, name in ipairs(net.claimedBy(22)) do
-    assert(not name:find("LEDGER_", 1, true),
-        "a Vault must claim no ledger name -- it runs no ledgerLoop, so the"
-            .. " name would be answered by nobody even if it could hold it,"
-            .. " and holding it kills whichever half starts second: " .. name)
-end
+-- The bug that made this rule: both halves are one bank and share one bank
+-- code, so a Vault claiming the ledger name took the one its Core needed and
+-- killed whichever started second with "Hostname in use".
 assert(net.lookup("PUMPE_LEDGER_V1", "LEDGER_0001") == 11,
-    "LEDGER_0001 still resolves to the Core after the Vault has started")
-
--- And the other way round, because whichever starts second is the one that
--- would have died.
-net.reset()
-boot(22, { role = "vault", partner = "11" })
-boot(11, { role = "core", partner = "22" })
-assert(net.lookup("PUMPE_LEDGER_V1", "LEDGER_0001") == 11)
-assert(net.lookup("PUMPE_DEPLOY_V5", "PUMPE_UPDATES") == 22)
+    "LEDGER_0001 still resolves to the Core")
+assert(net.lookup("PUMPE_DEPLOY_V5", "PUMPE_UPDATES") == 11)
 assert(net.lookup("PUMPE_BANK_V5", "BANK_SERVER") == 11)
 
 print("host_pair_hosting_test: OK")

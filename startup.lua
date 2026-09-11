@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "9.2.3"
+local INSTALLER_VERSION = "9.3.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -53,6 +53,12 @@ local roles = {
     -- and a role the installer cannot find is one it refuses to start.
     { id = "tpbank", label = "3RD PARTY BANK SERVER",
       detail = "Hosts a Bank App", hidden = true },
+    -- Reached by pairing from a Bank Server rather than picked here, but it
+    -- has to be in this list all the same: pairing writes a boot marker with
+    -- this id, and a role the installer cannot find is one it refuses to
+    -- start. New in 9.3.
+    { id = "vault", label = "BANK VAULT", detail = "The other half of a Bank",
+      hidden = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
     { id = "ccgserver", label = "CCG SERVER", detail = "Runs the games" },
     { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
@@ -62,6 +68,7 @@ local roles = {
 local rolePrograms = {
     bank = "bank_server.lua",
     tpbank = "bank_app_server.lua",
+    vault = "bank_vault.lua",
     pumpe = "pumpe.lua",
     service = "service_kiosk.lua",
     event = "event_kiosk.lua",

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.2.3"
+local PROGRAM_VERSION = "9.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -45,15 +45,18 @@ local RELEASE = {}
 -- a third-party bank has a balance and nothing else.
 local ledger = setmetatable({}, { __index = util.ledger })
 
--- Pair Mode. A second Bank Server takes the update depot and the app record
--- store off the Core, so banking never queues behind a file transfer. Both
--- halves run this same program and agree which is which when they pair.
+-- Pair Mode. A Bank is two computers joined by a cable: this one, the Core,
+-- holds the money and decides who is asking, and the Vault runs
+-- bank_vault.lua and holds everything that is about an account without being
+-- its balance -- conversations, visas, tickets, app records. A Core with no
+-- Vault still banks; it just cannot answer for what the Vault owns.
 local pair = {
-    role = "solo",              -- "solo", "core" or "vault"
-    code = nil,                 -- the six digits this server is showing
-    partner = nil,              -- the other server's computer id
-    partner_code = nil,
+    role = "solo",              -- "solo" (no Vault yet), "core" or "vault"
+    partner = nil,              -- the other half's computer id
     since = nil,
+    wired = nil,                -- proved to be on a cable when they paired
+    pairing = false,            -- true only while the pairing screen is up
+    online = nil,               -- did the Vault answer the last time we asked
     file = fs.combine(ROOT, "bank_pair_v1.dat"),
 }
 RELEASE.local_files = {
@@ -276,7 +279,8 @@ local function absoluteRootFile(path)
     return combined
 end
 
-local function ensureBankStartup(installerBody)
+local function ensureBankStartup(installerBody, roleId)
+    roleId = roleId or "bank"
     installerBody = cacheInstaller(installerBody)
     local startupPath = "/startup.lua"
     local existing = util.readFile(startupPath)
@@ -289,7 +293,7 @@ local function ensureBankStartup(installerBody)
     end
     local body = DEPLOY.role_marker .. "\n"
         .. "shell.run(" .. string.format("%q", absoluteRootFile("installer.lua"))
-        .. ", \"--boot\", \"bank\")\n"
+        .. ", \"--boot\", " .. string.format("%q", roleId) .. ")\n"
     util.writeFile(startupPath, body)
     return true
 end
@@ -488,14 +492,11 @@ local function blankState()
         schema = 8,
         created_at = util.nowMs(),
         sequence = {
-            account = 0, company = 0, terminal = 0, event = 0,
-            ticket_type = 0, ticket = 0, transaction = 0,
+            account = 0, company = 0, terminal = 0, transaction = 0,
             period = 0, notification = 0, subscription = 0,
-            territory = 0, visa = 0,
-            visa_application = 0, visit = 0, border = 0,
             bet_hold = 0, bet_activity = 0,
             ccg_console = 0, ccg_lobby = 0,
-            conversation = 0, proximity = 0, announcement = 0,
+            proximity = 0, announcement = 0,
         },
         accounts = {},
         account_names = {},
@@ -504,27 +505,20 @@ local function blankState()
         bank_account_ids = {},
         companies = {},
         terminals = {},
-        events = {},
-        ticket_types = {},
-        tickets = {},
         transactions = {},
         declaration_periods = {},
         declarations = {},
         active_pay_codes = {},
-        territories = {},
-        territory_names = {},
-        visas = {},
-        visa_codes = {},
-        visa_applications = {},
-        visits = {},
-        border_controllers = {},
         -- Lobbies and consoles moved to ccg_server.lua in 9.1. What the
         -- Bank holds is the money in play.
         ccg_escrow = {},
         ccg_servers = {},
         ccg_house_profit = 0,
-        conversations = {},
-        direct_conversations = {},
+        -- Conversations, calls, territories, visas, border registers, events,
+        -- tickets and app records moved to bank_vault.lua in 9.3. A Bank
+        -- upgrading from 9.2 still has them in its saved state; pair.migrate
+        -- hands each one over and clears it, so they are deliberately absent
+        -- from a fresh Bank rather than kept empty here.
         proximity_offers = {},
         developers = {},
         announcements = {},
@@ -565,10 +559,6 @@ local function ensureState()
             account.bet_wallet.balance or 0) or 0
         account.bet_wallet.holds = account.bet_wallet.holds or {}
         account.bet_wallet.activity = account.bet_wallet.activity or {}
-        account.friends = account.friends or {}
-        account.friend_requests_in = account.friend_requests_in or {}
-        account.friend_requests_out = account.friend_requests_out or {}
-        account.conversation_ids = account.conversation_ids or {}
         if account.name then
             state.account_names[util.normalName(account.name)] = account.account_id
         end
@@ -594,51 +584,12 @@ local function ensureState()
         company.linked_terminal_ids = company.linked_terminal_ids or {}
         company.status = company.status or "active"
     end
-    for _, event in pairs(state.events) do
-        event.ticket_type_ids = event.ticket_type_ids or {}
-        event.status = event.status or "active"
-    end
-    state.schema = 8
-    state.territory_names = {}
-    for territoryId, territory in pairs(state.territories) do
-        territory.territory_id = territory.territory_id or territoryId
-        territory.citizen_account_ids = territory.citizen_account_ids or {}
-        territory.free_roam_territory_ids =
-            territory.free_roam_territory_ids or {}
-        territory.status = territory.status or "active"
-        if territory.name then
-            state.territory_names[util.normalName(territory.name)] =
-                territory.territory_id
-        end
-    end
-    state.visa_codes = {}
-    for visaId, document in pairs(state.visas) do
-        document.visa_id = document.visa_id or visaId
-        document.status = document.status or
-            (document.kind == "citizenship" and "active" or "issued")
-        if document.code then
-            document.code = string.upper(util.trim(document.code))
-            state.visa_codes[document.code] = document.visa_id
-        end
-    end
-    for applicationId, application in pairs(state.visa_applications) do
-        application.application_id =
-            application.application_id or applicationId
-        application.status = application.status or "pending"
-    end
-    for visitId, visit in pairs(state.visits) do
-        visit.visit_id = visit.visit_id or visitId
-        visit.status = visit.status or "visiting"
-        local document = visit.visa_id and state.visas[visit.visa_id]
-        if document and document.kind == "visa"
-            and (visit.status == "visiting" or visit.status == "overdue") then
-            document.status = visit.status
-        end
-    end
-    for controllerId, controller in pairs(state.border_controllers) do
-        controller.controller_id = controller.controller_id or controllerId
-        controller.status = controller.status or "active"
-    end
+    -- Everything that used to be repaired here -- territory names, visa
+    -- codes, visit statuses, event ticket lists -- is repaired on the Vault
+    -- now, because that is where those records live. A Bank arriving from
+    -- 9.2 still has its copies; pair.migrate hands them over untouched and
+    -- the Vault indexes them on the way in.
+    state.schema = 9
     state.ccg_escrow = state.ccg_escrow or {}
     state.ccg_servers = state.ccg_servers or {}
 end
@@ -825,6 +776,33 @@ local function requireSpender(payload)
     return account
 end
 
+-- What the Vault is told about who is asking. Never a session token: the
+-- Core has already decided this, and a Vault that has not been given the
+-- means to check cannot be talked into acting as somebody else.
+local function vaultCaller(account, extra)
+    local caller = {
+        account_id = account.account_id,
+        name = account.name,
+        position = account.position,
+    }
+    for key, value in pairs(extra or {}) do caller[key] = value end
+    return caller
+end
+
+-- Friendship is a Vault record, and a handful of money routes here turn on
+-- it. Worth the hop: sending cash to a friend is rare next to a balance
+-- check, and getting it wrong would mean paying a stranger.
+local function requireVaultFriend(account, accountId)
+    pair.forward("VAULT_FRIEND", { account_id = accountId },
+        vaultCaller(account))
+    -- The Vault answers whether they are friends. Who they are, and what
+    -- their money is, is still this half's to look up.
+    local friend = state.accounts[accountId]
+    need(friend, "NOT_FOUND", "Account not found")
+    checkAccountActive(friend, true)
+    return friend
+end
+
 local function requireTerminal(payload)
     local terminal = state.terminals[payload and payload.terminal_id]
     need(terminal and terminal.auth_token == payload.terminal_token,
@@ -832,17 +810,6 @@ local function requireTerminal(payload)
     need(terminal.status == "active", "TERMINAL_INACTIVE", "Kiosk is inactive")
     terminal.last_seen = util.nowMs()
     return terminal
-end
-
-local function requireBorderController(payload)
-    local controller =
-        state.border_controllers[payload and payload.controller_id]
-    need(controller and controller.auth_token == payload.controller_token,
-        "BORDER_AUTH", "Border Controller is not registered")
-    need(controller.status == "active",
-        "BORDER_INACTIVE", "Border Controller is inactive")
-    controller.last_seen = util.nowMs()
-    return controller
 end
 
 local function requireGovernment(payload)
@@ -901,194 +868,15 @@ local function mapCount(map)
     return count
 end
 
-local function territoryOwner(account, territoryId)
-    local territory = state.territories[territoryId]
-    need(territory and territory.status == "active",
-        "TERRITORY_NOT_FOUND", "Territory not found")
-    need(territory.owner_account_id == account.account_id,
-        "NOT_TERRITORY_OWNER", "You do not control that territory")
-    return territory
-end
 
-local function newVisaCode()
-    local code
-    repeat
-        code = util.randomString(8, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-    until not state.visa_codes[code]
-    return code
-end
 
-local function matchingDocument(accountId, territoryId, kind)
-    for _, document in pairs(state.visas) do
-        if document.account_id == accountId
-            and document.territory_id == territoryId
-            and (not kind or document.kind == kind)
-            and document.status ~= "revoked"
-            and document.status ~= "expired"
-            and document.status ~= "used" then
-            return document
-        end
-    end
-    return nil
-end
 
-local function issueDocument(account, territory, kind, options)
-    options = options or {}
-    local existing = matchingDocument(
-        account.account_id, territory.territory_id, kind)
-    if existing then return nil, existing end
-    local visaId = nextId("visa")
-    local document = {
-        visa_id = visaId,
-        code = newVisaCode(),
-        account_id = account.account_id,
-        territory_id = territory.territory_id,
-        kind = kind,
-        duration_days = kind == "visa"
-            and math.floor(tonumber(options.duration_days) or 1) or nil,
-        status = kind == "citizenship" and "active" or "issued",
-        issued_day = util.ingameDay(),
-        issued_by_account_id = options.issued_by_account_id,
-        application_id = options.application_id,
-    }
-    state.visas[visaId] = document
-    state.visa_codes[document.code] = visaId
-    if kind == "citizenship" then
-        territory.citizen_account_ids[account.account_id] = true
-    end
-    return document
-end
 
-local function openVisit(accountId, territoryId, visaId)
-    local newest
-    for _, visit in pairs(state.visits) do
-        if visit.account_id == accountId
-            and visit.territory_id == territoryId
-            and (not visaId or visit.visa_id == visaId)
-            and (visit.status == "visiting" or visit.status == "overdue")
-            and (not newest
-                or (visit.entered_at or 0) > (newest.entered_at or 0)) then
-            newest = visit
-        end
-    end
-    return newest
-end
 
-local function publicVisit(visit)
-    if not visit then return nil end
-    local remaining
-    if visit.due_day then
-        remaining = math.max(0, visit.due_day - util.ingameDay() + 1)
-    end
-    return {
-        visit_id = visit.visit_id,
-        territory_id = visit.territory_id,
-        territory_name = state.territories[visit.territory_id]
-            and state.territories[visit.territory_id].name or "Unknown",
-        authorization = visit.authorization,
-        entered_day = visit.entered_day,
-        due_day = visit.due_day,
-        remaining_days = remaining,
-        permanent = visit.due_day == nil,
-        status = visit.status,
-    }
-end
 
-local function publicDocument(document)
-    local territory = state.territories[document.territory_id]
-    local freeRoam = {}
-    if document.kind == "citizenship" then
-        for _, destination in pairs(state.territories) do
-            if destination.status == "active"
-                and destination.territory_id ~= document.territory_id
-                and destination.free_roam_territory_ids[
-                    document.territory_id] then
-                freeRoam[#freeRoam + 1] = {
-                    territory_id = destination.territory_id,
-                    territory_name = destination.name,
-                }
-            end
-        end
-        table.sort(freeRoam, function(a, b)
-            return a.territory_name < b.territory_name
-        end)
-    end
-    local visits = {}
-    for _, visit in pairs(state.visits) do
-        if visit.account_id == document.account_id
-            and visit.visa_id == document.visa_id
-            and (visit.status == "visiting" or visit.status == "overdue") then
-            visits[#visits + 1] = publicVisit(visit)
-        end
-    end
-    table.sort(visits, function(a, b)
-        return (a.entered_day or 0) > (b.entered_day or 0)
-    end)
-    return {
-        visa_id = document.visa_id,
-        code = document.code,
-        kind = document.kind,
-        territory_id = document.territory_id,
-        territory_name = territory and territory.name or "Unknown",
-        duration_days = document.duration_days,
-        permanent = document.kind == "citizenship",
-        status = document.status,
-        issued_day = document.issued_day,
-        free_roam = freeRoam,
-        visits = visits,
-    }
-end
 
-local function publicApplication(application)
-    local territory = state.territories[application.territory_id]
-    local applicant = state.accounts[application.account_id]
-    return {
-        application_id = application.application_id,
-        territory_id = application.territory_id,
-        territory_name = territory and territory.name or "Unknown",
-        applicant_name = applicant and applicant.name or "Unknown",
-        requested_days = application.requested_days,
-        status = application.status,
-        created_day = application.created_day,
-        reviewed_day = application.reviewed_day,
-        visa_id = application.visa_id,
-    }
-end
 
-local function accessForAccount(accountId, destination)
-    local temporary
-    for _, document in pairs(state.visas) do
-        if document.account_id == accountId
-            and document.status ~= "revoked"
-            and document.status ~= "expired"
-            and document.status ~= "used" then
-            if document.kind == "citizenship"
-                and document.territory_id == destination.territory_id then
-                return "citizenship", document
-            elseif document.kind == "citizenship"
-                and destination.free_roam_territory_ids[
-                    document.territory_id] then
-                return "free_roam", document
-            elseif document.kind == "visa"
-                and document.territory_id == destination.territory_id then
-                temporary = document
-            end
-        end
-    end
-    if temporary then return "visa", temporary end
-    return nil
-end
 
-local function pendingApplication(accountId, territoryId)
-    for _, application in pairs(state.visa_applications) do
-        if application.account_id == accountId
-            and application.territory_id == territoryId
-            and application.status == "pending" then
-            return application
-        end
-    end
-    return nil
-end
 
 local function transaction(account, kind, amount, counterparty, description, extra)
     local item = {
@@ -1270,7 +1058,6 @@ end
 
 local function cleanupEphemeral()
     local now = util.nowMs()
-    local travelChanged = false
     for code, payment in pairs(state.active_pay_codes) do
         if payment.expires_at <= now and payment.status == "pending" then
             payment.status = "expired"
@@ -1287,19 +1074,6 @@ local function cleanupEphemeral()
     for token, session in pairs(betSessions) do
         if session.expires_at <= now then betSessions[token] = nil end
     end
-    local today = util.ingameDay()
-    for _, visit in pairs(state.visits) do
-        if visit.status == "visiting" and visit.due_day
-            and visit.due_day < today then
-            visit.status = "overdue"
-            local document = state.visas[visit.visa_id]
-            if document and document.kind == "visa" then
-                document.status = "overdue"
-            end
-            travelChanged = true
-        end
-    end
-    if travelChanged then save() end
 end
 
 local function validateAmount(value, maximum)
@@ -1575,17 +1349,17 @@ function actions.LOGIN(payload)
     return { account = publicAccount(account), session_token = createSession(account) }
 end
 
--- Assigned by the social section further down, which needs helpers defined
--- after this route. The home screen badges come from one summary call.
-local socialBadges
-
 function actions.ACCOUNT_SUMMARY(payload)
     local account = requireSession(payload)
     local unread = 0
     for _, item in ipairs(account.notifications) do
         if not item.read then unread = unread + 1 end
     end
-    local badges = socialBadges and socialBadges(account) or {}
+    -- Unread counts belong to the Vault, but this is the most called action
+    -- on the network and a cable hop inside it would be felt everywhere. The
+    -- Vault pushes the counts up whenever they move; this reads them from
+    -- memory, and a Vault that is offline simply leaves them where they were.
+    local badges = account.badges or {}
     return {
         account = publicAccount(account),
         unread_notifications = unread,
@@ -2186,795 +1960,63 @@ local SOCIAL = { max_group = 8, max_message = 160 }
 SOCIAL.max_conversation = 60
 SOCIAL.ring_ms = 30 * 1000
 SOCIAL.idle_ms = 10 * 60 * 1000
-local urgentCalls = {}
 
 -- The proximity scan engine, gathered under one name. Open scans are
 -- deliberately not persisted: a Bank restart drops a half-finished door check
 -- the way a dropped connection would.
-local scans = { requests = {}, kinds = { ticket = true, visa = true } }
+local scans = { kinds = { ticket = true, visa = true } }
 -- Declared here rather than beside its own section below: Urgent
 -- Contact reaches into it, and a local declared further down the file
 -- is a nil global at any use site above it.
 local appstore = {}
 
-local function socialAccount(account)
-    account.friends = account.friends or {}
-    account.friend_requests_in = account.friend_requests_in or {}
-    account.friend_requests_out = account.friend_requests_out or {}
-    account.conversation_ids = account.conversation_ids or {}
-    return account
-end
 
-local function areFriends(account, other)
-    return socialAccount(account).friends[other.account_id] == true
-end
 
-local function requireFriend(account, accountId)
-    local other = state.accounts[accountId]
-    checkAccountActive(other)
-    need(areFriends(account, other), "NOT_FRIENDS",
-        "You can only do that with a friend")
-    return socialAccount(other)
-end
 
-local function linkFriends(first, second)
-    socialAccount(first).friends[second.account_id] = true
-    socialAccount(second).friends[first.account_id] = true
-    first.friend_requests_in[second.account_id] = nil
-    first.friend_requests_out[second.account_id] = nil
-    second.friend_requests_in[first.account_id] = nil
-    second.friend_requests_out[first.account_id] = nil
-end
 
-local function friendCard(accountId)
-    local other = state.accounts[accountId]
-    if not other then return nil end
-    return { account_id = other.account_id, name = other.name }
-end
 
-function actions.FRIEND_OVERVIEW(payload)
-    local account = socialAccount(requireSession(payload))
-    local friends, incoming, outgoing = {}, {}, {}
-    for friendId in pairs(account.friends) do
-        friends[#friends + 1] = friendCard(friendId)
-    end
-    for requesterId in pairs(account.friend_requests_in) do
-        incoming[#incoming + 1] = friendCard(requesterId)
-    end
-    for targetId in pairs(account.friend_requests_out) do
-        outgoing[#outgoing + 1] = friendCard(targetId)
-    end
-    local byName = function(a, b) return a.name < b.name end
-    table.sort(friends, byName)
-    table.sort(incoming, byName)
-    table.sort(outgoing, byName)
-    return { friends = friends, incoming = incoming, outgoing = outgoing }
-end
 
-function actions.FRIEND_SEARCH(payload)
-    local account = socialAccount(requireSession(payload))
-    local query = util.normalName(util.trim(payload.query or ""))
-    need(#query >= 2, "QUERY_TOO_SHORT", "Type at least two characters")
-    local results = {}
-    for normal, accountId in pairs(state.account_names) do
-        local other = state.accounts[accountId]
-        if accountId ~= account.account_id and other and not other.banned
-            and normal:find(query, 1, true) then
-            results[#results + 1] = {
-                account_id = accountId,
-                name = other.name,
-                friend = account.friends[accountId] == true,
-                requested = account.friend_requests_out[accountId] == true,
-                incoming = account.friend_requests_in[accountId] ~= nil,
-            }
-        end
-    end
-    table.sort(results, function(a, b) return a.name < b.name end)
-    while #results > 12 do table.remove(results) end
-    return { results = results }
-end
 
-function actions.FRIEND_REQUEST(payload)
-    local account = socialAccount(requireSession(payload))
-    local other = payload.account_id and state.accounts[payload.account_id]
-        or accountByName(payload.name or "")
-    checkAccountActive(other)
-    need(other.account_id ~= account.account_id,
-        "INVALID_FRIEND", "That is your own account")
-    socialAccount(other)
-    need(not account.friends[other.account_id], "ALREADY_FRIENDS",
-        other.name .. " is already a friend")
-    if account.friend_requests_in[other.account_id] then
-        linkFriends(account, other)
-        notification(other, "Friend added",
-            account.name .. " accepted your friend request", "social")
-        save()
-        return { status = "friends", name = other.name }
-    end
-    if not account.friend_requests_out[other.account_id] then
-        account.friend_requests_out[other.account_id] = true
-        other.friend_requests_in[account.account_id] = {
-            created_day = util.ingameDay(),
-            created_time = util.formatClock(),
-        }
-        notification(other, "Friend request",
-            account.name .. " wants to be your friend", "social")
-        save()
-    end
-    return { status = "requested", name = other.name }
-end
 
-function actions.FRIEND_RESPOND(payload)
-    local account = socialAccount(requireSession(payload))
-    local other = state.accounts[payload.account_id]
-    need(other and account.friend_requests_in[other.account_id],
-        "NOT_FOUND", "That friend request is no longer waiting")
-    socialAccount(other)
-    if payload.accept == true then
-        linkFriends(account, other)
-        notification(other, "Friend added",
-            account.name .. " accepted your friend request", "social")
-        save()
-        return { status = "friends", name = other.name }
-    end
-    account.friend_requests_in[other.account_id] = nil
-    other.friend_requests_out[account.account_id] = nil
-    save()
-    return { status = "declined", name = other.name }
-end
 
-function actions.FRIEND_REMOVE(payload)
-    local account = socialAccount(requireSession(payload))
-    local other = state.accounts[payload.account_id]
-    need(other, "NOT_FOUND", "Account not found")
-    socialAccount(other)
-    account.friends[other.account_id] = nil
-    other.friends[account.account_id] = nil
-    save()
-    return { status = "removed", name = other.name }
-end
 
 -- Conversations -------------------------------------------------------------
 
-local function directKey(firstId, secondId)
-    if firstId < secondId then return firstId .. "|" .. secondId end
-    return secondId .. "|" .. firstId
-end
 
-local function unreadFor(conversation, accountId)
-    local member = conversation.members[accountId]
-    if not member then return 0 end
-    local unread = 0
-    for _, item in ipairs(conversation.messages) do
-        if item.seq > (member.last_read_seq or 0)
-            and item.sender_id ~= accountId then
-            unread = unread + 1
-        end
-    end
-    return unread
-end
 
-local function conversationTitle(conversation, accountId)
-    if conversation.kind == "government" then return "Government" end
-    if conversation.kind == "group" then return conversation.title end
-    for _, memberId in ipairs(conversation.member_ids) do
-        if memberId ~= accountId then
-            local other = state.accounts[memberId]
-            return other and other.name or "Unknown"
-        end
-    end
-    return "Empty chat"
-end
 
-local function conversationSummary(conversation, account)
-    local last = conversation.messages[#conversation.messages]
-    local names = {}
-    for _, memberId in ipairs(conversation.member_ids) do
-        local member = state.accounts[memberId]
-        if member then names[#names + 1] = member.name end
-    end
-    return {
-        conversation_id = conversation.conversation_id,
-        kind = conversation.kind,
-        title = conversationTitle(conversation, account.account_id),
-        member_names = names,
-        member_count = #conversation.member_ids,
-        unread = unreadFor(conversation, account.account_id),
-        last_at = conversation.last_at,
-        last_preview = last and (last.kind == "text" and last.body
-            or last.kind == "money_request"
-                and ("asked for " .. util.money(last.amount, config.currency))
-            or last.kind == "money_sent"
-                and ("sent " .. util.money(last.amount, config.currency))
-            or last.body) or "No messages yet",
-        last_sender = last and last.sender_name or nil,
-    }
-end
 
-local function appendMessage(conversation, senderId, kind, body, extra)
-    local sender = senderId and state.accounts[senderId]
-    local item = {
-        seq = conversation.next_seq,
-        sender_id = senderId,
-        sender_name = sender and sender.name
-            or (senderId == "GOVERNMENT" and "Government") or "PUMPE",
-        kind = kind,
-        body = util.safeText(body, SOCIAL.max_message),
-        day = util.ingameDay(),
-        time = util.formatClock(),
-        at = util.nowMs(),
-    }
-    for key, value in pairs(extra or {}) do item[key] = value end
-    conversation.next_seq = conversation.next_seq + 1
-    conversation.messages[#conversation.messages + 1] = item
-    while #conversation.messages > SOCIAL.max_conversation do
-        table.remove(conversation.messages, 1)
-    end
-    conversation.last_at = item.at
-    if senderId and conversation.members[senderId] then
-        conversation.members[senderId].last_read_seq = item.seq
-    end
-    return item
-end
 
--- Only the first unread message in a conversation raises an alert, so a busy
--- group chat cannot flood the 50-entry Alerts list.
-local function notifyNewMessage(conversation, senderId, preview)
-    for _, memberId in ipairs(conversation.member_ids) do
-        if memberId ~= senderId then
-            local member = state.accounts[memberId]
-            if member and unreadFor(conversation, memberId) <= 1 then
-                notification(member, "Message from "
-                    .. conversationTitle(conversation, memberId),
-                    preview, "message")
-            end
-        end
-    end
-end
 
-local function newConversation(kind, memberIds, title, ownerId)
-    local conversationId = nextId("conversation")
-    local conversation = {
-        conversation_id = conversationId,
-        kind = kind,
-        title = title,
-        owner_id = ownerId,
-        member_ids = memberIds,
-        members = {},
-        messages = {},
-        next_seq = 1,
-        created_at = util.nowMs(),
-        last_at = util.nowMs(),
-    }
-    for _, memberId in ipairs(memberIds) do
-        conversation.members[memberId] = { last_read_seq = 0 }
-        local member = state.accounts[memberId]
-        if member then socialAccount(member).conversation_ids[conversationId] = true end
-    end
-    state.conversations[conversationId] = conversation
-    if kind == "direct" then
-        state.direct_conversations[directKey(memberIds[1], memberIds[2])] =
-            conversationId
-    end
-    return conversation
-end
 
-local function directConversation(first, second)
-    local existing = state.direct_conversations[
-        directKey(first.account_id, second.account_id)]
-    local conversation = existing and state.conversations[existing]
-    if conversation then return conversation end
-    return newConversation("direct",
-        { first.account_id, second.account_id }, nil, first.account_id)
-end
 
-local function requireConversation(account, conversationId)
-    local conversation = state.conversations[conversationId]
-    need(conversation and conversation.members[account.account_id],
-        "NOT_FOUND", "That chat is not available")
-    return conversation
-end
 
-function actions.CHAT_LIST(payload)
-    local account = socialAccount(requireSession(payload))
-    local list = {}
-    for conversationId in pairs(account.conversation_ids) do
-        local conversation = state.conversations[conversationId]
-        if conversation then
-            list[#list + 1] = conversationSummary(conversation, account)
-        else
-            account.conversation_ids[conversationId] = nil
-        end
-    end
-    table.sort(list, function(a, b)
-        return (a.last_at or 0) > (b.last_at or 0)
-    end)
-    return { conversations = list }
-end
 
-function actions.CHAT_START(payload)
-    local account = socialAccount(requireSession(payload))
-    local requested = type(payload.account_ids) == "table"
-        and payload.account_ids or {}
-    need(#requested >= 1, "NO_MEMBERS", "Choose at least one friend")
-    need(#requested + 1 <= SOCIAL.max_group, "TOO_MANY_MEMBERS",
-        "A group holds at most " .. SOCIAL.max_group .. " people")
-    local memberIds, seen = { account.account_id }, {
-        [account.account_id] = true,
-    }
-    for _, accountId in ipairs(requested) do
-        if not seen[accountId] then
-            requireFriend(account, accountId)
-            seen[accountId] = true
-            memberIds[#memberIds + 1] = accountId
-        end
-    end
-    if #memberIds == 2 then
-        local conversation = directConversation(account,
-            state.accounts[memberIds[2]])
-        save()
-        return { conversation = conversationSummary(conversation, account) }
-    end
-    local title = util.safeText(util.trim(payload.title or ""), 24)
-    if title == "" then title = account.name .. "'s group" end
-    local conversation = newConversation("group", memberIds, title,
-        account.account_id)
-    appendMessage(conversation, nil, "system",
-        account.name .. " created " .. title)
-    for _, memberId in ipairs(memberIds) do
-        if memberId ~= account.account_id then
-            notification(state.accounts[memberId], "Added to a group",
-                account.name .. " added you to " .. title, "message")
-        end
-    end
-    save()
-    return { conversation = conversationSummary(conversation, account) }
-end
 
-function actions.CHAT_OPEN(payload)
-    local account = socialAccount(requireSession(payload))
-    local conversation = requireConversation(account, payload.conversation_id)
-    local afterSeq = math.max(0, math.floor(tonumber(payload.after_seq) or 0))
-    local messages = {}
-    for _, item in ipairs(conversation.messages) do
-        if item.seq > afterSeq then messages[#messages + 1] = util.copy(item) end
-    end
-    -- An open chat polls this every second. Only write the database when the
-    -- read marker actually moved.
-    local member = conversation.members[account.account_id]
-    if payload.mark_read ~= false
-        and member.last_read_seq ~= conversation.next_seq - 1 then
-        member.last_read_seq = conversation.next_seq - 1
-        save()
-    end
-    return {
-        conversation = conversationSummary(conversation, account),
-        messages = messages,
-        next_seq = conversation.next_seq,
-    }
-end
 
-function actions.CHAT_SEND(payload)
-    local account = socialAccount(requireSession(payload))
-    local conversation = requireConversation(account, payload.conversation_id)
-    local body = util.safeText(util.trim(payload.body or ""), SOCIAL.max_message)
-    need(#body > 0, "EMPTY_MESSAGE", "Type a message first")
-    local item = appendMessage(conversation, account.account_id, "text", body)
-    notifyNewMessage(conversation, account.account_id, body)
-    save()
-    return { message = util.copy(item) }
-end
 
-function actions.CHAT_REQUEST_MONEY(payload)
-    local account = socialAccount(requireSession(payload))
-    local conversation = requireConversation(account, payload.conversation_id)
-    need(conversation.kind ~= "government", "GOVERNMENT_THREAD",
-        "Only the government can move money in this chat")
-    local amount = validateAmount(payload.amount)
-    local item = appendMessage(conversation, account.account_id,
-        "money_request", util.safeText(payload.note or "", 60), {
-            amount = amount,
-            status = "pending",
-        })
-    notifyNewMessage(conversation, account.account_id,
-        account.name .. " asked for " .. util.money(amount, config.currency))
-    save()
-    return { message = util.copy(item) }
-end
 
-local function conversationCounterpart(conversation, account, accountId)
-    if accountId then
-        need(conversation.members[accountId], "NOT_FOUND",
-            "That person is not in this chat")
-        return state.accounts[accountId]
-    end
-    need(conversation.kind == "direct", "CHOOSE_MEMBER",
-        "Choose who to pay in a group chat")
-    for _, memberId in ipairs(conversation.member_ids) do
-        if memberId ~= account.account_id then return state.accounts[memberId] end
-    end
-end
 
-function actions.CHAT_SEND_MONEY(payload)
-    local account = socialAccount(requireSpender(payload))
-    local conversation = requireConversation(account, payload.conversation_id)
-    need(conversation.kind ~= "government", "GOVERNMENT_THREAD",
-        "Only the government can move money in this chat")
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local recipient = conversationCounterpart(conversation, account,
-        payload.to_account_id)
-    checkAccountActive(recipient)
-    local quote = performTransfer(account, recipient.name, payload.amount,
-        "Sent in Messages")
-    appendMessage(conversation, account.account_id, "money_sent",
-        "sent " .. util.money(quote.amount, config.currency)
-            .. " to " .. recipient.name,
-        { amount = quote.amount, to_account_id = recipient.account_id })
-    save()
-    return { quote = quote }
-end
 
-function actions.CHAT_PAY_REQUEST(payload)
-    local account = socialAccount(requireSession(payload))
-    local conversation = requireConversation(account, payload.conversation_id)
-    -- Paying the government is never blocked by owing the government.
-    if conversation.kind ~= "government" then checkNoTaxDemand(account) end
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local requestSeq = math.floor(tonumber(payload.seq) or 0)
-    local target
-    for _, item in ipairs(conversation.messages) do
-        if item.seq == requestSeq and item.kind == "money_request" then
-            target = item
-        end
-    end
-    need(target, "NOT_FOUND", "That money request is no longer here")
-    need(target.status == "pending", "ALREADY_HANDLED",
-        "That request was already handled")
-    need(target.sender_id ~= account.account_id, "OWN_REQUEST",
-        "That is your own request")
-    -- A government demand is paid to the state. There is no counterpart
-    -- account to credit, so it settles like a fine rather than a transfer.
-    if conversation.kind == "government" then
-        local amount = validateAmount(target.amount)
-        need(account.balance >= amount, "INSUFFICIENT_FUNDS",
-            "Not enough money to pay this")
-        account.balance = util.roundMoney(account.balance - amount)
-        state.tax_revenue = util.roundMoney((state.tax_revenue or 0) + amount)
-        transaction(account, "government", -amount, "Government",
-            util.safeText(target.body or "Government demand", 60))
-        target.status = "paid"
-        target.paid_by = account.account_id
-        appendMessage(conversation, account.account_id, "money_sent",
-            "paid " .. util.money(amount, config.currency) .. " to Government",
-            { amount = amount })
-        logActivity(account.name .. " paid a government demand", colors.lime)
-        save()
-        return { quote = { amount = amount, total = amount, fee = 0,
-            recipient = "Government" } }
-    end
-    local recipient = state.accounts[target.sender_id]
-    checkAccountActive(recipient)
-    local quote = performTransfer(account, recipient.name, target.amount,
-        "Money request in Messages")
-    target.status = "paid"
-    target.paid_by = account.account_id
-    appendMessage(conversation, account.account_id, "money_sent",
-        "paid " .. util.money(quote.amount, config.currency)
-            .. " to " .. recipient.name,
-        { amount = quote.amount, to_account_id = recipient.account_id })
-    save()
-    return { quote = quote }
-end
 
-function actions.CHAT_DECLINE_REQUEST(payload)
-    local account = socialAccount(requireSession(payload))
-    local conversation = requireConversation(account, payload.conversation_id)
-    local requestSeq = math.floor(tonumber(payload.seq) or 0)
-    for _, item in ipairs(conversation.messages) do
-        if item.seq == requestSeq and item.kind == "money_request"
-            and item.status == "pending"
-            and item.sender_id ~= account.account_id then
-            item.status = "declined"
-            appendMessage(conversation, account.account_id, "system",
-                account.name .. " declined the request")
-            save()
-            return { status = "declined" }
-        end
-    end
-    need(false, "NOT_FOUND", "That money request is no longer here")
-end
 
-socialBadges = function(account)
-    socialAccount(account)
-    local messages, requests, friends = 0, 0, 0
-    for conversationId in pairs(account.conversation_ids) do
-        local conversation = state.conversations[conversationId]
-        if conversation then
-            messages = messages + unreadFor(conversation, account.account_id)
-        end
-    end
-    for _ in pairs(account.friend_requests_in) do requests = requests + 1 end
-    for _ in pairs(account.friends) do friends = friends + 1 end
-    return { messages = messages, friend_requests = requests, friends = friends }
-end
 
 -- Urgent Contact ------------------------------------------------------------
 
-local function endCall(call, reason, endedById)
-    if call.status == "ended" then return call end
-    call.status = "ended"
-    call.ended_at = util.nowMs()
-    call.ended_reason = reason
-    call.ended_by = endedById
-    if call.save_votes[call.from_id] and call.save_votes[call.to_id] then
-        local from = state.accounts[call.from_id]
-        local to = state.accounts[call.to_id]
-        if from and to then
-            local conversation = directConversation(from, to)
-            appendMessage(conversation, nil, "system",
-                "Urgent Contact transcript saved")
-            for _, item in ipairs(call.messages) do
-                if item.kind ~= "system" then
-                    appendMessage(conversation, item.sender_id, item.kind,
-                        item.body, { amount = item.amount })
-                end
-            end
-            call.saved = true
-            save()
-        end
-    end
-    return call
-end
 
-local function cleanupUrgentCalls()
-    local now = util.nowMs()
-    for callId, call in pairs(urgentCalls) do
-        if call.status == "ringing" and now - call.created_at > SOCIAL.ring_ms then
-            call.status = "missed"
-            call.ended_at = now
-            local to = state.accounts[call.to_id]
-            local from = state.accounts[call.from_id]
-            if to then
-                notification(to, "Missed Urgent Contact",
-                    call.from_name .. " tried to reach you", "warning")
-            end
-            if from then
-                notification(from, "No answer",
-                    call.to_name .. " did not answer", "warning")
-            end
-            save()
-        elseif call.status == "active" and now - (call.last_at or now) > SOCIAL.idle_ms then
-            endCall(call, "Timed out")
-        elseif call.status ~= "ringing" and call.status ~= "active"
-            and (call.ended_at or now) + 120 * 1000 < now then
-            urgentCalls[callId] = nil
-        end
-    end
-end
 
-local function busyCall(accountId)
-    for _, call in pairs(urgentCalls) do
-        if (call.status == "ringing" or call.status == "active")
-            and (call.from_id == accountId or call.to_id == accountId) then
-            return call
-        end
-    end
-    return nil
-end
 
-local function requireCall(account, callId)
-    local call = urgentCalls[callId]
-    need(call and (call.from_id == account.account_id
-        or call.to_id == account.account_id),
-        "NOT_FOUND", "That Urgent Contact has ended")
-    return call
-end
 
-local function publicCall(call, accountId)
-    local mine = call.from_id == accountId
-    return {
-        call_id = call.call_id,
-        status = call.status,
-        other_name = mine and call.to_name or call.from_name,
-        other_id = mine and call.to_id or call.from_id,
-        outgoing = mine,
-        saved = call.saved == true,
-        save_votes = (call.save_votes[call.from_id] and 1 or 0)
-            + (call.save_votes[call.to_id] and 1 or 0),
-        i_saved = call.save_votes[accountId] == true,
-        ended_reason = call.ended_reason,
-        next_seq = call.next_seq,
-        app_name = call.app_name,
-    }
-end
 
-function actions.URGENT_RING(payload)
-    local account = requireSession(payload)
-    cleanupUrgentCalls()
-    for _, call in pairs(urgentCalls) do
-        if call.to_id == account.account_id and call.status == "ringing" then
-            return { call = publicCall(call, account.account_id) }
-        end
-    end
-    return {}
-end
 
-function actions.URGENT_CALL(payload)
-    local session = requireSession(payload)
-    local account = socialAccount(session)
-    cleanupUrgentCalls()
-    local other = requireFriend(account, payload.account_id)
-    -- The Urgent Contact API. A messaging app can raise the same alert the
-    -- PUMPE raises, but it has to be signed in, and the name on the alert
-    -- comes from the grant rather than from the app asking.
-    local appName
-    if payload.app_id then
-        appName = appstore.requireGrant(session,
-            appstore.appId(payload)).app_name
-    end
-    need(not busyCall(account.account_id), "CALL_BUSY",
-        "You already have an Urgent Contact open")
-    need(not busyCall(other.account_id), "CALL_BUSY",
-        other.name .. " is already on an Urgent Contact")
-    local call = {
-        call_id = util.token("CALL"),
-        from_id = account.account_id,
-        from_name = account.name,
-        to_id = other.account_id,
-        to_name = other.name,
-        status = "ringing",
-        created_at = util.nowMs(),
-        last_at = util.nowMs(),
-        messages = {},
-        next_seq = 1,
-        save_votes = {},
-        app_name = appName,
-    }
-    urgentCalls[call.call_id] = call
-    notification(other, appName and (appName .. " call") or "Urgent Contact",
-        account.name .. " is reaching you right now"
-            .. (appName and (" on " .. appName) or ""), "urgent")
-    logActivity("Urgent Contact " .. account.name .. " > " .. other.name
-        .. (appName and (" via " .. appName) or ""), colors.orange)
-    return { call = publicCall(call, account.account_id) }
-end
 
-function actions.URGENT_ANSWER(payload)
-    local account = requireSession(payload)
-    local call = requireCall(account, payload.call_id)
-    need(call.to_id == account.account_id, "NOT_CALLEE",
-        "Only the person being reached can answer")
-    need(call.status == "ringing", "CALL_CLOSED", "That Urgent Contact ended")
-    if payload.accept == true then
-        call.status = "active"
-        call.answered_at = util.nowMs()
-        call.last_at = call.answered_at
-        return { call = publicCall(call, account.account_id) }
-    end
-    call.status = "declined"
-    call.ended_at = util.nowMs()
-    local from = state.accounts[call.from_id]
-    if from then
-        notification(from, "Urgent Contact declined",
-            call.to_name .. " could not talk", "warning")
-        save()
-    end
-    return { call = publicCall(call, account.account_id) }
-end
 
-local function appendCallMessage(call, senderId, kind, body, extra)
-    local sender = senderId and state.accounts[senderId]
-    local item = {
-        seq = call.next_seq,
-        sender_id = senderId,
-        sender_name = sender and sender.name or "PUMPE",
-        kind = kind,
-        body = util.safeText(body, SOCIAL.max_message),
-        time = util.formatClock(),
-        at = util.nowMs(),
-    }
-    for key, value in pairs(extra or {}) do item[key] = value end
-    call.next_seq = call.next_seq + 1
-    call.messages[#call.messages + 1] = item
-    while #call.messages > SOCIAL.max_conversation do
-        table.remove(call.messages, 1)
-    end
-    call.last_at = item.at
-    return item
-end
 
-function actions.URGENT_STATE(payload)
-    local account = requireSession(payload)
-    cleanupUrgentCalls()
-    local call = requireCall(account, payload.call_id)
-    local afterSeq = math.max(0, math.floor(tonumber(payload.after_seq) or 0))
-    local messages = {}
-    for _, item in ipairs(call.messages) do
-        if item.seq > afterSeq then messages[#messages + 1] = util.copy(item) end
-    end
-    return { call = publicCall(call, account.account_id), messages = messages }
-end
 
-function actions.URGENT_SEND(payload)
-    local account = requireSession(payload)
-    local call = requireCall(account, payload.call_id)
-    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
-    local body = util.safeText(util.trim(payload.body or ""), SOCIAL.max_message)
-    need(#body > 0, "EMPTY_MESSAGE", "Type something first")
-    local item = appendCallMessage(call, account.account_id, "text", body)
-    return { message = util.copy(item) }
-end
 
-function actions.URGENT_SAVE(payload)
-    local account = requireSession(payload)
-    local call = requireCall(account, payload.call_id)
-    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
-    if call.save_votes[account.account_id] then
-        call.save_votes[account.account_id] = nil
-        appendCallMessage(call, nil, "system",
-            account.name .. " no longer wants to save this")
-    else
-        call.save_votes[account.account_id] = true
-        appendCallMessage(call, nil, "system",
-            account.name .. " wants to save this conversation")
-    end
-    return { call = publicCall(call, account.account_id) }
-end
 
-function actions.URGENT_REQUEST_MONEY(payload)
-    local account = requireSession(payload)
-    local call = requireCall(account, payload.call_id)
-    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
-    local amount = validateAmount(payload.amount)
-    local item = appendCallMessage(call, account.account_id, "money_request",
-        "asked for " .. util.money(amount, config.currency),
-        { amount = amount, status = "pending" })
-    return { message = util.copy(item) }
-end
 
-function actions.URGENT_SEND_MONEY(payload)
-    local account = requireSpender(payload)
-    local call = requireCall(account, payload.call_id)
-    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local otherId = call.from_id == account.account_id
-        and call.to_id or call.from_id
-    local recipient = state.accounts[otherId]
-    checkAccountActive(recipient)
-    local quote = performTransfer(account, recipient.name, payload.amount,
-        "Sent in Urgent Contact")
-    appendCallMessage(call, account.account_id, "money_sent",
-        "sent " .. util.money(quote.amount, config.currency),
-        { amount = quote.amount })
-    return { quote = quote }
-end
 
-function actions.URGENT_PAY_REQUEST(payload)
-    local account = requireSpender(payload)
-    local call = requireCall(account, payload.call_id)
-    need(call.status == "active", "CALL_CLOSED", "That Urgent Contact ended")
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local requestSeq = math.floor(tonumber(payload.seq) or 0)
-    local target
-    for _, item in ipairs(call.messages) do
-        if item.seq == requestSeq and item.kind == "money_request" then
-            target = item
-        end
-    end
-    need(target and target.status == "pending", "NOT_FOUND",
-        "That money request is no longer waiting")
-    need(target.sender_id ~= account.account_id, "OWN_REQUEST",
-        "That is your own request")
-    local recipient = state.accounts[target.sender_id]
-    checkAccountActive(recipient)
-    local quote = performTransfer(account, recipient.name, target.amount,
-        "Urgent Contact request")
-    target.status = "paid"
-    appendCallMessage(call, account.account_id, "money_sent",
-        "paid " .. util.money(quote.amount, config.currency),
-        { amount = quote.amount })
-    return { quote = quote }
-end
 
 -- Proximity Pay ------------------------------------------------------------
 -- Devices report where they are and the Bank keeps the map. A kiosk offers
@@ -2996,17 +2038,6 @@ local function freshPosition(holder)
     return position
 end
 
--- A scanner sends its own coordinates rather than borrowing an account's, so
--- an organiser standing at their own door is not mistaken for the terminal.
-function scans.position(payload)
-    local position = type(payload) == "table" and payload.position or nil
-    local x = position and tonumber(position.x)
-    local y = position and tonumber(position.y)
-    local z = position and tonumber(position.z)
-    need(x and y and z, "NO_POSITION",
-        "This computer has no GPS fix. Add GPS anchors nearby.")
-    return { x = x, y = y, z = z }
-end
 
 local function distanceBetween(first, second)
     local dx, dy, dz = first.x - second.x, first.y - second.y, first.z - second.z
@@ -3369,7 +2400,7 @@ end
 -- ceiling is what the friendship replaces: you cannot reach a stranger.
 function actions.FOXY_CASH_QUOTE(payload)
     local account = requireSpender(payload)
-    local friend = requireFriend(socialAccount(account), payload.account_id)
+    local friend = requireVaultFriend(account, payload.account_id)
     local amount = validateAmount(payload.amount)
     local rate = tonumber(config.foxy_cash_fee_rate) or 0.02
     local fee = util.roundMoney(amount * rate)
@@ -3385,7 +2416,7 @@ end
 
 function actions.FOXY_CASH_SEND(payload)
     local account = requireSpender(payload)
-    local friend = requireFriend(socialAccount(account), payload.account_id)
+    local friend = requireVaultFriend(account, payload.account_id)
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
     local amount = validateAmount(payload.amount)
     local rate = tonumber(config.foxy_cash_fee_rate) or 0.02
@@ -3488,16 +2519,9 @@ function appstore.profile(account, scopes)
     if allowed.number then profile.personal_number = account.personal_number end
     if allowed.balance then profile.balance = account.balance end
     if allowed.friends then
-        local friends = {}
-        for friendId in pairs(socialAccount(account).friends) do
-            local friend = state.accounts[friendId]
-            if friend then
-                friends[#friends + 1] = { account_id = friendId,
-                    name = friend.name }
-            end
-        end
-        table.sort(friends, function(a, b) return a.name < b.name end)
-        profile.friends = friends
+        local listed = pair.forward("VAULT_FRIEND_LIST", {},
+            vaultCaller(account))
+        profile.friends = listed.friends or {}
     end
     return profile
 end
@@ -3552,51 +2576,7 @@ end
 -- anything else without the Bank knowing what any of it means. Records are
 -- owned by whoever wrote them; reactions are the one thing anybody can add.
 
-function appstore.collection(appId, name)
-    state.app_data = state.app_data or {}
-    state.app_data[appId] = state.app_data[appId] or {}
-    local key = util.safeText(util.trim(tostring(name or "")), 20)
-    need(key:match("^[%w_%-]+$"), "BAD_COLLECTION", "That collection has no name")
-    local existing = state.app_data[appId][key]
-    if existing then return existing end
 
-    -- Opening a new collection is the only thing that is capped. An app that
-    -- keeps one per conversation would otherwise be able to fill the Bank's
-    -- disk a conversation at a time, and the disk is the scarce thing here.
-    -- Emptied collections are swept first, so a chat whose messages have all
-    -- expired gives its slot back rather than holding it forever.
-    local limit = tonumber(config.max_app_collections) or 40
-    local count = 0
-    for _ in pairs(state.app_data[appId]) do count = count + 1 end
-    if count >= limit then
-        for otherKey, collection in pairs(state.app_data[appId]) do
-            if #collection.items == 0 then
-                state.app_data[appId][otherKey] = nil
-                count = count - 1
-            end
-        end
-        need(count < limit, "TOO_MANY",
-            "That app is holding as much as it is allowed to")
-    end
-    state.app_data[appId][key] = { items = {}, sequence = 0 }
-    return state.app_data[appId][key]
-end
-
--- Measured rather than serialised: it bounds depth as well as length, so a
--- deeply nested record cannot slip past on size alone.
-function appstore.dataSize(value, depth)
-    depth = (depth or 0) + 1
-    if depth > 4 then return math.huge end
-    local kind = type(value)
-    if kind == "string" then return #value + 2 end
-    if kind ~= "table" then return 8 end
-    local total = 2
-    for key, item in pairs(value) do
-        total = total + appstore.dataSize(key, depth)
-            + appstore.dataSize(item, depth)
-    end
-    return total
-end
 
 -- The Pin API. An app can ask the owner to prove it is really them before it
 -- opens something sensitive, without ever seeing the PIN: the PUMPE collects
@@ -3736,8 +2716,7 @@ function actions.APP_NOTIFY(payload)
         need(recipient, "ACCOUNT_NOT_FOUND", "Nobody has that account")
         -- An app can only reach across accounts between friends. Without
         -- this, one grant would be a licence to alert the whole server.
-        need(socialAccount(account).friends[wantedId], "NOT_FRIENDS",
-            "You can only reach a friend that way")
+        requireVaultFriend(account, wantedId)
     end
     local entry = appstore.permissions(recipient)[appId]
     need(entry and entry.notifications == "granted", "NO_PERMISSION",
@@ -4000,269 +2979,26 @@ function appstore.requireGrant(account, appId)
     return grant
 end
 
--- A record with an audience is private to the author and the people named
--- in it. One without is public to everybody using the app, which is what a
--- feed wants. The Bank still has no idea what any of it means.
-function appstore.audience(payload)
-    local raw = payload.audience
-    if type(raw) ~= "table" or #raw == 0 then return nil end
-    local out, seen = {}, {}
-    for _, id in ipairs(raw) do
-        id = util.safeText(util.trim(tostring(id or "")), 24)
-        if id ~= "" and not seen[id] then
-            seen[id] = true
-            out[#out + 1] = id
-        end
-        if #out >= 8 then break end
-    end
-    if #out == 0 then return nil end
-    return out
-end
 
-function appstore.visible(record, accountId)
-    if not record.audience then return true end
-    if record.author_id == accountId then return true end
-    for _, id in ipairs(record.audience) do
-        if id == accountId then return true end
-    end
-    return false
-end
 
--- Records can be told to go away. The clock only starts once the record has
--- been read, so a message nobody opened is still there tomorrow.
-function appstore.prune(collection)
-    local today, removed = util.ingameDay(), 0
-    for index = #collection.items, 1, -1 do
-        local record = collection.items[index]
-        if record.expires_day and today >= record.expires_day then
-            table.remove(collection.items, index)
-            removed = removed + 1
-        end
-    end
-    return removed
-end
 
-function appstore.publicRecord(record, accountId)
-    local reactions, mine = 0, false
-    for reactorId in pairs(record.reactions or {}) do
-        reactions = reactions + 1
-        if reactorId == accountId then mine = true end
-    end
-    return {
-        id = record.id,
-        parent = record.parent,
-        data = util.copy(record.data),
-        author_id = record.author_id,
-        author_name = record.author_name,
-        created_day = record.created_day,
-        created_time = record.created_time,
-        created_at = record.created_at,
-        reactions = reactions,
-        reacted = mine,
-        mine = record.author_id == accountId,
-        private = record.audience ~= nil,
-        read = record.read_by ~= nil and record.read_by[accountId] == true,
-        seen = record.read_by ~= nil and next(record.read_by) ~= nil,
-        expires_day = record.expires_day,
-    }
-end
 
 -- Where the records actually live ---------------------------------------------
 -- The Core decides who you are and what you are allowed to touch; the store
 -- itself is just data, and in Pair Mode it lives on the Vault. Splitting the
 -- handlers here rather than duplicating them means there is exactly one
 -- implementation of what an app record means, wherever it is kept.
-appstore.ops = {}
 
-function appstore.dispatch(op, account, appId, payload)
-    if not pair.isCore() or not pair.paired() then
-        return appstore.ops[op](account, appId, payload)
-    end
-    local result, err, code = pair.ask("VAULT_APP_DATA", {
-        op = op, app_id = appId, payload = payload,
-        -- The Core has already established this. The Vault holds no
-        -- accounts and takes the Core's word for who is asking.
-        caller = { account_id = account.account_id, name = account.name },
-    })
-    if not result then
-        need(false, code or "VAULT_OFFLINE",
-            err or "The Vault is not answering")
-    end
-    return result
-end
 
-function actions.APP_DATA_PUT(payload)
-    local account = requireSession(payload)
-    local appId = appstore.appId(payload)
-    appstore.requireGrant(account, appId)
-    return appstore.dispatch("put", account, appId, payload)
-end
 
-function appstore.ops.put(account, appId, payload)
-    local collection = appstore.collection(appId, payload.collection)
-    appstore.prune(collection)
-    need(appstore.dataSize(payload.data or {})
-        <= (tonumber(config.max_app_record_bytes) or 400),
-        "RECORD_TOO_BIG", "That is more than an app record can hold")
-    local record
-    if payload.id then
-        for _, item in ipairs(collection.items) do
-            if item.id == payload.id
-                and appstore.visible(item, account.account_id) then
-                record = item
-            end
-        end
-        need(record, "NOT_FOUND", "That record is gone")
-        need(record.author_id == account.account_id, "NOT_YOURS",
-            "That record belongs to somebody else")
-        record.data = util.copy(payload.data or {})
-    else
-        collection.sequence = collection.sequence + 1
-        record = {
-            id = string.format("%s%06d", appId:sub(1, 3):upper(),
-                collection.sequence),
-            parent = payload.parent and util.safeText(payload.parent, 24) or nil,
-            data = util.copy(payload.data or {}),
-            author_id = account.account_id,
-            author_name = account.name,
-            created_day = util.ingameDay(),
-            created_time = util.formatClock(),
-            created_at = util.nowMs(),
-            reactions = {},
-            audience = appstore.audience(payload),
-            expire_after_days = payload.expire_after_days
-                and math.max(1, math.min(30,
-                    math.floor(tonumber(payload.expire_after_days) or 1)))
-                or nil,
-        }
-        table.insert(collection.items, 1, record)
-        local limit = tonumber(config.max_app_records) or 200
-        while #collection.items > limit do table.remove(collection.items) end
-    end
-    save()
-    return { record = appstore.publicRecord(record, account.account_id) }
-end
 
-function actions.APP_DATA_LIST(payload)
-    local account = requireSession(payload)
-    local appId = appstore.appId(payload)
-    appstore.requireGrant(account, appId)
-    return appstore.dispatch("list", account, appId, payload)
-end
 
-function appstore.ops.list(account, appId, payload)
-    local collection = appstore.collection(appId, payload.collection)
-    if appstore.prune(collection) > 0 then save() end
-    local parent = payload.parent
-    local limit = math.max(1, math.min(60,
-        math.floor(tonumber(payload.limit) or 40)))
-    local out, visible = {}, 0
-    for _, record in ipairs(collection.items) do
-        if appstore.visible(record, account.account_id) then
-            visible = visible + 1
-            if (not parent or record.parent == parent) and #out < limit then
-                out[#out + 1] = appstore.publicRecord(record,
-                    account.account_id)
-            end
-        end
-    end
-    return { records = out, total = visible }
-end
 
-function actions.APP_DATA_DELETE(payload)
-    local account = requireSession(payload)
-    local appId = appstore.appId(payload)
-    appstore.requireGrant(account, appId)
-    return appstore.dispatch("delete", account, appId, payload)
-end
 
-function appstore.ops.delete(account, appId, payload)
-    local collection = appstore.collection(appId, payload.collection)
-    for index = #collection.items, 1, -1 do
-        local record = collection.items[index]
-        if record.id == payload.id
-            and appstore.visible(record, account.account_id) then
-            need(record.author_id == account.account_id, "NOT_YOURS",
-                "That record belongs to somebody else")
-            table.remove(collection.items, index)
-            save()
-            return { removed = payload.id }
-        end
-    end
-    need(false, "NOT_FOUND", "That record is gone")
-end
 
--- Reading a record is what starts its clock. An app that asked for an
--- expiry gets disappearing records for free, and one that did not is
--- simply told who has seen what.
-function actions.APP_DATA_READ(payload)
-    local account = requireSession(payload)
-    local appId = appstore.appId(payload)
-    appstore.requireGrant(account, appId)
-    return appstore.dispatch("read", account, appId, payload)
-end
 
-function appstore.ops.read(account, appId, payload)
-    local collection = appstore.collection(appId, payload.collection)
-    appstore.prune(collection)
-    local marked = {}
-    local wanted = {}
-    if type(payload.ids) == "table" then
-        for _, id in ipairs(payload.ids) do wanted[tostring(id)] = true end
-    end
-    if payload.id then wanted[tostring(payload.id)] = true end
-    for _, record in ipairs(collection.items) do
-        if wanted[record.id]
-            and appstore.visible(record, account.account_id)
-            -- The author reading their own record back is not a read
-            -- receipt, or every message would expire the moment it was sent.
-            and record.author_id ~= account.account_id then
-            record.read_by = record.read_by or {}
-            if not record.read_by[account.account_id] then
-                record.read_by[account.account_id] = true
-                if record.expire_after_days and not record.expires_day then
-                    record.expires_day = util.ingameDay()
-                        + record.expire_after_days
-                end
-            end
-            marked[#marked + 1] = record.id
-        end
-    end
-    save()
-    return { read = marked }
-end
 
--- The one thing anybody can add to somebody else's record.
-function actions.APP_DATA_REACT(payload)
-    local account = requireSession(payload)
-    local appId = appstore.appId(payload)
-    appstore.requireGrant(account, appId)
-    return appstore.dispatch("react", account, appId, payload)
-end
 
-function appstore.ops.react(account, appId, payload)
-    local collection = appstore.collection(appId, payload.collection)
-    for _, record in ipairs(collection.items) do
-        if record.id == payload.id
-            and appstore.visible(record, account.account_id) then
-            record.reactions = record.reactions or {}
-            if payload.on == false then
-                record.reactions[account.account_id] = nil
-            else
-                local count = 0
-                for _ in pairs(record.reactions) do count = count + 1 end
-                need(count < (tonumber(config.max_app_reactions) or 60)
-                    or record.reactions[account.account_id],
-                    "TOO_MANY", "That record cannot hold more reactions")
-                record.reactions[account.account_id] = true
-            end
-            save()
-            return { record = appstore.publicRecord(record,
-                account.account_id) }
-        end
-    end
-    need(false, "NOT_FOUND", "That record is gone")
-end
 
 -- Developer accounts ----------------------------------------------------------
 -- A Service Kiosk owner can become a developer and publish apps. The App
@@ -4337,136 +3073,15 @@ function scans.presenting(account, kind)
     return held
 end
 
--- The nearest account holding up something this scanner accepts. `matches`
--- decides whether the held reference is valid here, so the ticket door and
--- the border gate share everything except that one rule.
-function scans.nearest(origin, kind, matches, excluded)
-    local best, bestDistance, bestHeld
-    local radius = tonumber(config.proximity_pay_radius) or 16
-    for accountId, account in pairs(state.accounts) do
-        local held = not excluded[accountId] and not account.banned
-            and not account.frozen and scans.presenting(account, kind)
-        local position = held and freshPosition(account)
-        if position and matches(account, held) then
-            local distance = distanceBetween(origin, position)
-            if distance <= radius
-                and (not bestDistance or distance < bestDistance) then
-                best, bestDistance, bestHeld = account, distance, held
-            end
-        end
-    end
-    return best, bestDistance, bestHeld
-end
 
-function scans.public(request)
-    return {
-        request_id = request.request_id,
-        kind = request.kind,
-        status = request.status,
-        title = request.title,
-        detail = request.detail,
-        target_name = request.target_name,
-        distance = request.distance,
-        reference = request.reference,
-        result = request.result,
-    }
-end
 
-function scans.expired(request)
-    return request.status ~= "offered" or request.expires_at <= util.nowMs()
-end
 
--- Hands the ask to the next nearest holder, or reports that nobody is there.
-function scans.retarget(request)
-    local origin = request.origin
-    local account, distance, held = scans.nearest(origin, request.kind,
-        request.matches, request.declined)
-    if not account then
-        request.status = "nobody_nearby"
-        request.target_account_id, request.target_name = nil, nil
-        return request
-    end
-    request.target_account_id = account.account_id
-    request.target_name = account.name
-    request.reference = held.ref
-    request.distance = math.floor(distance * 10) / 10
-    request.status = "offered"
-    request.expires_at = util.nowMs()
-        + (tonumber(config.proximity_offer_ttl_ms) or 60000)
-    notification(account, request.title, request.detail, "info")
-    return request
-end
 
--- Scans are in-memory, so they need their own sweep. A settled one is kept
--- briefly so the scanner's next poll still sees the result.
-function scans.cleanup()
-    local now = util.nowMs()
-    for requestId, request in pairs(scans.requests) do
-        local settled = request.settled_at or request.created_at
-        if (request.status ~= "offered" and now - settled > 60 * 1000)
-            or request.expires_at + 5 * 60 * 1000 < now then
-            scans.requests[requestId] = nil
-        end
-    end
-end
 
-function scans.new(kind, origin, title, detail, matches, extra)
-    cleanupEphemeral()
-    scans.cleanup()
-    local request = {
-        request_id = nextId("scan"),
-        kind = kind,
-        origin = origin,
-        title = util.safeText(title, 40),
-        detail = util.safeText(detail, 90),
-        matches = matches,
-        declined = {},
-        status = "offered",
-        created_at = util.nowMs(),
-        expires_at = util.nowMs()
-            + (tonumber(config.proximity_offer_ttl_ms) or 60000),
-    }
-    for key, value in pairs(extra or {}) do request[key] = value end
-    scans.requests[request.request_id] = request
-    scans.retarget(request)
-    return request
-end
 
-function scans.poll(request)
-    scans.cleanup()
-    if request.status == "offered" and request.expires_at <= util.nowMs() then
-        request.declined[request.target_account_id or ""] = true
-        scans.retarget(request)
-    end
-    return request
-end
 
--- The scan waiting on this account, used by the OS poll.
-function scans.forAccount(accountId)
-    for _, request in pairs(scans.requests) do
-        if request.target_account_id == accountId and not scans.expired(request) then
-            return scans.public(request)
-        end
-    end
-    return nil
-end
 
--- The scanner's own view of a request it started.
-function scans.requireOwn(ownerId, requestId, field)
-    local request = scans.requests[requestId]
-    need(request and request[field] == ownerId, "NOT_FOUND",
-        "That check has ended")
-    return request
-end
 
-function scans.require(account, requestId)
-    local request = scans.requests[requestId]
-    need(request and not scans.expired(request), "NOT_FOUND",
-        "That request has ended")
-    need(request.target_account_id == account.account_id, "NOT_YOURS",
-        "That request is not yours")
-    return request
-end
 
 function actions.PRESENT(payload)
     local account = requireSession(payload)
@@ -4480,38 +3095,7 @@ function actions.PRESENT(payload)
     return { presenting = true }
 end
 
--- Accepting runs the scan's own settle step: admitting a ticket, or putting a
--- traveller through the border. A refusal there ends this person's turn and
--- tells the scanner why, rather than silently passing to the next one.
-function actions.SCAN_ACCEPT(payload)
-    local account = requireSession(payload)
-    local request = scans.require(account, payload.request_id)
-    local ok, result = pcall(request.settle, request, account)
-    if not ok then
-        request.declined[account.account_id] = true
-        request.status = "rejected"
-        request.settled_at = util.nowMs()
-        request.result = type(result) == "table" and result.message
-            or "Could not be accepted"
-        save()
-        error(result, 0)
-    end
-    request.status = "accepted"
-    request.settled_at = util.nowMs()
-    request.settled_account_id = account.account_id
-    request.result = result
-    save()
-    return { scan = scans.public(request) }
-end
 
-function actions.SCAN_DECLINE(payload)
-    local account = requireSession(payload)
-    local request = scans.require(account, payload.request_id)
-    request.declined[account.account_id] = true
-    scans.retarget(request)
-    save()
-    return { scan = scans.public(request) }
-end
 
 -- The offer waiting for this account, used by the OS poll.
 local function offerFor(accountId)
@@ -4793,21 +3377,18 @@ end
 -- anything that needs a reply: a speeding ticket, a query, a warning. Only
 -- the government can move money in it; the holder can answer and can settle
 -- what is asked of them.
-local function governmentThread(account)
-    local threadId = account.government_conversation_id
-    local existing = threadId and state.conversations[threadId]
-    if existing then return existing end
-    local conversation = newConversation("government",
-        { account.account_id }, "Government", nil)
-    account.government_conversation_id = conversation.conversation_id
-    return conversation
-end
-
-local function governmentSay(conversation, account, kind, body, extra)
-    local item = appendMessage(conversation, "GOVERNMENT", kind, body, extra)
+-- The thread itself is a conversation, and conversations are the Vault's.
+-- The money and the demand behind a government message are still settled
+-- here; only the line of text crosses the cable.
+local function governmentSay(account, kind, body, extra)
+    local said = pair.forward("VAULT_GOV_SAY", {
+        account_id = account.account_id,
+        name = account.name,
+        kind = kind, body = body, extra = extra,
+    }, { kind = "government" })
     notification(account, "Government message",
         util.safeText(body, 90), "warning")
-    return item
+    return said
 end
 
 function actions.ADMIN_MESSAGE(payload)
@@ -4815,12 +3396,10 @@ function actions.ADMIN_MESSAGE(payload)
     local account = requireAccountId(payload)
     local body = util.safeText(util.trim(payload.body or ""), SOCIAL.max_message)
     need(#body > 0, "EMPTY_MESSAGE", "Write something to send")
-    local conversation = governmentThread(account)
-    local item = governmentSay(conversation, account, "text", body)
+    local said = governmentSay(account, "text", body)
     save()
     logActivity("Government message to " .. account.name, colors.magenta)
-    return { conversation_id = conversation.conversation_id,
-        message = util.copy(item) }
+    return { conversation_id = said.conversation_id, message = said.message }
 end
 
 function actions.ADMIN_MESSAGE_DEMAND(payload)
@@ -4828,16 +3407,14 @@ function actions.ADMIN_MESSAGE_DEMAND(payload)
     local account = requireAccountId(payload)
     local amount = validateAmount(payload.amount)
     local note = util.safeText(util.trim(payload.note or "Government demand"), 60)
-    local conversation = governmentThread(account)
-    local item = governmentSay(conversation, account, "money_request", note, {
+    local said = governmentSay(account, "money_request", note, {
         amount = amount,
         status = "pending",
     })
     save()
     logActivity("Government asked " .. account.name .. " for "
         .. util.money(amount, config.currency), colors.orange)
-    return { conversation_id = conversation.conversation_id,
-        message = util.copy(item) }
+    return { conversation_id = said.conversation_id, message = said.message }
 end
 
 function actions.ADMIN_MESSAGE_PAY(payload)
@@ -4845,63 +3422,34 @@ function actions.ADMIN_MESSAGE_PAY(payload)
     local account = requireAccountId(payload)
     local amount = validateAmount(payload.amount)
     local note = util.safeText(util.trim(payload.note or "Government payment"), 60)
-    local conversation = governmentThread(account)
     account.balance = util.roundMoney(account.balance + amount)
     state.tax_revenue = util.roundMoney((state.tax_revenue or 0) - amount)
     transaction(account, "government", amount, "Government", note)
-    governmentSay(conversation, account, "money_sent",
+    local said = governmentSay(account, "money_sent",
         "sent " .. util.money(amount, config.currency), { amount = amount })
     save()
     logActivity("Government paid " .. account.name .. " "
         .. util.money(amount, config.currency), colors.lime)
-    return { conversation_id = conversation.conversation_id,
+    return { conversation_id = said.conversation_id,
         balance = account.balance }
 end
 
 function actions.ADMIN_MESSAGE_HISTORY(payload)
     requireGovernment(payload)
     local account = requireAccountId(payload)
-    local conversation = account.government_conversation_id
-        and state.conversations[account.government_conversation_id]
-    if not conversation then
-        return { messages = {}, name = account.name }
-    end
-    local afterSeq = math.max(0, math.floor(tonumber(payload.after_seq) or 0))
-    local messages = {}
-    for _, item in ipairs(conversation.messages) do
-        if item.seq > afterSeq then messages[#messages + 1] = util.copy(item) end
-    end
-    return {
-        conversation_id = conversation.conversation_id,
-        name = account.name,
-        messages = messages,
-        next_seq = conversation.next_seq,
-    }
+    local history = pair.forward("VAULT_GOV_HISTORY", {
+        account_id = account.account_id,
+        after_seq = payload.after_seq,
+    }, { kind = "government" })
+    history.name = account.name
+    return history
 end
 
 -- Every thread the government is holding, newest first, so the terminal can
 -- see who has replied.
 function actions.ADMIN_MESSAGE_THREADS(payload)
     requireGovernment(payload)
-    local threads = {}
-    for _, account in pairs(state.accounts) do
-        local conversation = account.government_conversation_id
-            and state.conversations[account.government_conversation_id]
-        if conversation then
-            local last = conversation.messages[#conversation.messages]
-            threads[#threads + 1] = {
-                account_id = account.account_id,
-                name = account.name,
-                last_at = conversation.last_at,
-                last_body = last and util.safeText(last.body or "", 40) or "",
-                waiting = last ~= nil and last.sender_id ~= "GOVERNMENT",
-            }
-        end
-    end
-    table.sort(threads, function(a, b)
-        return (a.last_at or 0) > (b.last_at or 0)
-    end)
-    return { threads = threads }
+    return pair.forward("VAULT_GOV_THREADS", {}, { kind = "government" })
 end
 
 local function announcementFor(accountId)
@@ -4935,16 +3483,23 @@ end
 -- One poll for the whole PUMPE OS: an incoming Urgent Contact, the newest
 -- unread alert for the banner, and every home screen badge. The phone checks
 -- this a few times a second, so it must stay a single cheap request.
+-- A ringing call and an open scan both belong to the Vault, and both have to
+-- reach a phone that is polling this. Rather than put the cable on the poll
+-- path -- every phone, several times a second -- the Vault pushes the short
+-- list of people something is actually waiting on, and this reads it out of
+-- memory. Expiry is checked here so a pushed entry cannot outlive its ring.
+local function waitingFor(account)
+    local held = account.waiting
+    if not held then return nil, nil end
+    local now, call, scan = util.nowMs(), held.call, held.scan
+    if call and (held.call_expires_at or 0) <= now then call = nil end
+    if scan and (held.scan_expires_at or 0) <= now then scan = nil end
+    return call, scan
+end
+
 function actions.PUMPE_POLL(payload)
     local account = requireSession(payload)
     recordPosition(account, payload.position)
-    cleanupUrgentCalls()
-    local ring
-    for _, call in pairs(urgentCalls) do
-        if call.to_id == account.account_id and call.status == "ringing" then
-            ring = publicCall(call, account.account_id)
-        end
-    end
     local unread, latest = 0, nil
     for _, item in ipairs(account.notifications) do
         if not item.read then
@@ -4952,15 +3507,16 @@ function actions.PUMPE_POLL(payload)
             if not latest then latest = item end
         end
     end
-    local badges = socialBadges(account)
+    local badges = account.badges or {}
+    local ring, scan = waitingFor(account)
     return {
         call = ring,
         balance = account.balance,
         unread_notifications = unread,
-        unread_messages = badges.messages,
-        friend_requests = badges.friend_requests,
+        unread_messages = badges.messages or 0,
+        friend_requests = badges.friend_requests or 0,
         offer = offerFor(account.account_id),
-        scan = scans.forAccount(account.account_id),
+        scan = scan,
         announcement = announcementFor(account.account_id),
         latest = latest and {
             notification_id = latest.notification_id,
@@ -4973,587 +3529,30 @@ function actions.PUMPE_POLL(payload)
     }
 end
 
-function actions.URGENT_END(payload)
-    local account = requireSession(payload)
-    local call = requireCall(account, payload.call_id)
-    endCall(call, "Hung up", account.account_id)
-    return { call = publicCall(call, account.account_id) }
-end
 
 -- Customs, citizenship, and visa routes -------------------------------------
 
-function actions.CUSTOMS_OVERVIEW(payload)
-    local account = requireSession(payload)
-    cleanupEphemeral()
-    local territories = util.sortedValues(state.territories, function(territory)
-        return territory.owner_account_id == account.account_id
-            and territory.status == "active"
-    end, function(a, b) return a.name < b.name end)
-    local output = {}
-    for _, territory in ipairs(territories) do
-        local pending = 0
-        for _, application in pairs(state.visa_applications) do
-            if application.territory_id == territory.territory_id
-                and application.status == "pending" then
-                pending = pending + 1
-            end
-        end
-        output[#output + 1] = {
-            territory_id = territory.territory_id,
-            name = territory.name,
-            citizen_count = mapCount(territory.citizen_account_ids),
-            free_roam_count = mapCount(territory.free_roam_territory_ids),
-            pending_count = pending,
-            created_day = territory.created_day,
-        }
-    end
-    return {
-        territories = output,
-        maximum_territories =
-            math.max(1, math.floor(tonumber(config.max_territories_per_account)
-                or 3)),
-    }
-end
 
-function actions.CUSTOMS_DETAIL(payload)
-    local account = requireSession(payload)
-    local territory = territoryOwner(account, payload.territory_id)
-    cleanupEphemeral()
-    local citizens = {}
-    for accountId in pairs(territory.citizen_account_ids) do
-        local citizen = state.accounts[accountId]
-        local document = matchingDocument(
-            accountId, territory.territory_id, "citizenship")
-        if citizen and document then
-            citizens[#citizens + 1] = {
-                account_id = accountId,
-                name = citizen.name,
-                code = document.code,
-                issued_day = document.issued_day,
-            }
-        end
-    end
-    table.sort(citizens, function(a, b) return a.name < b.name end)
 
-    local applications = {}
-    for _, application in pairs(state.visa_applications) do
-        if application.territory_id == territory.territory_id then
-            applications[#applications + 1] =
-                publicApplication(application)
-        end
-    end
-    table.sort(applications, function(a, b)
-        if a.status ~= b.status then return a.status == "pending" end
-        return (a.created_day or 0) > (b.created_day or 0)
-    end)
 
-    local otherTerritories = {}
-    for _, other in pairs(state.territories) do
-        if other.status == "active"
-            and other.territory_id ~= territory.territory_id then
-            otherTerritories[#otherTerritories + 1] = {
-                territory_id = other.territory_id,
-                name = other.name,
-                free_roam =
-                    territory.free_roam_territory_ids[other.territory_id]
-                        == true,
-            }
-        end
-    end
-    table.sort(otherTerritories, function(a, b) return a.name < b.name end)
-    return {
-        territory = {
-            territory_id = territory.territory_id,
-            name = territory.name,
-            citizen_count = #citizens,
-            free_roam_count = mapCount(territory.free_roam_territory_ids),
-        },
-        citizens = citizens,
-        applications = applications,
-        other_territories = otherTerritories,
-    }
-end
 
-function actions.CUSTOMS_CREATE_TERRITORY(payload)
-    local account = requireSession(payload)
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local name = util.safeText(util.trim(payload.name), 24)
-    need(#name >= 3 and name:match("^[%w _%-]+$"),
-        "INVALID_TERRITORY",
-        "Use 3-24 letters, numbers, spaces, _ or -")
-    need(not state.territory_names[util.normalName(name)],
-        "TERRITORY_TAKEN", "That territory name is already registered")
-    local owned = 0
-    for _, territory in pairs(state.territories) do
-        if territory.owner_account_id == account.account_id
-            and territory.status == "active" then
-            owned = owned + 1
-        end
-    end
-    local maximum = math.max(1,
-        math.floor(tonumber(config.max_territories_per_account) or 3))
-    need(owned < maximum, "TERRITORY_LIMIT",
-        "A Foxy Account can control up to " .. maximum .. " territories")
 
-    local territoryId = nextId("territory")
-    local territory = {
-        territory_id = territoryId,
-        name = name,
-        owner_account_id = account.account_id,
-        citizen_account_ids = {},
-        free_roam_territory_ids = {},
-        status = "active",
-        created_day = util.ingameDay(),
-    }
-    state.territories[territoryId] = territory
-    state.territory_names[util.normalName(name)] = territoryId
-    local citizenship = assert(issueDocument(
-        account, territory, "citizenship", {
-            issued_by_account_id = account.account_id,
-        }))
-    notification(account, "Territory created",
-        name .. " citizenship code: " .. citizenship.code, "travel")
-    save()
-    logActivity("Territory created: " .. name, colors.lightBlue)
-    return {
-        territory = {
-            territory_id = territoryId,
-            name = name,
-        },
-        citizenship = publicDocument(citizenship),
-    }
-end
 
-function actions.CUSTOMS_ISSUE_CITIZENSHIP(payload)
-    local owner = requireSession(payload)
-    local territory = territoryOwner(owner, payload.territory_id)
-    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local citizen = accountByName(payload.username)
-    checkAccountActive(citizen)
-    local document, existing = issueDocument(
-        citizen, territory, "citizenship", {
-            issued_by_account_id = owner.account_id,
-        })
-    need(document, "ALREADY_CITIZEN",
-        existing and "That Foxy Account is already a citizen"
-            or "Citizenship could not be created")
-    notification(citizen, "Citizenship granted",
-        territory.name .. " permanent code: " .. document.code, "travel")
-    save()
-    logActivity("Citizenship: " .. citizen.name .. " / " .. territory.name,
-        colors.cyan)
-    return {
-        citizen_name = citizen.name,
-        document = publicDocument(document),
-    }
-end
 
-function actions.CUSTOMS_SET_FREE_ROAM(payload)
-    local owner = requireSession(payload)
-    local territory = territoryOwner(owner, payload.territory_id)
-    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local source = state.territories[payload.source_territory_id]
-    need(source and source.status == "active",
-        "TERRITORY_NOT_FOUND", "Partner territory not found")
-    need(source.territory_id ~= territory.territory_id,
-        "INVALID_TERRITORY", "A territory already accepts its own citizens")
-    local enabled = payload.enabled == true
-    territory.free_roam_territory_ids[source.territory_id] =
-        enabled and true or nil
-    save()
-    logActivity((enabled and "Free Roam enabled: " or "Free Roam ended: ")
-        .. source.name .. " > " .. territory.name,
-        enabled and colors.lime or colors.orange)
-    return {
-        territory_id = territory.territory_id,
-        source_territory_id = source.territory_id,
-        enabled = enabled,
-    }
-end
-
-function actions.CUSTOMS_REVIEW_APPLICATION(payload)
-    local owner = requireSession(payload)
-    local application = state.visa_applications[payload.application_id]
-    need(application and application.status == "pending",
-        "APPLICATION_NOT_FOUND", "Pending visa application not found")
-    local territory = territoryOwner(owner, application.territory_id)
-    need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local applicant = state.accounts[application.account_id]
-    checkAccountActive(applicant)
-
-    local document
-    if payload.approved == true then
-        local access = accessForAccount(applicant.account_id, territory)
-        need(not access, "ACCESS_EXISTS",
-            "This traveler already has entry rights")
-        document = assert(issueDocument(
-            applicant, territory, "visa", {
-                duration_days = application.requested_days,
-                issued_by_account_id = owner.account_id,
-                application_id = application.application_id,
-            }))
-        application.status = "approved"
-        application.visa_id = document.visa_id
-        notification(applicant, "Visa approved",
-            territory.name .. " for " .. application.requested_days
-                .. " day(s). Code: " .. document.code, "travel")
-    else
-        application.status = "denied"
-        notification(applicant, "Visa declined",
-            territory.name .. " declined your application", "travel")
-    end
-    application.reviewed_day = util.ingameDay()
-    application.reviewed_by_account_id = owner.account_id
-    save()
-    logActivity("Visa " .. application.status .. ": "
-        .. applicant.name .. " / " .. territory.name,
-        document and colors.lime or colors.orange)
-    return {
-        application = publicApplication(application),
-        document = document and publicDocument(document) or nil,
-    }
-end
-
-function actions.VISA_OVERVIEW(payload)
-    local account = requireSession(payload)
-    cleanupEphemeral()
-    local documents = {}
-    for _, document in pairs(state.visas) do
-        if document.account_id == account.account_id then
-            documents[#documents + 1] = publicDocument(document)
-        end
-    end
-    table.sort(documents, function(a, b)
-        if a.kind ~= b.kind then return a.kind == "citizenship" end
-        return a.territory_name < b.territory_name
-    end)
-
-    local applications = {}
-    for _, application in pairs(state.visa_applications) do
-        if application.account_id == account.account_id then
-            applications[#applications + 1] =
-                publicApplication(application)
-        end
-    end
-    table.sort(applications, function(a, b)
-        return (a.created_day or 0) > (b.created_day or 0)
-    end)
-
-    local territories = {}
-    for _, territory in pairs(state.territories) do
-        if territory.status == "active" then
-            local accessKind = accessForAccount(account.account_id, territory)
-            local pending = pendingApplication(
-                account.account_id, territory.territory_id) ~= nil
-            territories[#territories + 1] = {
-                territory_id = territory.territory_id,
-                name = territory.name,
-                access = accessKind,
-                pending = pending,
-                can_apply = not accessKind and not pending,
-            }
-        end
-    end
-    table.sort(territories, function(a, b) return a.name < b.name end)
-    return {
-        documents = documents,
-        applications = applications,
-        territories = territories,
-        visa_min_days =
-            math.max(1, math.floor(tonumber(config.visa_min_days) or 1)),
-        visa_max_days =
-            math.max(1, math.floor(tonumber(config.visa_max_days) or 30)),
-    }
-end
-
-function actions.VISA_APPLY(payload)
-    local account = requireSpender(payload)
-    local territory = state.territories[payload.territory_id]
-    need(territory and territory.status == "active",
-        "TERRITORY_NOT_FOUND", "Territory not found")
-    local minimum =
-        math.max(1, math.floor(tonumber(config.visa_min_days) or 1))
-    local maximum =
-        math.max(minimum, math.floor(tonumber(config.visa_max_days) or 30))
-    local requestedDays = math.floor(tonumber(payload.requested_days) or 0)
-    need(requestedDays >= minimum and requestedDays <= maximum,
-        "INVALID_STAY", "Choose a stay from " .. minimum
-            .. " to " .. maximum .. " days")
-    local access = accessForAccount(account.account_id, territory)
-    need(not access, "ACCESS_EXISTS",
-        "You already have entry rights for this territory")
-    need(not pendingApplication(account.account_id, territory.territory_id),
-        "APPLICATION_PENDING", "You already have an application pending")
-
-    local applicationId = nextId("visa_application")
-    local application = {
-        application_id = applicationId,
-        account_id = account.account_id,
-        territory_id = territory.territory_id,
-        requested_days = requestedDays,
-        status = "pending",
-        created_day = util.ingameDay(),
-    }
-    state.visa_applications[applicationId] = application
-    local owner = state.accounts[territory.owner_account_id]
-    if owner then
-        notification(owner, "New visa request",
-            account.name .. " requests " .. requestedDays
-                .. " day(s) in " .. territory.name, "travel")
-    end
-    save()
-    logActivity("Visa applied: " .. account.name .. " / " .. territory.name,
-        colors.lightBlue)
-    return { application = publicApplication(application) }
-end
 
 -- Border Controller routes --------------------------------------------------
 
-function actions.BORDER_REGISTER(payload)
-    local owner = requireSession(payload)
-    local territory = territoryOwner(owner, payload.territory_id)
-    local controllerId = nextId("border")
-    local controller = {
-        controller_id = controllerId,
-        auth_token = util.token("BORDER"),
-        territory_id = territory.territory_id,
-        owner_account_id = owner.account_id,
-        label = util.safeText(
-            util.trim(payload.label or ("Border " .. controllerId)), 24),
-        status = "active",
-        created_day = util.ingameDay(),
-        last_seen = util.nowMs(),
-    }
-    state.border_controllers[controllerId] = controller
-    save()
-    logActivity("Border online: " .. territory.name, colors.purple)
-    return {
-        controller_id = controller.controller_id,
-        controller_token = controller.auth_token,
-        territory_id = territory.territory_id,
-        territory_name = territory.name,
-        label = controller.label,
-    }
-end
 
-function actions.BORDER_STATUS(payload)
-    local controller = requireBorderController(payload)
-    local territory = state.territories[controller.territory_id]
-    need(territory and territory.status == "active",
-        "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
-    return {
-        controller_id = controller.controller_id,
-        territory_id = territory.territory_id,
-        territory_name = territory.name,
-        label = controller.label,
-        day = util.ingameDay(),
-        time = util.formatClock(),
-    }
-end
 
-function actions.BORDER_OWNER_PIN(payload)
-    local controller = requireBorderController(payload)
-    local owner = state.accounts[controller.owner_account_id]
-    need(owner and verifyAccount(owner, payload.pin),
-        "BAD_PIN", "Owner PIN is incorrect")
-    return { authorized = true }
-end
 
-function actions.BORDER_CHECK(payload)
-    local controller = requireBorderController(payload)
-    cleanupEphemeral()
-    local territory = state.territories[controller.territory_id]
-    need(territory and territory.status == "active",
-        "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
-    local code = string.upper(util.trim(payload.code))
-    local direction = string.lower(util.trim(payload.direction))
-    need(direction == "enter" or direction == "exit",
-        "BORDER_DIRECTION", "Choose Enter Territory or Exit Territory")
-    need(code:match("^[A-Z2-9]+$") and #code == 8,
-        "VISA_CODE_INVALID", "Enter the eight-character travel code")
-    local documentId = state.visa_codes[code]
-    local document = documentId and state.visas[documentId]
-    need(document and document.status ~= "revoked",
-        "VISA_NOT_FOUND", "Travel code was not found")
-    need(document.status ~= "expired",
-        "VISA_EXPIRED", "This visa has expired")
-    local traveler = state.accounts[document.account_id]
-    checkAccountActive(traveler)
-
-    local authorization
-    if document.kind == "citizenship"
-        and document.territory_id == territory.territory_id then
-        authorization = "citizenship"
-    elseif document.kind == "citizenship"
-        and territory.free_roam_territory_ids[document.territory_id] then
-        authorization = "free_roam"
-    elseif document.kind == "visa"
-        and document.territory_id == territory.territory_id then
-        authorization = "visa"
-    end
-    need(authorization, "VISA_WRONG_TERRITORY",
-        "This document does not allow entry here")
-
-    local visit = openVisit(
-        traveler.account_id, territory.territory_id, document.visa_id)
-    local now = util.nowMs()
-    local today = util.ingameDay()
-    local permanent = authorization ~= "visa"
-    local actionLabel
-
-    if direction == "enter" then
-        need(not visit, "ALREADY_VISITING",
-            "This traveler is already inside; choose Exit Territory")
-        if not permanent then
-            need(document.status == "issued",
-                "VISA_ALREADY_USED", "This temporary visa has already been used")
-        else
-            local nextEntry = tonumber(document.next_border_entry_at) or 0
-            local remaining = math.ceil(math.max(0, nextEntry - now) / 1000)
-            need(remaining <= 0, "VISA_COOLDOWN",
-                "This permanent travel code is cooling down for "
-                    .. remaining .. " second(s)")
-        end
-        local visitId = nextId("visit")
-        local dueDay
-        if authorization == "visa" then
-            dueDay = today
-                + math.max(1, document.duration_days or 1) - 1
-            document.status = "visiting"
-            document.entered_day = today
-            document.due_day = dueDay
-        else
-            local cooldown = math.max(1,
-                math.floor(tonumber(config.permanent_visa_cooldown_seconds)
-                    or 30))
-            document.next_border_entry_at = now + cooldown * 1000
-        end
-        visit = {
-            visit_id = visitId,
-            account_id = traveler.account_id,
-            territory_id = territory.territory_id,
-            visa_id = document.visa_id,
-            authorization = authorization,
-            entered_day = today,
-            entered_at = now,
-            due_day = dueDay,
-            status = "visiting",
-            controller_id = controller.controller_id,
-        }
-        state.visits[visitId] = visit
-        notification(traveler, "Border entry recorded",
-            territory.name .. (dueDay and
-                (" - leave by day " .. dueDay) or " - permanent stay"),
-            "travel")
-        logActivity("Border entry: " .. traveler.name .. " > "
-            .. territory.name, colors.lime)
-        actionLabel = "entered"
-    else
-        need(visit, "NOT_VISITING",
-            "No active visit was found for this travel code")
-        visit.status = "exited"
-        visit.exited_day = today
-        visit.exited_at = now
-        visit.exit_controller_id = controller.controller_id
-        if permanent then
-            local cooldown = math.max(1,
-                math.floor(tonumber(config.permanent_visa_cooldown_seconds)
-                    or 30))
-            document.next_border_entry_at = now + cooldown * 1000
-            document.last_exit_day = today
-        else
-            document.status = "used"
-            document.exited_day = today
-        end
-        notification(traveler, "Border exit recorded",
-            "You left " .. territory.name
-                .. (permanent and "" or "; temporary visa locked"), "travel")
-        logActivity("Border exit: " .. traveler.name .. " < "
-            .. territory.name, colors.orange)
-        actionLabel = "exited"
-    end
-    save()
-    local remaining = visit.due_day
-        and math.max(0, visit.due_day - today + 1) or nil
-    return {
-        approved = true,
-        direction = direction,
-        action = actionLabel,
-        traveler_name = traveler.name,
-        territory_name = territory.name,
-        authorization = authorization,
-        permanent = permanent,
-        stay_days = remaining,
-        due_day = visit.due_day,
-        entered_day = visit.entered_day,
-        exited_day = visit.exited_day,
-        visiting = direction == "enter",
-    }
-end
 
 -- Proximity Visa. The controller leaves this on and the Bank keeps asking
 -- whoever is nearest with a travel document on screen. Accepting runs the
 -- ordinary border check, so entry rules, cooldowns and visits are identical
 -- to typing the code in by hand.
 
-function actions.VISA_SCAN(payload)
-    local controller = requireBorderController(payload)
-    local territory = state.territories[controller.territory_id]
-    need(territory and territory.status == "active",
-        "TERRITORY_NOT_FOUND", "Configured territory is unavailable")
-    local origin = scans.position(payload)
-    local request = scans.new("visa", origin, "Border check",
-        "Stand at the " .. territory.name .. " border to cross",
-        function(account, held)
-            local document = state.visas[held.ref]
-            return document ~= nil
-                and document.account_id == account.account_id
-                and document.status ~= "revoked"
-                and document.status ~= "expired"
-        end,
-        {
-            controller_id = controller.controller_id,
-            controller_token = controller.auth_token,
-            territory_id = territory.territory_id,
-            settle = function(request, account)
-                local document = state.visas[request.reference]
-                need(document and document.account_id == account.account_id,
-                    "NOT_YOURS", "That travel document is not yours")
-                -- Leaving if they are already inside, entering otherwise. A
-                -- gate has no Enter/Exit buttons to press.
-                local inside = openVisit(account.account_id,
-                    request.territory_id, document.visa_id)
-                local outcome = actions.BORDER_CHECK({
-                    controller_id = request.controller_id,
-                    controller_token = request.controller_token,
-                    code = document.code,
-                    direction = inside and "exit" or "enter",
-                })
-                account.presenting = nil
-                request.direction = outcome.direction
-                return account.name .. "  -  " .. outcome.action
-            end,
-        })
-    save()
-    return { scan = scans.public(request) }
-end
 
-function actions.VISA_SCAN_STATUS(payload)
-    local controller = requireBorderController(payload)
-    local request = scans.requireOwn(controller.controller_id,
-        payload.request_id, "controller_id")
-    scans.poll(request)
-    return { scan = scans.public(request) }
-end
 
-function actions.VISA_SCAN_CANCEL(payload)
-    local controller = requireBorderController(payload)
-    local request = scans.requireOwn(controller.controller_id,
-        payload.request_id, "controller_id")
-    request.status = "cancelled"
-    request.settled_at = util.nowMs()
-    return { scan = scans.public(request) }
-end
 
 function actions.PAY_CODE_PREVIEW(payload)
     local account = requireSpender(payload)
@@ -5677,142 +3676,9 @@ function actions.PAY_CODE_CONFIRM(payload)
     return settleCode(account, payment, payload.pin)
 end
 
-function actions.LIST_EVENTS(payload)
-    requireSession(payload)
-    local today = util.ingameDay()
-    local events = util.sortedValues(state.events, function(event)
-        return event.status == "active" and tonumber(event.event_day) >= today
-    end, function(a, b)
-        if a.event_day ~= b.event_day then return a.event_day < b.event_day end
-        return (util.parseEventTime(a.event_time) or 0)
-            < (util.parseEventTime(b.event_time) or 0)
-    end)
-    local output = {}
-    for _, event in ipairs(events) do
-        local sold, total, minimum = 0, 0, nil
-        for _, typeId in ipairs(event.ticket_type_ids or {}) do
-            local ticketType = state.ticket_types[typeId]
-            if ticketType then
-                sold = sold + ticketType.sold_quantity
-                total = total + ticketType.total_quantity
-                minimum = not minimum and ticketType.price or math.min(minimum, ticketType.price)
-            end
-        end
-        output[#output + 1] = {
-            event_id = event.event_id,
-            title = event.title,
-            description = event.description,
-            location = event.location,
-            event_day = event.event_day,
-            event_time = event.event_time,
-            sold = sold,
-            total = total,
-            from_price = minimum,
-        }
-    end
-    return { events = output }
-end
 
-function actions.EVENT_DETAILS(payload)
-    requireSession(payload)
-    local event = state.events[payload.event_id]
-    need(event and event.status == "active", "NOT_FOUND", "Event not found")
-    local types = {}
-    for _, id in ipairs(event.ticket_type_ids or {}) do
-        local ticketType = state.ticket_types[id]
-        if ticketType then
-            local item = util.copy(ticketType)
-            item.available_quantity = ticketType.total_quantity - ticketType.sold_quantity
-            types[#types + 1] = item
-        end
-    end
-    return { event = util.copy(event), ticket_types = types }
-end
 
-function actions.BUY_TICKETS(payload)
-    local account = requireSpender(payload)
-    local event = state.events[payload.event_id]
-    local ticketType = state.ticket_types[payload.ticket_type_id]
-    need(event and event.status == "active" and ticketType
-        and ticketType.event_id == event.event_id,
-        "NOT_FOUND", "Ticket type not found")
-    local quantity = math.floor(tonumber(payload.quantity) or 0)
-    need(quantity >= 1 and quantity <= config.max_ticket_quantity,
-        "BAD_QUANTITY", "Choose 1-" .. config.max_ticket_quantity .. " tickets")
-    need(ticketType.sold_quantity + quantity <= ticketType.total_quantity,
-        "SOLD_OUT", "Not enough tickets are left")
-    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
-    local total = util.roundMoney(ticketType.price * quantity)
-    need(account.balance >= total, "INSUFFICIENT_FUNDS", "Not enough money")
 
-    local organizer = state.accounts[event.organizer_account_id]
-    checkAccountActive(organizer)
-    account.balance = util.roundMoney(account.balance - total)
-    organizer.balance = util.roundMoney(organizer.balance + total)
-    account.daily_spent = util.roundMoney(account.daily_spent + total)
-    ticketType.sold_quantity = ticketType.sold_quantity + quantity
-    if ticketType.sold_quantity >= ticketType.total_quantity then
-        ticketType.status = "sold_out"
-    end
-
-    local tickets = {}
-    for _ = 1, quantity do
-        local ticket = {
-            ticket_id = nextId("ticket"),
-            event_id = event.event_id,
-            ticket_type_id = ticketType.ticket_type_id,
-            account_id = account.account_id,
-            qr_code = util.randomString(8),
-            used = false,
-            status = "valid",
-            purchased_day = util.ingameDay(),
-        }
-        state.tickets[ticket.ticket_id] = ticket
-        tickets[#tickets + 1] = util.copy(ticket)
-    end
-    transaction(account, "ticket_purchase", -total, event.title,
-        quantity .. "x " .. ticketType.name)
-    transaction(organizer, "ticket_revenue", total, account.name,
-        event.title .. " - " .. ticketType.name)
-    notification(account, "Tickets purchased",
-        quantity .. "x " .. ticketType.name .. " for " .. event.title, "event")
-    notification(organizer, "Ticket sale",
-        account.name .. " bought " .. quantity .. "x " .. ticketType.name, "money")
-    save()
-    logActivity("Tickets sold: " .. event.title .. " x" .. quantity, colors.magenta)
-    return {
-        tickets = tickets,
-        total = total,
-        balance = account.balance,
-        event = util.copy(event),
-        ticket_type = util.copy(ticketType),
-    }
-end
-
-function actions.MY_TICKETS(payload)
-    local account = requireSession(payload)
-    local output = {}
-    for _, ticket in pairs(state.tickets) do
-        if ticket.account_id == account.account_id then
-            local event = state.events[ticket.event_id]
-            local ticketType = state.ticket_types[ticket.ticket_type_id]
-            if event and ticketType then
-                local item = util.copy(ticket)
-                item.event_title = event.title
-                item.location = event.location
-                item.event_day = event.event_day
-                item.event_time = event.event_time
-                item.ticket_type_name = ticketType.name
-                output[#output + 1] = item
-            end
-        end
-    end
-    table.sort(output, function(a, b)
-        if a.event_day ~= b.event_day then return a.event_day < b.event_day end
-        return a.event_time < b.event_time
-    end)
-    return { tickets = output }
-end
 
 function actions.DECLARATION_STATUS(payload)
     local account = requireSession(payload)
@@ -6247,208 +4113,19 @@ end
 
 -- Event organizer routes ----------------------------------------------------
 
-function actions.EVENT_DASHBOARD(payload)
-    local owner = requireSession(payload)
-    local active, sold, revenue = 0, 0, 0
-    for _, event in pairs(state.events) do
-        if event.organizer_account_id == owner.account_id then
-            if event.status == "active" then active = active + 1 end
-            for _, typeId in ipairs(event.ticket_type_ids or {}) do
-                local ticketType = state.ticket_types[typeId]
-                if ticketType then
-                    sold = sold + ticketType.sold_quantity
-                    revenue = revenue + ticketType.sold_quantity * ticketType.price
-                end
-            end
-        end
-    end
-    return {
-        account = publicAccount(owner),
-        active_events = active,
-        tickets_sold = sold,
-        revenue = util.roundMoney(revenue),
-    }
-end
 
-function actions.CREATE_EVENT(payload)
-    local owner = requireSession(payload)
-    local title = util.safeText(util.trim(payload.title), 40)
-    need(#title >= 2, "INVALID_TITLE", "Event title is too short")
-    local day = math.floor(tonumber(payload.event_day) or -1)
-    need(day >= util.ingameDay(), "INVALID_DAY", "Event day is in the past")
-    need(util.parseEventTime(payload.event_time), "INVALID_TIME", "Use time HH:MM")
-    local id = nextId("event")
-    local event = {
-        event_id = id,
-        title = title,
-        description = util.safeText(payload.description, 120),
-        location = util.safeText(payload.location, 60),
-        event_day = day,
-        event_time = payload.event_time,
-        organizer_account_id = owner.account_id,
-        ticket_type_ids = {},
-        status = "active",
-        created_day = util.ingameDay(),
-    }
-    state.events[id] = event
-    save()
-    logActivity("Event created: " .. title, colors.magenta)
-    return { event = util.copy(event) }
-end
 
-function actions.MY_EVENTS(payload)
-    local owner = requireSession(payload)
-    local output = util.sortedValues(state.events, function(event)
-        return event.organizer_account_id == owner.account_id
-    end, function(a, b) return a.event_day < b.event_day end)
-    for _, event in ipairs(output) do
-        event.ticket_types = {}
-        for _, id in ipairs(event.ticket_type_ids or {}) do
-            event.ticket_types[#event.ticket_types + 1] = util.copy(state.ticket_types[id])
-        end
-    end
-    return { events = util.copy(output) }
-end
 
-local function ownedEvent(payload)
-    local owner = requireSession(payload)
-    local event = state.events[payload.event_id]
-    need(event and event.organizer_account_id == owner.account_id,
-        "NOT_OWNER", "Event not found or not yours")
-    return owner, event
-end
 
-function actions.ADD_TICKET_TYPE(payload)
-    local _, event = ownedEvent(payload)
-    local name = util.safeText(util.trim(payload.name), 28)
-    need(#name >= 1, "INVALID_NAME", "Ticket type needs a name")
-    local price = validateAmount(payload.price, 1000000)
-    local quantity = math.floor(tonumber(payload.quantity) or 0)
-    need(quantity >= 1 and quantity <= 100000,
-        "INVALID_QUANTITY", "Quantity must be 1-100000")
-    local id = nextId("ticket_type")
-    local ticketType = {
-        ticket_type_id = id,
-        event_id = event.event_id,
-        name = name,
-        description = util.safeText(payload.description, 80),
-        price = price,
-        total_quantity = quantity,
-        sold_quantity = 0,
-        perks = payload.perks or {},
-        status = "available",
-    }
-    state.ticket_types[id] = ticketType
-    event.ticket_type_ids[#event.ticket_type_ids + 1] = id
-    save()
-    return { ticket_type = util.copy(ticketType) }
-end
 
-function actions.VERIFY_TICKET(payload)
-    local owner = requireSession(payload)
-    local code = string.upper(util.trim(payload.code))
-    local found
-    for _, ticket in pairs(state.tickets) do
-        if ticket.qr_code == code then found = ticket break end
-    end
-    need(found, "NOT_FOUND", "Ticket code not found")
-    local event = state.events[found.event_id]
-    need(event and event.organizer_account_id == owner.account_id,
-        "NOT_OWNER", "Ticket is for another organizer")
-    local ticketType = state.ticket_types[found.ticket_type_id]
-    local holder = state.accounts[found.account_id]
-    return {
-        ticket = util.copy(found),
-        event = util.copy(event),
-        ticket_type = util.copy(ticketType),
-        holder = holder and holder.name or "Unknown",
-        valid = found.status == "valid" and not found.used
-            and event.status == "active",
-    }
-end
 
-function actions.MARK_TICKET_USED(payload)
-    local owner = requireSession(payload)
-    local ticket = state.tickets[payload.ticket_id]
-    need(ticket, "NOT_FOUND", "Ticket not found")
-    local event = state.events[ticket.event_id]
-    need(event and event.organizer_account_id == owner.account_id,
-        "NOT_OWNER", "Ticket is for another organizer")
-    need(ticket.status == "valid" and not ticket.used,
-        "ALREADY_USED", "Ticket has already been used")
-    ticket.used = true
-    ticket.status = "used"
-    ticket.used_day = util.ingameDay()
-    ticket.used_time = util.formatClock()
-    save()
-    logActivity("Ticket admitted: " .. ticket.qr_code, colors.lime)
-    return { ticket = util.copy(ticket) }
-end
 
 -- Proximity ticket scanning. The organiser turns it on at the door and the
 -- Bank asks whoever is nearest with a ticket for this event on screen.
 
-local function requireOrganizerEvent(owner, eventId)
-    local event = state.events[eventId]
-    need(event and event.organizer_account_id == owner.account_id,
-        "NOT_OWNER", "That event is not yours")
-    need(event.status == "active", "EVENT_CLOSED", "That event is closed")
-    return event
-end
 
-function actions.TICKET_SCAN(payload)
-    local owner = requireSession(payload)
-    local event = requireOrganizerEvent(owner, payload.event_id)
-    local origin = scans.position(payload)
-    local request = scans.new("ticket", origin, "Ticket check",
-        "Scan your ticket for " .. event.title,
-        function(_, held)
-            local ticket = state.tickets[held.ref]
-            return ticket ~= nil and ticket.event_id == event.event_id
-                and ticket.status == "valid" and not ticket.used
-        end,
-        {
-            event_id = event.event_id,
-            organizer_id = owner.account_id,
-            settle = function(request, account)
-                local ticket = state.tickets[request.reference]
-                need(ticket and ticket.account_id == account.account_id,
-                    "NOT_YOURS", "That ticket is not yours")
-                need(ticket.event_id == request.event_id, "WRONG_EVENT",
-                    "That ticket is for another event")
-                need(ticket.status == "valid" and not ticket.used,
-                    "ALREADY_USED", "That ticket has already been used")
-                ticket.used = true
-                ticket.status = "used"
-                ticket.used_day = util.ingameDay()
-                ticket.used_time = util.formatClock()
-                account.presenting = nil
-                local ticketType = state.ticket_types[ticket.ticket_type_id]
-                logActivity("Ticket admitted: " .. ticket.qr_code, colors.lime)
-                return account.name .. "  -  "
-                    .. (ticketType and ticketType.name or "Ticket")
-            end,
-        })
-    save()
-    return { scan = scans.public(request) }
-end
 
-function actions.TICKET_SCAN_STATUS(payload)
-    local owner = requireSession(payload)
-    local request = scans.requireOwn(owner.account_id, payload.request_id,
-        "organizer_id")
-    scans.poll(request)
-    return { scan = scans.public(request) }
-end
 
-function actions.TICKET_SCAN_CANCEL(payload)
-    local owner = requireSession(payload)
-    local request = scans.requireOwn(owner.account_id, payload.request_id,
-        "organizer_id")
-    request.status = "cancelled"
-    request.settled_at = util.nowMs()
-    return { scan = scans.public(request) }
-end
 
 -- Government routes --------------------------------------------------------
 
@@ -6806,16 +4483,136 @@ local function deploymentRoute(sender, message)
     end
 end
 
+-- What the Vault owns ---------------------------------------------------------
+-- Listing them here rather than letting anything unknown fall through is
+-- deliberate: a typo in a client must still be an unknown action, not a
+-- question quietly posted down a cable. Each entry is the rule the Core
+-- applies before forwarding -- who is asking, whether they may spend, and
+-- whether they had to prove it with a PIN -- so authentication stays on the
+-- half that holds the accounts.
+--
+--   session  someone signed in            pin    also prove it with a PIN
+--   spender  ... whose money can move     app    ... signed in to that app
+--   device   a Border Controller          account  fold the balance into the
+--                                                  reply, which is the Core's
+pair.routes = {
+    FRIEND_OVERVIEW = { auth = "session" },
+    FRIEND_SEARCH = { auth = "session" },
+    FRIEND_REQUEST = { auth = "session" },
+    FRIEND_RESPOND = { auth = "session" },
+    FRIEND_REMOVE = { auth = "session" },
+    CHAT_LIST = { auth = "session" },
+    CHAT_START = { auth = "session" },
+    CHAT_OPEN = { auth = "session" },
+    CHAT_SEND = { auth = "session" },
+    CHAT_REQUEST_MONEY = { auth = "session" },
+    CHAT_SEND_MONEY = { auth = "spender", pin = true },
+    -- Session rather than spender: paying the government is never blocked by
+    -- owing the government, and the transfer route applies the rest.
+    CHAT_PAY_REQUEST = { auth = "session", pin = true },
+    CHAT_DECLINE_REQUEST = { auth = "session" },
+    URGENT_RING = { auth = "session" },
+    URGENT_CALL = { auth = "session", app = "optional" },
+    URGENT_ANSWER = { auth = "session" },
+    URGENT_STATE = { auth = "session" },
+    URGENT_SEND = { auth = "session" },
+    URGENT_SAVE = { auth = "session" },
+    URGENT_REQUEST_MONEY = { auth = "session" },
+    URGENT_SEND_MONEY = { auth = "spender", pin = true },
+    URGENT_PAY_REQUEST = { auth = "spender", pin = true },
+    URGENT_END = { auth = "session" },
+    APP_DATA_PUT = { auth = "session", app = "required" },
+    APP_DATA_LIST = { auth = "session", app = "required" },
+    APP_DATA_DELETE = { auth = "session", app = "required" },
+    APP_DATA_READ = { auth = "session", app = "required" },
+    APP_DATA_REACT = { auth = "session", app = "required" },
+    SCAN_ACCEPT = { auth = "session" },
+    SCAN_DECLINE = { auth = "session" },
+    CUSTOMS_OVERVIEW = { auth = "session" },
+    CUSTOMS_DETAIL = { auth = "session" },
+    CUSTOMS_CREATE_TERRITORY = { auth = "session", pin = true },
+    CUSTOMS_ISSUE_CITIZENSHIP = { auth = "session", pin = true },
+    CUSTOMS_SET_FREE_ROAM = { auth = "session", pin = true },
+    CUSTOMS_REVIEW_APPLICATION = { auth = "session", pin = true },
+    VISA_OVERVIEW = { auth = "session" },
+    VISA_APPLY = { auth = "spender" },
+    BORDER_REGISTER = { auth = "session" },
+    BORDER_STATUS = { auth = "device" },
+    BORDER_OWNER_PIN = { auth = "device" },
+    BORDER_CHECK = { auth = "device" },
+    VISA_SCAN = { auth = "device" },
+    VISA_SCAN_STATUS = { auth = "device" },
+    VISA_SCAN_CANCEL = { auth = "device" },
+    LIST_EVENTS = { auth = "session" },
+    EVENT_DETAILS = { auth = "session" },
+    BUY_TICKETS = { auth = "spender", pin = true },
+    MY_TICKETS = { auth = "session" },
+    EVENT_DASHBOARD = { auth = "session", account = true },
+    CREATE_EVENT = { auth = "session" },
+    MY_EVENTS = { auth = "session" },
+    ADD_TICKET_TYPE = { auth = "session" },
+    VERIFY_TICKET = { auth = "session" },
+    MARK_TICKET_USED = { auth = "session" },
+    TICKET_SCAN = { auth = "session" },
+    TICKET_SCAN_STATUS = { auth = "session" },
+    TICKET_SCAN_CANCEL = { auth = "session" },
+}
+
+-- Everything the Core checks before a question goes down the cable.
+local function routeToVault(action, spec, payload)
+    if spec.auth == "device" then
+        -- A Border Controller proves itself against the Vault's own register
+        -- of them. Nothing here can help: the Core does not hold that list.
+        return pair.forward(action, payload, { kind = "device" })
+    end
+    local account = spec.auth == "spender" and requireSpender(payload)
+        or requireSession(payload)
+    if spec.pin then
+        need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    end
+    local extra = {}
+    if spec.app == "required" then
+        local appId = appstore.appId(payload)
+        appstore.requireGrant(account, appId)
+        extra.app_id = appId
+    elseif spec.app == "optional" and payload.app_id then
+        local appId = appstore.appId(payload)
+        extra.app_id = appId
+        extra.app_name = appstore.requireGrant(account, appId).app_name
+    end
+    -- The PIN stops here. Nothing downstream has any use for it, and a
+    -- secret that does not travel cannot be logged on the far side.
+    local forwarded = {}
+    for key, value in pairs(payload) do
+        if key ~= "pin" and key ~= "session_token" then
+            forwarded[key] = value
+        end
+    end
+    local result = pair.forward(action, forwarded,
+        vaultCaller(account, extra))
+    if spec.account and type(result) == "table" then
+        result.account = publicAccount(account)
+    end
+    return result
+end
+
 local function route(sender, message)
     if type(message) ~= "table" or message.kind ~= "request"
         or type(message.action) ~= "string" then return end
     local handler = actions[message.action]
-    if not handler then
+    local spec = not handler and pair.routes[message.action] or nil
+    if not handler and not spec then
         net.reply(sender, config.protocol, message.request_id, false, nil,
             "Unknown bank action", "UNKNOWN_ACTION")
         return
     end
-    local ok, result = pcall(handler, message.payload or {}, sender)
+    local ok, result
+    if spec then
+        ok, result = pcall(routeToVault, message.action, spec,
+            message.payload or {})
+    else
+        ok, result = pcall(handler, message.payload or {}, sender)
+    end
     if ok then
         net.reply(sender, config.protocol, message.request_id, true, result)
     elseif type(result) == "table" and result.pumpe then
@@ -7058,9 +4855,11 @@ local function dashboardLoop()
             dash.update_color)
         ui.text(target, 2, 11,
             ui.truncate("DEPLOYMENT  " .. dash.deploy_status, width - 2), dash.deploy_color)
+        ui.text(target, 2, 12, ui.truncate("VAULT  " .. pair.status(),
+            width - 12), pair.statusColor())
 
         local scene = ui.scene(target)
-        local feedY = 13
+        local feedY = 14
         ui.text(target, 2, feedY, "ACTIVITY", colors.lightGray)
         local maxFeed = math.max(1, height - feedY - 2)
         for index = 1, math.min(#activity, maxFeed) do
@@ -7069,13 +4868,20 @@ local function dashboardLoop()
                 item.time .. "  " .. ui.truncate(item.text, width - 10),
                 item.color)
         end
+        -- A Vault that has been destroyed, or a cable that has been cut,
+        -- must not leave the Bank with no way back: the same button that
+        -- pairs the first one pairs a replacement.
+        scene:button("vault", 2, height, 9, 1,
+            pair.paired() and "RE-PAIR" or "PAIR", { background = colors.lime })
         scene:button("save", width - 18, height, 8, 1, "SAVE",
             { background = colors.blue })
         scene:button("stop", width - 9, height, 8, 1, "STOP",
             { background = colors.red })
         local action = scene:wait({ tickRate = 0.5, flash = false })
         blink = not blink
-        if action == "save" then
+        if action == "vault" then
+            pair.repairScreen(target)
+        elseif action == "save" then
             save()
             logActivity("Manual save complete", colors.lime)
         elseif action == "stop" then
@@ -7094,73 +4900,140 @@ local function dashboardLoop()
 end
 
 -- Pair Mode -------------------------------------------------------------------
--- Two Bank Servers, one bank. The split is deliberately not down the middle:
--- everyday banking is a hot path where a second radio hop would be felt on
--- every balance check, so the Core keeps all of it. What moves to the Vault
--- is the heavy, cold work -- serving update downloads, and holding the app
--- record store -- which is what was actually crowding the Core's disk and
--- making banking queue behind file transfers.
+-- Two Bank Servers, one bank. The split is not down the middle and is not
+-- about load: it is about what a thing IS. The Core holds anything where
+-- being wrong means money is wrong -- balances, sessions, the ledger, tax,
+-- escrow. The Vault holds everything that is merely ABOUT an account:
+-- conversations, visas and border records, tickets, app records, who is
+-- standing near whom. Those are the parts that grew without limit, and
+-- moving them is what took this program from 287 KB back under 200 KB, which
+-- is the difference between a Bank that can be updated and one that cannot.
 --
--- Clients never learn any of this. The depot simply answers from a different
--- computer, which rednet already resolves by name, and app records reach the
--- Vault through the Core.
+-- The Vault runs a different program, bank_vault.lua. That is the whole point:
+-- before 9.3 both halves ran this file, so the Vault carried 287 KB to use
+-- 25 KB of it and the Core saved nothing at all by having a partner.
+--
+-- Clients never learn any of this. They ask the Core, as they always have,
+-- and the Core answers or passes the question down the cable.
 
 function pair.load()
     local saved = util.loadTable(pair.file, {})
     if saved.role == "core" or saved.role == "vault" then
         pair.role = saved.role
         pair.partner = saved.partner
-        pair.partner_code = saved.partner_code
         pair.since = saved.since
+        pair.wired = saved.wired
     end
 end
 
 function pair.store()
     pcall(util.saveTable, pair.file, {
-        role = pair.role, partner = pair.partner,
-        partner_code = pair.partner_code, since = pair.since,
+        role = pair.role, partner = pair.partner, since = pair.since,
+        wired = pair.wired,
     })
-end
-
-function pair.newCode()
-    pair.code = util.randomString(6, "0123456789")
-    return pair.code
 end
 
 function pair.isVault() return pair.role == "vault" end
 function pair.isCore() return pair.role == "core" end
 function pair.paired() return pair.partner ~= nil end
 
--- What a Vault answers. Everything the Core hands over lives behind this one
--- protocol, so nothing else on the network can reach it.
+-- Wired only, on purpose ------------------------------------------------------
+-- Since 9.3 a Vault is not a spare computer holding cold files: it answers
+-- part of every session, so the link between the halves is on the path of a
+-- player's request rather than beside it. A wireless modem shares the air
+-- with every pocket computer on the server and stops existing when the chunk
+-- unloads; a cable does neither. So the handshake runs with the wireless
+-- modems shut. Whatever answers is on the other end of a physical cable, and
+-- that is the whole of the authorisation -- there is no code to type because
+-- a code proves nothing the cable has not already proved.
+
+function pair.modemSides()
+    local wired, wireless = {}, {}
+    local sides = peripheral and peripheral.getNames and peripheral.getNames()
+    for _, side in ipairs(sides or {}) do
+        if peripheral.getType(side) == "modem" then
+            local ok, isWireless = pcall(peripheral.call, side, "isWireless")
+            if ok and isWireless then
+                wireless[#wireless + 1] = side
+            else
+                wired[#wired + 1] = side
+            end
+        end
+    end
+    return wired, wireless
+end
+
+function pair.wireAttached()
+    local wired = pair.modemSides()
+    return #wired > 0
+end
+
+-- Shutting the wireless modems for the length of the handshake, so that
+-- being heard at all is proof of a cable.
+function pair.wiredOnly()
+    local wired, wireless = pair.modemSides()
+    if #wired == 0 then return nil end
+    for _, side in ipairs(wireless) do
+        if rednet.isOpen(side) then rednet.close(side) end
+    end
+    for _, side in ipairs(wired) do
+        if not rednet.isOpen(side) then rednet.open(side) end
+    end
+    return wired
+end
+
+-- Every Bank Server looking for a partner hosts its own computer id, so one
+-- lookup returns the whole cable rather than a code someone has to carry
+-- between two keyboards.
+function pair.beacon()
+    local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
+    pcall(rednet.unhost, protocol)
+    rednet.host(protocol, "BANKPAIR_" .. os.getComputerID())
+end
+
+function pair.discover()
+    local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
+    local mine, peers, seen = os.getComputerID(), {}, {}
+    for _, id in ipairs({ rednet.lookup(protocol) }) do
+        if type(id) == "number" and id ~= mine and not seen[id] then
+            seen[id] = true
+            peers[#peers + 1] = id
+        end
+    end
+    table.sort(peers)
+    return peers
+end
+
+-- What a half answers to its other half. Everything here is reachable only
+-- over the pair protocol, and the money actions below are the only way the
+-- Vault can ever touch a balance: it asks, the Core decides.
 pair.actions = {}
 
 function pair.actions.PAIR_HELLO(payload, sender)
     return {
         computer = os.getComputerID(),
-        code = pair.code,
         accounts = mapCount(state.accounts),
         version = config.version,
+        pairing = pair.pairing == true,
+        role = pair.role,
     }
 end
 
--- Claiming is what pairs them. The server whose code was entered decides
--- which half is which, and it protects data: whichever side already has
--- accounts stays the Core, so pairing can never strand a live ledger behind
--- a Vault that does no banking.
+-- Claiming is what pairs them. Whichever side already has accounts stays the
+-- Core, so pairing can never strand a live ledger behind a half that does no
+-- banking. A tie goes to the server being claimed: it was here first.
 function pair.actions.PAIR_CLAIM(payload, sender)
-    need(pair.role ~= "vault", "ALREADY_VAULT", "This server is already a Vault")
-    need(not pair.paired(), "ALREADY_PAIRED", "This server is already paired")
-    need(tostring(payload.code or "") == tostring(pair.code or ""),
-        "BAD_CODE", "That is not this server's code")
+    need(pair.pairing == true, "NOT_PAIRING",
+        "That server is not looking for a partner")
+    need(pair.role ~= "vault", "ALREADY_VAULT", "That server is already a Vault")
+    need(not pair.paired(), "ALREADY_PAIRED", "That server is already paired")
     local mine = mapCount(state.accounts)
     local theirs = math.floor(tonumber(payload.accounts) or 0)
-    -- A tie goes to the server that was already here: the one being claimed.
     local iAmCore = mine >= theirs
     pair.role = iAmCore and "core" or "vault"
     pair.partner = sender
-    pair.partner_code = payload.code_of_theirs
     pair.since = util.nowMs()
+    pair.wired = true
     pair.store()
     logActivity("Paired with computer #" .. tostring(sender) .. " as "
         .. string.upper(pair.role), colors.lime)
@@ -7172,21 +5045,340 @@ function pair.actions.PAIR_CLAIM(payload, sender)
     }
 end
 
--- The app record store, once it lives on the Vault. The Core forwards the
--- whole action rather than reaching into the data, so there is exactly one
--- implementation of what an app record means.
-function pair.actions.VAULT_APP_DATA(payload, sender)
-    -- Only the Core this Vault is paired to. Rednet ids are as strong as
-    -- anything else on this network, and without the check any computer
-    -- could read every app's records by asking nicely.
-    need(sender == pair.partner, "NOT_MY_CORE",
-        "This Vault is paired to another server")
-    local handler = appstore.ops[tostring(payload.op or "")]
-    need(handler, "NOT_VAULT_WORK", "The Vault does not do that")
-    local caller = type(payload.caller) == "table" and payload.caller or {}
-    need(type(caller.account_id) == "string", "NO_CALLER",
-        "The Core did not say who is asking")
-    return handler(caller, payload.app_id, payload.payload or {})
+-- Handing the Vault its own program over the cable. The Core already holds
+-- every published file for Easy Deployment, so the half that has just been
+-- told it is a Vault does not need the internet to become one.
+function pair.actions.PAIR_FETCH(payload, sender)
+    local path = tostring(payload.path or "")
+    need(path == "bank_vault.lua" or path == "config.lua"
+        or path:match("^lib/[%w_]+%.lua$") ~= nil,
+        "NOT_PAIR_FILE", "That file is not handed out over the pair link")
+    local body = localUpdateBody(path)
+    need(body, "NO_FILE", "This Bank does not have " .. path)
+    return { path = path, body = body, checksum = util.checksum(body) }
+end
+
+-- What the Core does on the Vault's behalf ------------------------------------
+-- The Vault owns records, never money. When something it owns has to move
+-- money -- a ticket bought, a note paid inside a conversation -- it asks
+-- here, and the Core does both halves of the move in one step so there is
+-- never a moment where the money is in neither account. The move id is what
+-- makes a lost reply harmless: asking again with the same id returns the
+-- first answer instead of moving the money a second time.
+function pair.actions.CORE_MOVE(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local moveId = tostring(payload.move_id or "")
+    need(#moveId > 0, "NO_MOVE_ID", "A move needs an id")
+    state.vault_moves = state.vault_moves or {}
+    local already = state.vault_moves[moveId]
+    if already then return already.result end
+    local from = state.accounts[tostring(payload.from or "")]
+    local to = state.accounts[tostring(payload.to or "")]
+    need(from, "NO_PAYER", "That account is not at this bank")
+    need(to, "NO_PAYEE", "That account is not at this bank")
+    need(from ~= to, "SELF_MOVE", "That is the same account")
+    local amount = validateAmount(payload.amount, config.max_transfer)
+    checkAccountActive(from)
+    checkBankOpen(from)
+    checkNoTaxDemand(from)
+    checkAccountActive(to, true)
+    if not payload.priced then
+        need((from.balance or 0) >= amount, "INSUFFICIENT_FUNDS",
+            "There is not enough money in that account")
+    end
+    local kind = util.safeText(payload.kind or "transfer", 24)
+    local description = util.safeText(payload.description or "", 100)
+    local result
+    if payload.priced then
+        -- Money sent between two people, wherever it was typed. It is the
+        -- same move as Send Money and has to cost the same: the processing
+        -- fee, the daily ceilings and the recipient's alert all live in
+        -- performTransfer, and a second implementation of them here is how a
+        -- fee quietly stops being charged.
+        local quote = performTransfer(from, to.name, amount, description)
+        result = {
+            from_balance = from.balance, to_balance = to.balance,
+            from_name = from.name, to_name = to.name,
+            amount = quote.amount, fee = quote.fee, total = quote.total,
+        }
+    else
+        from.balance = util.roundMoney(from.balance - amount)
+        to.balance = util.roundMoney((to.balance or 0) + amount)
+        transaction(from, kind .. "_out", -amount, to.name, description)
+        transaction(to, kind .. "_in", amount, from.name, description)
+        result = {
+            from_balance = from.balance, to_balance = to.balance,
+            from_name = from.name, to_name = to.name,
+            amount = amount, fee = 0, total = amount,
+        }
+    end
+    state.vault_moves[moveId] = { result = result, at = util.nowMs() }
+    -- The record only has to outlive a retry, not the day.
+    for id, entry in pairs(state.vault_moves) do
+        if util.nowMs() - (entry.at or 0) > 600000 then
+            state.vault_moves[id] = nil
+        end
+    end
+    save()
+    return result
+end
+
+function pair.actions.CORE_NOTIFY(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local account = state.accounts[tostring(payload.account_id or "")]
+    need(account, "NO_ACCOUNT", "No such account")
+    local item = notification(account, payload.title, payload.body,
+        payload.kind, type(payload.extra) == "table" and payload.extra or nil)
+    save()
+    return { notification_id = item.notification_id }
+end
+
+-- Unread counts, pushed rather than asked for. ACCOUNT_SUMMARY is the most
+-- called action on the network -- every PUMPE polls it -- and it would be a
+-- poor trade to put a cable round trip inside it just to colour a badge. So
+-- the Vault tells the Core when a count changes and the Core answers
+-- summaries out of its own memory.
+function pair.actions.CORE_BADGES(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local account = state.accounts[tostring(payload.account_id or "")]
+    need(account, "NO_ACCOUNT", "No such account")
+    account.badges = {
+        messages = math.max(0, math.floor(tonumber(payload.messages) or 0)),
+        friend_requests =
+            math.max(0, math.floor(tonumber(payload.friend_requests) or 0)),
+        friends = math.max(0, math.floor(tonumber(payload.friends) or 0)),
+    }
+    return { ok = true }
+end
+
+function pair.actions.CORE_ACCOUNT(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local account
+    if payload.account_id ~= nil then
+        account = state.accounts[tostring(payload.account_id)]
+    elseif payload.name ~= nil then
+        account = accountByName(payload.name)
+    end
+    if not account then return { found = false } end
+    return {
+        found = true,
+        account_id = account.account_id,
+        name = account.name,
+        gender = account.gender,
+        personal_number = account.personal_number,
+        balance = account.balance,
+        frozen = account.frozen == true,
+        banned = account.banned == true,
+        approved = account.approved,
+        bank_closed = account.bank_closed == true,
+    }
+end
+
+-- Searching by name stays here because the name index is part of who holds
+-- an account, not part of what the Vault records about them.
+function pair.actions.CORE_SEARCH(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local query = util.normalName(util.trim(payload.query or ""))
+    need(#query >= 2, "QUERY_TOO_SHORT", "Type at least two characters")
+    local exclude = tostring(payload.exclude or "")
+    local results = {}
+    for normal, accountId in pairs(state.account_names) do
+        local other = state.accounts[accountId]
+        if accountId ~= exclude and other and not other.banned
+            and normal:find(query, 1, true) then
+            results[#results + 1] =
+                { account_id = accountId, name = other.name }
+        end
+    end
+    table.sort(results, function(a, b) return a.name < b.name end)
+    while #results > 12 do table.remove(results) end
+    return { results = results }
+end
+
+-- Who is standing nearby holding up the right kind of thing. Positions and
+-- what a phone is presenting both stay here, because the OS poll already
+-- carries them and moving them would put a cable hop inside it. Whether a
+-- candidate's ticket or visa is actually valid needs the records, so the
+-- Vault decides that from this list.
+function pair.actions.CORE_NEAREST(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local origin = type(payload.origin) == "table" and payload.origin or {}
+    local kind = tostring(payload.kind or "")
+    local excluded = type(payload.exclude) == "table" and payload.exclude or {}
+    local radius = tonumber(config.proximity_pay_radius) or 16
+    local found = {}
+    for accountId, account in pairs(state.accounts) do
+        local held = not excluded[accountId] and not account.banned
+            and not account.frozen and scans.presenting(account, kind)
+        local position = held and freshPosition(account)
+        if position then
+            local distance = distanceBetween(origin, position)
+            if distance <= radius then
+                found[#found + 1] = {
+                    account_id = accountId,
+                    name = account.name,
+                    ref = held.ref,
+                    distance = distance,
+                }
+            end
+        end
+    end
+    table.sort(found, function(a, b) return a.distance < b.distance end)
+    return { candidates = found }
+end
+
+function pair.actions.CORE_CLEAR_PRESENTING(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local account = state.accounts[tostring(payload.account_id or "")]
+    if account then account.presenting = nil end
+    return { ok = true }
+end
+
+-- A PIN is never held anywhere but here, so a Vault route that turns on one
+-- -- a Border Controller asking its owner to unlock it -- asks this.
+function pair.actions.CORE_VERIFY_PIN(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local account = state.accounts[tostring(payload.account_id or "")]
+    return { ok = account ~= nil and verifyAccount(account, payload.pin) }
+end
+
+-- Paying a government demand. There is no counterpart account to credit, so
+-- it settles like a fine rather than a transfer.
+function pair.actions.CORE_GOV_PAY(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local moveId = tostring(payload.move_id or "")
+    need(#moveId > 0, "NO_MOVE_ID", "A payment needs an id")
+    state.vault_moves = state.vault_moves or {}
+    local already = state.vault_moves[moveId]
+    if already then return already.result end
+    local account = state.accounts[tostring(payload.account_id or "")]
+    need(account, "NO_ACCOUNT", "No such account")
+    local amount = validateAmount(payload.amount, config.max_transfer)
+    checkAccountActive(account)
+    checkBankOpen(account)
+    need((account.balance or 0) >= amount, "INSUFFICIENT_FUNDS",
+        "Not enough money to pay this")
+    account.balance = util.roundMoney(account.balance - amount)
+    state.tax_revenue = util.roundMoney((state.tax_revenue or 0) + amount)
+    transaction(account, "government", -amount, "Government",
+        util.safeText(payload.description or "Government demand", 60))
+    local result = { balance = account.balance, amount = amount }
+    state.vault_moves[moveId] = { result = result, at = util.nowMs() }
+    save()
+    return result
+end
+
+-- What is waiting on somebody, pushed up rather than polled for. Kept on the
+-- account so a restart does not drop a ringing call, and stamped with an
+-- expiry so a push that stops arriving cannot leave a phone ringing forever.
+function pair.actions.CORE_WAITING(payload, sender)
+    need(sender == pair.partner, "NOT_MY_PARTNER", "Not this Bank's Vault")
+    local entries = type(payload.entries) == "table" and payload.entries or {}
+    for _, account in pairs(state.accounts) do
+        if account.waiting then account.waiting = nil end
+    end
+    local held = 0
+    for accountId, entry in pairs(entries) do
+        local account = state.accounts[accountId]
+        if account and type(entry) == "table" then
+            account.waiting = entry
+            held = held + 1
+        end
+    end
+    return { held = held }
+end
+
+-- Handing over what the Core used to keep ---------------------------------------
+-- A Bank upgrading from 9.2 still has every conversation, visa, territory,
+-- event and app record in its own state file, because until 9.3 that is
+-- where they lived. They are sent one table at a time and each one is
+-- acknowledged before the Core lets go of its copy, so an interrupted move
+-- leaves the data on the Core rather than nowhere. Running it twice is
+-- harmless: what has already gone is no longer here to send.
+pair.moving = {
+    "territories", "territory_names", "visas", "visa_codes",
+    "visa_applications", "visits", "border_controllers",
+    "conversations", "direct_conversations",
+    "events", "ticket_types", "tickets", "app_data",
+}
+
+function pair.migrate()
+    if not pair.isCore() or not pair.paired() then return false, "No Vault" end
+    local moved, failed = 0, nil
+    for _, name in ipairs(pair.moving) do
+        local rows = state[name]
+        if type(rows) == "table" and next(rows) ~= nil then
+            local ok, err = pair.ask("VAULT_MIGRATE",
+                { table = name, rows = rows }, 20)
+            if ok then
+                state[name] = nil
+                moved = moved + 1
+                logActivity("Handed " .. name .. " to the Vault", colors.lime)
+            else
+                failed = failed or err
+            end
+        else
+            state[name] = nil
+        end
+    end
+
+    -- The counters have to go too, or the Vault starts numbering at one and
+    -- writes a second CHAT00000001 over somebody's conversation.
+    local counters = {}
+    for _, key in ipairs({ "territory", "visa", "visa_application", "visit",
+        "border", "conversation", "scan", "event", "ticket_type",
+        "ticket" }) do
+        if state.sequence[key] then
+            counters[key] = state.sequence[key]
+        end
+    end
+    if next(counters) ~= nil then
+        if pair.ask("VAULT_MIGRATE", { table = "sequence", rows = counters },
+            10) then
+            for key in pairs(counters) do state.sequence[key] = nil end
+            moved = moved + 1
+        end
+    end
+
+    -- And the parts of an account that were never about money.
+    local holders = {}
+    for accountId, account in pairs(state.accounts) do
+        local fields = {}
+        local any = false
+        for _, key in ipairs({ "friends", "friend_requests_in",
+            "friend_requests_out", "conversation_ids",
+            "government_conversation_id" }) do
+            if account[key] ~= nil then
+                fields[key] = account[key]
+                any = true
+            end
+        end
+        if any then
+            fields.name = account.name
+            holders[accountId] = fields
+        end
+    end
+    if next(holders) ~= nil then
+        if pair.ask("VAULT_MIGRATE", { table = "holders", rows = holders },
+            20) then
+            for accountId in pairs(holders) do
+                local account = state.accounts[accountId]
+                account.friends = nil
+                account.friend_requests_in = nil
+                account.friend_requests_out = nil
+                account.conversation_ids = nil
+                account.government_conversation_id = nil
+            end
+            moved = moved + 1
+        end
+    end
+
+    if moved > 0 then
+        save()
+        logActivity("Handed " .. moved .. " record sets to the Vault",
+            colors.lime)
+    end
+    return failed == nil, failed
 end
 
 function pair.reach()
@@ -7201,8 +5393,26 @@ end
 
 function pair.ask(action, payload, timeout)
     local client = pair.reach()
-    if not client then return nil, "No Vault is paired" end
-    return client:request(action, payload, timeout or 6)
+    if not client then return nil, "No Vault is paired", "NO_VAULT" end
+    local data, err, code = client:request(action, payload, timeout or 6)
+    pair.online = data ~= nil
+    pair.last_error = data and nil or err
+    return data, err, code
+end
+
+-- Handing a client's request to the half that owns it. The Core has already
+-- decided who is asking by the time this runs: the Vault is told an identity,
+-- never a session token, so a Vault that is lied to cannot be talked into
+-- acting as somebody else.
+function pair.forward(action, payload, caller)
+    need(pair.paired(), "NO_VAULT",
+        "This Bank has no Vault yet. Pair a second Bank Server to use this.")
+    local data, err, code = pair.ask("VAULT_CALL", {
+        action = action, payload = payload, caller = caller,
+    }, 6)
+    if data then return data end
+    if code then reject(code, err or "The Vault refused that") end
+    reject("VAULT_OFFLINE", err or "The Vault is not answering")
 end
 
 function pair.loop()
@@ -7234,31 +5444,37 @@ function pair.loop()
     end
 end
 
--- Entering the other server's code. A code is a rednet hostname while it is
--- being shown, so finding the other half is the same lookup everything else
--- on this network uses rather than a broadcast nobody can debug.
-function pair.claim(code)
-    code = tostring(code or ""):gsub("%D", "")
-    if #code ~= 6 then return nil, "A pairing code is six digits" end
-    if code == pair.code then return nil, "That is this server's own code" end
+-- Pairing with the Bank Server at the other end of the cable.
+function pair.claim(id)
+    id = math.floor(tonumber(id) or 0)
+    if id <= 0 then return nil, "That is not a computer id" end
+    if id == os.getComputerID() then
+        return nil, "That is this server's own id"
+    end
     local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
-    local other = rednet.lookup(protocol, "PAIRING_" .. code)
-    if not other then return nil, "No server is showing that code" end
     local client = net.client({ protocol = protocol,
-        hostname = "PAIRING_" .. code })
-    client.serverId = other
-    local claimed, err = client:request("PAIR_CLAIM", {
-        code = code,
-        code_of_theirs = pair.code,
+        hostname = "BANKPAIR_" .. id })
+    client.serverId = id
+    local hello, helloError = client:request("PAIR_HELLO", {}, 4)
+    if not hello then
+        return nil, helloError or "That computer did not answer"
+    end
+    if hello.version ~= config.version then
+        return nil, "That server is on v" .. tostring(hello.version)
+            .. ", this one is on v" .. tostring(config.version)
+    end
+    local claimed, failed = client:request("PAIR_CLAIM", {
         accounts = mapCount(state.accounts),
     }, 8)
-    if not claimed then return nil, err or "That server did not answer" end
+    if not claimed then
+        return nil, failed or "That server would not pair"
+    end
     pair.role = claimed.their_role
-    pair.partner = other
-    pair.partner_code = code
+    pair.partner = id
     pair.since = util.nowMs()
+    pair.wired = true
     pair.store()
-    logActivity("Paired with computer #" .. tostring(other) .. " as "
+    logActivity("Paired with computer #" .. tostring(id) .. " as "
         .. string.upper(pair.role), colors.lime)
     return true
 end
@@ -7278,60 +5494,129 @@ if TEST_MODE then
         compact_bank_storage = compactBankStorage,
         deployment_fetch = fetchDepotFile,
         drop_stale_cache = dropStaleDepotCache,
-        urgent_calls = urgentCalls,
         ledger = ledger,
         pair = pair,
         appstore = appstore,
+        -- The dispatcher itself, so a test can reach a Vault route exactly
+        -- the way the server loop does rather than through a hand-written
+        -- imitation of it. A stub that is more forgiving than the real thing
+        -- is how a bug ships.
+        routes = pair.routes,
+        route_to_vault = routeToVault,
+        vault_caller = vaultCaller,
     }
 end
 
--- The launch question, asked once. A Bank that has already been paired or
--- has already been told to stay solo never asks again.
-function pair.chooseMode(target)
+-- What the dashboard says about the other half.
+function pair.status()
+    if pair.isVault() then
+        return "THIS IS THE VAULT FOR #" .. tostring(pair.partner)
+    end
+    if not pair.paired() then
+        if pair.wireAttached() then
+            return "NONE PAIRED - PRESS PAIR"
+        end
+        return "NONE PAIRED - NO WIRED MODEM"
+    end
+    if pair.online == false then
+        return "#" .. tostring(pair.partner) .. " NOT ANSWERING"
+    end
+    if not pair.wireAttached() then
+        return "#" .. tostring(pair.partner) .. " - WIRED MODEM GONE"
+    end
+    return "#" .. tostring(pair.partner) .. " LINKED OVER CABLE"
+end
+
+function pair.statusColor()
+    if not pair.paired() then return colors.orange end
+    if pair.online == false or not pair.wireAttached() then
+        return colors.red
+    end
+    return colors.lime
+end
+
+-- Becoming the Vault. The half that loses the coin toss is not running the
+-- right program yet, so it takes bank_vault.lua off the cable from the Core
+-- -- which already holds every published file for Easy Deployment -- points
+-- its startup at it and restarts into it.
+function pair.becomeVault(target)
+    ui.message(target, "info", "BECOMING THE VAULT",
+        "Taking bank_vault.lua from computer #" .. tostring(pair.partner), 1.2)
+    local client = net.client({
+        protocol = config.pair_protocol or "PUMPE_PAIR_V1",
+        hostname = "BANKPAIR_" .. tostring(pair.partner),
+    })
+    client.serverId = pair.partner
+    local file, err = client:request("PAIR_FETCH",
+        { path = "bank_vault.lua" }, 12)
+    if not file or type(file.body) ~= "string" then
+        -- Not fatal, and not worth stranding the computer over: the role is
+        -- written anyway and the installer will fetch the program from the
+        -- internet on the next boot the way every other role does.
+        logActivity("Vault program not on the cable: " .. tostring(err),
+            colors.orange)
+    else
+        util.writeFile(fs.combine(ROOT, "bank_vault.lua"), file.body)
+    end
+    local ok, startupError = ensureBankStartup(nil, "vault")
+    if not ok then
+        ui.message(target, "error", "COULD NOT SET STARTUP",
+            tostring(startupError), 3)
+        return false
+    end
+    ui.message(target, "success", "PAIRED AS THE VAULT",
+        "Restarting into bank_vault.lua", 1.5)
+    os.reboot()
+    return true
+end
+
+-- Finding the other half ------------------------------------------------------
+-- One screen, no codes. It shuts the wireless modems, lists the Bank Servers
+-- that answer over the cable, and pairs with the one you press. It also
+-- answers a claim from the other end, so whichever computer you happen to be
+-- standing at is the one you can do this from.
+-- Waiting for somebody to run a cable. Nothing can arrive over one that is
+-- not there, so this stage listens for nothing and simply asks.
+function pair.waitForWire(target, title)
     while true do
+        local wired = pair.wiredOnly()
+        if wired then return wired end
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "PUMPE BANK SERVER", "v" .. config.version,
-            util.formatClock())
-        ui.center(target, 5, "HOW SHOULD THIS BANK RUN?", colors.white)
-        local half = math.floor((width - 3) / 2)
-        ui.card(target, 2, 7, half, 6, colors.cyan)
-        ui.text(target, 4, 8, "SOLO", colors.white, colors.gray)
-        ui.wrappedText(target, 4, 9, "One computer does everything. This is"
-            .. " how every Bank before 9.0 ran.", half - 3, 4,
-            colors.lightGray, colors.gray)
-        ui.card(target, 3 + half, 7, width - 3 - half, 6, colors.lime)
-        ui.text(target, 5 + half, 8, "PAIR", colors.white, colors.gray)
-        ui.wrappedText(target, 5 + half, 9, "Two computers share the work."
-            .. " Downloads and app data move off the banking computer.",
-            width - 6 - half, 4, colors.lightGray, colors.gray)
+        ui.header(target, title, "A Bank needs a cable", util.formatClock())
+        ui.card(target, 2, 5, width - 2, 7, colors.orange)
+        ui.wrappedText(target, 4, 6, "Put a WIRED MODEM on this computer and"
+            .. " on the second Bank Server, run networking cable between"
+            .. " them, and right-click both modems so they light up.",
+            width - 6, 6, colors.white, colors.gray)
+        ui.wrappedText(target, 2, 13, "A wireless modem is not enough. The two"
+            .. " halves answer parts of the same request, so the link between"
+            .. " them has to be as fast and as reliable as the disk.",
+            width - 2, 4, colors.lightGray)
         local scene = ui.scene(target)
-        scene:button("solo", 2, 14, half, 3, "SOLO MODE",
-            { background = colors.cyan, foreground = colors.black })
-        scene:button("pair", 3 + half, 14, width - 3 - half, 3, "PAIR MODE",
+        scene:button("rescan", 2, height - 2, 16, 2, "CHECK AGAIN",
             { background = colors.lime, foreground = colors.black })
-        local action = scene:wait({ tickRate = 5, flash = false })
-        if action == "solo" then return "solo" end
-        if action == "pair" then return "pair" end
-        if action == "__terminate" then return "solo" end
+        scene:button("skip", width - 17, height - 2, 16, 2, "BANK ONLY",
+            { background = colors.gray })
+        local action = scene:wait({ tickRate = 1, flash = false })
+        if action == "skip" or action == "__terminate" then return nil end
     end
 end
 
--- Showing a code and being able to type the other one. Both servers show
--- both, which is what makes it not matter which computer you walk to first.
-function pair.pairingScreen(target)
+-- Finding the other half ------------------------------------------------------
+-- One screen, no codes. The wireless modems are already shut, so everything
+-- that answers is on the cable. It also answers a claim from the other end,
+-- so whichever computer you happen to be standing at is the one you can do
+-- this from.
+function pair.findOnWire(target, title)
     local protocol = config.pair_protocol or "PUMPE_PAIR_V1"
-    pair.newCode()
-    net.openModems()
-    pcall(rednet.unhost, protocol)
-    rednet.host(protocol, "PAIRING_" .. pair.code)
     local message, messageColor = nil, colors.lightGray
+    local peers = {}
+    pair.pairing = true
+    pair.beacon()
 
-    -- Answering PAIR_CLAIM while the code is on screen is what lets the
-    -- other server pair with this one without anybody touching this
-    -- keyboard.
     local function listen()
-        while not pair.paired() do
+        while pair.pairing and not pair.paired() do
             local sender, packet = rednet.receive(protocol, 0.4)
             if sender and type(packet) == "table"
                 and packet.kind == "request" then
@@ -7339,104 +5624,145 @@ function pair.pairingScreen(target)
                 if handler then
                     local ok, result = pcall(handler, packet.payload or {},
                         sender)
-                    if ok then
-                        net.reply(sender, protocol, packet.request_id, true,
-                            result)
-                    else
-                        net.reply(sender, protocol, packet.request_id, false,
-                            nil, type(result) == "table" and result.message
-                                or "Pairing failed",
-                            type(result) == "table" and result.code or nil)
-                    end
+                    net.reply(sender, protocol, packet.request_id, ok,
+                        ok and result or nil,
+                        (not ok) and (type(result) == "table"
+                            and result.message or "Pairing failed") or nil,
+                        (not ok) and type(result) == "table"
+                            and result.code or nil)
                 end
             end
         end
     end
 
     local function draw()
+        local scanAt = 0
         while not pair.paired() do
+            if util.nowMs() >= scanAt then
+                peers = pair.discover()
+                scanAt = util.nowMs() + 2000
+            end
             local width, height = target.getSize()
             ui.clear(target)
-            ui.header(target, "PAIR MODE", "Waiting for the other server",
+            ui.header(target, title, "Looking along the cable",
                 util.formatClock())
-            ui.card(target, 2, 5, width - 2, 5, colors.lime)
-            ui.text(target, 4, 6, "THIS SERVER'S CODE", colors.lightGray,
-                colors.gray)
-            ui.center(target, 8, pair.code, colors.white, colors.gray)
-            ui.wrappedText(target, 2, 11, "Open a second Bank Server, choose"
-                .. " PAIR MODE, and type this code into it -- or type its"
-                .. " code in here. Either way round works.",
-                width - 2, 4, colors.lightGray)
+            ui.text(target, 2, 5, "THIS SERVER IS COMPUTER #"
+                .. os.getComputerID(), colors.lightGray)
+            local scene = ui.scene(target)
+            if #peers == 0 then
+                ui.card(target, 2, 7, width - 2, 5, colors.orange)
+                ui.wrappedText(target, 4, 8, "No other Bank Server is"
+                    .. " answering on this cable yet. Start the second one"
+                    .. " and leave it on this screen.", width - 6, 3,
+                    colors.white, colors.gray)
+            else
+                ui.text(target, 2, 7, "ON THIS CABLE", colors.lightGray)
+                for index = 1, math.min(#peers, 4) do
+                    scene:button("peer" .. index, 2, 8 + (index - 1) * 3,
+                        width - 3, 2, "PAIR WITH COMPUTER #" .. peers[index],
+                        { background = colors.lime,
+                          foreground = colors.black })
+                end
+            end
             if message then
-                ui.text(target, 2, height - 4,
+                ui.text(target, 2, height - 3,
                     ui.truncate(message, width - 2), messageColor)
             end
-            local scene = ui.scene(target)
-            scene:button("enter", 2, height - 2, 22, 2, "ENTER THEIR CODE",
-                { background = colors.blue })
-            scene:button("solo", width - 11, height - 2, 10, 2, "GO SOLO",
+            scene:button("skip", width - 17, height - 1, 16, 2, "BANK ONLY",
                 { background = colors.gray })
-            local action = scene:wait({ tickRate = 0.4, flash = false })
-            if action == "solo" or action == "__terminate" then
-                pair.role = "solo"
-                return
-            elseif action == "enter" then
-                local typed = ui.input(target, "THEIR CODE", {
-                    hint = "Six digits from the other server",
-                    mode = "number", maxLength = 6,
-                })
-                if typed then
-                    local ok, err = pair.claim(typed)
-                    if not ok then
-                        message, messageColor = err, colors.orange
-                    end
+            local action = scene:wait({ tickRate = 0.5, flash = false })
+            if action == "skip" or action == "__terminate" then return end
+            local index = tostring(action or ""):match("^peer(%d+)$")
+            if index and peers[tonumber(index)] then
+                local ok, err = pair.claim(peers[tonumber(index)])
+                if not ok then
+                    message, messageColor = err, colors.orange
+                    peers = pair.discover()
                 end
             end
         end
     end
 
     parallel.waitForAny(listen, draw)
+    pair.pairing = false
     pcall(rednet.unhost, protocol)
+end
+
+function pair.findScreen(target, title)
+    if pair.waitForWire(target, title) then
+        pair.findOnWire(target, title)
+    end
+    -- The wireless modems were shut for the handshake. Everything else on
+    -- this network still needs them.
+    net.openModems()
     return pair.role
+end
+
+-- Pairing a replacement Vault from the dashboard. Forgetting the old one
+-- first is what makes this work at all: a Core that still believes it has a
+-- partner refuses to be claimed.
+function pair.repairScreen(target)
+    if pair.isVault() then
+        ui.message(target, "info", "THIS IS A VAULT",
+            "Re-pair from the Core instead", 2)
+        return
+    end
+    if pair.paired() then
+        if not ui.confirm(target, "REPLACE THE VAULT",
+            "Forget computer #" .. tostring(pair.partner)
+                .. " and pair another? Records already on it stay there.",
+            "REPLACE", "BACK") then
+            return
+        end
+        pair.partner = nil
+        pair.since = nil
+        pair.role = "solo"
+        pair.store()
+        logActivity("Vault forgotten, looking for another", colors.orange)
+    end
+    pair.findScreen(target, "PAIR A VAULT")
+    pair.store()
+    if pair.isVault() then pair.becomeVault(target) end
 end
 
 ui.boot(term.current(), "PUMPE BANK", "SECURE ECONOMY CORE")
 
--- Solo or Pair, asked once. A Bank that was already answered -- paired, or
--- told to stay solo -- comes straight up the way it was left.
+-- Looking for the other half, asked once. A Bank that has already answered --
+-- paired, or told to bank on its own -- comes straight up the way it was
+-- left, and the dashboard's PAIR button is how it is asked again.
 pair.load()
-if pair.role == "solo" or not pair.role then
-    if not fs.exists(pair.file) then
-        if pair.chooseMode(term.current()) == "pair" then
-            pair.pairingScreen(term.current())
-        else
-            pair.role = "solo"
-        end
-        pair.store()
-    else
-        pair.role = "solo"
-    end
+if not pair.paired() and not fs.exists(pair.file) then
+    pair.findScreen(term.current(), "SET UP THIS BANK")
+    pair.store()
 end
+
+-- The half that was made the Vault is not running the right program yet.
+if pair.isVault() then pair.becomeVault(term.current()) end
 
 net.openModems()
 if pair.isVault() then
-    -- The Vault does no banking. It serves downloads and holds the app
-    -- record store, and it is the only half that hosts the depot, so a
-    -- client looking for updates simply resolves a different computer.
+    -- Reached only when becomeVault could not write a startup, so this
+    -- computer is a Vault running the Core's program. It must not bank --
+    -- two halves answering as the Bank is how a ledger gets two truths --
+    -- so it serves downloads and says what is wrong until it is fixed.
     rednet.host(config.pair_protocol or "PUMPE_PAIR_V1",
         config.pair_hostname or "BANK_VAULT")
-    rednet.host(DEPLOY.protocol, DEPLOY.hostname)
-    logActivity("Vault online for computer #" .. tostring(pair.partner),
-        colors.lime)
+    logActivity("VAULT WITHOUT ITS PROGRAM - reinstall this computer",
+        colors.red)
 else
     net.host(config.protocol, config.hostname)
+    -- Easy Deployment stays here, on the half that is always present.
+    -- Through 9.2 the Vault held it, on the reasoning that a Vault was idle
+    -- and the Core was not. Both halves of that reasoning died in 9.3: the
+    -- Vault now answers player requests, so file transfers would land on a
+    -- hot path rather than beside one, and -- worse -- a Vault that holds
+    -- the installer is a Vault you cannot reinstall once it breaks. The
+    -- Core serving a download between balance checks costs a few ticks;
+    -- that deadlock costs the bank.
+    rednet.host(DEPLOY.protocol, DEPLOY.hostname)
     if pair.isCore() then
-        -- The depot belongs to the Vault now. Not hosting it here is what
-        -- takes file transfers off the banking computer.
         logActivity("Core online, Vault is computer #"
             .. tostring(pair.partner), colors.lime)
-    else
-        rednet.host(DEPLOY.protocol, DEPLOY.hostname)
     end
     -- Every bank answers to LEDGER_<its four digits>. Claimed only by the
     -- half that runs ledgerLoop: both halves of a pair share one bank code,
@@ -7447,6 +5773,16 @@ else
         "LEDGER_" .. ledger.bankCode())
 end
 logActivity("Server online on computer #" .. os.getComputerID(), colors.lime)
+-- A Bank arriving from 9.2 is still holding the Vault's records. Cheap and
+-- silent once there is nothing left to hand over, so it runs every boot
+-- rather than behind a flag that could be wrong.
+if pair.isCore() and pair.paired() then
+    local handed, handError = pair.migrate()
+    if not handed then
+        logActivity("Vault handover incomplete: " .. tostring(handError),
+            colors.orange)
+    end
+end
 local depotMissing = updateDepotMissingFiles()
 if #depotMissing == 0 then
     dash.deploy_status, dash.deploy_color = "READY", colors.lime

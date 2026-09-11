@@ -50,6 +50,10 @@ const forwardOptionalFiles = [
   "ccg_server.lua",
   // Revolution, the first third-party bank with terms of its own.
   "revolution.lua",
+  // The other half of a Bank. New in 9.3: the Core runs bank_server.lua and
+  // the Vault runs this, which is what took the Bank back under the size a
+  // ComputerCraft computer can update itself through.
+  "bank_vault.lua",
 ];
 
 function checksum(buffer) {

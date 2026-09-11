@@ -34,10 +34,14 @@ util.saveTable = function() end
 package.loaded["lib.util"] = util
 
 local config = require("config")
-PUMPE_TEST_MODE = true
-local bank = assert(loadfile("../bank_server.lua"))()
-PUMPE_TEST_MODE = nil
+-- Since 9.3 these routes are answered by the Vault, so the test stands up
+-- both halves and lets the Core decide which one answers -- the same way the
+-- server does. A stub Vault would be more forgiving than the real one.
+local harness = require("bank_pair_harness")
+local bank = harness.pair()
 local actions = bank.actions
+local state = bank.state
+local vaultState = bank.vault_state
 
 local function rejected(action, expectedCode, payload)
     local ok, result = pcall(action, payload)

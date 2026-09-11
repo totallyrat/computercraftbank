@@ -31,10 +31,13 @@ util.loadTable = function(_, fallback) return util.copy(fallback) end
 util.saveTable = function() end
 package.loaded["lib.util"] = util
 
-PUMPE_TEST_MODE = true
-local bank = assert(loadfile("../bank_server.lua"))()
-PUMPE_TEST_MODE = nil
+-- Since 9.3 these routes are answered by the Vault, so the test stands up
+-- both halves and lets the Core decide which one answers -- the same way the
+-- server does. A stub Vault would be more forgiving than the real one.
+local harness = require("bank_pair_harness")
+local bank = harness.pair()
 local actions, state = bank.actions, bank.state
+local vaultState = bank.vault_state
 
 local function rejected(action, expectedCode, payload)
     local ok, result = pcall(action, payload)
@@ -263,11 +266,15 @@ currentEpoch = currentEpoch + 31 * 1000
 assert(actions.URGENT_RING(as(bob)).call == nil, "a stale ring stops ringing")
 assert(alertCount(bob, "Missed Urgent Contact") == 1)
 assert(alertCount(alice, "No answer") == 1)
-assert(bank.urgent_calls[missed.call_id].status == "missed")
+assert(bank.vault.urgent_calls[missed.call_id].status == "missed")
 
--- Calls are never written to the database, so a Bank restart drops them.
-assert(state.conversations ~= nil and state.urgent_calls == nil,
+-- Calls are never written to the database, so a restart drops them. Since
+-- 9.3 both live on the Vault, and the Core must hold neither: a second copy
+-- of a conversation is a second answer to what was said.
+assert(vaultState.conversations ~= nil and vaultState.urgent_calls == nil,
     "urgent calls must stay out of the saved state")
+assert(state.conversations == nil,
+    "the Core must not keep conversations once the Vault holds them")
 
 -- Proximity Pay ---------------------------------------------------------------
 

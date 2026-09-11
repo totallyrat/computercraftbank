@@ -86,13 +86,23 @@ os.getComputerID = function() return 11 end
 -- anything else, so booting one means answering that. The script taps SOLO.
 os.startTimer = function() return 1 end
 os.queueEvent = function() end
-local scriptedTaps = {}
+local scriptedTaps, idleTicks = {}, 0
 os.pullEvent = function()
     local tap = table.remove(scriptedTaps, 1)
-    if tap then return "mouse_click", 1, tap[1], tap[2] end
+    if tap then
+        idleTicks = 0
+        return "mouse_click", 1, tap[1], tap[2]
+    end
+    -- A screen waiting for a tap that never comes would otherwise spin
+    -- forever and take the whole suite with it. Fail loudly instead: a
+    -- moved button is a thing to fix, not a thing to hang on.
+    idleTicks = idleTicks + 1
+    if idleTicks > 200 then
+        error("the Bank is still waiting for input after 200 ticks", 0)
+    end
     return "timer", 1
 end
-function scriptTaps(taps) scriptedTaps = taps end
+function scriptTaps(taps) scriptedTaps, idleTicks = taps, 0 end
 rednet = { host = function() end, unhost = function() end,
     isOpen = function() return true end, open = function() end }
 peripheral = { getNames = function() return {} end,
@@ -125,7 +135,7 @@ parallel = { waitForAny = function() error("__BANK_STARTED__", 0) end }
 local function loadBank()
     drawn = {}
     -- The SOLO button on the launch screen, at the coordinates it is drawn.
-    scriptTaps({ { 4, 15 } })
+    scriptTaps({ { 40, 17 } })
     local ok, err = pcall(assert(loadfile("../bank_server.lua")))
     assert(not ok, "the Bank should have reached its main loop")
     assert(tostring(err) == "__BANK_STARTED__",
@@ -157,12 +167,15 @@ assert(files["/updates/ccg.lua"] == nil)
 -- logActivity, which is what "attempt to call a nil value" died on.
 assert(#drawn > 0, "the Bank draws its boot screen")
 
--- The launch question is part of booting a fresh Bank since 9.0. Without
--- this the scripted tap above could stop matching and nobody would notice:
--- the Bank would just take the timeout branch and still reach its loop.
+-- Looking for the other half is part of booting a fresh Bank. Without this
+-- the scripted tap above could stop matching and nobody would notice: the
+-- Bank would just take the timeout branch and still reach its loop. Since
+-- 9.3 there is no Solo/Pair question -- a Bank goes looking along the cable
+-- by itself -- so what has to be on screen is the cable.
 local screen = table.concat(drawn, " ")
-assert(screen:find("SOLO", 1, true) and screen:find("PAIR", 1, true),
-    "a Bank with no pairing file asks Solo or Pair before it starts")
+assert(screen:find("PAIR", 1, true) or screen:find("CABLE", 1, true)
+    or screen:find("WIRED", 1, true) or screen:find("BANK ONLY", 1, true),
+    "a Bank with no pairing file goes looking for a Vault before it starts")
 assert(files["/updates/public/config.lua"],
     "the sanitized client config is written at bootstrap")
 assert(files["/startup.lua"] and

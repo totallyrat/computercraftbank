@@ -5,6 +5,21 @@ Run this after installing into a ComputerCraft world.
 ## Hardware preflight
 
 - [ ] Bank Server has an open wireless or Ender modem.
+- [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
+
+## Pair Mode (9.3)
+
+- [ ] Start a Bank Server with no wired modem and confirm it says so and offers **BANK ONLY** rather than pairing over the air.
+- [ ] Attach the cable, press **CHECK AGAIN**, and confirm the other Bank Server appears as **PAIR WITH COMPUTER #n** with no code to type.
+- [ ] Press it and confirm the server holding the accounts stays the **Core** and the other restarts by itself into **PUMPE BANK VAULT**.
+- [ ] Pair the other way round — press the button on the empty server instead — and confirm the live ledger still ends up the Core.
+- [ ] On a Bank upgraded from 9.2, confirm the activity feed reports handing each record set to the Vault, and that conversations, friends, territories, visas and tickets all still read back on a PUMPE afterwards.
+- [ ] Confirm the Bank Server dashboard shows **VAULT #n LINKED OVER CABLE**.
+- [ ] Pull the cable and confirm: balances, Send Money, pay codes and the bet wallet still work; Messages, Urgent Contact, Travel, tickets and app data report the Vault is not answering rather than failing oddly; and no money is lost.
+- [ ] Reconnect and confirm everything resumes without a restart.
+- [ ] Break the Vault deliberately (`delete /pumpe` and reinstall it), press **PAIR** on the Bank Server dashboard, and confirm a replacement pairs.
+- [ ] Confirm Easy Deployment still answers from the **Core** while the Vault is down — that is what lets you rebuild the Vault at all.
+- [ ] Send money inside a conversation and confirm the 10% processing fee is charged, exactly as Send Money charges it.
 - [ ] Every client resolves the `PUMPE_BANK_V5` Rednet host.
 - [ ] Service Kiosk uses an Advanced Computer.
 - [ ] Optional customer display is an Advanced Monitor and reports as connected under **S → Rescan Display**.
