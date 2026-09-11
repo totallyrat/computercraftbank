@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.3.0"
+local PROGRAM_VERSION = "9.3.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -148,6 +148,12 @@ RELEASE.programs = {
     apps = "app_server.lua",
     tpbank = "bank_app_server.lua",
     ccgserver = "ccg_server.lua",
+    -- The other half of this Bank. Easy Deployment has to know this role
+    -- like any other: 9.3.0 added it to the installer's list but not to
+    -- this one, so a computer that had just been made a Vault rebooted,
+    -- asked its Core for the program, was told there is no such role, and
+    -- stopped with "Run Easy Deployment again".
+    vault = "bank_vault.lua",
 }
 
 -- lib/update.lua is included for every role: without it a client cannot load
@@ -5053,7 +5059,12 @@ function pair.actions.PAIR_FETCH(payload, sender)
     need(path == "bank_vault.lua" or path == "config.lua"
         or path:match("^lib/[%w_]+%.lua$") ~= nil,
         "NOT_PAIR_FILE", "That file is not handed out over the pair link")
+    -- Role programs are not kept on the Bank's own disk; they are fetched
+    -- when somebody installs one. So look locally first and fall back to the
+    -- depot's own fetch, which is what makes handing a Vault its program
+    -- work on a Bank that has never deployed one before.
     local body = localUpdateBody(path)
+    if not body then body = fetchDepotFile(path) end
     need(body, "NO_FILE", "This Bank does not have " .. path)
     return { path = path, body = body, checksum = util.checksum(body) }
 end

@@ -68,5 +68,36 @@ assert(#frozen == 0,
     "these roles never update themselves, so they stay on whatever release"
         .. " installed them: " .. table.concat(frozen, ", "))
 
+-- A role the installer knows and the Bank does not is a computer that boots,
+-- asks its Bank for its program, is told there is no such role, and stops.
+-- That is what 9.3.0 did to every Vault: the role was added to the installer
+-- and not to RELEASE.programs, so becoming a Vault ended in "ROLE FILE
+-- MISSING -- Run Easy Deployment again" and a computer that turned itself
+-- off. Both lists are read here rather than restated, so a role added to one
+-- and forgotten in the other fails before it ships.
+local bank = readFile("../bank_server.lua")
+local servedBlock = bank:match("RELEASE%.programs = {(.-)\n}")
+assert(servedBlock, "RELEASE.programs was not found in bank_server.lua")
+local served = {}
+for id, file in servedBlock:gmatch('([%w_]+)%s*=%s*"([%w_%.]+)"') do
+    served[id] = file
+end
+
+local unservable, mismatched = {}, {}
+for id, file in programBlock:gmatch('([%w_]+)%s*=%s*"([%w_%.]+)"') do
+    if not served[id] then
+        unservable[#unservable + 1] = id .. " (" .. file .. ")"
+    elseif served[id] ~= file then
+        mismatched[#mismatched + 1] = id .. ": installer wants " .. file
+            .. ", the Bank serves " .. served[id]
+    end
+end
+assert(#unservable == 0,
+    "Easy Deployment cannot serve these roles, so a computer installed as"
+        .. " one boots and stops: " .. table.concat(unservable, ", "))
+assert(#mismatched == 0,
+    "the installer and the Bank disagree about which program a role runs: "
+        .. table.concat(mismatched, "; "))
+
 print("host_program_version_test: OK (" .. stamped .. " programs stamped v"
-    .. release .. ", every role self-updating)")
+    .. release .. ", every role self-updating and servable)")

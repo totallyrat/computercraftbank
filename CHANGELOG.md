@@ -1,5 +1,24 @@
 # Changelog
 
+## 9.3.1
+
+Adding a Vault failed with "Run Easy Deployment again" and the computer
+stopped.
+
+- **The Bank did not know the role it had just created.** 9.3.0 taught the
+  installer about `vault` but never added it to `RELEASE.programs`, which is
+  the list Easy Deployment serves from. So a computer that had just been made
+  a Vault rebooted, asked its Core for `bank_vault.lua`, was told there is no
+  such role, and stopped on **ROLE FILE MISSING**. The role is registered now.
+- **Handing the Vault its program over the cable falls back to the depot's own
+  fetch.** Role programs are not kept on the Bank's disk -- they are fetched
+  when somebody installs one -- so on a Bank that had never deployed a Vault
+  there was nothing local to hand over. That made the reboot the only path,
+  and the reboot was the broken one.
+- `host_program_version_test` reads the installer's role list and the Bank's
+  together and fails if either knows a role the other does not, or if they
+  disagree about which program it runs. It fails against the 9.3.0 files.
+
 ## 9.3.0
 
 The Bank is two computers, joined by a cable, and half the size.
