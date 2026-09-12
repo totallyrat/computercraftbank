@@ -7,6 +7,26 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## Foxy is the bank (9.4)
+
+- [ ] Sign in on a fresh PUMPE and confirm **Foxy** installs itself and appears on the Home Screen without visiting the App Browser.
+- [ ] Confirm there is no **Bank** app on the Home Screen, and that Settings has no **Account ID** entry.
+- [ ] In Foxy → Bank, scroll the column and confirm the balance, your accounts, Foxy Cash, **Bet Wallet**, **Activity**, **Cash out with a code** and **Account ID + Transfer** are all reachable.
+- [ ] Deposit into the Bet Wallet from Foxy, then join a CCG game and confirm the wallet funds it.
+- [ ] With a tax demand open, confirm it appears at the top of the bank column and that spending is refused until it is paid.
+- [ ] Transfer everything to another bank, then confirm Foxy's bank section says where the money went and still offers the Account ID.
+
+## Paying (9.4)
+
+- [ ] Build a cart on a Service Kiosk and confirm **Portable Mode is already on** for a kiosk that has never been configured.
+- [ ] Stand in front of it and confirm the basket arrives on the PUMPE as **FOXY PAY**, and that paying it works.
+- [ ] Confirm a second PUMPE standing further away cannot pay that offer.
+- [ ] Confirm a kiosk sale code cannot be typed anywhere on a Foxy account — there should be no screen for it, and the Bank refuses it.
+- [ ] Confirm a **withdrawal** code still works from Foxy → Bank → Cash out with a code.
+- [ ] Confirm a **subscription** code still starts a subscription, and that it appears in Subs.
+- [ ] On Revolution: use **Pay kiosk by code** with a Foxy kiosk's code, confirm the quote shows the merchant and fee, and that paying it credits the shop and charges the Revolution account.
+- [ ] Confirm Revolution's own **Pay nearby** still works between two Revolution accounts.
+
 ## Pair Mode (9.3)
 
 - [ ] Start a Bank Server with no wired modem and confirm it says so and offers **BANK ONLY** rather than pairing over the air.

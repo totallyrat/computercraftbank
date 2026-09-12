@@ -251,10 +251,15 @@ actions = {
     "pot:POT00000001", "move", "pick:main",
     "down", "down",                      -- Foxy Cash sits under the accounts
     "cash", "pick:ACC000002", "send",
+    -- 9.4: the bet wallet, activity, cash out and the Account ID all moved
+    -- into this list from the PUMPE's Bank tab, so scrolling to the bottom
+    -- is what proves they are reachable from inside Foxy.
+    "down", "down", "down", "down",
     "back",                              -- leave the bank
     "account", "back",                   -- the account section
     "back",                              -- leave Foxy
-    "open:bank", "back",                 -- the Foxy Bank tab
+    -- 9.4: there is no Bank tab to open. Foxy is the bank, and the Home
+    -- Screen has one fewer built-in app than it had.
     "__terminate",
 }
 local index = 0
@@ -359,5 +364,13 @@ assert(not pressed("Move to Foxy"),
     "and the migration banner that pointed at Foxy has gone with it")
 assert(pressed("Account ID + Transfer"),
     "what is there instead is the Account ID every bank understands")
+
+-- 9.4: everything that used to be a Bank tab on the Home Screen is in here.
+assert(pressed("Bet Wallet"), "the bet wallet moved into Foxy")
+assert(pressed("Activity"), "and so did the transaction list")
+assert(pressed("Cash out with a code"),
+    "and the one code a Foxy account still uses -- a kiosk handing it money")
+assert(not pressed("Code Pay"),
+    "but not Code Pay: paying a kiosk is Foxy Pay, or a third-party bank")
 
 print("host_pumpe_apps_test: OK")

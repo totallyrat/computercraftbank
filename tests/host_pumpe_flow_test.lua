@@ -6,13 +6,11 @@
 local actions = {
     "create",                                        -- new account
     "next", "next", "next", "next", "next", "next",  -- the six guide steps
-    "edit", "pick:bank", "pick:friends", "back",     -- fill the dock
-    "open:bank",                                     -- the Bank tab from the dock
-    "pay", "code", "send", "back", "back",           -- payments behind Continue
-    "activity", "back",                              -- activity inside the Bank tab
-    "wallet", "holding", "back", "activity", "back",
-    "add", "withdraw", "back",                       -- Bet Wallet inside the Bank tab
-    "back",                                          -- leave the Bank tab
+    "edit", "pick:tickets", "pick:friends", "back",  -- fill the dock
+    "open:tickets", "back",                          -- an app from the dock
+    -- 9.4: there is no Bank tab. Payments, the bet wallet and activity all
+    -- live in the Foxy app now, and host_pumpe_apps_test walks them there,
+    -- with the app actually installed.
     "open:tickets", "browse", "event:EVT000001", "back", "back",
     "mine", "back", "back",                          -- Tickets hub
     "open:customs",
@@ -694,26 +692,32 @@ assert(find(buttonLabels, "Finish"))
 assert(find(buttonLabels, "How PUMPE Works"))
 assert(find(buttonLabels, "Edit Your Dock"))
 
-local codeIndex = assert(find(buttonLabels,
-    "Code Pay\nEnter a six-character\nkiosk code"))
-local sendIndex = assert(find(buttonLabels,
-    "Send Money\n10% processing fee\n$2000 daily limit"))
-assert(codeIndex < sendIndex)
+-- 9.4: the PUMPE itself offers no way to pay. Foxy Cash and Foxy Pay are
+-- the Foxy app's, and a kiosk code belongs to a third-party bank app, so
+-- none of these may reappear here however the phone is navigated.
+assert(not find(buttonLabels, "Code Pay"),
+    "the PUMPE has no Code Pay screen since 9.4")
+assert(not find(buttonLabels, "Send Money"),
+    "and no Send Money screen: Foxy Cash replaced it")
 assert(not find(buttonLabels, "Proximity Pay"))
-assert(find(drawnText, "SUBSCRIPTION ACTIVE"))
+-- "SUBSCRIPTION ACTIVE" was drawn by the Code Pay screen when a kiosk code
+-- started one. That screen is gone in 9.4, so what is checked now is the
+-- Subs app, which still lists and cancels what is running.
+assert(find(buttonLabels, "Cancel Subscription"),
+    "the Subs app still lists what is billing daily")
 -- The 8.0 home screen: small glyph icons with the app name drawn beneath
 -- them, so every app fits on one page instead of two-per-row tiles.
-for _, glyph in ipairs({ "$", "@", "#", "=", "?", "%", "~", "*" }) do
+for _, glyph in ipairs({ "@", "#", "=", "?", "%", "~", "*" }) do
     assert(find(buttonLabels, glyph), "missing app icon " .. glyph)
 end
-for _, name in ipairs({ "Bank", "Friends", "Tickets", "Customs",
+for _, name in ipairs({ "Friends", "Tickets", "Customs",
     "Bet", "Tax", "Subs", "Settings" }) do
     assert(find(drawnText, name), "missing app caption " .. name)
 end
-assert(not find(buttonLabels, "$\nBank"), "old two-line tiles are gone")
--- Payments, the Bet Wallet and activity all live inside the Bank tab.
-assert(find(buttonLabels, "Continue"))
-assert(find(buttonLabels, "Bet\nWallet"))
+assert(not find(drawnText, "Bank"),
+    "9.4: there is no Bank app on the Home Screen -- Foxy is the bank")
+assert(not find(buttonLabels, "Bet\nWallet"),
+    "and the Bet Wallet moved into Foxy with the rest of the banking")
 assert(not find(buttonLabels, "$\nBet Wallet"),
     "Bet Wallet is no longer a separate home screen app")
 assert(not find(buttonLabels, "!\nAlerts"),
@@ -739,8 +743,11 @@ assert(find(requests, "CUSTOMS_DETAIL"))
 assert(find(requests, "BET_UNLOCK"))
 assert(find(requests, "BET_JOIN"))
 assert(find(requests, "BET_PLACE_WAGER"))
-assert(find(requests, "BET_WALLET_DEPOSIT"))
-assert(find(requests, "BET_WALLET_WITHDRAW"))
+-- The bet wallet moved into Foxy in 9.4, so the PUMPE itself no longer
+-- deposits or withdraws; host_pumpe_apps_test covers that where the app is
+-- installed. What is still the PUMPE's is unlocking and playing.
+assert(not find(requests, "BET_WALLET_DEPOSIT"),
+    "the PUMPE no longer moves money into the bet wallet itself")
 
 -- A signed-in PUMPE arms the Urgent Contact ring watcher, so a call reaches
 -- the user from whatever app is open.

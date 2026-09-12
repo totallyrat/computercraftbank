@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.3.1"
+local PROGRAM_VERSION = "9.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1088,6 +1088,82 @@ local function validateAmount(value, maximum)
     need(not maximum or amount <= maximum, "INVALID_AMOUNT",
         "Amount is above the allowed maximum")
     return amount
+end
+
+-- Paying a Foxy kiosk from another bank ------------------------------------------
+-- A kiosk belongs to this bank, and since 9.4 its code is the only way an
+-- account somewhere else can pay one. The paying bank quotes the code, takes
+-- the money from its own holder, and then tells this bank to credit the
+-- merchant under a transfer id -- the same three steps, safe to repeat, that
+-- a Bank Transfer uses. This bank never touches the payer's balance and the
+-- paying bank never touches the merchant's.
+function ledger.actions.LEDGER_CODE_QUOTE(payload)
+    cleanupEphemeral()
+    local code = string.upper(util.trim(tostring(payload.code or "")))
+    local payment = state.active_pay_codes[code]
+    need(payment and payment.status == "pending"
+        and payment.expires_at > util.nowMs(),
+        "BAD_CODE", "Code is invalid or expired")
+    -- A withdrawal hands out this bank's money and a subscription is a
+    -- standing charge against an account here. Neither is a thing another
+    -- bank can settle on somebody's behalf.
+    need(payment.kind ~= "withdrawal", "NOT_PAYABLE",
+        "A withdrawal code can only be used by the account it pays into")
+    need(payment.kind ~= "subscription", "NOT_PAYABLE",
+        "A subscription has to be started from an account at this bank")
+    local terminal = state.terminals[payment.terminal_id]
+    need(terminal, "TERMINAL_NOT_FOUND", "Kiosk no longer exists")
+    return {
+        code = code,
+        kind = payment.kind,
+        amount = payment.amount,
+        merchant = terminal.name,
+        description = payment.description,
+        items = util.copy(payment.items or {}),
+        expires_in_ms = payment.expires_at - util.nowMs(),
+    }
+end
+
+function ledger.actions.LEDGER_CODE_SETTLE(payload)
+    local code = string.upper(util.trim(tostring(payload.code or "")))
+    local transferId = util.safeText(tostring(payload.transfer_id or ""), 32)
+    need(#transferId >= 8, "BAD_TRANSFER", "That payment has no id")
+    state.applied_transfers = state.applied_transfers or {}
+
+    local payment = state.active_pay_codes[code]
+    local settled, repeated = ledger.applyOnce(state.applied_transfers,
+        transferId, 1, function()
+            need(payment and payment.status == "pending"
+                and payment.expires_at > util.nowMs(),
+                "BAD_CODE", "Code is invalid or expired")
+            need(payment.kind ~= "withdrawal" and payment.kind ~= "subscription",
+                "NOT_PAYABLE", "That code cannot be paid from another bank")
+            local amount = math.floor(tonumber(payload.amount) or 0)
+            need(amount == payment.amount, "AMOUNT_MISMATCH",
+                "That is not what this code is worth")
+            local terminal = state.terminals[payment.terminal_id]
+            need(terminal, "TERMINAL_NOT_FOUND", "Kiosk no longer exists")
+            local payerName = util.safeText(
+                tostring(payload.from_name or "Another bank"), 24)
+            creditMerchant(terminal, amount,
+                (payment.description or "Kiosk sale") .. " - " .. payerName
+                    .. " (" .. tostring(payload.from_bank_name or "another bank")
+                    .. ")", nil)
+            payment.status = "paid"
+            payment.paid_at = util.nowMs()
+            payment.paid_by_bank = payload.from_bank_code
+            payment.paid_by_name = payerName
+        end)
+    if repeated then
+        -- The kiosk was already paid; only the answer was lost. Say yes
+        -- again rather than charging somebody twice for one basket.
+        return { settled = true, repeated = true, code = code }
+    end
+    ledger.forget(state.applied_transfers)
+    save()
+    logActivity("Kiosk code " .. code .. " paid from "
+        .. tostring(payload.from_bank_name or "another bank"), colors.lime)
+    return { settled = settled ~= nil, code = code }
 end
 
 local actions = {}
@@ -3560,14 +3636,30 @@ end
 
 
 
-function actions.PAY_CODE_PREVIEW(payload)
-    local account = requireSpender(payload)
-    cleanupEphemeral()
-    local code = string.upper(util.trim(payload.code))
-    local payment = state.active_pay_codes[code]
-    need(payment and payment.status == "pending"
-        and payment.expires_at > util.nowMs(),
-        "BAD_CODE", "Code is invalid or expired")
+-- Kiosk codes and a Foxy account ------------------------------------------------
+-- Since 9.4 a Foxy account pays in person with Foxy Pay, not by typing a
+-- code. A code can still put money into a Foxy account -- a withdrawal is a
+-- kiosk handing you cash, which is the opposite of paying -- but it can no
+-- longer take money out of one. Paying a kiosk by code is what an account at
+-- Revolution or another third-party bank does, and that arrives over the
+-- ledger rather than through here.
+--
+-- Enforced on the Bank rather than in the phone: the screen is gone from the
+-- PUMPE either way, and a rule that only exists in the client is a rule that
+-- holds until somebody edits the client.
+local function checkCodePayable(payment)
+    -- A withdrawal is a kiosk handing you money, and a subscription is a
+    -- standing arrangement you can see and cancel in Subs. Neither is the
+    -- thing Foxy Pay replaced, and neither has a proximity equivalent: a
+    -- kiosk offers a basket in person, never a daily billing agreement. So
+    -- what is refused here is exactly the one-off purchase.
+    need(payment.kind == "withdrawal" or payment.kind == "subscription",
+        "FOXY_PAY_ONLY",
+        "Foxy accounts pay in person with Foxy Pay. Use a bank app like"
+            .. " Revolution to pay a kiosk with its code.")
+end
+
+local function paymentPreview(account, code, payment)
     local terminal = state.terminals[payment.terminal_id]
     need(terminal, "TERMINAL_NOT_FOUND", "Kiosk no longer exists")
     resetDailySpend(account)
@@ -3586,6 +3678,18 @@ function actions.PAY_CODE_PREVIEW(payload)
         pin_required = pinRequired,
         expires_in_ms = payment.expires_at - util.nowMs(),
     }
+end
+
+function actions.PAY_CODE_PREVIEW(payload)
+    local account = requireSpender(payload)
+    cleanupEphemeral()
+    local code = string.upper(util.trim(payload.code))
+    local payment = state.active_pay_codes[code]
+    need(payment and payment.status == "pending"
+        and payment.expires_at > util.nowMs(),
+        "BAD_CODE", "Code is invalid or expired")
+    checkCodePayable(payment)
+    return paymentPreview(account, code, payment)
 end
 
 local function settleCode(account, payment, pin)
@@ -3679,6 +3783,42 @@ function actions.PAY_CODE_CONFIRM(payload)
     need(payment and payment.status == "pending"
         and payment.expires_at > util.nowMs(),
         "BAD_CODE", "Code is invalid or expired")
+    checkCodePayable(payment)
+    return settleCode(account, payment, payload.pin)
+end
+
+-- Foxy Pay ------------------------------------------------------------------
+-- The same settlement as a typed code, reached a different way: the kiosk
+-- picked this account by standing next to it, rather than this account
+-- naming a code. That difference is the whole permission -- an offer is
+-- addressed, so paying one is not something a client can talk its way into
+-- the way it could by typing a code it overheard. Which is why this is a
+-- route of its own rather than a flag on the code route: a flag would be
+-- the client's word for how it got here.
+local function foxyPayable(account, offerId)
+    local offer = state.proximity_offers[tostring(offerId or "")]
+    need(offer, "NOT_FOUND", "That payment is no longer waiting")
+    need(offer.target_account_id == account.account_id
+        or offer.claimed_by == account.account_id,
+        "NOT_YOURS", "That payment is for somebody else")
+    local payment = offer.code and state.active_pay_codes[offer.code]
+    need(payment and payment.status == "pending"
+        and payment.expires_at > util.nowMs(),
+        "BAD_CODE", "That payment has expired")
+    return offer, payment
+end
+
+function actions.FOXY_PAY_PREVIEW(payload)
+    local account = requireSpender(payload)
+    cleanupEphemeral()
+    local offer, payment = foxyPayable(account, payload.offer_id)
+    return paymentPreview(account, offer.code, payment)
+end
+
+function actions.FOXY_PAY_CONFIRM(payload)
+    local account = requireSpender(payload)
+    cleanupEphemeral()
+    local offer, payment = foxyPayable(account, payload.offer_id)
     return settleCode(account, payment, payload.pin)
 end
 

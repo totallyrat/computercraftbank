@@ -326,14 +326,19 @@ assert(exhausted.status == "nobody_nearby",
     "a distant PUMPE is out of range, got " .. tostring(exhausted.status))
 assert(actions.PUMPE_POLL(as(dave)).offer == nil)
 
--- Accepting settles through the ordinary payment code, fee rules included.
+-- Accepting settles as Foxy Pay, fee rules included. Typing the same code
+-- would be refused: since 9.4 that is a third-party bank's way to pay.
 actions.PUMPE_POLL(as(alice, { position = { x = 101, y = 64, z = 100 } }))
 local second = actions.PROXIMITY_OFFER(atKiosk({
     amount = 30, description = "Milk", position = shop })).offer
-local preview = actions.PAY_CODE_PREVIEW(as(alice, { code = second.code }))
+rejected(actions.PAY_CODE_PREVIEW, "FOXY_PAY_ONLY",
+    as(alice, { code = second.code }))
+local preview = actions.FOXY_PAY_PREVIEW(as(alice,
+    { offer_id = second.offer_id }))
 assert(preview.amount == 30)
 local before = actions.ACCOUNT_SUMMARY(as(alice)).account.balance
-actions.PAY_CODE_CONFIRM(as(alice, { code = second.code, pin = "1111" }))
+actions.FOXY_PAY_CONFIRM(as(alice,
+    { offer_id = second.offer_id, pin = "1111" }))
 assert(actions.ACCOUNT_SUMMARY(as(alice)).account.balance == before - 30)
 assert(actions.PROXIMITY_STATUS(
     atKiosk({ offer_id = second.offer_id })).offer.status == "paid")

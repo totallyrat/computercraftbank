@@ -234,6 +234,68 @@ return function(api)
         end
     end
 
+    -- Paying a shop ------------------------------------------------------------------
+    -- A Foxy kiosk prints a code, and since 9.4 that is how an account here
+    -- buys from one: Foxy accounts pay those in person with Foxy Pay
+    -- instead, so the code is ours. The bank does the three-step settle;
+    -- this screen only shows what is being bought before the PIN.
+
+    local function codePayScreen()
+        while running() do
+            local code = ui.input(target, "Kiosk code", {
+                hint = "The code on the kiosk screen",
+                mode = "code", maxLength = 8,
+            })
+            if not code then return end
+            local quote, quoteError = ask("TPB_PAY_CODE_QUOTE", {
+                session_token = session, code = code })
+            if not quote then
+                ui.message(target, "error", "Bad code", quoteError, 2)
+            else
+                local width, height = target.getSize()
+                ui.clear(target)
+                ui.header(target, "Pay kiosk", quote.merchant,
+                    util.formatClock())
+                ui.card(target, 2, 5, width - 2, 8, REVO)
+                ui.wrappedText(target, 4, 6,
+                    quote.description or "Kiosk purchase", width - 6, 2,
+                    ui.theme.ink, ui.theme.panel)
+                ui.text(target, 4, 9, "Amount  " .. money(quote.amount),
+                    ui.theme.ink, ui.theme.panel)
+                ui.text(target, 4, 10, "Fee     " .. money(quote.fee),
+                    ui.theme.muted, ui.theme.panel)
+                ui.text(target, 4, 11, "You pay " .. money(quote.total),
+                    ui.theme.ink, ui.theme.panel)
+                local scene = ui.scene(target)
+                scene:button("pay", 2, height - 5, width - 2, 2,
+                    "Pay " .. money(quote.total),
+                    { background = ui.theme.success,
+                      foreground = colors.black })
+                scene:button("back", 1, height, 8, 1, "< Back",
+                    { background = ui.theme.panel })
+                local action = scene:wait({ tickRate = 5 })
+                if action == "back" or action == "__terminate" then return end
+                if action == "pay" then
+                    local pin = ui.pin(target,
+                        "Pay " .. money(quote.total), true)
+                    if pin then
+                        local paid, payError = ask("TPB_PAY_CODE", {
+                            session_token = session, code = quote.code,
+                            pin = pin })
+                        if paid then
+                            ui.message(target, "success", "Paid",
+                                money(paid.paid) .. " to " .. paid.merchant,
+                                1.8)
+                            refresh()
+                            return
+                        end
+                        ui.message(target, "error", "Not paid", payError, 2.4)
+                    end
+                end
+            end
+        end
+    end
+
     -- Everything else ----------------------------------------------------------------
 
     local function pendingScreen()
@@ -335,13 +397,16 @@ return function(api)
         scene:button("take", 2, 10, width - 2, 3, "Take a payment\n0% fee",
             { background = REVO, foreground = colors.white })
         local half = math.floor((width - 3) / 2)
-        scene:button("pay", 2, 14, half, 2, "Pay",
+        scene:button("pay", 2, 14, half, 2, "Pay\nnearby",
             { background = ui.theme.success, foreground = colors.black })
-        scene:button("clearing", 3 + half, 14, width - 3 - half, 2,
-            "Clearing", { background = ui.theme.panel })
-        scene:button("id", 2, 17, half, 2, "My ID",
+        scene:button("code", 3 + half, 14, width - 3 - half, 2,
+            "Pay kiosk\nby code",
+            { background = colors.blue })
+        scene:button("clearing", 2, 17, half, 2, "Clearing",
             { background = ui.theme.panel })
-        scene:button("move", 3 + half, 17, width - 3 - half, 2, "Move out",
+        scene:button("id", 3 + half, 17, width - 3 - half, 2, "My ID",
+            { background = ui.theme.panel })
+        scene:button("move", 2, 20, width - 2, 2, "Move out",
             { background = ui.theme.warning, foreground = colors.black })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
@@ -349,6 +414,7 @@ return function(api)
         if action == "back" or action == "__terminate" then return end
         if action == "take" then takeScreen()
         elseif action == "pay" then payScreen()
+        elseif action == "code" then codePayScreen()
         elseif action == "clearing" then pendingScreen()
         elseif action == "id" then accountIdScreen()
         elseif action == "move" then transferOut() end

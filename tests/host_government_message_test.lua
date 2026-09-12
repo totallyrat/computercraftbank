@@ -198,8 +198,17 @@ local owing = actions.ACCOUNT_SUMMARY(as(driver)).account.balance
 actions.PAY_TAX_DEMAND(as(driver, { pin = "1234" }))
 assert(actions.ACCOUNT_SUMMARY(as(driver)).account.balance == owing - 40)
 
--- With it settled, paying works again.
-assert(actions.PAY_CODE_PREVIEW(as(driver, { code = code.code })).amount == 5,
+-- With it settled, spending works again.
+assert(actions.SEND_MONEY_QUOTE(as(driver,
+    { recipient = "Old Friend", amount = 5 })).amount == 5,
     "the lockout lifts the moment the demand is paid")
+
+-- And a kiosk code is still refused, for a different reason: since 9.4 a
+-- Foxy account pays a kiosk in person with Foxy Pay, never by typing its
+-- code. Checked on the Bank, so a modified client cannot type past it.
+rejected(actions.PAY_CODE_PREVIEW, "FOXY_PAY_ONLY", as(driver,
+    { code = code.code }))
+rejected(actions.PAY_CODE_CONFIRM, "FOXY_PAY_ONLY", as(driver,
+    { code = code.code, pin = "1234" }))
 
 print("host_government_message_test: OK")

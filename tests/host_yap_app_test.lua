@@ -282,7 +282,8 @@ actions = {
                                        -- buying returns straight to the feed
     "new",                             -- write one
     "back",                            -- leave Yap
-    "next",                            -- Settings moved to page two
+    -- 9.4: the Bank app left the Home Screen, so the built-in apps fit on
+    -- one page and Settings needs no page turn.
     "open:settings", "connected", "back", "back",
     "__terminate",
 }

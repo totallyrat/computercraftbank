@@ -69,14 +69,18 @@ Once accepted, both sides poll a live transcript several times a second, so a ty
 
 Calls are never written to the database. A Bank Server restart drops a live call the way a dropped connection would, and only a transcript both people agreed to save is kept.
 
-### PUMPE Pay
+### Paying, since 9.4
 
-PUMPE Pay presents two options:
+The PUMPE itself no longer offers a way to pay. A Foxy account has two:
 
-1. **Code Pay** accepts the kiosk's six-character payment code.
-2. **Send Money** sends money to another Foxy Account username.
+1. **Foxy Pay** — stand in front of a kiosk and it finds you. This is what Proximity Pay is called now, and it works the same way.
+2. **Foxy Cash** — inside the Foxy app, to a friend, at a flat fee and no daily ceiling. The ceiling is what the friendship replaces: you cannot reach a stranger.
 
-For Send Money, the entered amount is what the recipient receives. The sender pays that amount plus a 10% processing fee, rounded up to the nearest cent. The review screen shows **They Receive**, **Fee**, and **You Pay** before requesting the PIN. The Bank Server independently calculates the fee and enforces a separate `$2,000` recipient-amount limit per in-game day, so modifying the PUMPE client cannot bypass either rule.
+**Code Pay is extinct on a Foxy account.** Typing a kiosk code is refused by the Bank, not merely hidden by the phone, so editing the client changes nothing. Paying a kiosk with its code is what an account at Revolution or another third-party bank does.
+
+Two codes still work on a Foxy account, because neither is the thing Foxy Pay replaced: **cashing out** at a kiosk, which is a kiosk handing you money, and **starting a subscription**, which is an arrangement you can see and cancel in Subs.
+
+Foxy Pay is a route of its own rather than a flag on the code route. An offer is *addressed* — the kiosk chose who may pay it — so the Bank checks the offer, never the client's word for how it came by the code.
 
 ## ComputerCraftGaming Bet Play
 
@@ -112,15 +116,17 @@ From then on the console runs by itself:
 
 Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when the mode was started; a wrong code leaves it running. The setting is saved to the console, so a restart — including one caused by an automatic update — comes back into Auto Mode instead of the game menu. Rotate mode remembers which game is next across restarts.
 
-## Proximity Pay
+## Foxy Pay
 
-A Service Kiosk can offer the bill to whoever is standing closest instead of reading out a code. Tap **NEARBY** with a cart built, and the nearest PUMPE gets a full-screen offer showing the merchant, the amount and the distance.
+A Service Kiosk offers the bill to whoever is standing closest. Tap **NEARBY** with a cart built, and the nearest PUMPE gets a full-screen offer showing the merchant, the amount and the distance. Since 9.4 this is how a Foxy account pays a shop, and **Portable Mode is on by default** — the basket is built on the customer's phone rather than on a second screen.
 
-**Not mine** passes the bill to the next nearest person rather than cancelling the sale, so someone declining an offer meant for the person behind them costs the cashier nothing. Accepting settles through the ordinary payment code, so PIN rules, daily limits and the transaction log are identical to every other payment, and nothing is ever charged without a tap.
+**Not mine** passes the bill to the next nearest person rather than cancelling the sale, so someone declining an offer meant for the person behind them costs the cashier nothing. PIN rules, daily limits and the transaction log are identical to every other payment, and nothing is ever charged without a tap.
+
+You need a live Foxy bank account for it. An account that has moved its money to another bank is refused, and told where its money went.
 
 ### GPS Anchors come first
 
-ComputerCraft can only work out where something is by trilaterating **four** hosts with known coordinates. A world with no GPS constellation cannot locate anything at all, so Proximity Pay does nothing until anchors exist.
+ComputerCraft can only work out where something is by trilaterating **four** hosts with known coordinates. A world with no GPS constellation cannot locate anything at all, so Foxy Pay does nothing until anchors exist.
 
 1. Install the **GPS Anchor** role on four or more computers with wireless modems.
 2. Spread them out, and put at least one at a different height — four anchors in a flat line cannot resolve a position.
@@ -194,7 +200,7 @@ Since 9.2 a bank also sets its own terms in the same header — `PUMPE BANK CLEA
 
 Every account at every bank has a sixteen-digit **Account ID**, the first four digits naming the bank holding it. It is the one thing every bank agrees on, and enough on its own to find where money lives.
 
-**Bank Transfer** (Settings → Account ID, or the Bank tab) moves everything you have to any Account ID. Your account here closes behind it — the Bank tab will not open — and the same feature from the other bank brings it home. Money arriving is what reopens an account.
+**Bank Transfer** (Foxy → Bank → Account ID + Transfer) moves everything you have to any Account ID. Your account here closes behind it — Foxy's bank section will not open — and the same feature from the other bank brings it home. Money arriving is what reopens an account.
 
 A transfer never gives money back on a guess. A bank that *refuses* answers with a code, so nothing was applied and the money returns. A bank that says *nothing* might have applied it or not, so the money stays parked and is settled later by asking whether that transfer id was ever seen.
 
@@ -502,7 +508,7 @@ Install **CCG Bet Console**, attach the monitor and modem, and select a game. Pl
 
 - Payment codes expire after five minutes and can be cancelled by the cashier.
 - Purchases above the configured PIN-free limit require the customer's PIN.
-- Send Money always requires a PIN, charges the server-calculated 10% fee, and has a separate `$2,000` daily limit. Money sent inside Messages or Urgent Contact uses the same server-side path, so the fee, the limit, and the transaction log are identical everywhere.
+- Money sent inside Messages or Urgent Contact goes through the Bank's one transfer path, so the server-calculated 10% fee, the `$2,000` daily limit and the transaction log are identical everywhere. Foxy Cash is the only way to start one from the phone since 9.4, and it reaches friends only.
 - You can only message or reach someone who is already a friend.
 - A conversation keeps its most recent 60 messages.
 - PUMPE locks after 60 seconds of inactivity and begins requiring a PIN after 120 seconds.

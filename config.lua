@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "9.3.1",
+    version = "9.4.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
 

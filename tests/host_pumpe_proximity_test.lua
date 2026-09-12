@@ -81,11 +81,17 @@ local client = {
             claimed = payload.offer_id
             return { offer = { offer_id = payload.offer_id,
                 status = "claimed" } }
-        elseif action == "PAY_CODE_PREVIEW" then
+        elseif action == "FOXY_PAY_PREVIEW" then
             return { amount = 12, pin_required = true }
-        elseif action == "PAY_CODE_CONFIRM" then
-            paid = payload.code
+        elseif action == "FOXY_PAY_CONFIRM" then
+            paid = payload.offer_id
             return { balance = 488 }
+        elseif action == "PAY_CODE_PREVIEW"
+            or action == "PAY_CODE_CONFIRM" then
+            -- Since 9.4 the Bank refuses these for a Foxy account. A phone
+            -- that reached for one would be a phone paying the wrong way,
+            -- so fail the test rather than quietly answering.
+            error("the PUMPE must pay a kiosk with Foxy Pay, not a code", 0)
         end
         return { ok = true }
     end,
@@ -271,6 +277,9 @@ assert(claimed == "NEAR01")
 assert(drew("Your Basket"), "the itemised basket arrives on the PUMPE")
 assert(drew("3x Apple"), "with the lines the operator rang up")
 assert(pressed("Continue  $12"))
-assert(paid == "ABC123", "and confirming again is what actually pays")
+assert(paid == "NEAR01",
+    "and confirming again is what actually pays -- by offer id, because the"
+        .. " Bank checks the offer was addressed here rather than trusting"
+        .. " the phone to have come by the code honestly")
 
 print("host_pumpe_proximity_test: OK")

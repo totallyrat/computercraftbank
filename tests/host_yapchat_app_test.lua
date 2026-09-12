@@ -327,7 +327,7 @@ actions = {
     "cancel",                          -- Bo does not pick up
     "back",                            -- back to the chat list
     "back",                            -- leave the app
-    "next",                            -- Settings is on page two
+    -- 9.4: the built-in apps fit one page, so no page turn to Settings.
     "open:settings", "apps",           -- App Settings
     "open:YAPCHAT",                    -- the app's own permissions
     "full",                            -- turn fullscreen on

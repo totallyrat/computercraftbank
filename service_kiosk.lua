@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.3.1"
+local PROGRAM_VERSION = "9.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -15,6 +15,12 @@ local target = term.current()
 local client = net.client(config)
 local kioskFile = fs.combine(ROOT, "service_kiosk_device.dat")
 local kiosk = util.loadTable(kioskFile, {})
+-- Portable Mode is how a kiosk is used since 9.4: the sale finds the
+-- customer standing in front of it rather than the customer typing a code,
+-- because a Foxy account no longer has a code screen to type it into. It is
+-- still a switch -- a kiosk bolted to a wall with its own customer display
+-- may not want it -- but it is on unless somebody turned it off.
+if kiosk.portable == nil then kiosk.portable = true end
 local kioskState
 local running = true
 local customerMonitor
@@ -656,7 +662,7 @@ local function proximityCheckout(cart)
     while running do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "NEARBY PAYMENT", money(total),
+        ui.header(target, "FOXY PAY", money(total),
             util.formatClock(blink))
         if offer.status == "offered" then
             ui.center(target, 6, "OFFERED TO", ui.theme.muted)
@@ -1030,7 +1036,7 @@ local function settingsScreen()
             { "products", "MANAGE PRODUCTS", colors.purple },
             { "company", "LINK COMPANY", ui.theme.warning },
             { "display", "RESCAN DISPLAY", ui.theme.panel },
-            { "portable", kiosk.portable and "PORTABLE MODE ON"
+            { "portable", kiosk.portable and "FOXY PAY ON"
                 or "PORTABLE MODE OFF",
                 kiosk.portable and colors.cyan or ui.theme.panel },
             { "dev", kiosk.developer_id and "DEV MODE" or "ENTER DEV MODE",
@@ -1076,7 +1082,7 @@ local function settingsScreen()
             saveKiosk()
             if not kiosk.portable then portableRelease() end
             ui.message(target, "info",
-                kiosk.portable and "PORTABLE MODE ON" or "PORTABLE MODE OFF",
+                kiosk.portable and "FOXY PAY ON" or "FOXY PAY OFF",
                 kiosk.portable
                     and "Find the customer before ringing up"
                     or "Back to codes and NEARBY", 1.2)

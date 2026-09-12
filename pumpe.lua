@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.3.1"
+local PROGRAM_VERSION = "9.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -17,7 +17,6 @@ local sessionToken
 local betAccessToken
 local account
 local running = true
-local payMenu
 local deviceFile = fs.combine(ROOT, "pumpe_device.dat")
 local device = util.loadTable(deviceFile, {
     last_name = "",
@@ -68,7 +67,6 @@ local favouritesPicker
 local appBrowser
 local connectedApps
 local appSettingsScreen
-local accountIdScreen
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -508,143 +506,9 @@ local function reviewTransfer(quote)
     end
 end
 
-local function sendingAnimation(recipient)
-    local width, height = target.getSize()
-    local stages = {
-        "Securing transfer",
-        "Contacting PUMPE Bank",
-        "Sending to " .. recipient,
-    }
-    for index, label in ipairs(stages) do
-        for frame = 1, 3 do
-            ui.clear(target)
-            ui.center(target, 6, "PUMPE Pay", ui.theme.ink)
-            ui.wrappedText(target, 2, 9, label, width - 4, 2,
-                ui.theme.muted)
-            ui.center(target, 12, string.rep(".", frame), ui.theme.accent)
-            ui.progress(target, 3, height - 4, width - 5,
-                (index - 1) * 3 + frame, #stages * 3,
-                ui.theme.accent, ui.theme.panel)
-            sleep(0.06)
-        end
-    end
-end
 
-local function sendMoney()
-    local recipient = ui.input(target, "Send Money", {
-        hint = "Foxy Account username",
-        maxLength = 20,
-        allowSpace = true,
-    })
-    if not recipient then return end
-    local amountText = ui.input(target, "They Receive", {
-        hint = "Up to " .. money(config.send_money_daily_limit) .. " per day",
-        mode = "number", maxLength = 12,
-    })
-    if not amountText then return end
-    local amount = tonumber(amountText)
-    if not amount or amount <= 0 then
-        ui.message(target, "error", "Invalid Amount", "Enter a number above zero")
-        return
-    end
-    local quote, quoteErr = request("SEND_MONEY_QUOTE", {
-        recipient = recipient,
-        amount = amount,
-    }, true)
-    if not quote then
-        ui.message(target, "error", "Cannot Send Money", quoteErr, 1.1)
-        return
-    end
-    if not reviewTransfer(quote) then return end
-    local pin = ui.pin(target, "Confirm with PIN", true)
-    if not pin then return end
-    sendingAnimation(quote.recipient)
-    local result, err = request("SEND_MONEY", {
-        recipient = quote.recipient,
-        amount = quote.amount,
-        pin = pin,
-    }, true)
-    if result then
-        account.balance = result.balance
-        account.daily_sent = result.daily_limit - result.daily_remaining
-        ui.message(target, "success", "Money Sent",
-            result.recipient .. " received " .. money(result.amount), 1.1)
-    else
-        ui.message(target, "error", "Transfer Failed", err, 1.1)
-    end
-end
 
-local function payCode()
-    local code = ui.input(target, "PAY A CODE", {
-        hint = "6-character kiosk code",
-        mode = "code", maxLength = 6, minLength = 6,
-    })
-    if not code then return end
-    local preview, err = request("PAY_CODE_PREVIEW", { code = code }, true)
-    if not preview then
-        ui.message(target, "error", "CODE REJECTED", err, 1.1)
-        return
-    end
 
-    local verb = preview.kind == "withdrawal" and "RECEIVE"
-        or preview.kind == "subscription" and "SUBSCRIBE" or "PAY"
-    local body = money(preview.amount)
-        .. (preview.kind == "subscription" and "/day  " or "  ")
-        .. preview.merchant
-    if not ui.confirm(target, verb .. "?", body, verb, "CANCEL") then return end
-    local pin
-    if preview.pin_required then
-        pin = ui.pin(target, "CONFIRM WITH PIN", true)
-        if not pin then return end
-    end
-    local result, payErr = request("PAY_CODE_CONFIRM", {
-        code = code,
-        pin = pin,
-    }, true)
-    if result then
-        account.balance = result.balance
-        local title = result.kind == "withdrawal" and "MONEY RECEIVED"
-            or result.kind == "subscription" and "SUBSCRIPTION ACTIVE"
-            or "PAYMENT ACCEPTED"
-        ui.message(target, "success", title,
-            money(result.amount)
-                .. (result.kind == "subscription" and "/day - " or " - ")
-                .. result.merchant, 1.1)
-    else
-        ui.message(target, "error", "PAYMENT FAILED", payErr, 1.2)
-    end
-end
-
-local function historyScreen()
-    local result = request("HISTORY")
-    if not result then return end
-    local items, page, blink = result.transactions, 1, true
-    while true do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Activity", #items .. " transactions", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(items, page, 1)
-        page = actualPage
-        for index, tx in ipairs(pageItems) do
-            local y = 4 + (index - 1) * 14
-            local color = tx.amount >= 0 and ui.theme.success or ui.theme.danger
-            ui.card(target, 2, y, width - 2, 14, color)
-            ui.wrappedText(target, 4, y, tx.description,
-                width - 6, 11, ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 11, "Day " .. tx.day .. " " .. tx.time,
-                ui.theme.muted, ui.theme.panel)
-            local amountText = (tx.amount >= 0 and "+" or "") .. money(tx.amount)
-            ui.text(target, 4, y + 12, amountText, color, ui.theme.panel)
-        end
-        local scene = ui.scene(target)
-        pageFooter(scene, page, pages)
-        local action = scene:wait({ tickRate = 0.5 })
-        blink = not blink
-        if action == "back" or action == "__terminate" then return
-        elseif action == "prev" then page = page - 1
-        elseif action == "next" then page = page + 1 end
-    end
-end
 
 local function ticketTypeScreen(event, ticketTypes)
     local selectedQuantity = {}
@@ -1010,41 +874,6 @@ local function taxScreen()
     end
 end
 
-payMenu = function()
-    local blink = true
-    while sessionToken do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "PUMPE Pay", "Choose how to pay",
-            util.formatClock(blink))
-        local scene = ui.scene(target)
-        scene:button("code", 2, 5, width - 2, 5,
-            "Code Pay\nEnter a six-character\nkiosk code", {
-                background = colors.blue,
-                shadow = true,
-            })
-        scene:button("send", 2, 11, width - 2, 5,
-            "Send Money\n10% processing fee\n"
-                .. money(config.send_money_daily_limit) .. " daily limit", {
-                background = colors.purple,
-                shadow = true,
-            })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        if action == "__tick" or action == "__idle" then
-            blink = not blink
-        elseif action == "code" then
-            phoneTransition("Code Pay", colors.blue)
-            payCode()
-        elseif action == "send" then
-            phoneTransition("Send Money", colors.purple)
-            sendMoney()
-        elseif action == "back" or action == "__terminate" then
-            return
-        end
-    end
-end
 
 local function travelDocumentScreen(documents)
     local page = 1
@@ -1684,169 +1513,10 @@ local function betRequest(action, payload, silent)
     return result, err, code
 end
 
-local function heldReleaseText(hold)
-    if hold.status ~= "holding" then return "Released" end
-    return "Day " .. tostring(hold.release_day or "?")
-        .. " " .. tostring(hold.release_time or "")
-end
 
-local function betHoldingScreen(holds)
-    local pending = {}
-    for _, hold in ipairs(holds or {}) do
-        if hold.status == "holding" then pending[#pending + 1] = hold end
-    end
-    local page = 1
-    while true do
-        local width, height = target.getSize()
-        local visible, current, pages = util.page(pending, page, 2)
-        page = current
-        ui.clear(target)
-        ui.header(target, "Holding", #pending .. " CCG payouts",
-            util.formatClock())
-        if #visible == 0 then
-            ui.center(target, 8, "Nothing is holding", ui.theme.ink)
-            ui.center(target, 10, "Wins appear here for one day",
-                ui.theme.muted)
-        end
-        for index, hold in ipairs(visible) do
-            local y = 5 + (index - 1) * 6
-            ui.card(target, 2, y, width - 2, 5, colors.purple)
-            ui.text(target, 4, y, ui.truncate(
-                hold.game_name or "CCG WIN", width - 6),
-                ui.theme.muted, ui.theme.panel)
-            ui.text(target, 4, y + 1, money(hold.amount),
-                ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 3, "UNLOCKS " .. heldReleaseText(hold),
-                ui.theme.warning, ui.theme.panel)
-        end
-        local scene = ui.scene(target)
-        scene:button("prev", 2, height - 2, 6, 1, "<",
-            { background = ui.theme.panel, disabled = page <= 1 })
-        scene:button("next", width - 7, height - 2, 6, 1, ">",
-            { background = ui.theme.panel, disabled = page >= pages })
-        scene:button("back", 1, height, 10, 1, "< Wallet",
-            { background = ui.theme.panel })
-        local action = scene:wait()
-        if action == "prev" then page = math.max(1, page - 1)
-        elseif action == "next" then page = math.min(pages, page + 1)
-        elseif action == "back" or action == "__terminate" then return end
-    end
-end
 
-local function betActivityScreen(items)
-    local page = 1
-    while true do
-        local width, height = target.getSize()
-        local visible, current, pages = util.page(items or {}, page, 3)
-        page = current
-        ui.clear(target)
-        ui.header(target, "Bet Activity", #items .. " entries",
-            util.formatClock())
-        if #visible == 0 then
-            ui.center(target, 9, "No Bet Wallet activity", ui.theme.muted)
-        end
-        for index, item in ipairs(visible) do
-            local y = 5 + (index - 1) * 4
-            ui.text(target, 3, y, ui.truncate(item.description, width - 5),
-                ui.theme.ink)
-            local amountText = money(math.abs(item.amount or 0))
-            if (item.amount or 0) < 0 then amountText = "-" .. amountText end
-            ui.text(target, 3, y + 1, amountText,
-                (item.amount or 0) >= 0 and ui.theme.success
-                    or ui.theme.warning)
-            ui.text(target, width - 8, y + 1,
-                "D" .. tostring(item.day or "?"), ui.theme.muted)
-        end
-        local scene = ui.scene(target)
-        scene:button("prev", 2, height - 2, 6, 1, "<",
-            { background = ui.theme.panel, disabled = page <= 1 })
-        scene:button("next", width - 7, height - 2, 6, 1, ">",
-            { background = ui.theme.panel, disabled = page >= pages })
-        scene:button("back", 1, height, 10, 1, "< Wallet",
-            { background = ui.theme.panel })
-        local action = scene:wait()
-        if action == "prev" then page = math.max(1, page - 1)
-        elseif action == "next" then page = math.min(pages, page + 1)
-        elseif action == "back" or action == "__terminate" then return end
-    end
-end
 
-local function betWalletMove(action, available)
-    local adding = action == "BET_WALLET_DEPOSIT"
-    local amountText = ui.input(target,
-        adding and "Add to Bet Wallet" or "Send to Foxy Account", {
-            hint = "Available " .. money(available),
-            mode = "number",
-            maxLength = 12,
-        })
-    if not amountText then return nil end
-    local amount = tonumber(amountText)
-    if not amount or amount <= 0 then
-        ui.message(target, "error", "Invalid Amount", "Enter a number above zero")
-        return nil
-    end
-    local pin = ui.pin(target, "Confirm with PIN", true)
-    if not pin then return nil end
-    local result, err = request(action, { amount = amount, pin = pin }, true)
-    if result then
-        account.balance = result.account_balance
-        ui.message(target, "success",
-            adding and "MONEY ADDED" or "MONEY TRANSFERRED",
-            money(amount), 0.9)
-        return result.wallet
-    end
-    ui.message(target, "error", "TRANSFER FAILED", err, 1.1)
-    return nil
-end
 
-local function betWalletScreen()
-    local result = request("BET_WALLET_SUMMARY")
-    if not result then return end
-    local wallet = result.wallet
-    while sessionToken do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Bet Wallet", "CCG game balance", util.formatClock())
-        ui.card(target, 2, 4, width - 2, 4, colors.magenta)
-        ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 6, money(wallet.available),
-            ui.theme.ink, ui.theme.panel)
-        ui.card(target, 2, 9, width - 2, 3, colors.purple)
-        ui.text(target, 4, 9, "HOLDING FOR 1 DAY", ui.theme.muted,
-            ui.theme.panel)
-        ui.text(target, 4, 10, money(wallet.held),
-            ui.theme.warning, ui.theme.panel)
-        local scene = ui.scene(target)
-        scene:button("add", 2, 13, 11, 2, "+ ADD",
-            { background = ui.theme.success, foreground = colors.black })
-        scene:button("withdraw", width - 12, 13, 11, 2, "CASH OUT",
-            { background = ui.theme.accentDark })
-        scene:button("holding", 2, 16, 11, 2,
-            "HOLDING " .. tostring(wallet.hold_count or 0),
-            { background = colors.purple })
-        scene:button("activity", width - 12, 16, 11, 2, "ACTIVITY",
-            { background = ui.theme.panel })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 1 })
-        if action == "add" then
-            wallet = betWalletMove("BET_WALLET_DEPOSIT", account.balance)
-                or wallet
-        elseif action == "withdraw" then
-            wallet = betWalletMove("BET_WALLET_WITHDRAW", wallet.available)
-                or wallet
-        elseif action == "holding" then
-            betHoldingScreen(wallet.holds)
-        elseif action == "activity" then
-            betActivityScreen(wallet.activity)
-        elseif action == "__tick" then
-            local refreshed = request("BET_WALLET_SUMMARY", {}, true)
-            if refreshed then wallet = refreshed.wallet end
-        elseif action == "back" or action == "__terminate" then
-            return
-        end
-    end
-end
 
 local function chooseBetSelection(lobby)
     local width, height = target.getSize()
@@ -2059,7 +1729,7 @@ local function betApp()
     betAccessToken = unlocked.bet_token
     if (unlocked.wallet.available or 0) <= 0 then
         ui.message(target, "warning", "BET WALLET EMPTY",
-            "Add money in the Bet Wallet app", 1.2)
+            "Add money in Foxy > Bank > Bet Wallet", 1.4)
     end
     local code = ui.input(target, "Join CCG", {
         hint = "Letters + numbers",
@@ -2981,15 +2651,19 @@ local function portableBasketScreen(offer)
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 2 })
         if action == "pay" then
-            local preview = request("PAY_CODE_PREVIEW", { code = offer.code })
+            -- Portable Mode settles as Foxy Pay too: the basket was built
+            -- for this phone, so the Bank checks the offer rather than the
+            -- code.
+            local preview = request("FOXY_PAY_PREVIEW",
+                { offer_id = offer.offer_id })
             if not preview then return end
             local pin
             if preview.pin_required then
-                pin = ui.pin(target, "Confirm payment", true)
+                pin = ui.pin(target, "Confirm Foxy Pay", true)
                 if not pin then return end
             end
-            local paid = request("PAY_CODE_CONFIRM",
-                { code = offer.code, pin = pin })
+            local paid = request("FOXY_PAY_CONFIRM",
+                { offer_id = offer.offer_id, pin = pin })
             if paid then
                 ui.message(target, "success", "Paid " .. money(offer.amount),
                     offer.merchant, 1.4)
@@ -3072,7 +2746,7 @@ local function proximityOfferScreen(offer)
     while running and sessionToken do
         local width, height = target.getSize()
         ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
-        ui.center(target, 3, "PAYMENT NEARBY", colors.white, ui.theme.accentDark)
+        ui.center(target, 3, "FOXY PAY", colors.white, ui.theme.accentDark)
         ui.center(target, 5, frame % 2 == 0 and "( ( ( ) ) )" or "  ( ( ) )  ",
             colors.white, ui.theme.accentDark)
         ui.wrappedText(target, 2, 7, offer.merchant, width - 2, 2,
@@ -3094,15 +2768,19 @@ local function proximityOfferScreen(offer)
         frame = frame + 1
         if action == "pay" then
             inCall = false
-            local preview = request("PAY_CODE_PREVIEW", { code = offer.code })
+            -- Foxy Pay, not a typed code: the Bank checks this offer was
+            -- addressed to this account rather than taking the phone's word
+            -- for how it came by the code.
+            local preview = request("FOXY_PAY_PREVIEW",
+                { offer_id = offer.offer_id })
             if preview then
                 local pin
                 if preview.pin_required then
-                    pin = ui.pin(target, "Confirm payment", true)
+                    pin = ui.pin(target, "Confirm Foxy Pay", true)
                     if not pin then return end
                 end
-                local paid = request("PAY_CODE_CONFIRM",
-                    { code = offer.code, pin = pin })
+                local paid = request("FOXY_PAY_CONFIRM",
+                    { offer_id = offer.offer_id, pin = pin })
                 if paid then
                     ui.message(target, "success", "Paid " .. money(offer.amount),
                         offer.merchant, 1.4)
@@ -3216,41 +2894,6 @@ local function announcementScreen(item)
     inCall = false
 end
 
--- A government tax demand has to be settled from the account holder's own
--- PUMPE, with their PIN. Nothing is ever taken without them paying it.
-local function taxDemandScreen(demand)
-    while running and sessionToken do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Tax demand", money(demand.amount),
-            util.formatClock())
-        ui.card(target, 2, 5, width - 2, 4, ui.theme.warning)
-        ui.text(target, 4, 6, "OWED", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 7, money(demand.amount), ui.theme.ink, ui.theme.panel)
-        ui.wrappedText(target, 2, 10, demand.reason or "", width - 2, 4,
-            ui.theme.muted)
-        local scene = ui.scene(target)
-        scene:button("pay", 2, height - 5, width - 2, 2,
-            "Pay " .. money(demand.amount),
-            { background = ui.theme.success, foreground = colors.black })
-        scene:button("back", 2, height - 2, width - 2, 2, "Later",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 1 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "pay" then
-            local pin = ui.pin(target, "Confirm tax payment", true)
-            if pin then
-                local paid = request("PAY_TAX_DEMAND", { pin = pin })
-                if paid then
-                    account.balance = paid.balance
-                    ui.message(target, "success", "Tax settled",
-                        money(demand.amount), 1.4)
-                    return
-                end
-            end
-        end
-    end
-end
 
 -- The one OS poll: it rings an Urgent Contact and banners a new alert.
 watchForUrgentCalls = function()
@@ -3467,7 +3110,6 @@ local function settingsScreen()
             { id = "updates", label = "Updates",
               value = device.auto_update == false and "Off" or "Auto",
               warn = device.auto_update == false },
-            { id = "id", label = "Account ID", value = "" },
             { id = "apps", label = "App Settings", value = "" },
             { id = "connected", label = "Connected Apps", value = "" },
             { id = "guide", label = "How PUMPE Works", value = "" },
@@ -3526,7 +3168,6 @@ local function settingsScreen()
             if not sessionToken then return end
         elseif action == "storage" then storageScreen()
         elseif action == "updates" then updatesScreen()
-        elseif action == "id" then accountIdScreen()
         elseif action == "apps" then appSettingsScreen()
         elseif action == "connected" then connectedApps()
         elseif action == "guide" then guideScreen(true)
@@ -3557,173 +3198,8 @@ end
 -- It is shown here so it can be read out, and typed here to send everything
 -- somewhere else.
 
-local function bankTransferScreen(identity)
-    local typed = ui.input(target, "Their Account ID", {
-        hint = "16 digits from the other bank",
-        mode = "number", maxLength = 19, allowSpace = true,
-    })
-    if not typed then return false end
-    local quote, err = request("BANK_TRANSFER_QUOTE",
-        { bank_account_id = typed }, true)
-    if not quote then
-        ui.message(target, "error", "Cannot send there", err, 2)
-        return false
-    end
 
-    -- Everything moves, and this account closes behind it. Said plainly,
-    -- before the PIN rather than after.
-    local width, height = target.getSize()
-    ui.clear(target)
-    ui.header(target, "Move your money", quote.bank_name, util.formatClock())
-    ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
-    ui.text(target, 4, 5, "TO", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 6, ui.truncate(quote.name, width - 6),
-        ui.theme.ink, ui.theme.panel)
-    ui.text(target, 4, 7, ui.truncate(quote.bank_name, width - 6),
-        ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 9, "AMOUNT", ui.theme.muted, ui.theme.panel)
-    ui.text(target, 4, 10, money(quote.amount), ui.theme.ink, ui.theme.panel)
-    ui.wrappedText(target, 2, 13, "All of it goes, and your Bank here closes"
-        .. " until you transfer money back.", width - 2, 3, ui.theme.muted)
-    local scene = ui.scene(target)
-    scene:button("go", 2, height - 5, width - 2, 2, "Move it all",
-        { background = ui.theme.danger })
-    scene:button("no", 2, height - 2, width - 2, 2, "Keep it here",
-        { background = ui.theme.panel })
-    if scene:wait({ tickRate = 5 }) ~= "go" then return false end
 
-    local pin = ui.pin(target, "Confirm with PIN", true)
-    if not pin then return false end
-    local moved, moveError, code = request("BANK_TRANSFER_CONFIRM", {
-        bank_account_id = quote.bank_account_id, pin = pin,
-    }, true)
-    if not moved then
-        ui.message(target, code == "TRANSFER_PENDING" and "warning" or "error",
-            code == "TRANSFER_PENDING" and "Held safely" or "Not moved",
-            moveError, 2.4)
-        return false
-    end
-    ui.message(target, "success", "Moved to " .. moved.bank_name,
-        money(moved.moved) .. " transferred", 2)
-    refreshSummary(true)
-    return true
-end
-
-accountIdScreen = function()
-    while running and sessionToken do
-        local width, height = target.getSize()
-        local identity = request("BANK_IDENTITY", {}, true)
-        if not identity then return end
-        ui.clear(target)
-        ui.header(target, "Account ID", identity.bank_name,
-            util.formatClock())
-        ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
-        ui.text(target, 4, 5, "YOUR ACCOUNT ID", ui.theme.muted,
-            ui.theme.panel)
-        -- Two halves on a narrow screen, so all sixteen digits are readable
-        -- rather than trailing off into an ellipsis.
-        ui.text(target, 4, 7, identity.formatted:sub(1, 9),
-            ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 8, identity.formatted:sub(11),
-            ui.theme.ink, ui.theme.panel)
-        ui.wrappedText(target, 2, 11, "Give this to another bank to have"
-            .. " money sent here. It works at every bank on the network.",
-            width - 2, 4, ui.theme.muted)
-        local scene = ui.scene(target)
-        if identity.bank_closed then
-            ui.wrappedText(target, 2, 15, "Your money is at "
-                .. tostring(identity.moved_to_name or "another bank")
-                .. ". Transfer it back from there.", width - 2, 3,
-                ui.theme.warning)
-        else
-            scene:button("move", 2, height - 5, width - 2, 2,
-                "Move my money to another bank",
-                { background = ui.theme.warning, foreground = colors.black })
-        end
-        scene:button("back", 1, height, 8, 1, "< Back",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "move" then
-            if bankTransferScreen(identity) then return end
-        end
-    end
-end
-
--- The Foxy bank account, built into the phone. BuckApp used to be the icon
--- here; in 9.0 that brand left to become a bank of its own, and what is left
--- is simply your Foxy money. It stays built in because paying somebody, the
--- Bet Wallet and your activity live nowhere else -- a phone that had to
--- download an app before it could pay anyone would be a worse phone.
-local function bankApp()
-    local blink = true
-    while running and sessionToken do
-        local width, height = target.getSize()
-        local summary = refreshSummary(true)
-        -- Money that has moved to another bank is not here to be spent, and
-        -- says where it went instead of showing an empty account.
-        if account.bank_closed then
-            ui.clear(target)
-            ui.header(target, "Bank", "Closed", util.formatClock())
-            ui.card(target, 2, 5, width - 2, 6, ui.theme.warning)
-            ui.wrappedText(target, 4, 6, "Your money is at "
-                .. tostring(account.moved_to_name or "another bank") .. ".",
-                width - 6, 3, ui.theme.ink, ui.theme.panel)
-            ui.wrappedText(target, 4, 9, "Transfer it back from there to use"
-                .. " this account again.", width - 6, 2, ui.theme.muted,
-                ui.theme.panel)
-            local closedScene = ui.scene(target)
-            closedScene:button("id", 2, height - 5, width - 2, 2,
-                "Show my Account ID", { background = ui.theme.panel })
-            closedScene:button("back", 1, height, 8, 1, "< Home",
-                { background = ui.theme.panel })
-            local closedAction = closedScene:wait({ tickRate = 5 })
-            if closedAction == "id" then accountIdScreen() else return end
-        else
-        ui.clear(target)
-        ui.header(target, "Bank", account.name, util.formatClock(blink))
-        ui.card(target, 2, 5, width - 2, 4, ui.theme.success)
-        ui.text(target, 4, 5, "AVAILABLE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 6, money(account.balance), ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 7, "Daily sent " .. money(account.daily_sent or 0),
-            ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 8, ui.truncate("ID " .. tostring(
-            account.bank_account_id and util.ledger.format(
-                account.bank_account_id) or "-"), width - 6),
-            ui.theme.muted, ui.theme.panel)
-
-        local demand = request("TAX_DEMAND_STATUS", {}, true)
-        demand = demand and demand.demand or nil
-        local scene = ui.scene(target)
-        if demand then
-            scene:button("demand", 2, 10, width - 2, 3,
-                "Tax demand " .. money(demand.amount),
-                { background = ui.theme.warning, foreground = colors.black })
-        else
-            scene:button("pay", 2, 10, width - 2, 3, "Continue",
-                { background = ui.theme.accentDark, shadow = true })
-        end
-        local half = math.floor((width - 3) / 2)
-        scene:button("wallet", 2, 14, half, 3, "Bet\nWallet",
-            { background = colors.purple })
-        scene:button("activity", 2 + half + 1, 14, width - 3 - half, 3,
-            "Activity", { background = ui.theme.panel })
-        scene:button("id", 2, 18, width - 2, 2, "Account ID + Transfer",
-            { background = ui.theme.accentDark })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        blink = not blink
-        if action == "back" or action == "__terminate" then return
-        elseif action == "pay" then payMenu()
-        elseif action == "demand" then taxDemandScreen(demand)
-        elseif action == "wallet" then betWalletScreen()
-        elseif action == "activity" then historyScreen()
-        elseif action == "id" then accountIdScreen() end
-        if summary == nil and not sessionToken then return end
-        end
-    end
-end
 
 -- One entry point for everything social.
 local function friendsApp()
@@ -4545,8 +4021,6 @@ end
 
 -- The app catalogue the Home Screen, the dock and the picker share.
 local APPS = {
-    bank = { name = "Bank", glyph = "$", color = colors.green,
-        open = bankApp },
     friends = { name = "Friends", glyph = "@", color = colors.cyan,
         open = friendsApp },
     tickets = { name = "Tickets", glyph = "#", color = colors.orange,
@@ -4560,7 +4034,7 @@ local APPS = {
     settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
-    "bank", "friends", "tickets", "customs", "bet", "tax", "subs",
+    "friends", "tickets", "customs", "bet", "tax", "subs",
     "browser", "settings",
 }
 
@@ -4795,6 +4269,24 @@ local function drawAlertsPage(scene, items, offset, width, layout)
     return perView
 end
 
+-- Foxy is not optional ---------------------------------------------------------
+-- Until 9.4 the Bank was a tab built into this phone, so a PUMPE could bank
+-- the moment it was signed in. Banking lives in the Foxy app now, which
+-- means a phone without it is a phone that cannot see its own money. So it
+-- is fetched on first sign-in rather than left in the App Browser for
+-- somebody to find. Quiet on failure: an App Server that is down is a
+-- reason to try again next time, not a reason to block the Home Screen.
+local function ensureFoxy()
+    if installedApp("FOXY") then return end
+    local listed = storeRequest("APP_LIST", {}, true)
+    for _, app in ipairs(listed and listed.apps or {}) do
+        if app.app_id == "FOXY" then
+            installApp(app)
+            return
+        end
+    end
+end
+
 local function mainMenu()
     -- The apps that are not hubs are wired here, where their screens exist.
     APPS.bet.open = betApp
@@ -4802,6 +4294,7 @@ local function mainMenu()
     APPS.subs.open = subscriptionsScreen
     APPS.settings.open = settingsScreen
     APPS.browser.open = appBrowser
+    pcall(ensureFoxy)
     refreshInstalledApps()
 
     local blink, tick, page, alertOffset = true, 0, 1, 0

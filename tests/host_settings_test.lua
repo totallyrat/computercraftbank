@@ -246,7 +246,9 @@ function ui.confirm() return true end
 
 actions = {
     "login",
-    "next", "open:settings",           -- Settings is on page two
+    -- 9.4: the Bank app left the Home Screen, so the built-in apps fit on
+    -- one page and Settings no longer needs a page turn to reach.
+    "open:settings",
     "storage", "back",                 -- what the phone is holding
     "updates", "toggle", "back",       -- turn auto updates off
     "network", "toggle",               -- turn the modem off: signs out
@@ -313,11 +315,15 @@ assert(not drew("stopped"), "the PUMPE must not have crashed")
 -- 9.0 added enough to Settings that the old fixed layout stopped fitting a
 -- 20-row screen. The list pages instead, and every entry keeps its name on
 -- its own button rather than being drawn over a blank one.
-for _, label in ipairs({ "Network", "Storage", "Updates", "Account ID",
+for _, label in ipairs({ "Network", "Storage", "Updates",
     "App Settings", "Connected Apps", "How PUMPE Works", "Edit Your Dock",
     "Sign Out", "Close PUMPE" }) do
     assert(pressed(label), "Settings is missing " .. label)
 end
+-- The Account ID moves money, so in 9.4 it left Settings for the bank
+-- section of the Foxy app, where the rest of the banking is.
+assert(not pressed("Account ID"),
+    "the Account ID belongs with the money, not beside the modem switch")
 
 -- Storage ------------------------------------------------------------------------
 

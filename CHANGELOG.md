@@ -1,5 +1,61 @@
 # Changelog
 
+## 9.4.0
+
+The Bank app is gone. Foxy is the bank.
+
+**One account, one app.** Until now your money lived in two places on the
+same phone: a Bank tab built into the PUMPE, and the Foxy app beside it.
+Everything from the tab -- the balance, the bet wallet, activity, tax
+demands, the Account ID and Bank Transfer -- is inside Foxy's bank section
+now, in the same scrolling column as your accounts and Foxy Cash. The Home
+Screen has one fewer built-in app, and Settings no longer needs a page turn.
+
+- **Foxy installs itself on first sign-in.** A phone without it would be a
+  phone that cannot see its own money, so it is no longer something to find
+  in the App Browser. An App Server that is down just means it tries again
+  next time.
+- The Account ID left Settings with the rest of the banking. It moves money;
+  it does not belong beside the modem switch.
+
+**How you pay, and how you do not.**
+
+- **Foxy Pay** is what proximity pay is called now, and it is what a Foxy
+  account uses to pay a shop: stand in front of the kiosk and it finds you.
+  It works exactly as it did.
+- **Portable Mode is standard.** A kiosk builds the basket on the customer's
+  phone by default rather than only when somebody turned it on.
+- **Code Pay is extinct on a Foxy account.** Typing a kiosk code is refused,
+  by the Bank rather than by the phone -- the screen is gone either way, and
+  a rule that only exists in the client is a rule that holds until somebody
+  edits the client. Foxy Pay is a route of its own rather than a flag on the
+  code route, because an offer is *addressed*: the kiosk chose who may pay
+  it. A flag would have been the client's word for how it came by the code.
+- **Send Money is gone from the phone.** Foxy Cash is how a Foxy account
+  sends money, and it reaches friends only. That ceiling is what the
+  friendship replaces.
+- Two codes still work on a Foxy account, because neither is the thing Foxy
+  Pay replaced: **cashing out** at a kiosk, which is a kiosk handing you
+  money, and **starting a subscription**, which is an arrangement you can see
+  and cancel in Subs. A kiosk offers a basket in person; it does not offer a
+  daily billing agreement.
+
+**Revolution pays by code, across two banks.** A kiosk belongs to Foxy, so
+paying one from another bank means the money has to cross between them. The
+paying bank quotes the code, takes the money from its own holder, then tells
+Foxy to credit the merchant under a transfer id -- the same three steps,
+each safe to repeat, that a Bank Transfer uses. Asking twice with one id
+pays the shop once; a refusal refunds, and only silence is left pending for
+the holder's bank to ask about. Revolution keeps its own proximity charges
+for payments between its own users.
+
+- `host_foxy_pay_test` checks all of it against a real Foxy Bank and a real
+  third-party bank server wired together: that a Foxy account is refused a
+  sale code and allowed a withdrawal and a subscription, that somebody else
+  cannot pay an offer addressed to you even holding its code, that a
+  cross-bank payment conserves the money in the world, and that a repeated
+  settle credits the merchant once.
+
 ## 9.3.1
 
 Adding a Vault failed with "Run Easy Deployment again" and the computer

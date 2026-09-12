@@ -16,7 +16,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- is public, its accounts are opened by whoever wants one, and there is
 -- nothing here that could compromise the Foxy ledger.
 
-local PROGRAM_VERSION = "9.3.1"
+local PROGRAM_VERSION = "9.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -441,6 +441,100 @@ local function ask(bankCode, action, payload, timeout)
     return reach(bankCode):request(action, payload, timeout or 6)
 end
 
+-- Paying a Foxy kiosk ------------------------------------------------------------
+-- Since 9.4 a kiosk code is how an account here buys something from a shop
+-- on the Foxy network, because Foxy accounts pay in person with Foxy Pay
+-- instead. Three steps, in this order: quote the code, take the money here,
+-- then tell Foxy to pay the merchant under an id it can recognise twice.
+--
+-- The order matters. Taking the money first means a lost reply can leave a
+-- payer charged for a basket nobody was paid for, so a refusal -- which is
+-- the far bank actually answering -- refunds, and only silence is left
+-- pending for the holder to ask about. The alternative, crediting first,
+-- would let a broken bank buy things for free.
+function actions.TPB_PAY_CODE_QUOTE(payload)
+    local account = requireSession(payload)
+    local code = string.upper(util.trim(tostring(payload.code or "")))
+    need(#code >= 4, "BAD_CODE", "Type the code from the kiosk")
+    local foxy = config.foxy_bank_code or "0001"
+    local quote, err, errCode = ask(foxy, "LEDGER_CODE_QUOTE",
+        { code = code }, 6)
+    if not quote then
+        reject(errCode or "FOXY_OFFLINE",
+            err or "The Foxy network did not answer")
+    end
+    local fee = util.roundMoney(quote.amount * (state.fee_rate or 0))
+    return {
+        code = quote.code,
+        amount = quote.amount,
+        fee = fee,
+        total = util.roundMoney(quote.amount + fee),
+        merchant = quote.merchant,
+        description = quote.description,
+        items = quote.items,
+        balance = account.balance,
+    }
+end
+
+function actions.TPB_PAY_CODE(payload)
+    local account = requireSession(payload)
+    need(account.pin_hash == util.hashPin(payload.pin), "BAD_PIN",
+        "Incorrect PIN")
+    local code = string.upper(util.trim(tostring(payload.code or "")))
+    local foxy = config.foxy_bank_code or "0001"
+    local quote, err, errCode = ask(foxy, "LEDGER_CODE_QUOTE",
+        { code = code }, 6)
+    if not quote then
+        reject(errCode or "FOXY_OFFLINE",
+            err or "The Foxy network did not answer")
+    end
+    local fee = util.roundMoney(quote.amount * (state.fee_rate or 0))
+    local total = util.roundMoney(quote.amount + fee)
+    need(account.balance >= total, "INSUFFICIENT_FUNDS",
+        "Not enough money" .. (fee > 0 and " including the fee" or ""))
+
+    local transferId = util.token("KIOSK")
+    account.balance = util.roundMoney(account.balance - total)
+    state.pending_out = state.pending_out or {}
+    state.pending_out[transferId] = {
+        transfer_id = transferId, code = code, amount = quote.amount,
+        account_id = account.account_id, at = util.nowMs(),
+    }
+    save()
+
+    local settled, settleError, settleCode = ask(foxy, "LEDGER_CODE_SETTLE", {
+        code = code, transfer_id = transferId, amount = quote.amount,
+        from_name = account.name, from_bank_name = state.bank_name,
+        from_bank_code = state.bank_code,
+    }, 10)
+    if settled then
+        state.pending_out[transferId] = nil
+        if fee > 0 then
+            state.fees_taken = util.roundMoney((state.fees_taken or 0) + fee)
+            transaction(account, "fee", -fee, state.bank_name, "Kiosk fee")
+        end
+        transaction(account, "kiosk_pay", -quote.amount, quote.merchant,
+            quote.description or "Paid a kiosk")
+        save()
+        logActivity(account.name .. " paid " .. tostring(quote.merchant)
+            .. " " .. util.money(quote.amount, config.currency), colors.lime)
+        return { paid = quote.amount, fee = fee, merchant = quote.merchant,
+                 balance = account.balance, account = publicAccount(account) }
+    end
+    if settleCode then
+        -- Foxy answered and said no, so nothing was paid and the money comes
+        -- straight back. Only a refusal is safe to refund on: silence might
+        -- mean the kiosk was paid and the reply was lost.
+        account.balance = util.roundMoney(account.balance + total)
+        state.pending_out[transferId] = nil
+        save()
+        reject(settleCode, settleError or "That code was refused")
+    end
+    reject("SETTLE_UNKNOWN",
+        "The Foxy network stopped answering. The money is held until this"
+            .. " bank can find out whether the kiosk was paid.")
+end
+
 function actions.LEDGER_LOOKUP(payload)
     local accountId = state.ids[ledger.clean(payload.bank_account_id)]
     local account = accountId and state.accounts[accountId]
@@ -543,6 +637,33 @@ local function reconcile()
                 pending(account)[transferId] = nil
                 save()
             end
+        end
+    end
+
+    -- Kiosk payments where Foxy stopped answering mid-settle. Same rule: ask
+    -- whether it landed, refund only when the answer is no. Until Foxy
+    -- answers, the money stays taken rather than being handed back to
+    -- somebody who may already be holding the goods.
+    for transferId, parked in pairs(state.pending_out or {}) do
+        local answer = ask(config.foxy_bank_code or "0001", "LEDGER_STATUS",
+            { transfer_id = transferId }, 6)
+        if answer then
+            local account = state.accounts[parked.account_id]
+            if account then
+                if not answer.applied then
+                    account.balance = util.roundMoney(
+                        account.balance + parked.amount)
+                    transaction(account, "kiosk_refund", parked.amount,
+                        "Kiosk", "Code " .. tostring(parked.code)
+                            .. " was never paid")
+                else
+                    transaction(account, "kiosk_pay", -parked.amount,
+                        "Kiosk", "Code " .. tostring(parked.code)
+                            .. " confirmed")
+                end
+            end
+            state.pending_out[transferId] = nil
+            save()
         end
     end
 end

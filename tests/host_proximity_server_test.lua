@@ -267,8 +267,11 @@ assert(waiting.offer.portable and waiting.offer.code == billed.code)
 local balanceBefore = actions.ACCOUNT_SUMMARY({
     session_token = buyer.session_token,
 }).account.balance
-actions.PAY_CODE_CONFIRM({
-    session_token = buyer.session_token, code = billed.code, pin = "1234",
+-- Foxy Pay, not a typed code. The Bank checks the offer was addressed to
+-- this account rather than taking the phone's word for how it got the code.
+actions.FOXY_PAY_CONFIRM({
+    session_token = buyer.session_token, offer_id = billed.offer_id,
+    pin = "1234",
 })
 local settled = actions.PROXIMITY_STATUS({
     terminal_id = cart.terminal_id, terminal_token = cart.terminal_token,
