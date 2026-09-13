@@ -253,8 +253,9 @@ actions = {
     "cash", "pick:ACC000002", "send",
     -- 9.4: the bet wallet, activity, cash out and the Account ID all moved
     -- into this list from the PUMPE's Bank tab, so scrolling to the bottom
-    -- is what proves they are reachable from inside Foxy.
-    "down", "down", "down", "down",
+    -- is what proves they are reachable from inside Foxy. 9.5 added Bring
+    -- money in below them.
+    "down", "down", "down", "down", "down",
     "back",                              -- leave the bank
     "account", "back",                   -- the account section
     "back",                              -- leave Foxy
@@ -370,6 +371,10 @@ assert(pressed("Bet Wallet"), "the bet wallet moved into Foxy")
 assert(pressed("Activity"), "and so did the transaction list")
 assert(pressed("Cash out with a code"),
     "and the one code a Foxy account still uses -- a kiosk handing it money")
+-- 9.5: the way back from another bank. Foxy cannot reach in and take money
+-- out, so this opens the bank holding it and asks that bank to push.
+assert(pressed("Bring money in"),
+    "Fast Bank Transfer is reachable from the account it moves money into")
 assert(not pressed("Code Pay"),
     "but not Code Pay: paying a kiosk is Foxy Pay, or a third-party bank")
 

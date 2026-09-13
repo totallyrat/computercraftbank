@@ -137,6 +137,39 @@ local function readEntry(rawFile, allowed, seen, skipUnknown)
     }
 end
 
+-- What a release says it changed, in the words a person reads on a phone
+-- rather than a commit log. Cosmetic: a malformed entry is dropped and the
+-- release still installs, because refusing an update over its own notes
+-- would strand a device for the sake of a caption.
+local MAX_CHANGES = 16
+local MAX_CHANGE_LENGTH = 96
+
+local function readChanges(raw)
+    local list = {}
+    if type(raw) ~= "table" then return list end
+    for _, entry in ipairs(raw) do
+        if #list >= MAX_CHANGES then break end
+        if type(entry) == "string" then
+            local clean = entry:gsub("%c", " "):gsub("%s+", " ")
+            clean = clean:gsub("^ +", ""):gsub(" +$", "")
+            if clean ~= "" then
+                list[#list + 1] = clean:sub(1, MAX_CHANGE_LENGTH)
+            end
+        end
+    end
+    return list
+end
+
+-- The name a release goes by. The version orders releases and the label
+-- names them, because "10.0 Pre" is not a number and 9.5.0 is not a name.
+local function readLabel(raw)
+    if type(raw) ~= "string" then return nil end
+    local clean = raw:gsub("%c", " "):gsub("%s+", " ")
+    clean = clean:gsub("^ +", ""):gsub(" +$", "")
+    if clean == "" then return nil end
+    return clean:sub(1, 24)
+end
+
 function update.validateManifest(manifest, expectedPaths, expectedChannel,
     optionalPaths)
     if type(manifest) ~= "table" or manifest.schema ~= 1 then
@@ -192,7 +225,9 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel,
         schema = 1,
         channel = manifest.channel,
         version = manifest.version,
+        label = readLabel(manifest.label),
         notes = tostring(manifest.notes or ""),
+        changes = readChanges(manifest.changes),
         files = files,
     }
 end
@@ -403,8 +438,11 @@ function update.mergeConfig(stagedPath, localConfig, version)
         and defaults.config_resets or {}
     local merged = util.copy(defaults)
     for key, value in pairs(localConfig or {}) do
+        -- release_name belongs to the release, not to the device. Preserving
+        -- it like a local setting would leave every updated phone naming the
+        -- release it was installed from, forever.
         if key ~= "version" and key ~= "config_resets"
-            and value ~= resets[key] then
+            and key ~= "release_name" and value ~= resets[key] then
             merged[key] = util.copy(value)
         end
     end
@@ -423,13 +461,13 @@ function update.hasFreeSpace(root, needed)
     return free >= needed + 8192, free
 end
 
--- Downloads and installs just this role's files. Returns true when the device
--- should restart, false when it is already current, or nil plus a reason.
-function update.selfUpdate(options)
+-- Asking whether there is an update, without installing one. Split out of
+-- selfUpdate so a device with somebody in front of it can put the question
+-- to them: what comes back names the release, what it changed, and the files
+-- this role would download. Nothing is written until apply() is called.
+function update.check(options)
     local config = options.config or {}
     local role = options.role
-    local root = options.root or "/pumpe"
-    if config.auto_update == false then return false, "disabled" end
     local manifestUrl = tostring(config.update_manifest_url or "")
     if manifestUrl == "" then return false, "no manifest url" end
 
@@ -446,7 +484,32 @@ function update.selfUpdate(options)
     end
 
     local files, total = update.filesForRole(manifest, role)
-    if #files == 0 then return nil, "release has no files for " .. tostring(role) end
+    if #files == 0 then
+        return nil, "release has no files for " .. tostring(role)
+    end
+    return {
+        manifest = manifest,
+        manifest_url = manifestUrl,
+        version = manifest.version,
+        label = manifest.label,
+        changes = manifest.changes or {},
+        files = files,
+        bytes = total,
+    }
+end
+
+-- Installs a release that check() already found and validated. The download
+-- is staged in full and committed in one move, so a device that loses the
+-- network halfway through still starts on the release it had.
+function update.apply(found, options)
+    options = options or {}
+    local config = options.config or {}
+    local root = options.root or "/pumpe"
+    local manifest, files = found.manifest, found.files
+    local manifestUrl = found.manifest_url
+        or tostring(config.update_manifest_url or "")
+    local total = found.bytes or 0
+
     local roomy, free = update.hasFreeSpace(root, total)
     if not roomy and options.onSpaceNeeded then
         pcall(options.onSpaceNeeded, total)
@@ -491,6 +554,16 @@ function update.selfUpdate(options)
         backup)
     if not committed then return nil, commitError end
     return true, manifest.version
+end
+
+-- Downloads and installs just this role's files. Returns true when the device
+-- should restart, false when it is already current, or nil plus a reason.
+function update.selfUpdate(options)
+    local config = options.config or {}
+    if config.auto_update == false then return false, "disabled" end
+    local found, why = update.check(options)
+    if not found then return found, why end
+    return update.apply(found, options)
 end
 
 return update

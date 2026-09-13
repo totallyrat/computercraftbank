@@ -121,4 +121,56 @@ for _, path in ipairs(shared) do
         path .. " is served to clients but Easy Deployment never repairs it")
 end
 
+-- The release's own name and change list. A phone asks before it installs
+-- anything now, so it has to be able to say what it is asking about. Both are
+-- derived by the builder from files in this repository -- the label from
+-- config.lua, the changes from CHANGELOG.md -- which leaves exactly one way
+-- for them to be wrong: the changelog not covering this release at all. That
+-- is what this checks, because showing the previous release's notes is worse
+-- than showing none.
+local configSource = readFile("../config.lua")
+local releaseName = configSource:match('release_name%s*=%s*"([^"]*)"')
+assert(releaseName and releaseName ~= "",
+    "config.lua must name the release")
+assert(manifest:find('"label": "' .. releaseName .. '"', 1, true),
+    "the manifest must publish config.lua's release_name as its label")
+
+local changelog = readFile("../CHANGELOG.md")
+local topHeading = changelog:match("\n## ([^\n]+)")
+assert(topHeading and topHeading:gsub("%s+$", "") == version,
+    "CHANGELOG.md starts at " .. tostring(topHeading) .. ", not " .. version
+        .. "; the release has no notes to show")
+
+local section = changelog:match("\n## " .. version:gsub("%.", "%%.")
+    .. "\n(.-)\n## ")
+assert(section, "CHANGELOG.md has no closed section for " .. version)
+local expectedChanges = {}
+for line in (section .. "\n"):gmatch("([^\n]*)\n") do
+    local headline = line:match("^%*%*(.-)%*%*")
+        or line:match("^[%-%*] %*%*(.-)%*%*")
+    if headline and #expectedChanges < 16 then
+        assert(not headline:find('"', 1, true),
+            "a change headline cannot contain a quote: " .. headline)
+        expectedChanges[#expectedChanges + 1] = headline:gsub("%s+", " ")
+    end
+end
+assert(#expectedChanges > 0,
+    "the " .. version .. " changelog section has no bold headlines, so the"
+        .. " update alert would list nothing")
+
+local publishedChanges = {}
+local changesSection = manifest:match('"changes":%s*%[(.-)%]')
+assert(changesSection, "the manifest must publish a change list")
+for entry in changesSection:gmatch('"(.-)"') do
+    publishedChanges[#publishedChanges + 1] = entry
+end
+assert(#publishedChanges == #expectedChanges,
+    "the manifest lists " .. #publishedChanges .. " changes but the changelog"
+        .. " has " .. #expectedChanges .. "; rerun the release builder")
+for index, expectedChange in ipairs(expectedChanges) do
+    assert(publishedChanges[index] == expectedChange,
+        "change " .. index .. " is \"" .. tostring(publishedChanges[index])
+            .. "\" but the changelog says \"" .. expectedChange .. "\"")
+end
+
 print("host_release_manifest_test: OK")

@@ -1,4 +1,4 @@
-# PUMPE Ecosystem v8.0
+# PUMPE Ecosystem
 
 A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. It includes personal banking, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
@@ -32,13 +32,14 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - Up to four favourites live in **the dock**, under every app page rather than on a page of their own. An empty dock slot opens the picker, and so does **Edit Your Dock** in Settings.
 - Unread counts appear as a badge in an icon's corner.
-- **Bank** holds the balance, payments behind **Continue**, the Bet Wallet, Activity and your Account ID. (This was BuckApp until 9.0, when that name left to become a bank of its own.)
+- **Foxy** is the bank. Since 9.4 the balance, your accounts, Foxy Cash, the Bet Wallet, Activity, cashing out and the Account ID all live in its bank section; there is no Bank app on the Home Screen. (It was BuckApp until 9.0, then a built-in Bank tab until 9.4.)
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
 - **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
 - Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
 - The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
 - **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
+- **Turning the modem off leaves you signed in.** Settings → Network takes the phone off the network; since 9.5 that is all it does. The Home Screen, Settings and everything already downloaded keep working, the header reads **Offline** where the balance goes, and anything needing a server says so instead of hanging. A phone that starts up with the modem off opens the same way, under the name it last signed in as — a label, not a session, and the first thing it can do back on the network is sign in properly. Off the network the Lock Screen opens on a tap, because the PIN is checked by the Bank and there is no Bank to check it.
 
 ## Friends, Messages, and Urgent Contact
 
@@ -204,6 +205,14 @@ Every account at every bank has a sixteen-digit **Account ID**, the first four d
 
 A transfer never gives money back on a guess. A bank that *refuses* answers with a code, so nothing was applied and the money returns. A bank that says *nothing* might have applied it or not, so the money stays parked and is settled later by asking whether that transfer id was ever seen.
 
+### Fast Bank Transfer, since 9.5
+
+Nobody should have to read sixteen digits off one screen and type them into another. A bank app asks the phone where else its owner keeps money, and the phone answers — it is the phone, it knows what is installed and whose account it is signed into.
+
+- **Bringing money in.** Revolution offers this the moment you open an account, and keeps a Bring in button beside Move out. Pick Foxy and the PUMPE itself makes the two Bank calls, behind its own confirmation screen and its own PIN prompt. The app is told an amount arrived and nothing else — never the session token, never the PIN.
+- **Going home.** Foxy cannot reach into Revolution and take money out: the bank holding money is the only one that can authorise it leaving. So Foxy asks the phone to open that bank with this account's own ID as the destination, and that bank pushes. Foxy's bank section offers this under **Bring money in**, and a closed account offers it as **Bring it back here** under the name of the bank the money went to.
+- A bank is never offered a transfer to itself, and an app the phone opened cannot open another one.
+
 ## Foxy, the App Browser and the App Server
 
 ### Foxy
@@ -337,11 +346,15 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 
 Every role updates itself. A PUMPE, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
 
+**Since 9.5, the PUMPE asks first.** When a release lands the phone fills the screen with what changed and waits for an answer: Update now, or Later. Later holds until the phone restarts, and Settings → Updates has a Check now button in the meantime. The same screen switches the phone to Automatic for anyone who prefers the old behaviour. Every other role is unattended — there is nobody in front of a Bank Server to tap Update — so everything except the PUMPE still updates itself silently.
+
+What the phone shows comes from the manifest: a `label` naming the release and a `changes` array of headlines. Both are derived by the release builder from files in this repository — the label from `release_name` in `config.lua`, the headlines from the top section of `CHANGELOG.md` — so they cannot drift from the release they describe. `release_name` is the one config value an update replaces rather than preserves; every other local setting still survives.
+
 Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published defaults. A release can name a setting it is taking back — `config_resets` in `config.lua` — and a device still carrying exactly that stale value adopts the new default instead. That is how the retired `CHANGE-ME-GOVERNMENT-KEY` placeholder is cleared.
 
 The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
 
-Because each device stages only its own role, the worst-case update peaks at about 633 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 367 KiB for account data.
+Because each device stages only its own role, the worst-case update peaks at about 740 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 260 KiB for account data.
 
 ### Manifest layout
 
@@ -516,7 +529,8 @@ Install **CCG Bet Console**, attach the monitor and modem, and select a game. Pl
 - A ticket code becomes invalid immediately after **Mark Used + Admit**.
 - Subscription codes are confirmed with the customer's PIN inside PUMPE. The first charge settles immediately; later charges run once per in-game day. Failed charges notify the customer and retry the next day.
 - Sessions are kept in memory and expire after 12 hours by default. Restarting the Bank Server signs clients out without changing their data.
-- The PUMPE stores only the last account name locally, never the PIN.
+- The PUMPE stores only the last account name locally, never the PIN and never a session token.
+- A PUMPE asks before it installs a release, and lists what changed. Every unattended role still updates itself.
 - Citizenship codes grant permanent entry to their own territory. They also grant permanent entry wherever that citizenship has active Free Roam.
 - Temporary visa departure days are calculated by the Bank Server on entry, and the document locks permanently after its recorded exit.
 - CCG wagers leave Bet Wallet when they are marked ready. Leaving or expiring before a round starts returns the full wager.
@@ -621,4 +635,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `6.2.2`.
+PUMPE Ecosystem `9.5.0`, released as **10.0 Pre**.

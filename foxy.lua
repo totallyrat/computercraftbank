@@ -726,6 +726,81 @@ return function(api)
         end
     end
 
+    -- Fast Bank Transfer -------------------------------------------------------
+    -- Foxy cannot reach into another bank and take money out; the bank
+    -- holding it is the only one that can let it go. So this opens that
+    -- bank, with this account's own ID as the destination, and waits to be
+    -- told what arrived.
+    local function bringMoneyIn(preferredName)
+        if type(api.banks) ~= "function" or type(api.handoff) ~= "function" then
+            ui.message(target, "info", "Not on this PUMPE",
+                "This phone is on an older release", 1.8)
+            return false
+        end
+        local identity = request("BANK_IDENTITY", {}, true)
+        if not identity then return false end
+        local banks = {}
+        for _, bank in ipairs(api.banks() or {}) do
+            if bank.id ~= "FOXY" then banks[#banks + 1] = bank end
+        end
+        -- Coming home from a named bank: go straight there rather than
+        -- asking which of them it was.
+        if preferredName then
+            for _, bank in ipairs(banks) do
+                if bank.name == preferredName then banks = { bank } break end
+            end
+        end
+        if #banks == 0 then
+            ui.message(target, "info", "No other bank here",
+                preferredName and ("Install " .. preferredName .. " first")
+                    or "Nothing else holds money for you", 2.2)
+            return false
+        end
+
+        local choice = banks[1]
+        if #banks > 1 then
+            while running() do
+                local width, height = target.getSize()
+                ui.clear(target)
+                ui.header(target, "Bring it home", "Foxy", util.formatClock())
+                ui.wrappedText(target, 2, 5, "Open a bank and move everything"
+                    .. " it holds into this account.", width - 2, 4,
+                    ui.theme.muted)
+                local scene = ui.scene(target)
+                for index, bank in ipairs(banks) do
+                    if index > 3 then break end
+                    scene:button("bank:" .. index, 2, 10 + (index - 1) * 3,
+                        width - 2, 2, ui.truncate(bank.name, width - 4),
+                        { background = FOX, foreground = colors.black })
+                end
+                scene:button("back", 1, height, 8, 1, "< Back",
+                    { background = ui.theme.panel })
+                local action = scene:wait({ tickRate = 5 })
+                if action == "back" or action == "__terminate" then
+                    return false
+                end
+                local pick = tonumber(action and action:match("^bank:(%d+)$"))
+                if pick and banks[pick] then choice = banks[pick] break end
+            end
+            if not choice then return false end
+        end
+
+        local moved, err = api.handoff({
+            bank = choice.id,
+            account_id = identity.bank_account_id,
+            bank_name = identity.bank_name or "Foxy",
+        })
+        if not moved then
+            ui.message(target, "warning", "Nothing moved",
+                err or "That bank would not release it", 2.2)
+            return false
+        end
+        api.refresh()
+        ui.message(target, "success", "Back at Foxy",
+            money(moved.moved) .. " arrived", 2)
+        return true
+    end
+
     local function bankScreen()
         local offset, shimmered = 0, false
         while running() do
@@ -745,12 +820,18 @@ return function(api)
                     .. " use this account again.", width - 6, 2,
                     ui.theme.muted, ui.theme.panel)
                 local closed = ui.scene(target)
+                closed:button("home", 2, height - 8, width - 2, 2,
+                    "Bring it back here",
+                    { background = FOX, foreground = colors.black })
                 closed:button("id", 2, height - 5, width - 2, 2,
                     "Show my Account ID", { background = ui.theme.panel })
                 closed:button("back", 1, height, 8, 1, "< Foxy",
                     { background = ui.theme.panel })
                 local closedAction = closed:wait({ tickRate = 5 })
-                if closedAction == "id" then accountIdScreen() else return end
+                if closedAction == "home" then
+                    bringMoneyIn(here.moved_to_name)
+                elseif closedAction == "id" then accountIdScreen()
+                else return end
             else
             local overview = request("FOXY_OVERVIEW", {}, true)
             if not overview then return end
@@ -784,6 +865,7 @@ return function(api)
             rows[#rows + 1] = { kind = "wallet" }
             rows[#rows + 1] = { kind = "activity" }
             rows[#rows + 1] = { kind = "cashout" }
+            rows[#rows + 1] = { kind = "bringin" }
             rows[#rows + 1] = { kind = "id" }
             -- A tax demand is not a menu item you can ignore: it comes
             -- first, and while one is open the account cannot spend.
@@ -824,6 +906,9 @@ return function(api)
                         scene:button("cashout", 2, y, width - 2, 2,
                             "Cash out with a code",
                             { background = ui.theme.panel })
+                    elseif row.kind == "bringin" then
+                        scene:button("bringin", 2, y, width - 2, 2,
+                            "Bring money in", { background = ui.theme.panel })
                     elseif row.kind == "id" then
                         scene:button("id", 2, y, width - 2, 2,
                             "Account ID + Transfer",
@@ -854,6 +939,7 @@ return function(api)
             elseif action == "wallet" then betWalletScreen()
             elseif action == "activity" then historyScreen()
             elseif action == "cashout" then withdrawScreen()
+            elseif action == "bringin" then bringMoneyIn()
             elseif action == "id" then accountIdScreen()
             elseif action == "main" then
                 moveMoney(overview, "main", "Main account", overview.balance)

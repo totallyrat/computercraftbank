@@ -342,25 +342,52 @@ Run this after installing into a ComputerCraft world.
 
 ## Bank Transfer
 
-- [ ] Confirm your Account ID is sixteen digits and is shown in the Bank tab and under Settings → Account ID.
+- [ ] Confirm your Account ID is sixteen digits and is shown in Foxy → Bank → Account ID + Transfer.
 - [ ] Transfer everything from Foxy to your BuckApp Account ID. Confirm the amount arrives, and that the total money across both banks is unchanged.
-- [ ] Confirm the Foxy **Bank tab no longer opens** and says where the money went.
+- [ ] Confirm **Foxy's bank section no longer opens** and says where the money went.
 - [ ] Confirm Send Money, Pay and every other spending feature refuse while the money is elsewhere.
 - [ ] Confirm somebody sending you money is told your account has moved rather than the money vanishing into it.
-- [ ] Transfer back from BuckApp to your Foxy Account ID and confirm the Bank tab reopens with the money in it.
+- [ ] Transfer back from BuckApp to your Foxy Account ID and confirm Foxy's bank section reopens with the money in it.
 - [ ] Type an Account ID at a bank that is not running and confirm it says so and takes nothing.
 - [ ] Enter the wrong PIN and confirm nothing leaves the account.
 - [ ] Stop the receiving Bank Server *mid-transfer* and confirm the money is reported as held rather than lost, and that it settles or returns on its own within a minute.
 
 ## Settings
 
-- [ ] Confirm Settings lists Network, Storage, Updates, Account ID, App Settings, Connected Apps, How PUMPE Works, Edit Your Dock, Sign Out and Close PUMPE, paging if the screen is short.
-- [ ] Turn the **modem off** and confirm the PUMPE signs out and says the modem is off rather than hanging on every screen.
-- [ ] With the modem off, confirm signing in fails immediately rather than after a pause.
-- [ ] Turn the modem back on and confirm banking works again.
+- [ ] Confirm Settings lists Network, Storage, Updates, App Settings, Connected Apps, How PUMPE Works, Edit Your Dock, Sign Out and Close PUMPE, paging if the screen is short.
 - [ ] Open **Storage** and confirm it reports free space and lists each installed app with its size.
-- [ ] Turn **Updates** off, publish a newer release, and confirm this PUMPE stays on its version while another updates.
-- [ ] Turn Updates back on and confirm it updates.
+
+## The modem switch (9.5)
+
+- [ ] Turn the **modem off** and confirm you are **still signed in**: the Home Screen still opens, the header reads **Offline** where the balance was, and you are not sent back to the welcome screen.
+- [ ] Confirm Settings still opens and still reaches **Network**, so the radio can be turned back on.
+- [ ] Open an app you downloaded and confirm it still opens.
+- [ ] Open something that needs a server — Foxy's bank, the App Browser, Tax — and confirm it says the modem is off immediately rather than pausing.
+- [ ] With the modem off, confirm the Lock Screen opens on a tap instead of asking for a PIN it cannot check.
+- [ ] Turn the modem back on and confirm banking works again **without signing in again**.
+- [ ] Restart a PUMPE with the modem off. Confirm it opens on the Home Screen under your name rather than the welcome screen, and that Settings → Network still turns the radio back on.
+- [ ] After that restart, confirm opening the App Browser or a bank app does **not** quietly put the radio back on: turn it on deliberately, and only then should anything reach the network.
+
+## Updates (9.5)
+
+- [ ] Publish a newer release and confirm the PUMPE shows a **fullscreen alert** listing what changed, with **Update now** and **Later**.
+- [ ] Confirm the list matches the new release's changelog headlines, and the alert names the release (for example `10.0 Pre`).
+- [ ] Tap **Later** and confirm nothing installs and the alert does not come back on its own.
+- [ ] Open **Settings → Updates**, tap **Check now**, and confirm the same alert comes back.
+- [ ] Tap **Update now** and confirm the phone downloads, restarts and comes back on the new version.
+- [ ] Switch Updates to **Install automatically**, publish another release, and confirm it installs without asking.
+- [ ] Confirm a Bank Server, App Server and kiosk all update themselves silently — none of them should be waiting for a tap.
+- [ ] With the modem off, confirm the PUMPE does not check for releases at all and Settings → Updates says so.
+
+## Fast Bank Transfer (9.5)
+
+- [ ] With money in Foxy, install **Revolution** and open an account. Confirm it offers to bring your money over and lists **Foxy** with the right balance.
+- [ ] Pick Foxy and confirm the **PUMPE's own** sheet appears, asks for your PIN, and that Revolution never asks for it.
+- [ ] Confirm the whole balance arrives at Revolution, that the total money across both banks is unchanged, and that Foxy's bank section says where the money went.
+- [ ] In Foxy, tap **Bring it back here** and confirm the phone opens Revolution, which asks for its **own** PIN and pushes the money home.
+- [ ] Confirm the money is back in Foxy and the account is open again.
+- [ ] Confirm a bank app is never offered a transfer to itself, and that **Foxy** appears once in the list rather than twice.
+- [ ] Cancel the PUMPE's sheet, or type the wrong PIN, and confirm nothing moves.
 
 ## App permissions and App Settings
 

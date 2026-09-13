@@ -243,6 +243,56 @@ function net.autoUpdate(config, role, root, client, options)
     end
 
     local updater = loadUpdater()
+
+    -- Ask-first. A device with somebody in front of it installs nothing until
+    -- they say so, so checking and installing are separate steps with the
+    -- answer in between. Unattended roles pass no confirm and keep updating
+    -- themselves, because there is nobody there to ask.
+    if options.confirm then
+        local found, why = nil, nil
+        if updater and type(updater.check) == "function" then
+            found, why = updater.check({
+                config = config, role = role, root = root,
+                requiredPaths = options.requiredPaths,
+                optionalPaths = options.optionalPaths,
+            })
+        end
+        -- Already on the newest release is a settled answer. Anything else
+        -- means the manifest could not be read, which is the one case worth
+        -- spending a request on the Bank over.
+        if found == false and why == "current" then return false end
+        if not found then
+            -- No manifest, so no change list. The Bank still knows what
+            -- release it is running, and a version with nothing to read is
+            -- a better question than no question at all.
+            local ping = client and client:request("PING", {}, 3)
+            if not ping or not net.isNewerVersion(ping.version, config.version)
+            then
+                return false
+            end
+            found = { version = ping.version, changes = {}, depot = true }
+        end
+        -- A crash while asking is not a yes. Wrapped so a broken alert
+        -- screen cannot take the device down on start-up, and so the answer
+        -- it failed to give defaults to leaving the release alone.
+        local askedOk, wanted = pcall(options.confirm, found)
+        if not askedOk or not wanted then return false end
+        if not found.depot and updater then
+            local applied, detail = updater.apply(found, {
+                config = config, role = role, root = root,
+                onProgress = options.onProgress,
+                onSpaceNeeded = options.onSpaceNeeded,
+            })
+            if applied then
+                if options.onInstalled then pcall(options.onInstalled, detail) end
+                os.reboot()
+                return true
+            end
+            net.lastUpdateError = detail
+        end
+        return depotUpdate(config, role, root, nil)
+    end
+
     if updater then
         local updated, detail = updater.selfUpdate({
             config = config,

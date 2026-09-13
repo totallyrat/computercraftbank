@@ -69,6 +69,39 @@ const configSource = fs.readFileSync(
 const versionMatch = configSource.match(/\bversion\s*=\s*"(\d+\.\d+\.\d+)"/);
 if (!versionMatch) throw new Error("Could not read version from config.lua");
 
+// What the release is called, and what it changed. Both are read out of the
+// repository rather than kept in this script: the label is config.lua's
+// release_name, and the change list is the headlines of the top section of
+// CHANGELOG.md. A version number orders releases; it does not name them, and
+// "10.0 Pre" is not a number.
+const labelMatch = configSource.match(/\brelease_name\s*=\s*"([^"]*)"/);
+const releaseLabel = labelMatch ? labelMatch[1] : versionMatch[1];
+
+// The headlines are the bold lead-ins of the section, in order. Deriving them
+// from the changelog rather than from a list kept beside it is the only way
+// the two cannot disagree, and a phone showing the previous release's notes
+// would be worse than showing none.
+function readChanges(version) {
+  const body = fs.readFileSync(path.join(projectRoot, "CHANGELOG.md"), "utf8");
+  const section = body.split(/^## /m)[1] || "";
+  const heading = section.split("\n", 1)[0].trim();
+  if (heading !== version) {
+    console.warn(
+      `WARNING: CHANGELOG.md starts at ${heading}, not ${version}. `
+        + "Publishing no change list.",
+    );
+    return [];
+  }
+  const changes = [];
+  for (const line of section.split("\n")) {
+    const headline = line.match(/^(?:[-*] )?\*\*(.+?)\*\*/);
+    if (headline) changes.push(headline[1].replace(/\s+/g, " ").trim());
+    if (changes.length >= 16) break;
+  }
+  return changes;
+}
+const releaseChanges = readChanges(versionMatch[1]);
+
 // Easy Deployment reports its own version, and it only replaces itself when
 // the downloaded file says it is newer. Keeping that in step with config.lua
 // here removes the one manual step that could strand an installer.
@@ -128,7 +161,9 @@ const manifest = {
   schema: 1,
   channel: "stable",
   version: versionMatch[1],
+  label: releaseLabel,
   notes: "PUMPE + ComputerCraftGaming automatic internet release",
+  changes: releaseChanges,
   files: releaseFiles.map(describe),
   extra_files: extraReleaseFiles.map(describe),
   optional_files: forwardOptionalFiles.map(describe),
@@ -184,7 +219,10 @@ if (worstPeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
   );
 }
 
-console.log(`Built release_manifest.json for PUMPE v${manifest.version}`);
+console.log(
+  `Built release_manifest.json for PUMPE v${manifest.version} (${releaseLabel}), `
+    + `${releaseChanges.length} change headlines`,
+);
 console.log(
   `Published ${manifest.files.length} required, `
     + `${manifest.extra_files.length} legacy-optional and `

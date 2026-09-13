@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.4.0"
+local PROGRAM_VERSION = "9.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -24,14 +24,36 @@ local device = util.loadTable(deviceFile, {
     -- Settings, kept on the device rather than in config.lua: they belong to
     -- this phone, and an update rewrites config.
     modem_on = true,
-    auto_update = true,
+    update_mode = "ask",
 })
 if device.onboarding_complete == nil then device.onboarding_complete = false end
 if device.modem_on == nil then device.modem_on = true end
-if device.auto_update == nil then device.auto_update = true end
--- Turning auto updates off is a setting, and net.autoUpdate reads it from
--- the config table it is handed.
-if device.auto_update == false then config.auto_update = false end
+-- Ask before installing, unless this phone has been told otherwise. A phone
+-- that replaces itself while somebody is holding it decided for them, so the
+-- question is the default and automatic is the setting. The old on/off
+-- switch is no longer read: "never" was never a good answer, and a phone
+-- carrying it is asked from now on instead of sitting on an old release.
+if device.update_mode ~= "auto" then device.update_mode = "ask" end
+
+-- Off the network, not out of the phone. The switch stops everything that
+-- needs a server and nothing else: what is already on the device still
+-- opens, and you stay signed in, because signing you out would leave the
+-- phone at a sign-in screen it has no way to complete.
+local function offline() return device.modem_on == false end
+
+-- net.client opened every modem looking for the Bank before the device file
+-- had been read. Close them again if this phone was switched off.
+if offline() then pcall(net.closeModems) end
+
+-- The name the phone opens under when it cannot ask the Bank who you are.
+-- A label, not a session: it grants nothing, and the first thing this phone
+-- can do back on the network is sign in properly.
+local function cachedProfile()
+    return {
+        name = device.last_name ~= "" and device.last_name or "PUMPE",
+        offline = true,
+    }
+end
 
 -- Every Bank call goes through here, whichever path made it. Gating the one
 -- wrapper below would have missed signing in and the lock screen, which both
@@ -183,9 +205,9 @@ local function unlockAnimation()
 end
 
 local function lockScreen(forcePin)
-    if not sessionToken or not account then return end
+    if not account then return end
     local blink = true
-    while running and sessionToken do
+    while running and (sessionToken or offline()) do
         local width, height = target.getSize()
         ui.clear(target, colors.blue)
         for row = 1, height do
@@ -198,12 +220,17 @@ local function lockScreen(forcePin)
         ui.center(target, 5, util.formatClock(blink), colors.white, colors.blue)
         ui.center(target, 7, "Day " .. util.ingameDay(), colors.lightGray, colors.blue)
         ui.center(target, 11, account.name, colors.white, colors.blue)
-        local pinRequired = forcePin
-            or ui.idleForMs() >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000
+        -- The PIN is checked by the Bank, and off the network there is no
+        -- Bank to check it. Keeping the prompt would lock the phone for
+        -- good; the money it guards is unreachable from here anyway, and
+        -- the switch can only be thrown from inside an unlocked phone.
+        local pinRequired = not offline() and (forcePin
+            or ui.idleForMs()
+                >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000)
         ui.center(target, height - 4,
             pinRequired and "PIN required" or "Tap to open",
             pinRequired and colors.orange or colors.white, colors.blue)
-        ui.center(target, height - 2, "Foxy Account",
+        ui.center(target, height - 2, offline() and "Offline" or "Foxy Account",
             colors.lightGray, colors.blue)
 
         local timer = os.startTimer(0.5)
@@ -215,9 +242,9 @@ local function lockScreen(forcePin)
             return
         elseif event[1] == "mouse_click" or event[1] == "monitor_touch"
             or event[1] == "key" or event[1] == "char" then
-            local mustUsePin = forcePin
+            local mustUsePin = not offline() and (forcePin
                 or ui.idleForMs()
-                    >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000
+                    >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000)
             if mustUsePin then
                 local pin = ui.pin(target, "Unlock PUMPE", true)
                 if pin then
@@ -2956,12 +2983,12 @@ local function networkScreen()
         ui.text(target, 4, 6, on and "On" or "Off", ui.theme.ink,
             ui.theme.panel)
         ui.wrappedText(target, 4, 8, on and "On the bank network."
-            or "Nothing needing the Bank works.", width - 6, 2,
+            or "Signed in, but off the network.", width - 6, 2,
             ui.theme.muted, ui.theme.panel)
         ui.wrappedText(target, 2, 11, "With the modem off your money, your"
-            .. " messages and every app that needs the network stop. What is"
-            .. " already on the phone still opens.", width - 2, 7,
-            ui.theme.muted)
+            .. " messages and anything else that needs a server stop. You"
+            .. " stay signed in, and everything already on the phone still"
+            .. " opens.", width - 2, 7, ui.theme.muted)
         local scene = ui.scene(target)
         scene:button("toggle", 2, height - 4, width - 2, 2,
             on and "Turn the modem off" or "Turn the modem on",
@@ -2974,18 +3001,18 @@ local function networkScreen()
         if action == "toggle" then
             if on then
                 if ui.confirm(target, "Turn the modem off",
-                    "You will be signed out of the Bank.", "Turn off",
+                    "Anything needing the Bank stops.", "Turn off",
                     "Keep on") then
                     device.modem_on = false
                     saveDevice()
                     net.closeModems()
-                    -- The session lives on the Bank, and the Bank is now
-                    -- unreachable. Holding a token that cannot be used would
-                    -- only look like being signed in.
-                    sessionToken, betAccessToken, account = nil, nil, nil
-                    disableDeviceLock()
+                    -- You stay signed in. Dropping the session here is what
+                    -- used to brick the phone: it sent you to a sign-in
+                    -- screen that needed the radio you had just switched
+                    -- off. The token is useless until the modem is back,
+                    -- which is exactly the state the phone is in.
                     ui.message(target, "warning", "Modem off",
-                        "This PUMPE is off the network", 1.4)
+                        "Your apps still work", 1.4)
                     return
                 end
             else
@@ -3055,42 +3082,159 @@ local function storageScreen()
     end
 end
 
+-- The update alert ----------------------------------------------------------
+-- A release lands, the phone stops and says what is in it, and nothing is
+-- written until somebody answers. "Later" holds until the phone restarts or
+-- Settings asks again, so the question is put once rather than every half
+-- minute.
+local updateDeferred
+
+local function updateProgress(file, index, count)
+    local width = target.getSize()
+    ui.clear(target)
+    ui.header(target, "Updating", index .. " of " .. count, util.formatClock())
+    ui.center(target, 8, ui.truncate(tostring(file.path or ""), width - 4),
+        ui.theme.ink)
+    local bar = width - 6
+    ui.fill(target, 4, 11, bar, 1, ui.theme.panel)
+    ui.fill(target, 4, 11,
+        math.floor(bar * index / math.max(1, count)), 1, ui.theme.accent)
+    ui.center(target, 14, "Do not turn this off", ui.theme.muted)
+end
+
+local function updateAlertScreen(found)
+    local offset = 0
+    while running do
+        local width, height = target.getSize()
+        local named = found.label
+            and (found.label .. "  v" .. tostring(found.version))
+            or ("v" .. tostring(found.version))
+        ui.clear(target)
+        ui.header(target, "Update ready", found.label
+            or ("v" .. tostring(found.version)), util.formatClock())
+        ui.card(target, 2, 5, width - 2, 3, ui.theme.accent)
+        ui.text(target, 4, 5, "NEW RELEASE", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 6, ui.truncate(named, width - 6), ui.theme.ink,
+            ui.theme.panel)
+
+        local top = 9
+        local rows = math.max(1, height - 6 - top + 1)
+        local lines = {}
+        for _, change in ipairs(found.changes or {}) do
+            for _, line in ipairs(ui.wrap("- " .. change, width - 6)) do
+                lines[#lines + 1] = line
+            end
+        end
+        if #lines == 0 then
+            lines = ui.wrap("This PUMPE could not read what changed. A newer"
+                .. " release is there either way.", width - 6)
+        end
+        offset = math.max(0, math.min(offset, #lines - rows))
+        for row = 1, rows do
+            local line = lines[offset + row]
+            if not line then break end
+            ui.text(target, 2, top + row - 1, ui.truncate(line, width - 5),
+                line:sub(1, 1) == "-" and ui.theme.ink or ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        if #lines > rows then
+            scene:button("up", width - 3, top, 3, 1, "^",
+                { background = ui.theme.panel, disabled = offset <= 0 })
+            scene:button("down", width - 3, top + rows - 1, 3, 1, "v",
+                { background = ui.theme.panel,
+                  disabled = offset + rows >= #lines })
+        end
+        scene:button("go", 2, height - 4, width - 2, 2, "Update now",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("later", 2, height - 1, width - 2, 2, "Later",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "go" then return true end
+        if action == "later" or action == "__terminate" then return false end
+        if action == "up" then offset = math.max(0, offset - rows) end
+        if action == "down" then offset = offset + rows end
+    end
+    return false
+end
+
+-- Handed to net.autoUpdate. Returning false leaves the release exactly where
+-- it was: check() reads the manifest, apply() is what writes.
+local function confirmUpdate(found)
+    if device.update_mode == "auto" then return true end
+    if updateDeferred == found.version then return false end
+    if updateAlertScreen(found) then return true end
+    updateDeferred = found.version
+    return false
+end
+
+-- The one place the phone looks for a release. With the modem off it does not
+-- look at all: the switch promises the phone stops talking, and fetching a
+-- manifest over the internet instead would be a lie told on a technicality.
+local function checkForUpdate(force)
+    if device.modem_on == false then return false end
+    local asking = device.update_mode ~= "auto"
+    if asking and updateDeferred and not force then return false end
+    if force then updateDeferred = nil end
+    return net.autoUpdate(config, "pumpe", ROOT, client, {
+        force = force or nil,
+        programVersion = force and PROGRAM_VERSION or nil,
+        confirm = asking and confirmUpdate or nil,
+        onProgress = updateProgress,
+    })
+end
+
 local function updatesScreen()
     while running do
         local width, height = target.getSize()
-        local on = device.auto_update ~= false
+        local auto = device.update_mode == "auto"
         ui.clear(target)
         ui.header(target, "Updates", "v" .. tostring(config.version),
             util.formatClock())
-        ui.card(target, 2, 5, width - 2, 5, on and ui.theme.success
-            or ui.theme.panel)
-        ui.text(target, 4, 5, "AUTOMATIC UPDATES", ui.theme.muted,
+        ui.card(target, 2, 5, width - 2, 5, auto and ui.theme.success
+            or ui.theme.accent)
+        ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
             ui.theme.panel)
-        ui.text(target, 4, 6, on and "On" or "Off", ui.theme.ink,
-            ui.theme.panel)
-        ui.wrappedText(target, 4, 8, on and "New releases install themselves."
-            or "Staying on this version.", width - 6, 2,
+        ui.text(target, 4, 6, auto and "Install it" or "Ask me first",
+            ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 4, 8, auto
+            and "New releases install themselves."
+            or "You choose each time.", width - 6, 2,
             ui.theme.muted, ui.theme.panel)
-        ui.wrappedText(target, 2, 11, "With updates off this PUMPE keeps the"
-            .. " version it has until you turn them back on. The rest of the"
-            .. " network carries on updating.", width - 2, 6, ui.theme.muted)
+        ui.text(target, 2, 11, "THIS PUMPE", ui.theme.muted)
+        ui.text(target, 2, 12, ui.truncate(tostring(config.release_name
+            or ("v" .. tostring(config.version))), width - 2), ui.theme.ink)
+        ui.wrappedText(target, 2, 14, device.modem_on == false
+            and "The modem is off, so this PUMPE is not looking for releases."
+            or (updateDeferred and ("Version " .. updateDeferred
+                .. " is waiting. Check now to see it again.")
+            or "Checked every half minute while you are on the network."),
+            width - 2, 4, ui.theme.muted)
         local scene = ui.scene(target)
-        scene:button("toggle", 2, height - 4, width - 2, 2,
-            on and "Turn updates off" or "Turn updates on",
-            { background = on and ui.theme.warning or ui.theme.success,
-              foreground = colors.black })
+        scene:button("mode", 2, height - 7, width - 2, 2,
+            auto and "Ask me instead" or "Install automatically",
+            { background = ui.theme.panel })
+        scene:button("check", 2, height - 4, width - 2, 2, "Check now",
+            { background = ui.theme.accentDark,
+              disabled = device.modem_on == false })
         scene:button("back", 1, height, 8, 1, "< Back",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 5 })
         if action == "back" or action == "__terminate" then return end
-        if action == "toggle" then
-            device.auto_update = not on
+        if action == "mode" then
+            device.update_mode = auto and "ask" or "auto"
             saveDevice()
-            config.auto_update = device.auto_update
             ui.message(target, "info",
-                device.auto_update and "Updates on" or "Updates off",
-                device.auto_update and "New releases install themselves"
-                    or "This PUMPE stays put", 1.2)
+                device.update_mode == "auto" and "Automatic" or "Ask first",
+                device.update_mode == "auto"
+                    and "New releases install themselves"
+                    or "You choose, every time", 1.2)
+        elseif action == "check" then
+            -- Forced, so a release the owner put off comes back up rather
+            -- than staying hidden because they said Later once.
+            if not checkForUpdate(true) then
+                ui.message(target, "info", "Up to date",
+                    "This PUMPE is on the newest release", 1.2)
+            end
         end
     end
 end
@@ -3100,7 +3244,8 @@ end
 -- and paging works on any size rather than only the two I happened to try.
 local function settingsScreen()
     local page = 1
-    while running and sessionToken do
+    while running and (sessionToken or offline()) do
+        if not account then account = cachedProfile() end
         local width, height = target.getSize()
         local entries = {
             { id = "network", label = "Network",
@@ -3108,8 +3253,7 @@ local function settingsScreen()
               warn = device.modem_on == false },
             { id = "storage", label = "Storage", value = "" },
             { id = "updates", label = "Updates",
-              value = device.auto_update == false and "Off" or "Auto",
-              warn = device.auto_update == false },
+              value = device.update_mode == "auto" and "Auto" or "Ask" },
             { id = "apps", label = "App Settings", value = "" },
             { id = "connected", label = "Connected Apps", value = "" },
             { id = "guide", label = "How PUMPE Works", value = "" },
@@ -3123,9 +3267,9 @@ local function settingsScreen()
         ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 6, ui.truncate(account.name, width - 6),
             ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 7, ui.truncate("NO " .. tostring(
-            account.personal_number), width - 6),
-            ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 7, ui.truncate(account.personal_number
+            and ("NO " .. tostring(account.personal_number)) or "Offline",
+            width - 6), ui.theme.muted, ui.theme.panel)
 
         local top = 9
         local bottom = height - 2
@@ -3165,7 +3309,7 @@ local function settingsScreen()
         elseif action == "next" then page = page + 1
         elseif action == "network" then
             networkScreen()
-            if not sessionToken then return end
+            if not sessionToken and not offline() then return end
         elseif action == "storage" then storageScreen()
         elseif action == "updates" then updatesScreen()
         elseif action == "apps" then appSettingsScreen()
@@ -3705,6 +3849,97 @@ local function appPurchase(entry, spec)
     return true
 end
 
+-- Fast Bank Transfer --------------------------------------------------------
+-- Opening an account at another bank used to mean reading sixteen digits off
+-- one screen and typing them into another. The phone knows where its owner
+-- keeps money, so a bank can ask it instead.
+--
+-- What the phone will not do is move money on an app's say-so. The Foxy side
+-- it moves itself, behind its own confirmation and its own PIN prompt. The
+-- far side it does not move at all: it opens the bank holding the money and
+-- lets that bank push it, because the bank holding money is the only one
+-- that can authorise it leaving.
+local transferIntent, transferMoved
+
+-- A bank app declares itself in its own first lines. Read from the file on
+-- disk rather than from the catalogue entry, so an app installed before this
+-- release -- whose entry records no bank name -- is still recognised.
+local function declaredBank(appId)
+    local body = util.readFile(appPath(appId))
+    if type(body) ~= "string" then return nil end
+    local name = body:sub(1, 400):match("%-%-%s*PUMPE BANK APP:%s*([^\r\n]+)")
+    return name and util.trim(name) or nil
+end
+
+-- Every bank this phone's owner holds money at, except the one asking. The
+-- Foxy app's id is FOXY, so asking from inside Foxy leaves out the Foxy
+-- account too rather than offering it a transfer to itself.
+local function bankList(exceptAppId)
+    local list = {}
+    if account and account.bank_account_id and exceptAppId ~= "FOXY" then
+        list[#list + 1] = {
+            id = "FOXY",
+            name = account.bank_name or config.bank_name or "Foxy",
+            account_id = account.bank_account_id,
+            balance = account.balance,
+            open = not account.bank_closed,
+        }
+    end
+    for _, entry in ipairs(installed.list) do
+        -- Foxy is already here as an account. The Foxy app is a window onto
+        -- that account, not a second bank standing beside it, and listing
+        -- both put two entries under one id.
+        local bankName = entry.app_id ~= exceptAppId and entry.app_id ~= "FOXY"
+            and (entry.bank_name or declaredBank(entry.app_id)) or nil
+        if bankName then
+            list[#list + 1] = {
+                id = entry.app_id, name = bankName, app = entry.name,
+                open = true,
+            }
+        end
+    end
+    return list
+end
+
+-- Moves the whole Foxy account to the Account ID the caller named: the same
+-- two Bank calls the Foxy app makes, without the typing.
+local function fastTransfer(spec)
+    if not sessionToken then return nil, "Sign in first" end
+    local wanted = tostring(spec.account_id or ""):gsub("%D", "")
+    if #wanted ~= 16 then return nil, "That is not an Account ID" end
+    local quote, quoteError = request("BANK_TRANSFER_QUOTE",
+        { bank_account_id = wanted }, true)
+    if not quote then return nil, quoteError end
+
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.header(target, "Move your money", quote.bank_name, util.formatClock())
+    ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
+    ui.text(target, 4, 5, "FROM", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 6, ui.truncate(account.bank_name
+        or config.bank_name or "Foxy", width - 6), ui.theme.ink, ui.theme.panel)
+    ui.text(target, 4, 8, "TO", ui.theme.muted, ui.theme.panel)
+    ui.text(target, 4, 9, ui.truncate(quote.name .. " at " .. quote.bank_name,
+        width - 6), ui.theme.ink, ui.theme.panel)
+    ui.text(target, 4, 10, money(quote.amount), ui.theme.ink, ui.theme.panel)
+    ui.wrappedText(target, 2, 13, "All of it goes, and your Foxy bank closes"
+        .. " until you move money back.", width - 2, 3, ui.theme.muted)
+    local scene = ui.scene(target)
+    scene:button("go", 2, height - 4, width - 2, 2, "Move it all",
+        { background = ui.theme.danger })
+    scene:button("no", 2, height - 1, width - 2, 2, "Not now",
+        { background = ui.theme.panel })
+    if scene:wait({ tickRate = 5 }) ~= "go" then return nil, "Cancelled" end
+
+    local pin = ui.pin(target, "Confirm with PIN", true)
+    if not pin then return nil, "Cancelled" end
+    local moved, moveError, code = request("BANK_TRANSFER_CONFIRM",
+        { bank_account_id = quote.bank_account_id, pin = pin }, true)
+    if not moved then return nil, moveError, code end
+    refreshSummary(true)
+    return { moved = moved.moved, bank_name = moved.bank_name }
+end
+
 local function runInstalledApp(entry)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
@@ -3734,7 +3969,9 @@ local function runInstalledApp(entry)
         end,
         account = function() return account end,
         refresh = function() return refreshSummary(true) end,
-        running = function() return running and sessionToken ~= nil end,
+        running = function()
+            return running and (sessionToken ~= nil or offline())
+        end,
         -- FoxyLogin. The app id comes from the install rather than the app,
         -- so nothing can ask for somebody else's grant.
         login = function(spec) return foxyLogin(entry.app_id, spec) end,
@@ -3779,11 +4016,59 @@ local function runInstalledApp(entry)
                 app_id = entry.app_id, product_id = tostring(productId or ""),
             }, true) ~= nil
         end,
+        -- Fast Bank Transfer. A bank app asks the phone where else its
+        -- owner keeps money; it never learns anything it was not shown, and
+        -- it never touches any of it.
+        banks = function() return bankList(entry.app_id) end,
+        transfer = function(spec)
+            return fastTransfer(type(spec) == "table" and spec or {})
+        end,
+        -- Opens the bank that is holding the money, with one job to do. The
+        -- app that asked is told what came back and nothing else.
+        handoff = function(spec)
+            spec = type(spec) == "table" and spec or {}
+            if transferIntent then return nil, "Already moving money" end
+            local other = installedApp(tostring(spec.bank or ""))
+            if not other then return nil, "That bank is not installed" end
+            transferIntent = {
+                app_id = other.app_id,
+                bank_account_id =
+                    tostring(spec.account_id or ""):gsub("%D", ""),
+                bank_name = tostring(spec.bank_name or "your bank"),
+            }
+            transferMoved = nil
+            local ranOk = pcall(runInstalledApp, other)
+            transferIntent = nil
+            local moved = transferMoved
+            transferMoved = nil
+            if not ranOk then return nil, "That bank stopped" end
+            if not moved then return nil, "Nothing was moved" end
+            return { moved = moved }
+        end,
+        -- The other half: what the bank being opened has been asked to do.
+        intent = function()
+            if not transferIntent
+                or transferIntent.app_id ~= entry.app_id then
+                return nil
+            end
+            return {
+                bank_account_id = transferIntent.bank_account_id,
+                bank_name = transferIntent.bank_name,
+            }
+        end,
+        transferred = function(amount)
+            if transferIntent and transferIntent.app_id == entry.app_id then
+                transferMoved = tonumber(amount) or 0
+            end
+        end,
         -- Bank Infrastructure for Apps. A bank app talks to the 3rd Party
         -- Bank Server hosting it, and only to that one: the hostname is
         -- built from the id the app was installed under, so an app cannot
         -- address somebody else's bank, or the Foxy Bank, through here.
         bank = function(action, payload)
+            -- net.client opens every modem it finds. Without this the switch
+            -- leaks: opening a bank app would put the radio back on.
+            if offline() then return nil, "Modem is off", "MODEM_OFF" end
             local client = net.client({
                 protocol = config.tpb_protocol or "PUMPE_TPB_V1",
                 hostname = "TPBANK_" .. entry.app_id,
@@ -3816,6 +4101,15 @@ local function appServer()
 end
 
 local function storeRequest(action, payload, silent)
+    -- Same leak as the bank bridge: appServer() builds a client, and building
+    -- a client opens every modem on the device.
+    if offline() then
+        if not silent then
+            ui.message(target, "warning", "Modem is off",
+                "Turn it on in Settings", 1.4)
+        end
+        return nil, "Modem is off", "MODEM_OFF"
+    end
     local result, err, code = appServer():request(action, payload or {})
     if not result and not silent then
         ui.message(target, "error", "App Server offline",
@@ -3873,6 +4167,10 @@ local function installApp(app)
     installed.list[#installed.list + 1] = {
         app_id = app.app_id, name = app.name, version = app.version,
         author = app.author, description = app.description,
+        -- Kept so Fast Bank Transfer can list this app as a bank without
+        -- opening its file. Apps installed before 9.5 have none, and are
+        -- read off disk instead.
+        bank_name = app.bank_name,
     }
     saveApps()
     -- The tick draws itself, one stroke at a time.
@@ -4301,10 +4599,11 @@ local function mainMenu()
     local poll = request("PUMPE_POLL", {}, true) or {}
     lastBannerId = poll.latest and poll.latest.notification_id or lastBannerId
     local alerts, alertsLoaded, perView = {}, false, 1
-    refreshSummary()
+    refreshSummary(offline())
     enableDeviceLock()
 
-    while running and sessionToken do
+    while running and (sessionToken or offline()) do
+        if not account then account = cachedProfile() end
         local width, height = target.getSize()
         local layout = homeLayout(width, height)
         -- The app pages come first, the notification centre is always last.
@@ -4328,7 +4627,11 @@ local function mainMenu()
                 unread > 0 and (unread .. " unread") or "All caught up",
                 util.formatClock(blink))
         else
-            ui.header(target, account.name, money(account.balance),
+            -- Never a balance the phone cannot vouch for. Off the network
+            -- the last number it saw is a number from the past, and a
+            -- number from the past is worse than no number.
+            ui.header(target, account.name,
+                offline() and "Offline" or money(account.balance),
                 util.formatClock(blink))
         end
 
@@ -4398,13 +4701,13 @@ local function mainMenu()
 
         if action == "__tick" or action == "__idle" or action == "__wake" then
             tick = tick + 1
-            net.autoUpdate(config, "pumpe", ROOT, client)
+            checkForUpdate(false)
         end
         -- The OS poll drives the badges, the balance and the alert dot.
         if tick % 6 == 0 or (action ~= "__tick" and action ~= "__idle") then
             poll = request("PUMPE_POLL", {}, true) or poll
             if poll.balance and account then account.balance = poll.balance end
-            if not sessionToken then return end
+            if not sessionToken and not offline() then return end
         end
     end
 end
@@ -4420,16 +4723,17 @@ else
 end
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
-net.autoUpdate(config, "pumpe", ROOT, client,
-    { force = true, programVersion = PROGRAM_VERSION })
+checkForUpdate(true)
 local online = client:discover()
 if not online then
     ui.message(target, "error", "BANK OFFLINE", "Check your wireless modem", 1.5)
 end
 
 while running do
-    if not sessionToken then welcome() end
-    if sessionToken then mainMenu() end
+    -- Off the network there is nobody to sign in to, so the phone opens as
+    -- itself instead of parking on a sign-in screen it cannot finish.
+    if not sessionToken and not offline() then welcome() end
+    if sessionToken or offline() then mainMenu() end
 end
 
 ui.clear(target)

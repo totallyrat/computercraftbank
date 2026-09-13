@@ -1,5 +1,93 @@
 # Changelog
 
+## 9.5.0
+
+Called **10.0 Pre**: three things worth fixing before the Web Update.
+
+**Updates ask first.** A PUMPE no longer replaces itself while you are
+holding it. When a release lands the phone stops, fills the screen with what
+changed, and waits: Update now, or Later. Later means later -- it asks again
+when the phone restarts, and Settings has a Check now button in the meantime.
+Automatic is still there for anybody who preferred it; it is simply not what
+a phone does unless you say so, and a phone that had updates switched off
+entirely is asked from now on rather than sitting on an old release forever.
+
+Only the PUMPE asks. Every unattended machine -- the Bank, the Vault, the App
+Server, the 3rd Party Bank Server, the kiosks, the anchors -- still updates
+itself, because there is nobody standing in front of one to answer, and a
+network where half the machines are waiting for a tap is a network that
+splits in half.
+
+- **The release says what changed.** The manifest carries a headline list and
+  a name, both derived by the release builder from files in this repository:
+  the name from `config.lua`, the headlines from the top section of this
+  changelog. Deriving them is the only way the two cannot disagree, and a
+  phone showing the previous release's notes would be worse than showing
+  none. A release whose changelog section is missing publishes no list and
+  fails its own test rather than shipping a stale one.
+- The notes are cosmetic, so a malformed entry is dropped and the release
+  still installs. Refusing an update over its own caption would strand a
+  device for the sake of a caption.
+- `release_name` is the one config value an update replaces rather than
+  preserves. Every other local setting survives; a device that kept this one
+  would name the release it was installed from, forever.
+
+This release is 9.5.0 and is *called* 10.0 Pre. A pre-release that sorts
+above the release it precedes would strand every phone on it, and `10.0.0` is
+where the Web Update goes.
+
+**Fast Bank Transfer.** Opening an account at another bank used to mean
+reading sixteen digits off one screen and typing them into another. The new
+bank asks the phone where else you keep money, and the phone knows.
+
+- **The phone moves the money, not the app.** A bank app asks; the PUMPE
+  shows what is moving, takes the PIN, and makes the two Bank calls itself.
+  The app is told an amount arrived and nothing else -- never the session
+  token, never the PIN. A bank is never offered a transfer to itself, and the
+  Foxy app is a window onto the Foxy account rather than a second bank
+  standing beside it.
+- **Coming back works the same way.** Foxy cannot reach into Revolution and
+  take money out; the bank holding money is the only one that can authorise
+  it leaving. So Foxy asks the phone to open that bank with this account's
+  own ID as the destination, and that bank pushes. An app the phone opened
+  cannot open another one: two banks handing the same money round would never
+  come back.
+- Revolution offers it the moment an account is opened, which is the moment
+  somebody wants their money there, and keeps a Bring in button beside Move
+  out. BuckApp fulfils a handoff too. Both take a destination now instead of
+  always asking for one; everything after that first line is the same move it
+  always was.
+- `host_fast_transfer_test` runs it against a real Foxy Bank Server and a
+  real 3rd Party Bank Server with a real PUMPE between them, and counts the
+  money on both sides: out of Foxy, into Revolution, and home again.
+- The Bank now tells the phone *which* bank an account moved to, not just
+  that it moved. Foxy could only say "another bank", which is no use to
+  somebody looking for their money and no use to a transfer trying to open
+  the app holding it.
+- Revolution's Move out button used to start on the last row of a 20-row
+  pocket screen and run two rows deep, so half of it was off the bottom and
+  the other half sat on top of Home. Every row is accounted for now.
+
+**The modem switch no longer bricks the phone.** Turning the radio off used
+to drop your session, and signing back in needed the radio it had just turned
+off -- from a welcome screen that has no way through to Settings. You stay
+signed in now. The Home Screen, Settings, and everything already downloaded
+keep working; anything that needs a server says so plainly.
+
+- A phone that *starts up* with the modem off opens as itself too, from the
+  name it last signed in under. That is a label and not a session: it grants
+  nothing, and the first thing that phone can do back on the network is sign
+  in properly. No session token is ever written to disk.
+- Building any client opens every modem on the device, so the App Browser and
+  the bank bridge check the switch before they build one. Without that, the
+  radio went back on the moment you opened an app.
+- Off the network the lock screen opens on a tap. The PIN is checked by the
+  Bank and there is no Bank to check it, so keeping the prompt would lock the
+  phone for good -- and the money it guards is unreachable from there anyway.
+- The Home Screen shows "Offline" where the balance goes. The last number it
+  saw is a number from the past, and a number from the past is worse than no
+  number.
+
 ## 9.4.0
 
 The Bank app is gone. Foxy is the bank.

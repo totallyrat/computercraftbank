@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.4.0"
+local PROGRAM_VERSION = "9.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -705,6 +705,11 @@ local function publicAccount(account)
         bank_name = config.bank_name or "Foxy",
         bank_closed = account.bank_closed == true,
         moved_to = account.moved_to,
+        -- Which bank it went to, by name. Without this the phone can only
+        -- say "another bank", which is no use to somebody trying to find
+        -- their money or to Fast Bank Transfer trying to open the app
+        -- holding it.
+        moved_to_name = account.moved_to_name,
     }
 end
 

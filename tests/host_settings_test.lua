@@ -8,6 +8,9 @@
 
 local WIDTH, HEIGHT = 26, 20
 savedDevice, deviceSaves, requestsAtModemOff = {}, {}, 0
+drawsAtModemOff, requestsAtModemOn, leakedOpens = 0, 0, 0
+radioOff = false
+appLiveRuns = 0
 buttonLabels, drawnText, requests = {}, {}, {}
 
 colors = {
@@ -38,8 +41,15 @@ sleep = function() end
 -- The phone loads an app off its own disk; here that disk is apps/.
 local realLoadfile = loadfile
 loadfile = function(path)
-    if tostring(path):find("YAPCHAT", 1, true) then
-        return realLoadfile("../apps/yapchat.lua")
+    if tostring(path):find("TESTBANK", 1, true) then
+        return function()
+            return function(api)
+                -- An app asks the phone whether it is still live before it
+                -- draws anything; one that is told no closes immediately.
+                if api.running() then appLiveRuns = appLiveRuns + 1 end
+                api.bank("TPB_INFO", {})
+            end
+        end
     end
     return realLoadfile(path)
 end
@@ -59,10 +69,18 @@ package.loaded.config = {
 }
 package.loaded["lib.util"] = {
     loadTable = function(path, fallback)
+        if bootOffline and tostring(path):find("device", 1, true) then
+            return { last_name = "Ana Fox", onboarding_complete = true,
+                modem_on = false, update_mode = "ask" }
+        end
         if tostring(path):find("apps", 1, true) then
-            return { list = { { app_id = "YAPCHAT", name = "Yap Chat",
+            -- One installed app, so the built-in apps still fit on the
+            -- first Home Screen page. It reaches a bank of its own, because
+            -- api.bank builds a client on every call and building any
+            -- client opens every modem on the device.
+            return { list = { { app_id = "TESTBANK", name = "Test Bank",
                 version = 1, author = "Ana Fox",
-                description = "Private messages" } } }
+                description = "Its own bank" } } }
         end
         return fallback
     end,
@@ -134,14 +152,56 @@ local client = {
         return { ok = true }
     end,
 }
+local updateOptions = {}
+local updateAsked, updateAnswer = false, nil
 package.loaded["lib.net"] = {
-    client = function() return client end,
-    autoUpdate = function() end,
+    client = function()
+        -- The real net.client opens every modem it can find before it
+        -- returns anything. A stub that skips that is more forgiving than
+        -- the thing it stands for, and what it hides is the modem switch
+        -- turning itself back on the moment an app or the App Browser
+        -- builds a client of its own.
+        package.loaded["lib.net"].openModems()
+        return client
+    end,
+    autoUpdate = function(_, _, _, _, options)
+        updateOptions[#updateOptions + 1] = options or {}
+        -- The updater's half of the bargain. A stub that takes the callback
+        -- and never calls it would let the alert screen ship undrawn and
+        -- unmeasured, which on a 26x20 pocket screen is where the bugs are.
+        if options and options.confirm and not updateAsked then
+            updateAsked = true
+            updateAnswer = options.confirm({
+                version = "9.9.9",
+                label = "10.0 Pre",
+                changes = {
+                    "Updates ask first.",
+                    "The modem switch no longer bricks the phone.",
+                },
+            })
+        end
+        return false
+    end,
     locate = function() return nil end,
-    openModems = function() openedModems = openedModems + 1 return { "m" } end,
+    openModems = function()
+        openedModems = openedModems + 1
+        if savedDevice.modem_on == false then
+            -- Opening the radio back up while the phone says it is off.
+            -- Start-up is the one time this is allowed: a client is built
+            -- before the device file has been read, and the phone closes
+            -- them again straight after.
+            if radioOff then leakedOpens = leakedOpens + 1 end
+        else
+            radioOff = false
+            requestsAtModemOn = #requests
+        end
+        return { "m" }
+    end,
     closeModems = function()
         closedModems = closedModems + 1
+        radioOff = true
         requestsAtModemOff = #requests
+        drawsAtModemOff = #drawnText
         return { "m" }
     end,
     modemsOpen = function() return true end,
@@ -245,14 +305,23 @@ function ui.pin() return "1234" end
 function ui.confirm() return true end
 
 actions = {
+    "later",                           -- the update alert, before anything
     "login",
     -- 9.4: the Bank app left the Home Screen, so the built-in apps fit on
     -- one page and Settings no longer needs a page turn to reach.
     "open:settings",
     "storage", "back",                 -- what the phone is holding
-    "updates", "toggle", "back",       -- turn auto updates off
-    "network", "toggle",               -- turn the modem off: signs out
-    "login",                           -- and try to use the network anyway
+    "updates", "mode", "back",         -- switch updates to automatic
+    -- 9.5: turning the modem off leaves you signed in. It used to drop the
+    -- session, which parked the phone on a sign-in screen that needed the
+    -- radio it had just switched off.
+    "network", "toggle",               -- turn the modem off
+    "back",                            -- Settings still answers offline
+    "open:tax",                        -- something that needs a server
+    "open:browser", "back",            -- and something that builds a client
+    "open:ext:TESTBANK",               -- including an app reaching its bank
+    "open:settings", "network", "toggle", "back",  -- and back on again
+    "back",
     "__terminate",
 }
 local index = 0
@@ -302,6 +371,15 @@ local function drew(text)
     end
     return false
 end
+-- Only what the phone drew after the radio went off. The welcome screen at
+-- the very start of the run would otherwise answer for the one it must not
+-- go back to.
+local function drewOffline(text)
+    for index = drawsAtModemOff + 1, #drawnText do
+        if drawnText[index]:find(text, 1, true) then return true end
+    end
+    return false
+end
 local function pressed(text)
     for _, item in ipairs(buttonLabels) do
         if item:find(text, 1, true) then return true end
@@ -332,22 +410,42 @@ assert(drew("WHAT IS ON THIS PUMPE"), "and what the phone is holding")
 
 -- Updates ------------------------------------------------------------------------
 
-assert(drew("AUTOMATIC UPDATES"))
+-- 9.5: a phone asks before it replaces itself. Automatic is still a setting,
+-- it is just no longer what a phone does without being told.
+assert(drew("WHEN A RELEASE LANDS"))
+assert(drew("Ask me first"),
+    "asking is what a PUMPE does unless somebody chose otherwise")
+assert(pressed("Install automatically"),
+    "and automatic is still there for anybody who wants it")
 -- Saved when the switch was flipped, not incidentally by a later save.
 local savedOnItsOwn = false
 for _, snapshot in ipairs(deviceSaves) do
-    if snapshot.auto_update == false and snapshot.modem_on ~= false then
+    if snapshot.update_mode == "auto" and snapshot.modem_on ~= false then
         savedOnItsOwn = true
     end
 end
 assert(savedOnItsOwn,
-    "turning updates off is remembered on the device the moment it is"
-        .. " turned off, and on the device rather than in config.lua, which"
+    "the update setting is remembered on the device the moment it is"
+        .. " changed, and on the device rather than in config.lua, which"
         .. " an update rewrites")
-assert(require("config").auto_update == false,
-    "and it reaches the config table net.autoUpdate actually reads")
-assert(pressed("Turn updates on"),
-    "and the switch reads the other way once it is off")
+assert(pressed("Ask me instead"),
+    "and the switch reads the other way once it is on")
+
+-- The setting is only a label unless the updater actually asks. A PUMPE that
+-- says "Ask me first" on screen and hands net.autoUpdate no way to ask would
+-- install the next release out from under its owner.
+assert(#updateOptions > 0, "the PUMPE never looked for a release at all")
+assert(type(updateOptions[1].confirm) == "function",
+    "a PUMPE in ask mode must hand the updater something to ask with")
+assert(updateAsked, "and the question has to actually be put")
+assert(drew("10.0 Pre"), "the alert names the release")
+assert(drew("- Updates ask first."),
+    "and lists what changed, in the release's own words")
+assert(pressed("Update now") and pressed("Later"),
+    "with both answers on screen")
+assert(updateAnswer == false,
+    "Later means no: the updater is told not to install, rather than the"
+        .. " phone installing and telling the owner afterwards")
 
 -- The modem --------------------------------------------------------------------
 -- Turning the radio off is the one setting that changes what the rest of the
@@ -355,16 +453,100 @@ assert(pressed("Turn updates on"),
 
 assert(drew("MODEM"))
 assert(closedModems == 1, "the radio was actually closed, not just recorded")
-assert(savedDevice.modem_on == false, "and the choice was remembered")
+local rememberedOff = false
+for _, snapshot in ipairs(deviceSaves) do
+    if snapshot.modem_on == false then rememberedOff = true end
+end
+assert(rememberedOff, "and the choice was remembered")
 
 -- With the radio off a request must not go out at all. Letting it through
 -- would mean every screen waiting out a five second timeout to discover
 -- what the phone already knows.
 local afterOff = 0
-for index = requestsAtModemOff + 1, #requests do afterOff = afterOff + 1 end
+for index = requestsAtModemOff + 1, requestsAtModemOn do afterOff = afterOff + 1 end
 assert(afterOff == 0,
     "nothing reached the network after the modem was turned off, but "
         .. afterOff .. " request(s) did")
 assert(drew("Modem is off"), "and the phone says why rather than hanging")
+
+-- Offline is a state the phone stays usable in ----------------------------------
+-- The switch used to sign you out, and signing back in needed the radio it
+-- had just turned off, so the only way out was the Settings screen you could
+-- no longer reach. Three things have to survive it: the Home Screen, the way
+-- back on, and your account.
+assert(savedDevice.session_token == nil,
+    "a session token is never written to disk; the phone would resume as you"
+        .. " after a reboot without ever asking for a PIN")
+assert(drewOffline("Offline"),
+    "the Home Screen says Offline rather than a balance nobody checked")
+assert(not drewOffline("Let us get you started"),
+    "turning the modem off must not dump the phone back at the welcome"
+        .. " screen, which is a screen it cannot get past while offline")
+assert(pressed("Turn the modem on"),
+    "and Settings still reaches the switch that puts the radio back")
+-- Still signed in, not merely still running. The phone knows this account's
+-- personal number, which it only has from the session it was handed at
+-- sign-in; a phone that dropped the session falls back to a cached name and
+-- has nothing else to show.
+assert(leakedOpens == 0,
+    "the radio was reopened " .. leakedOpens .. " time(s) while the modem"
+        .. " was switched off; building any client opens every modem, so the"
+        .. " switch has to be checked before one is built, not after")
+assert(drewOffline("NO 12345"),
+    "the account survives the switch: dropping the session offline is what"
+        .. " made the phone unrecoverable, because signing back in needs the"
+        .. " radio that was just turned off")
+local logins = 0
+for _, action in ipairs(requests) do
+    if action == "LOGIN" then logins = logins + 1 end
+end
+assert(logins == 1,
+    "and turning the radio back on does not cost a second sign-in")
+
+-- Starting up with the modem already off ---------------------------------------
+-- The dangerous half of the switch. A phone that restarts while offline has
+-- no session to keep, so it used to open on the welcome screen -- whose only
+-- two buttons both need the radio, and from which Settings cannot be
+-- reached. That is a phone you have to wipe to get back.
+
+local requestsBeforeBoot, drawsBeforeBoot = #requests, #drawnText
+local closesBeforeBoot, appRunsBeforeBoot = closedModems, appLiveRuns
+bootOffline = true
+savedDevice.modem_on = false
+index, actions = 0, {
+    "open:settings",                   -- reachable with no session at all
+    "network", "back",                 -- and the switch is right there
+    "back",
+    "open:browser", "back",            -- nothing builds a client behind it
+    "open:ext:TESTBANK",               -- and what is downloaded still opens
+    "__terminate",
+}
+local bootOk, bootErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(bootOk or tostring(bootErr):find("more actions", 1, true),
+    tostring(bootErr))
+
+local function drewAtBoot(text)
+    for index = drawsBeforeBoot + 1, #drawnText do
+        if drawnText[index]:find(text, 1, true) then return true end
+    end
+    return false
+end
+assert(closedModems > closesBeforeBoot,
+    "building a client opens every modem on the device, so a phone that"
+        .. " starts up switched off has to close them again or the radio is"
+        .. " on regardless of the setting")
+assert(#requests == requestsBeforeBoot,
+    "a phone that starts up offline must not put anything on the network")
+assert(not drewAtBoot("Let us get you started"),
+    "it opens as itself rather than at a sign-in screen it cannot finish")
+assert(drewAtBoot("Offline"), "and says so")
+assert(pressed("Turn the modem on"),
+    "with the way back onto the network reachable from where it opened")
+assert(leakedOpens == 0,
+    "and nothing it opened put the radio back on by building a client")
+assert(appLiveRuns > appRunsBeforeBoot,
+    "an app that is already downloaded still runs with no session and no"
+        .. " network; browsing what is on the phone is the whole of what is"
+        .. " left when the radio is off")
 
 print("host_settings_test: OK")

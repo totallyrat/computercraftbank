@@ -1,44 +1,53 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "9.4.0",
+  "version": "9.5.0",
+  "label": "10.0 Pre",
   "notes": "PUMPE + ComputerCraftGaming automatic internet release",
+  "changes": [
+    "Updates ask first.",
+    "The release says what changed.",
+    "Fast Bank Transfer.",
+    "The phone moves the money, not the app.",
+    "Coming back works the same way.",
+    "The modem switch no longer bricks the phone."
+  ],
   "files": [
     {
       "path": "bank_server.lua",
       "source": "bank_server.lua",
-      "size": 235293,
-      "checksum": "eab60026"
+      "size": 235583,
+      "checksum": "86c25121"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 185831,
-      "checksum": "f6bd3b4f"
+      "size": 200509,
+      "checksum": "e7d7a4ac"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
       "size": 56721,
-      "checksum": "22e8be69"
+      "checksum": "9b7b138a"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
       "size": 22620,
-      "checksum": "352791aa"
+      "checksum": "234fa82b"
     },
     {
       "path": "tax_controller.lua",
       "source": "tax_controller.lua",
       "size": 1741,
-      "checksum": "b2ec4a6b"
+      "checksum": "5dcab4ec"
     },
     {
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 60995,
-      "checksum": "c5c316f8"
+      "checksum": "02b8f3b9"
     },
     {
       "path": "launcher.lua",
@@ -49,14 +58,14 @@
     {
       "path": "config.lua",
       "source": "config.lua",
-      "size": 6293,
-      "checksum": "223d35a1"
+      "size": 6546,
+      "checksum": "bed3391e"
     },
     {
       "path": "lib/net.lua",
       "source": "lib/net.lua",
-      "size": 9008,
-      "checksum": "3b6b16a9"
+      "size": 11374,
+      "checksum": "7800641c"
     },
     {
       "path": "lib/ui.lua",
@@ -67,8 +76,8 @@
     {
       "path": "lib/update.lua",
       "source": "lib/update.lua",
-      "size": 18427,
-      "checksum": "44dd8436"
+      "size": 21259,
+      "checksum": "29351a23"
     },
     {
       "path": "lib/util.lua",
@@ -82,13 +91,13 @@
       "path": "border_controller.lua",
       "source": "border_controller.lua",
       "size": 18918,
-      "checksum": "30666916"
+      "checksum": "4c2884d7"
     },
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
       "size": 27128,
-      "checksum": "9a991edb"
+      "checksum": "54e9a05c"
     }
   ],
   "optional_files": [
@@ -96,55 +105,55 @@
       "path": "gps_anchor.lua",
       "source": "gps_anchor.lua",
       "size": 5415,
-      "checksum": "c482afdd"
+      "checksum": "c9e077de"
     },
     {
       "path": "admin_terminal.lua",
       "source": "admin_terminal.lua",
       "size": 35127,
-      "checksum": "67e774d2"
+      "checksum": "367f12b3"
     },
     {
       "path": "app_server.lua",
       "source": "app_server.lua",
       "size": 15267,
-      "checksum": "79c9a223"
+      "checksum": "ba4e2584"
     },
     {
       "path": "foxy.lua",
       "source": "foxy.lua",
-      "size": 45895,
-      "checksum": "08a396f0"
+      "size": 49822,
+      "checksum": "70383304"
     },
     {
       "path": "bank_app_server.lua",
       "source": "bank_app_server.lua",
       "size": 37590,
-      "checksum": "babf721c"
+      "checksum": "3052b69d"
     },
     {
       "path": "buckapp.lua",
       "source": "buckapp.lua",
-      "size": 12117,
-      "checksum": "c01904a5"
+      "size": 13034,
+      "checksum": "7c51d981"
     },
     {
       "path": "ccg_server.lua",
       "source": "ccg_server.lua",
       "size": 33204,
-      "checksum": "6ea0cbca"
+      "checksum": "b2c3ba2b"
     },
     {
       "path": "revolution.lua",
       "source": "revolution.lua",
-      "size": 19181,
-      "checksum": "e28d52e8"
+      "size": 23907,
+      "checksum": "ec2a70a8"
     },
     {
       "path": "bank_vault.lua",
       "source": "bank_vault.lua",
       "size": 119477,
-      "checksum": "fa50bcb6"
+      "checksum": "a3d6cbb7"
     }
   ]
 }

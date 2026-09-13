@@ -92,7 +92,10 @@ return function(api)
                 { background = ui.theme.panel })
             local action = scene:wait({ tickRate = 5 })
             if action == "back" or action == "__terminate" then return false end
-            if action == "open" then signIn(true)
+            if action == "open" then
+                -- Opening an account is the moment somebody wants their
+                -- money here, so this is where it is offered.
+                if signIn(true) then bringMoneyIn() end
             elseif action == "in" then signIn(false) end
         end
         return session ~= nil
@@ -322,11 +325,17 @@ return function(api)
         scene:wait({ tickRate = 5 })
     end
 
-    local function transferOut()
-        local typed = ui.input(target, "Their Account ID", {
-            hint = "16 digits, any bank", mode = "number", maxLength = 19,
-            allowSpace = true,
-        })
+    -- `prefilled` is Fast Bank Transfer: the phone already knows the Account
+    -- ID, so the only thing left to ask for is the PIN. Everything after the
+    -- first line is the same move it has always been.
+    local function transferOut(prefilled)
+        local typed = prefilled
+        if not typed then
+            typed = ui.input(target, "Their Account ID", {
+                hint = "16 digits, any bank", mode = "number", maxLength = 19,
+                allowSpace = true,
+            })
+        end
         if not typed then return end
         local quote, err = ask("TPB_TRANSFER_QUOTE", {
             session_token = session, bank_account_id = typed })
@@ -354,6 +363,87 @@ return function(api)
         ui.message(target, "success", "Moved to " .. moved.bank_name,
             money(moved.moved) .. " transferred", 2)
         refresh()
+        return moved.moved
+    end
+
+    -- Fast Bank Transfer -------------------------------------------------------
+    -- Two halves of one idea. Coming in, the phone is asked where else its
+    -- owner keeps money and moves the account it holds itself; Revolution
+    -- only ever names its own Account ID as the destination. Going out, the
+    -- phone opens this app because the money is here, and here is the only
+    -- place that can authorise it leaving.
+
+    local function bringMoneyIn()
+        if type(api.banks) ~= "function" or not me then return end
+        while running() do
+            local banks = {}
+            for _, bank in ipairs(api.banks() or {}) do
+                if bank.open ~= false and #banks < 3 then
+                    banks[#banks + 1] = bank
+                end
+            end
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Bring it over", me.name, util.formatClock())
+            if #banks == 0 then
+                ui.center(target, 9, "Nowhere to bring it", ui.theme.ink)
+                ui.wrappedText(target, 2, 11, "Nothing else on this PUMPE"
+                    .. " holds money for you.", width - 2, 3, ui.theme.muted)
+            else
+                ui.wrappedText(target, 2, 5, "Move an account here in one go."
+                    .. " All of it moves, and that bank closes behind it.",
+                    width - 2, 4, ui.theme.muted)
+            end
+            local scene = ui.scene(target)
+            for index, bank in ipairs(banks) do
+                scene:button("bank:" .. index, 2, 10 + (index - 1) * 3,
+                    width - 2, 2, ui.truncate(bank.name, width - 4)
+                        .. (bank.balance and ("\n" .. money(bank.balance))
+                            or "\nOpen it to move"),
+                    { background = REVO, foreground = colors.white })
+            end
+            scene:button("back", 1, height, 8, 1, "< Skip",
+                { background = ui.theme.panel })
+            local action = scene:wait({ tickRate = 5 })
+            if action == "back" or action == "__terminate" then return end
+            local pick = tonumber(action and action:match("^bank:(%d+)$"))
+            local bank = pick and banks[pick]
+            if bank then
+                local moved, err
+                if bank.id == "FOXY" then
+                    moved, err = api.transfer({
+                        account_id = me.bank_account_id,
+                        bank_name = "Revolution",
+                    })
+                elseif type(api.handoff) == "function" then
+                    moved, err = api.handoff({
+                        bank = bank.id,
+                        account_id = me.bank_account_id,
+                        bank_name = "Revolution",
+                    })
+                end
+                if moved then
+                    refresh()
+                    ui.message(target, "success", "It is here",
+                        money(moved.moved) .. " arrived", 2)
+                    return
+                end
+                ui.message(target, "warning", "Nothing moved",
+                    err or "That bank would not release it", 2)
+            end
+        end
+    end
+
+    local function fulfilIntent()
+        if type(api.intent) ~= "function" then return false end
+        local intent = api.intent()
+        if not intent then return false end
+        if not refresh() then return false end
+        local moved = transferOut(intent.bank_account_id)
+        if moved and type(api.transferred) == "function" then
+            api.transferred(moved)
+        end
+        return true
     end
 
     local function accountIdScreen()
@@ -377,6 +467,9 @@ return function(api)
     -- The app ------------------------------------------------------------------------
 
     if not welcome() then return end
+    -- The phone opened this app with one job to do: push what it is holding
+    -- back where it came from, and say how much went.
+    if fulfilIntent() then return end
 
     while running() and session do
         local width, height = target.getSize()
@@ -394,19 +487,24 @@ return function(api)
             and (money(me.pending) .. " clearing") or "Nothing clearing",
             width - 6), ui.theme.muted, ui.theme.panel)
         local scene = ui.scene(target)
-        scene:button("take", 2, 10, width - 2, 3, "Take a payment\n0% fee",
+        -- Every row accounted for on a 20-row pocket screen. Move out used
+        -- to start on the last row and run two rows deep, so half of it was
+        -- off the bottom and the other half sat on top of Home.
+        scene:button("take", 2, 9, width - 2, 3, "Take a payment\n0% fee",
             { background = REVO, foreground = colors.white })
         local half = math.floor((width - 3) / 2)
-        scene:button("pay", 2, 14, half, 2, "Pay\nnearby",
+        scene:button("pay", 2, 13, half, 2, "Pay\nnearby",
             { background = ui.theme.success, foreground = colors.black })
-        scene:button("code", 3 + half, 14, width - 3 - half, 2,
+        scene:button("code", 3 + half, 13, width - 3 - half, 2,
             "Pay kiosk\nby code",
             { background = colors.blue })
-        scene:button("clearing", 2, 17, half, 2, "Clearing",
+        scene:button("clearing", 2, 16, half, 2, "Clearing",
             { background = ui.theme.panel })
-        scene:button("id", 3 + half, 17, width - 3 - half, 2, "My ID",
+        scene:button("id", 3 + half, 16, width - 3 - half, 2, "My ID",
             { background = ui.theme.panel })
-        scene:button("move", 2, 20, width - 2, 2, "Move out",
+        scene:button("bring", 2, 19, half, 1, "Bring in",
+            { background = ui.theme.success, foreground = colors.black })
+        scene:button("move", 3 + half, 19, width - 3 - half, 1, "Move out",
             { background = ui.theme.warning, foreground = colors.black })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
@@ -417,6 +515,7 @@ return function(api)
         elseif action == "code" then codePayScreen()
         elseif action == "clearing" then pendingScreen()
         elseif action == "id" then accountIdScreen()
+        elseif action == "bring" then bringMoneyIn()
         elseif action == "move" then transferOut() end
     end
 end

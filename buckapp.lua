@@ -132,11 +132,16 @@ return function(api)
         refresh()
     end
 
-    local function transferOut()
-        local typed = ui.input(target, "Their Account ID", {
-            hint = "16 digits, any bank", mode = "number", maxLength = 19,
-            allowSpace = true,
-        })
+    -- `prefilled` is Fast Bank Transfer: the phone already knows where the
+    -- money is going, so the only thing left to ask for is the PIN.
+    local function transferOut(prefilled)
+        local typed = prefilled
+        if not typed then
+            typed = ui.input(target, "Their Account ID", {
+                hint = "16 digits, any bank", mode = "number", maxLength = 19,
+                allowSpace = true,
+            })
+        end
         if not typed then return end
         local quote, err = ask("TPB_TRANSFER_QUOTE", {
             session_token = session, bank_account_id = typed })
@@ -164,6 +169,22 @@ return function(api)
         ui.message(target, "success", "Moved to " .. moved.bank_name,
             money(moved.moved) .. " transferred", 2)
         refresh()
+        return moved.moved
+    end
+
+    -- The phone opened BuckApp because the money it is holding is wanted
+    -- somewhere else. BuckApp is the only one that can let it go, so it does
+    -- that here and reports back what went.
+    local function fulfilIntent()
+        if type(api.intent) ~= "function" then return false end
+        local intent = api.intent()
+        if not intent then return false end
+        if not refresh() then return false end
+        local moved = transferOut(intent.bank_account_id)
+        if moved and type(api.transferred) == "function" then
+            api.transferred(moved)
+        end
+        return true
     end
 
     local function historyScreen()
@@ -231,6 +252,7 @@ return function(api)
     -- The app ---------------------------------------------------------------------
 
     if not welcome() then return end
+    if fulfilIntent() then return end
 
     while running() and session do
         local width, height = target.getSize()
