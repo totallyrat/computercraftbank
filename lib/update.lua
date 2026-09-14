@@ -352,6 +352,10 @@ update.PUBLISHED_OPTIONAL = {
     "buckapp.lua",
     "ccg_server.lua",
     "revolution.lua",
+    "bank_vault.lua",
+    "internet_server.lua",
+    "wc.lua",
+    "internet.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -375,6 +379,12 @@ local ROLE_PROGRAMS = {
     apps = "app_server.lua",
     tpbank = "bank_app_server.lua",
     ccgserver = "ccg_server.lua",
+    internet = "internet_server.lua",
+    -- The other half of a Bank. 9.3 added this role to the installer and to
+    -- the Bank's depot but not here, so a Vault could not find its own
+    -- program in the public release and fell back to the depot for every
+    -- update it ever did.
+    vault = "bank_vault.lua",
 }
 
 function update.roleProgram(role)
@@ -384,7 +394,8 @@ end
 -- A few roles carry a file that is not a program of their own. The App
 -- Server ships with Foxy so its catalogue is never empty on a fresh world.
 local ROLE_EXTRA_FILES = {
-    apps = { "foxy.lua", "buckapp.lua", "revolution.lua" },
+    apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
+        "internet.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

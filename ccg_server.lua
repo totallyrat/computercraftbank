@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "9.5.0"
+local PROGRAM_VERSION = "10.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")

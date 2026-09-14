@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "9.5.0"
+local INSTALLER_VERSION = "10.0.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -43,7 +43,8 @@ local roles = {
     { id = "service", label = "SERVICE KIOSK", detail = "Shop checkout" },
     { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
-    { id = "bank", label = "BANK SERVER", detail = "Foxy or a 3rd party" },
+    { id = "bank", label = "BANK SERVER", detail = "Foxy or a 3rd party",
+      server = true },
     { id = "admin", label = "ADMIN TERMINAL", detail = "Government use", protected = true },
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
     -- so instead of failing with an unknown role.
@@ -53,16 +54,20 @@ local roles = {
     -- and a role the installer cannot find is one it refuses to start.
     { id = "tpbank", label = "3RD PARTY BANK SERVER",
       detail = "Hosts a Bank App", hidden = true },
-    -- Reached by pairing from a Bank Server rather than picked here, but it
-    -- has to be in this list all the same: pairing writes a boot marker with
-    -- this id, and a role the installer cannot find is one it refuses to
-    -- start. New in 9.3.
+    -- A Vault could only ever be made by pairing from a Bank Server, which
+    -- meant the Bank had to hand over the program before the computer could
+    -- run it. Since 10.0 it installs here like any other role and pairs
+    -- afterwards, over the cable, with nothing to download from the Bank.
     { id = "vault", label = "BANK VAULT", detail = "The other half of a Bank",
-      hidden = true },
+      server = true },
     { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
-    { id = "ccgserver", label = "CCG SERVER", detail = "Runs the games" },
+    { id = "ccgserver", label = "CCG SERVER", detail = "Runs the games",
+      server = true },
     { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
-    { id = "apps", label = "APP SERVER", detail = "Hosts optional apps" },
+    { id = "apps", label = "APP SERVER", detail = "Hosts optional apps",
+      server = true },
+    { id = "internet", label = "INTERNET SERVER", detail = "Hosts the web",
+      server = true },
 }
 
 local rolePrograms = {
@@ -79,6 +84,7 @@ local rolePrograms = {
     ccgserver = "ccg_server.lua",
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
+    internet = "internet_server.lua",
 }
 
 local function roleById(id)
@@ -508,12 +514,21 @@ end
 
 -- Everything that is not a PUMPE, behind the down arrow.
 local rolePage = 1
-local function rolesScreen(installed)
+-- One list screen, two lists. `servers` picks the Servers tab: the machines
+-- that run the network rather than the ones a person carries or stands at.
+-- Splitting them is what let the Vault stop being a thing you could only get
+-- by pairing, and it is where the Internet Server lives.
+local function rolesScreen(installed, servers)
     local width, height = target.getSize()
     clear()
     local all = {}
+    if not servers then
+        all[1] = { id = "__servers", label = "SERVERS",
+            detail = "Bank, Vault, Apps, Internet, CCG" }
+    end
     for _, role in ipairs(roles) do
-        if not role.hidden and role.id ~= "pumpe" then
+        if not role.hidden and role.id ~= "pumpe"
+            and (role.server == true) == (servers == true) then
             all[#all + 1] = role
         end
     end
@@ -529,7 +544,7 @@ local function rolesScreen(installed)
         math.min(#all, rolePage * perPage) do
         visible[#visible + 1] = all[index]
     end
-    header("OTHER ROLES", pages > 1
+    header(servers and "SERVERS" or "OTHER ROLES", pages > 1
         and ("What is this computer?  " .. rolePage .. "/" .. pages)
         or "What is this computer?")
     local buttons = {}
@@ -552,9 +567,11 @@ local function rolesScreen(installed)
                 2 + column * (cardWidth + 1), y, cardWidth,
                 math.min(cardHeight - 1, bottom - y + 1), label,
                 role.protected and theme.warning
+                    or role.id == "__servers" and theme.accent
                     or role.id == installed and theme.accentDark
                     or theme.panel,
-                role.protected and colors.black or colors.white)
+                (role.protected or role.id == "__servers")
+                    and colors.black or colors.white)
         end
     end
     local footer = installed
@@ -595,20 +612,23 @@ local function roleMenu()
     local screen = installed and installed ~= "pumpe" and "roles" or "pumpe"
     while running do
         local action = screen == "pumpe" and pumpeScreen(installed)
-            or rolesScreen(installed)
+            or rolesScreen(installed, screen == "servers")
         if action == "exit" or action == "__terminate" then
             running = false
             return nil
         elseif action == "more" then
             screen = "roles"
         elseif action == "__page" then
-            screen = "roles"
+            -- Paging stays on whichever list is open.
+            screen = screen == "servers" and "servers" or "roles"
         elseif action == "back" then
-            screen = "pumpe"
+            screen = screen == "servers" and "roles" or "pumpe"
         elseif action == "install" then
             return roleById("pumpe")
         elseif action == "start" then
             return roleById(screen == "pumpe" and "pumpe" or installed), true
+        elseif action == "role:__servers" then
+            screen, rolePage = "servers", 1
         else
             local id = action and action:match("^role:(.+)$")
             local role = id and roleById(id)

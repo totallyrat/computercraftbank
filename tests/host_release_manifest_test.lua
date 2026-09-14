@@ -58,7 +58,10 @@ local expectedExtra = { "border_controller.lua", "ccg.lua" }
 -- Everything added since. Older updaters never read this array at all.
 local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
     "app_server.lua", "foxy.lua", "bank_app_server.lua", "buckapp.lua",
-    "ccg_server.lua", "revolution.lua", "bank_vault.lua" }
+    "ccg_server.lua", "revolution.lua", "bank_vault.lua",
+    -- The web, new in 10.0: the server that holds everybody's pages, and
+    -- the two apps that write and read them.
+    "internet_server.lua", "wc.lua", "internet.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

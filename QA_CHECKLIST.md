@@ -379,6 +379,29 @@ Run this after installing into a ComputerCraft world.
 - [ ] Confirm a Bank Server, App Server and kiosk all update themselves silently — none of them should be waiting for a tap.
 - [ ] With the modem off, confirm the PUMPE does not check for releases at all and Settings → Updates says so.
 
+## The web (10.0)
+
+- [ ] From Easy Deployment, open **SERVERS** and confirm it lists Bank Server, Bank Vault, App Server, Internet Server and CCG Server.
+- [ ] Install **INTERNET SERVER** on a fresh computer and confirm its terminal comes up saying nothing is published yet.
+- [ ] Install **BANK VAULT** on a fresh computer straight from that tab. Confirm it starts, says it is not paired, and that pairing from the Bank Server over the cable then works -- with nothing downloaded from the Bank.
+- [ ] Install **Website Crafter** and the **Internet** app from the App Browser.
+- [ ] In Website Crafter, reserve a domain. Confirm the letters land one at a time, that it says **You're in, [your name]**, and that the domain appears on a card.
+- [ ] Confirm a name somebody else already has is refused, and so are `ab`, `two words`, `a.name` and `-dash`.
+- [ ] Reserve a second domain, then confirm a third is refused: two per account.
+- [ ] Write a title and some text on the main page, add a second page, and publish.
+- [ ] In the Internet app on **another** PUMPE, go to the domain and confirm it says **We're still preparing. Come back soon.**
+- [ ] Wait two in-game hours and confirm the site opens, with the sub page reachable from the tabs along the bottom.
+- [ ] Edit the site and publish again. Confirm it goes down for half an in-game hour and comes back with the change.
+- [ ] Rename the domain. Confirm the website follows the new name, and that reserving the old name on another account gives an empty site rather than the first owner's pages.
+- [ ] Delete a website and confirm the name is free for somebody else.
+- [ ] Turn the Internet Server off. Confirm Website Crafter still opens, still edits and still saves, and that the Internet app says no Internet Server is running.
+
+## Start-up and updating (10.0)
+
+- [ ] Start a PUMPE and confirm the letters land, the tagline holds about two seconds, and the Home Screen follows -- no blinking wordmark.
+- [ ] Publish a release, accept the update, and confirm the wordmark sits over a filling bar for about twenty seconds before the phone restarts.
+- [ ] Confirm a Bank Server, App Server and Internet Server all update without any twenty second screen: those are unattended machines.
+
 ## Fast Bank Transfer (9.5)
 
 - [ ] With money in Foxy, install **Revolution** and open an account. Confirm it offers to bring your money over and lists **Foxy** with the right balance.

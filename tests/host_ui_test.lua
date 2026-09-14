@@ -253,4 +253,25 @@ assert(rings >= 2,
 assert(rings <= 5, "it must not run far more often than its interval")
 ui.setBackgroundTask(nil)
 
+-- The start-up screen, timed ------------------------------------------------
+-- 10.0 made the normal boot short: the letters land, the tagline holds for
+-- two seconds, and the phone is yours. The long screen belongs to an update
+-- and only to an update, so the boot must not quietly grow back.
+local slept = 0
+sleep = function(seconds) slept = slept + (tonumber(seconds) or 0) end
+local splashTarget = mockTerminal(26, 20)
+ui.splash(splashTarget, "PUMPE", "Small yet Mighty",
+    { footnote = "v10.0.0", blinks = 0, hold = 2 })
+assert(slept < 3.2, "the boot splash took " .. slept
+    .. "s; the letters plus a two second tagline is the whole of it")
+assert(slept >= 2, "and the tagline is actually held, not flashed")
+
+local blinked = 0
+sleep = function(seconds) blinked = blinked + (tonumber(seconds) or 0) end
+ui.splash(splashTarget, "PUMPE", "Small yet Mighty", { hold = 2 })
+assert(blinked > slept,
+    "blinks = 0 has to actually skip the blink; `options.blinks or 3` would"
+        .. " keep three of them if it were written `blinks and ... or 3`")
+sleep = function() end
+
 print("host_ui_test: OK")

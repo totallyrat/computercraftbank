@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.5.0"
+local PROGRAM_VERSION = "10.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -3089,17 +3089,54 @@ end
 -- minute.
 local updateDeferred
 
-local function updateProgress(file, index, count)
-    local width = target.getSize()
+-- Installing takes twenty seconds whether or not it needs to. A release
+-- lands in about two, and an update nobody saw happen is an update nobody
+-- trusts -- the phone went dark and came back subtly different. So the bar
+-- is the clock rather than the download: it fills over twenty seconds, the
+-- line under it says what is actually landing, and the files are long since
+-- down by the time it reaches the end.
+local UPDATE_MS = 20 * 1000
+local updateDeadline
+
+local function updateScreen(note)
+    local width, height = target.getSize()
+    local remaining = math.max(0, (updateDeadline or 0) - util.nowMs())
+    local filled = math.min(1, (UPDATE_MS - remaining) / UPDATE_MS)
     ui.clear(target)
-    ui.header(target, "Updating", index .. " of " .. count, util.formatClock())
-    ui.center(target, 8, ui.truncate(tostring(file.path or ""), width - 4),
-        ui.theme.ink)
-    local bar = width - 6
-    ui.fill(target, 4, 11, bar, 1, ui.theme.panel)
-    ui.fill(target, 4, 11,
-        math.floor(bar * index / math.max(1, count)), 1, ui.theme.accent)
-    ui.center(target, 14, "Do not turn this off", ui.theme.muted)
+    local top = math.max(2, math.floor(height / 2) - 6)
+    if type(ui.wordmark) ~= "function"
+        or not ui.wordmark(target, top, "PUMPE", 5, ui.theme.accent) then
+        ui.center(target, top + 2, "PUMPE", ui.theme.accent)
+    end
+    local bar = width - 8
+    local barY = top + (tonumber(ui.wordmarkHeight) or 5) + 3
+    ui.fill(target, 5, barY, bar, 1, ui.theme.panel)
+    local done = math.floor(bar * filled)
+    if done > 0 then ui.fill(target, 5, barY, done, 1, ui.theme.ink) end
+    ui.center(target, barY + 2, ui.truncate(tostring(note or ""), width - 2),
+        ui.theme.muted)
+    ui.center(target, height - 1, "Do not turn this off", ui.theme.muted)
+end
+
+local function updateProgress(file, index, count)
+    updateDeadline = updateDeadline or (util.nowMs() + UPDATE_MS)
+    updateScreen(index .. " of " .. count .. "  "
+        .. tostring(file and file.path or ""))
+end
+
+-- Holds the screen out to its twenty seconds once the files are down. The
+-- iteration cap is there because a device with a stopped clock would
+-- otherwise wait here for good.
+local function updateInstalled()
+    updateDeadline = updateDeadline or (util.nowMs() + UPDATE_MS)
+    for _ = 1, 200 do
+        if util.nowMs() >= updateDeadline then break end
+        updateScreen("Installing")
+        sleep(0.2)
+    end
+    updateDeadline = util.nowMs()
+    updateScreen("Restarting")
+    sleep(0.4)
 end
 
 local function updateAlertScreen(found)
@@ -3180,6 +3217,7 @@ local function checkForUpdate(force)
         programVersion = force and PROGRAM_VERSION or nil,
         confirm = asking and confirmUpdate or nil,
         onProgress = updateProgress,
+        onInstalled = updateInstalled,
     })
 end
 
@@ -3451,9 +3489,13 @@ local function forgetApp(appId)
     saveApps()
 end
 
+-- Deleting an app deletes what it kept here too. Leaving a file behind
+-- would hand the next install of the same app somebody else's draft.
 local function removeApp(appId)
     forgetApp(appId)
     if fs.exists(appPath(appId)) then pcall(fs.delete, appPath(appId)) end
+    local kept = fs.combine(appsDir, appId .. ".dat")
+    if fs.exists(kept) then pcall(fs.delete, kept) end
 end
 
 -- FoxyLogin ---------------------------------------------------------------
@@ -3940,6 +3982,35 @@ local function fastTransfer(spec)
     return { moved = moved.moved, bank_name = moved.bank_name }
 end
 
+-- What an app keeps on this phone ------------------------------------------
+-- One file per app, beside the app itself, and no app can name another's.
+-- The Bank's app records are for things other people have to see; a draft
+-- belongs to the device it was written on, and a phone is not obliged to ask
+-- a server what is in its own pocket.
+local MAX_APP_STORE_BYTES = 8 * 1024
+-- Built once and kept: every app that reads or writes the web goes through
+-- the same connection rather than opening one of its own.
+local webClient
+
+local function appStorePath(appId)
+    return fs.combine(appsDir, appId .. ".dat")
+end
+
+local function appStoreSave(appId, value)
+    if type(value) ~= "table" then return false end
+    local body = textutils.serialize(value)
+    if type(body) ~= "string" or #body > MAX_APP_STORE_BYTES then
+        return false, "That is too big to keep on the phone"
+    end
+    if not fs.exists(appsDir) then fs.makeDir(appsDir) end
+    local ok = pcall(util.writeFile, appStorePath(appId), body)
+    return ok == true
+end
+
+local function appStoreLoad(appId)
+    return util.loadTable(appStorePath(appId), {})
+end
+
 local function runInstalledApp(entry)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
@@ -4061,6 +4132,20 @@ local function runInstalledApp(entry)
                 transferMoved = tonumber(amount) or 0
             end
         end,
+        -- The web, new in 10.0. One Internet Server serves the whole
+        -- network, so there is nothing for an app to address: it asks for
+        -- the web and gets the web.
+        web = function(action, payload)
+            if offline() then return nil, "Modem is off", "MODEM_OFF" end
+            webClient = webClient or net.client({
+                protocol = config.web_protocol or "PUMPE_WEB_V1",
+                hostname = config.web_hostname or "INTERNET_SERVER",
+            })
+            return webClient:request(tostring(action), payload or {}, 6)
+        end,
+        -- This app's own corner of the phone.
+        save = function(value) return appStoreSave(entry.app_id, value) end,
+        load = function() return appStoreLoad(entry.app_id) end,
         -- Bank Infrastructure for Apps. A bank app talks to the 3rd Party
         -- Bank Server hosting it, and only to that one: the hostname is
         -- built from the id the app was installed under, so an app cannot
@@ -4712,12 +4797,14 @@ local function mainMenu()
     end
 end
 
--- The start-up: the letters land one at a time, the wordmark blinks, then
--- the tagline holds. A device still carrying an older shared library has no
--- ui.splash, so it keeps the old progress-bar boot instead of crashing.
+-- The start-up: the letters land one at a time, then the tagline holds for
+-- two seconds and the phone is yours. Nothing is being downloaded here, so
+-- nothing here should look like it is: the long screen belongs to an update
+-- and only to an update. A device still carrying an older shared library has
+-- no ui.splash, so it keeps the old progress-bar boot instead of crashing.
 if type(ui.splash) == "function" then
     ui.splash(target, "PUMPE", "Small yet Mighty",
-        { footnote = "v" .. config.version })
+        { footnote = "v" .. config.version, blinks = 0, hold = 2 })
 else
     ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
 end

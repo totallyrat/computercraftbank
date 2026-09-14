@@ -54,6 +54,11 @@ const forwardOptionalFiles = [
   // the Vault runs this, which is what took the Bank back under the size a
   // ComputerCraft computer can update itself through.
   "bank_vault.lua",
+  // The web, new in 10.0. The server that holds everybody's pages, and the
+  // two apps that write and read them.
+  "internet_server.lua",
+  "wc.lua",
+  "internet.lua",
 ];
 
 function checksum(buffer) {

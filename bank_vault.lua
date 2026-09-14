@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "9.5.0"
+local PROGRAM_VERSION = "10.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -63,7 +63,7 @@ local function blankState()
         sequence = {
             territory = 0, visa = 0, visa_application = 0, visit = 0,
             border = 0, conversation = 0, scan = 0, event = 0,
-            ticket_type = 0, ticket = 0,
+            ticket_type = 0, ticket = 0, web = 0,
         },
         -- What this Vault knows about a person. Never their money.
         holders = {},
@@ -85,6 +85,11 @@ local function blankState()
         -- What apps keep. The name matches the table the Core used before
         -- 9.3, because a handover ships it under that name.
         app_data = {},
+        -- The domain register. A website's pages live on an Internet
+        -- Server; who owns the name, and when it goes live, lives here --
+        -- so a name is unique across the network and survives an Internet
+        -- Server being rebuilt.
+        domains = {},
         -- Pushed up to the Core so a PUMPE's poll never crosses the cable.
         waiting = {},
         migrated = {},
@@ -117,6 +122,11 @@ local prefixes = {
     event = { "EVT", 6 },
     ticket_type = { "TT", 6 },
     ticket = { "TICK", 10 },
+    -- A website, as opposed to the name it currently answers to. An
+    -- Internet Server files pages under this, so a rename moves the site
+    -- rather than orphaning it, and a name somebody else picks up later
+    -- gets a new one rather than the last owner's pages.
+    web = { "SITE", 8 },
 }
 
 local function nextId(kind)
@@ -2785,6 +2795,207 @@ local function syncWaiting()
     if not any and not lastWaiting then return end
     lastWaiting = any
     core.ask("CORE_WAITING", { entries = entries }, 4)
+end
+
+-- Domains -----------------------------------------------------------------
+-- The web, new in 10.0. This half is the register: which names are taken,
+-- who by, and when each one starts answering. The pages themselves are on an
+-- Internet Server, which is a machine anybody can run and rebuild; the name
+-- is the part that has to be the same for everyone, so the name is here.
+--
+-- Nothing here is a secret. Anyone on the network may ask who owns a domain
+-- and whether it is live, because that is what a web is. Publishing is what
+-- is gated, and it is gated with a token the owner fetches and hands over,
+-- so an Internet Server never has to be trusted with an account.
+
+local WEB = {
+    max_per_account = 2,
+    -- In-game hours. A new domain takes two before it answers, and an edit
+    -- takes half of one -- long enough to notice, short enough to forgive.
+    launch_hours = 2,
+    edit_hours = 0.5,
+    token_ms = 5 * 60 * 1000,
+}
+
+local function domainKey(value)
+    return string.lower(util.trim(tostring(value or "")))
+end
+
+-- Letters, digits and dashes, between three and twenty. No dots: a domain
+-- here is one word, because there is nobody to sell second levels to.
+local function validDomain(value)
+    local key = domainKey(value)
+    if #key < 3 or #key > 20 then return nil end
+    if not key:match("^[%a%d%-]+$") then return nil end
+    if key:sub(1, 1) == "-" or key:sub(-1) == "-" then return nil end
+    return key
+end
+
+local function domainLive(record)
+    return util.ingameMoment() >= (record.live_at or 0)
+end
+
+local function publicDomain(record)
+    local hoursLeft = math.max(0, (record.live_at or 0) - util.ingameMoment())
+    return {
+        domain = record.domain,
+        site_id = record.site_id,
+        owner_name = record.owner_name,
+        owner_account_id = record.owner_account_id,
+        live = domainLive(record),
+        live_at = record.live_at,
+        hours_left = hoursLeft,
+        revision = record.revision or 0,
+        reserved_day = record.reserved_day,
+        updated_day = record.updated_day,
+    }
+end
+
+local function myDomain(account, wanted)
+    local key = validDomain(wanted)
+    need(key, "BAD_DOMAIN", "A domain is 3-20 letters, numbers or dashes")
+    local record = state.domains[key]
+    need(record, "NO_SUCH_DOMAIN", "Nobody has reserved " .. key)
+    need(record.owner_account_id == account.account_id, "NOT_YOURS",
+        key .. " belongs to somebody else")
+    return key, record
+end
+
+-- Every site this account has reserved, and how many more it may have.
+function actions.WEB_MINE(payload, caller)
+    local account = whoIsAsking(caller)
+    local sites = {}
+    for _, record in pairs(state.domains) do
+        if record.owner_account_id == account.account_id then
+            sites[#sites + 1] = publicDomain(record)
+        end
+    end
+    table.sort(sites, function(a, b) return a.domain < b.domain end)
+    return { sites = sites, limit = WEB.max_per_account,
+        launch_hours = WEB.launch_hours, edit_hours = WEB.edit_hours }
+end
+
+function actions.WEB_RESERVE(payload, caller)
+    local account = whoIsAsking(caller)
+    local key = validDomain(payload.domain)
+    need(key, "BAD_DOMAIN", "A domain is 3-20 letters, numbers or dashes")
+    need(not state.domains[key], "DOMAIN_TAKEN",
+        key .. " is already somebody else's")
+    local mine = 0
+    for _, record in pairs(state.domains) do
+        if record.owner_account_id == account.account_id then
+            mine = mine + 1
+        end
+    end
+    need(mine < WEB.max_per_account, "TOO_MANY_SITES",
+        "Two websites is the limit for one account")
+    state.domains[key] = {
+        domain = key,
+        site_id = nextId("web"),
+        owner_account_id = account.account_id,
+        owner_name = account.name,
+        reserved_day = util.ingameDay(),
+        updated_day = util.ingameDay(),
+        live_at = util.ingameMoment() + WEB.launch_hours,
+        revision = 0,
+    }
+    save()
+    logActivity("Domain " .. key .. " to " .. tostring(account.name),
+        colors.cyan)
+    return publicDomain(state.domains[key])
+end
+
+-- Changing the name keeps the site and the launch it has already served.
+-- Only the downtime an edit costs applies, because to everyone else a
+-- renamed site is a new address that has to start answering.
+function actions.WEB_RENAME(payload, caller)
+    local account = whoIsAsking(caller)
+    local key, record = myDomain(account, payload.domain)
+    local wanted = validDomain(payload.new_domain)
+    need(wanted, "BAD_DOMAIN", "A domain is 3-20 letters, numbers or dashes")
+    need(wanted ~= key, "SAME_DOMAIN", "That is the name it already has")
+    need(not state.domains[wanted], "DOMAIN_TAKEN",
+        wanted .. " is already somebody else's")
+    state.domains[key] = nil
+    record.domain = wanted
+    record.updated_day = util.ingameDay()
+    record.live_at = math.max(record.live_at or 0,
+        util.ingameMoment() + WEB.edit_hours)
+    record.revision = (record.revision or 0) + 1
+    state.domains[wanted] = record
+    save()
+    logActivity("Domain " .. key .. " is now " .. wanted, colors.cyan)
+    return publicDomain(record)
+end
+
+function actions.WEB_RELEASE(payload, caller)
+    local account = whoIsAsking(caller)
+    local key = myDomain(account, payload.domain)
+    state.domains[key] = nil
+    save()
+    logActivity("Domain " .. key .. " released", colors.orange)
+    return { domain = key, released = true }
+end
+
+-- Said after a publish. An edit takes the site down for half an in-game hour
+-- rather than swapping under a reader mid-sentence.
+function actions.WEB_EDITED(payload, caller)
+    local account = whoIsAsking(caller)
+    local key, record = myDomain(account, payload.domain)
+    record.updated_day = util.ingameDay()
+    record.revision = (record.revision or 0) + 1
+    record.live_at = math.max(record.live_at or 0,
+        util.ingameMoment() + WEB.edit_hours)
+    save()
+    return publicDomain(record)
+end
+
+-- A ticket for one publish of one domain. The Internet Server takes it, asks
+-- the Bank whether it is real, and learns who the owner is from the answer
+-- rather than from whoever is talking to it.
+function actions.WEB_TOKEN(payload, caller)
+    local account = whoIsAsking(caller)
+    local key, record = myDomain(account, payload.domain)
+    record.token = util.token("WEB")
+    record.token_expires_at = util.nowMs() + WEB.token_ms
+    save()
+    return { domain = key, token = record.token,
+        expires_at = record.token_expires_at,
+        max_pages = tonumber(config.max_web_pages) or 3 }
+end
+
+-- Public, and deliberately so: a web where you cannot look up a name is not
+-- a web. It says who owns a domain and whether it is answering yet, never
+-- anything about the account behind it.
+function actions.WEB_LOOKUP(payload)
+    local key = validDomain(payload.domain)
+    need(key, "BAD_DOMAIN", "A domain is 3-20 letters, numbers or dashes")
+    local record = state.domains[key]
+    need(record, "NO_SUCH_DOMAIN", "Nobody has reserved " .. key)
+    local public = publicDomain(record)
+    public.owner_account_id = nil
+    return public
+end
+
+-- What an Internet Server asks before it stores anybody's pages. The token
+-- is burned here, so a stolen one is worth exactly one publish and only
+-- until the owner's next.
+function actions.WEB_CLAIM(payload)
+    local key = validDomain(payload.domain)
+    need(key, "BAD_DOMAIN", "A domain is 3-20 letters, numbers or dashes")
+    local record = state.domains[key]
+    need(record, "NO_SUCH_DOMAIN", "Nobody has reserved " .. key)
+    local token = tostring(payload.token or "")
+    need(token ~= "" and record.token == token, "BAD_WEB_TOKEN",
+        "That publish ticket is not for " .. key)
+    need(util.nowMs() < (record.token_expires_at or 0), "WEB_TOKEN_EXPIRED",
+        "That publish ticket has run out")
+    record.token, record.token_expires_at = nil, nil
+    save()
+    return { domain = key, site_id = record.site_id,
+        owner_name = record.owner_name,
+        owner_account_id = record.owner_account_id,
+        max_pages = tonumber(config.max_web_pages) or 3 }
 end
 
 -- What this Vault answers ------------------------------------------------------

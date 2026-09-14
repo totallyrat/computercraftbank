@@ -15,6 +15,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
+| `internet_server.lua` | Advanced Computer + wireless/Ender modem | Holds and serves every website on the network. The Bank Vault keeps the names |
 | `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
@@ -25,7 +26,7 @@ All screens support touch. Physical keyboard input also works.
 
 PUMPE now behaves like a small phone rather than a list of bank buttons:
 
-- Start-up spells **PUMPE** one letter at a time, blinks three times, then holds **Small yet Mighty** before anything else happens.
+- Start-up spells **PUMPE** one letter at a time, then holds **Small yet Mighty** for two seconds. Installing a release is the opposite: since 10.0 the wordmark sits over a bar that fills for twenty seconds whether or not it needs to, because a release lands in about two and a phone that goes dark and comes back subtly different reads as a glitch rather than an update.
 - Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a six-step guide to the phone. **How PUMPE Works** in Settings re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
@@ -301,6 +302,37 @@ The customer display has four animated states:
 
 The kiosk remains fully usable without the monitor. Attach one later and tap **S → Rescan Display**.
 
+## The web
+
+New in 10.0. Three pieces, deliberately separate.
+
+- **Website Crafter** (a PUMPE app) is where a website is written: titles and lines of text, a main page and up to two more. The draft is kept on the phone, so it works with no Internet Server anywhere on the network.
+- **The Bank Vault** keeps the register of names. Reserving a domain is what makes it yours, and a name means the same thing to everybody because there is one register. Two websites per account.
+- **The Internet Server** holds the pages and serves them. Install it from Easy Deployment → SERVERS.
+
+### Reserving a name
+
+In Website Crafter, pick a name — 3 to 20 letters, numbers or dashes, no dots. The letters land one at a time, the screen says **You're in, [your name]**, and the domain appears on a card.
+
+A new site takes **two in-game hours** to open. Until then, going to it in the Internet app says *We're still preparing. Come back soon.* Editing a live site takes it down for **half an in-game hour**, which is what stops a page changing under a reader mid-sentence. You can rename a domain or delete a website at any time, live or not.
+
+### Publishing, and why the Internet Server is not trusted
+
+An Internet Server is a machine anybody can run. It never sees an account and never checks a PIN.
+
+1. The PUMPE asks the Bank for a **one-shot ticket** for a domain it owns.
+2. It hands the ticket to the Internet Server with the pages.
+3. The Internet Server takes the ticket back to the Bank, which burns it and says whose site it is.
+
+So anyone can lie to an Internet Server about who they are, and nobody can produce a ticket for a name they do not own. A copied ticket is worth exactly one publish.
+
+Pages are filed under the **site**, not under the name. Renaming a domain moves the website with it; a name somebody else picks up later starts empty rather than inheriting the last owner's pages.
+
+### For app authors
+
+- `api.web(action, payload)` reaches the Internet Server. There is one per network, so there is nothing to address.
+- `api.save(table)` / `api.load()` keep something on this phone — one file per app, up to 8 KB, deleted with the app. The Bank's app records are for things other people have to see.
+
 ## Easy Deployment
 
 Only the first Bank Server needs the complete release copied locally. Every other computer needs just one standalone file. `startup.lua` and `installer.lua` are identical; use `startup.lua` at the computer root for automatic launch, or run `installer.lua` manually.
@@ -314,6 +346,12 @@ Only the first Bank Server needs the complete release copied locally. Every othe
 5. `/pumpe` keeps only the Bank runtime, installer, config, and shared libraries. `/updates` keeps one copy of each role-specific program plus the sanitized public client config; shared runtime files are served directly without duplication.
 
 If a required source file is missing, the first-boot screen lists it and lets you rescan after adding it.
+
+### The Servers tab
+
+Since 10.0 the machines that run the network live behind one card in the role list: **Bank Server**, **Bank Vault**, **App Server**, **Internet Server** and **CCG Server**.
+
+**Bank Vault** is a choice you can pick now. It used to be something only a Bank could make — pairing handed the computer the program — so a Vault could not exist before a Bank was willing to serve it one. It installs from the release like any other role; put a wired modem on both Bank Servers, run cable between them, and pair from the Bank Server as before.
 
 ### 2. Install any other computer
 
@@ -354,7 +392,7 @@ Local configuration survives: each device merges the published config over its o
 
 The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
 
-Because each device stages only its own role, the worst-case update peaks at about 740 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 260 KiB for account data.
+Because each device stages only its own role, the worst-case update peaks at about 747 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 253 KiB for account data. That headroom is the Bank Core's alone: since 9.3 everything that grows without limit -- conversations, events, tickets, app records, and now the domain register -- lives on the Vault.
 
 ### Manifest layout
 
@@ -635,4 +673,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `9.5.0`, released as **10.0 Pre**.
+PUMPE Ecosystem `10.0.0`, the **Web Update**.

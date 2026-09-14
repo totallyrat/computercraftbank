@@ -2,11 +2,11 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "9.5.0",
+    version = "10.0.0",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
-    release_name = "10.0 Pre",
+    release_name = "10.0",
     protocol = "PUMPE_BANK_V5",
     hostname = "BANK_SERVER",
 
@@ -130,6 +130,18 @@ return {
     max_app_purchase = 5000,
     max_app_notifications_per_day = 60,
     pin_check_lockout_seconds = 120,
+
+    -- The web, new in 10.0. One Internet Server holds the pages of every
+    -- site on the network; the Bank Vault keeps the register of who owns
+    -- which name, so a name is the same for everyone and outlives any one
+    -- Internet Server. A site is deliberately small: a title and some text,
+    -- a main page and up to two more.
+    web_protocol = "PUMPE_WEB_V1",
+    web_hostname = "INTERNET_SERVER",
+    max_web_pages = 3,
+    max_web_blocks = 14,
+    max_web_text = 240,
+    max_web_sites = 200,
 
     app_protocol = "PUMPE_APPS_V1",
     app_hostname = "APP_SERVER",

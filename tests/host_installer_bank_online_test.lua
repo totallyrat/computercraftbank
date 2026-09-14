@@ -203,7 +203,10 @@ end
 
 local PICK_BANK = {
     { "char", "m" },
-    { "char", "4" },
+    -- 10.0 moved the machines that run the network behind a Servers tab,
+    -- which is the first card on the other-roles list.
+    { "char", "1" },
+    { "char", "1" },
     -- Since 9.0 a Bank Server asks which kind it is before it asks for the
     -- code. 1 is Foxy's.
     { "char", "1" },

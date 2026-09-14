@@ -36,7 +36,10 @@ fs = {
     delete = function(path) written[path] = nil end,
 }
 shell = { getRunningProgram = function() return "/pumpe/pumpe.lua" end }
-sleep = function() end
+-- A clock that only moves when the phone waits, so a screen that is meant to
+-- hold for twenty seconds can be measured rather than guessed at.
+virtualClock = 0
+sleep = function(seconds) virtualClock = virtualClock + (tonumber(seconds) or 0) * 1000 end
 
 -- The phone loads an app off its own disk; here that disk is apps/.
 local realLoadfile = loadfile
@@ -110,6 +113,7 @@ package.loaded["lib.util"] = {
         return string.format("%08x", hash)
     end,
     cooperativeYield = function() end,
+    nowMs = function() return virtualClock end,
     trim = function(v) return tostring(v or ""):match("^%s*(.-)%s*$") end,
     money = function(v, symbol) return (symbol or "$") .. tostring(v) end,
     formatClock = function() return "12:00" end,
@@ -154,6 +158,7 @@ local client = {
 }
 local updateOptions = {}
 local updateAsked, updateAnswer = false, nil
+installTook, splashOptions = nil, nil
 package.loaded["lib.net"] = {
     client = function()
         -- The real net.client opens every modem it can find before it
@@ -169,18 +174,27 @@ package.loaded["lib.net"] = {
         -- The updater's half of the bargain. A stub that takes the callback
         -- and never calls it would let the alert screen ship undrawn and
         -- unmeasured, which on a 26x20 pocket screen is where the bugs are.
-        if options and options.confirm and not updateAsked then
-            updateAsked = true
-            updateAnswer = options.confirm({
-                version = "9.9.9",
-                label = "10.0 Pre",
-                changes = {
-                    "Updates ask first.",
-                    "The modem switch no longer bricks the phone.",
-                },
-            })
+        if not (options and options.confirm) then return false end
+        updateAsked = true
+        updateAnswer = options.confirm({
+            version = "9.9.9",
+            label = "10.0 Pre",
+            changes = {
+                "Updates ask first.",
+                "The modem switch no longer bricks the phone.",
+            },
+        })
+        if not updateAnswer then return false end
+        -- Driven the way the real updater drives it: a file at a time, then
+        -- the finishing screen.
+        local startedAt = virtualClock
+        if options.onProgress then
+            options.onProgress({ path = "pumpe.lua" }, 1, 2)
+            options.onProgress({ path = "config.lua" }, 2, 2)
         end
-        return false
+        if options.onInstalled then options.onInstalled("9.9.9") end
+        installTook = virtualClock - startedAt
+        return true
     end,
     locate = function() return nil end,
     openModems = function()
@@ -227,7 +241,9 @@ local ringHandler
 function ui.setBackgroundTask(_, handler) ringHandler = handler end
 function ui.clear() end
 function ui.boot() end
-function ui.splash() end
+function ui.splash(_, _, _, options)
+    splashOptions = options or {}
+end
 function ui.wipe() end
 function ui.progress() end
 function ui.fill(_, x, y, width, height) assertBox("fill", x, y, width, height) end
@@ -311,7 +327,10 @@ actions = {
     -- one page and Settings no longer needs a page turn to reach.
     "open:settings",
     "storage", "back",                 -- what the phone is holding
-    "updates", "mode", "back",         -- switch updates to automatic
+    "updates",
+    "check", "go",                     -- ask again, and take it this time
+    "mode",                            -- then switch updates to automatic
+    "back",
     -- 9.5: turning the modem off leaves you signed in. It used to drop the
     -- session, which parked the phone on a sign-in screen that needed the
     -- radio it had just switched off.
@@ -443,9 +462,24 @@ assert(drew("- Updates ask first."),
     "and lists what changed, in the release's own words")
 assert(pressed("Update now") and pressed("Later"),
     "with both answers on screen")
-assert(updateAnswer == false,
-    "Later means no: the updater is told not to install, rather than the"
-        .. " phone installing and telling the owner afterwards")
+assert(updateAnswer == true,
+    "and Check now puts the question again, so Later is not the end of it")
+-- 10.0: installing is deliberately slow. A release lands in about two
+-- seconds and the phone comes back subtly different, which reads as a
+-- glitch rather than an update. Twenty seconds of wordmark and bar is the
+-- whole point, so a well-meaning speed-up has to fail here.
+assert(installTook and installTook >= 20000,
+    "installing held the screen for " .. tostring(installTook)
+        .. "ms; it is meant to take twenty seconds whether or not it needs to")
+assert(installTook < 40000, "but not forever")
+-- And the boot that is not an update stays short. The tagline holds for two
+-- seconds and the wordmark does not blink; anything longer is the phone
+-- looking busy while doing nothing, which is what the update screen is for.
+assert(splashOptions, "the phone never drew its start-up screen")
+assert(splashOptions.hold == 2,
+    "the tagline holds for " .. tostring(splashOptions.hold)
+        .. "s at boot; two is the whole of it")
+assert(splashOptions.blinks == 0, "and the wordmark does not blink first")
 
 -- The modem --------------------------------------------------------------------
 -- Turning the radio off is the one setting that changes what the rest of the

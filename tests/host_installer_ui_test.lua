@@ -106,31 +106,39 @@ local function everyRoleReachable(screenWidth, screenHeight, script)
     local screen = table.concat(written, "\n")
     for _, label in ipairs({ "SERVICE KIOSK", "EVENT KIOSK",
         "BORDER CONTROLLER", "BANK SERVER", "ADMIN TERMINAL",
-        "CCG BET CONSOLE", "GPS ANCHOR", "APP SERVER" }) do
+        "CCG BET CONSOLE", "GPS ANCHOR", "APP SERVER",
+        -- 10.0: the machines that run the network moved behind a tab of
+        -- their own, and two of them are new there. A Vault used to be
+        -- something only a Bank could make.
+        "SERVERS", "BANK VAULT", "INTERNET SERVER", "CCG SERVER" }) do
         assert(screen:find(label, 1, true), label .. " is not reachable")
     end
 end
 
--- Pocket screen: one column, so the list needs a second page.
+-- Pocket screen: one column. Both lists fit a page each now that the
+-- servers are behind their own card.
 everyRoleReachable(26, 20, {
     { "mouse_click", 1, 3, 19 },  -- v OTHER ROLES
-    { "mouse_click", 1, 12, 20 }, -- PAGE 2
-    { "mouse_click", 1, 12, 20 }, -- PAGE 1
-    { "mouse_click", 1, 3, 20 },  -- ^ BACK
+    { "char", "1" },              -- SERVERS
+    { "mouse_click", 1, 3, 20 },  -- ^ BACK, to the other roles
+    { "mouse_click", 1, 3, 20 },  -- ^ BACK, to the PUMPE panel
     { "mouse_click", 1, 2, 20 },  -- EXIT
 })
 
 -- Advanced Computer: two columns, so they all fit on one page.
 everyRoleReachable(51, 19, {
     { "mouse_click", 1, 3, 18 },  -- v OTHER ROLES
-    { "mouse_click", 1, 3, 19 },  -- ^ BACK
+    { "char", "1" },              -- SERVERS
+    { "mouse_click", 1, 3, 19 },  -- ^ BACK, to the other roles
+    { "mouse_click", 1, 3, 19 },  -- ^ BACK, to the PUMPE panel
     { "mouse_click", 1, 2, 19 },  -- EXIT
 })
 
 -- Pocket-sized screen: the PUMPE panel first, then one column of roles.
 pickBankServer(26, 20, {
     { "char", "m" },             -- v OTHER ROLES
-    { "char", "4" },             -- Bank Server, fourth in the list
+    { "char", "1" },             -- SERVERS
+    { "char", "1" },             -- BANK SERVER, first in that tab
     { "mouse_click", 1, 4, 7 }, -- FOXY BANK SERVER, the new type menu
     { "mouse_click", 1, 4, 13 }, -- 4
     { "mouse_click", 1, 11, 17 }, -- 0
@@ -142,7 +150,8 @@ pickBankServer(26, 20, {
 -- Advanced Computer: two columns of role cards with room for the detail line.
 pickBankServer(51, 19, {
     { "char", "m" },             -- v OTHER ROLES
-    { "char", "4" },             -- Bank Server
+    { "char", "1" },             -- SERVERS
+    { "char", "1" },             -- BANK SERVER
     { "mouse_click", 1, 4, 7 }, -- FOXY BANK SERVER, the new type menu
     { "mouse_click", 1, 12, 12 }, -- 4
     { "mouse_click", 1, 22, 16 }, -- 0
@@ -157,7 +166,8 @@ width, height = 26, 20
 written, eventIndex = {}, 0
 events = {
     { "char", "m" },             -- v OTHER ROLES
-    { "char", "4" },             -- Bank Server
+    { "char", "1" },             -- SERVERS
+    { "char", "1" },             -- BANK SERVER
     { "mouse_click", 1, 4, 12 }, -- 3RD PARTY BANK SERVER
     { "mouse_click", 1, 2, 20 }, -- EXIT
 }

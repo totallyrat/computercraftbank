@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "9.5.0"
+local PROGRAM_VERSION = "10.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -96,6 +96,9 @@ RELEASE.depot_files = {
     "gps_anchor.lua",
     "app_server.lua",
     "foxy.lua",
+    "internet_server.lua",
+    "wc.lua",
+    "internet.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -133,6 +136,10 @@ RELEASE.optional = {
     "buckapp.lua",
     "ccg_server.lua",
     "revolution.lua",
+    "bank_vault.lua",
+    "internet_server.lua",
+    "wc.lua",
+    "internet.lua",
 }
 
 RELEASE.programs = {
@@ -148,6 +155,8 @@ RELEASE.programs = {
     apps = "app_server.lua",
     tpbank = "bank_app_server.lua",
     ccgserver = "ccg_server.lua",
+    -- The web, new in 10.0.
+    internet = "internet_server.lua",
     -- The other half of this Bank. Easy Deployment has to know this role
     -- like any other: 9.3.0 added it to the installer's list but not to
     -- this one, so a computer that had just been made a Vault rebooted,
@@ -4707,10 +4716,29 @@ pair.routes = {
     TICKET_SCAN = { auth = "session" },
     TICKET_SCAN_STATUS = { auth = "session" },
     TICKET_SCAN_CANCEL = { auth = "session" },
+    -- The web, new in 10.0. The Vault keeps the register of who owns which
+    -- domain; the pages are on an Internet Server.
+    WEB_MINE = { auth = "session" },
+    WEB_RESERVE = { auth = "session" },
+    WEB_RENAME = { auth = "session" },
+    WEB_RELEASE = { auth = "session" },
+    WEB_EDITED = { auth = "session" },
+    WEB_TOKEN = { auth = "session" },
+    -- Public on purpose. Looking up a name is what a web is for, and an
+    -- Internet Server has no account to sign in with -- it proves what it is
+    -- allowed to store with a token the owner handed it, not with a session.
+    WEB_LOOKUP = { auth = "public" },
+    WEB_CLAIM = { auth = "public" },
 }
 
 -- Everything the Core checks before a question goes down the cable.
 local function routeToVault(action, spec, payload)
+    if spec.auth == "public" then
+        -- Nobody to authenticate. These answer questions a web has to answer
+        -- for anyone, and the one that changes something is gated by a
+        -- ticket instead: see WEB_CLAIM in the Vault.
+        return pair.forward(action, payload, { kind = "public" })
+    end
     if spec.auth == "device" then
         -- A Border Controller proves itself against the Vault's own register
         -- of them. Nothing here can help: the Core does not hold that list.

@@ -1,5 +1,77 @@
 # Changelog
 
+## 10.0.0
+
+**The Web Update.** Apps are hard to write. A website is not, and now there
+is somewhere to put one.
+
+**Website Crafter** is a PUMPE app for writing a website on a pocket screen:
+titles and lines of text, a main page and up to two more. Pick a name, write
+something, publish. Two websites per account, which is a limit that will
+move once there is something to learn from.
+
+- **Your name is reserved at the Bank.** The letters land one at a time,
+  then the screen says *You're in, [your name]* and hands you a card with the
+  domain on it. That is the Vault's register, not this phone's: a name means
+  the same thing to everybody on the network, and it is still yours if
+  somebody rebuilds the machine serving it.
+- **The website itself is saved on the phone.** So Website Crafter works with
+  no Internet Server anywhere on the network -- you can write the whole thing
+  and publish it the day somebody sets one up.
+- **A new site takes two in-game hours to open.** Go to it before then and it
+  says *We're still preparing. Come back soon.* -- which is true, and reads
+  better than a site that appears to be broken.
+- **Editing costs half an in-game hour of downtime.** Long enough to notice,
+  short enough to forgive, and it is what stops a page changing under
+  somebody mid-sentence.
+- You can rename a domain or delete a website whenever you like, live or not.
+
+**The Internet app** reads the web: type a domain, or pick one off the list
+of what is out there. Sub pages are tabs along the bottom.
+
+**The Internet Server and Terminal** is the machine that holds everybody's
+pages. It is deliberately not trusted with anything else -- it never sees an
+account and never checks a PIN. Publishing works like handing over a ticket:
+the PUMPE fetches a one-shot ticket from the Bank for a domain it owns, the
+Internet Server takes that ticket back to the Bank, and the Bank tells it
+whose site this is. Anyone can lie to an Internet Server about who they are;
+nobody can produce a ticket for a name they do not own, and a ticket somebody
+copies is worth exactly one publish.
+
+- **Pages are filed under the site, not under the name.** Renaming a domain
+  moves the website; a name somebody else picks up later starts empty. Filing
+  by name meant a brand new domain came with the last owner's website on it,
+  which `host_web_test` caught on its first run.
+
+**Easy Deployment has a Servers tab.** The machines that run the network --
+Bank Server, Bank Vault, App Server, Internet Server, CCG Server -- are
+behind one card now instead of scattered through the role list.
+
+- **Bank Vault is a choice you can pick.** It used to be something only a
+  Bank could make: pairing handed the computer the program. Now it installs
+  from the release like any other role and pairs over the cable afterwards,
+  with nothing to fetch from the Bank.
+- **The Vault could not update itself.** It was in the installer's list and
+  in the Bank's, and missing from the updater's -- so for three releases
+  every Vault fell back to the Bank's depot instead of the public manifest,
+  silently. All three lists are now read by the same test, which is the
+  second time that exact gap has shipped.
+
+**Start-up is quicker, and updating is not.** The letters land, the tagline
+holds for two seconds, and the phone is yours -- about half what it was.
+Installing a release goes the other way: the wordmark sits over a bar that
+fills for twenty seconds whether or not it needs to. A release lands in about
+two seconds and the phone comes back subtly different, which reads as a
+glitch rather than an update. This is the one screen allowed to take its
+time.
+
+- An app can now keep something on the phone (`api.save` / `api.load`), one
+  file per app, deleted with the app. Website Crafter's draft lives there.
+  The Bank's app records are for things other people have to see.
+- An app can now reach the web (`api.web`). There is one Internet Server per
+  network, so there is nothing for an app to address: it asks for the web and
+  gets the web.
+
 ## 9.5.0
 
 Called **10.0 Pre**: three things worth fixing before the Web Update.
