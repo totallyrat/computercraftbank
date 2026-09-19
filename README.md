@@ -325,9 +325,32 @@ The kiosk remains fully usable without the monitor. Attach one later and tap **S
 
 New in 10.0. Three pieces, deliberately separate.
 
-- **Website Crafter** (a PUMPE app) is where a website is written: titles and lines of text, a main page and up to two more. The draft is kept on the phone, so it works with no Internet Server anywhere on the network.
+- **Website Crafter** (a PUMPE app) is where a website is written, as code. The draft is kept on the phone, so it works with no Internet Server anywhere on the network.
 - **The Bank Vault** keeps the register of names. Reserving a domain is what makes it yours, and a name means the same thing to everybody because there is one register. Two websites per account.
 - **The Internet Server** holds the pages and serves them. Install it from Easy Deployment → SERVERS.
+
+### A website is a program
+
+Since 10.1, a website is Lua, not a page of text. It returns a function; the phone calls it with one `api` table and nothing else:
+
+```lua
+return function(api)
+    local ui, target = api.ui, api.target
+    ui.clear(target)
+    ui.header(target, api.domain, "A website", "")
+    ui.wrappedText(target, 2, 6, "Hello from the web.", 24, 3, ui.theme.ink)
+end
+```
+
+**An app lives on your phone. A page is a visit.** The phone fetches the source when you open it, writes it down, runs it, and deletes it — whether the page returned, errored, or you closed it. Anything a previous visit left behind is swept at start-up.
+
+**What a page cannot reach is the point.** It runs in an environment with no `fs`, no `http`, no `rednet`, no `shell`, no `peripheral` and no `load` — absent, not restricted. It does not get the whole `ui` library either: `ui.pin` returns the owner's PIN in the clear. And it gets nothing of the Bank.
+
+The one exception is **Foxy Signin**. `api.login{}` raises the same consent sheet an app raises, and the grant is filed under the domain — signing into one site says nothing about any other. A page can know who you are; it can never know what you have.
+
+The phone opens websites, not the Internet app: an app has no filesystem and no `load`, and giving one either so it could browse would hand every app the means to run whatever it downloads.
+
+**Website Crafter** is a line editor with templates to start from, including a working Foxy page. Its **Check** button asks the Internet Server to compile the source — the only machine in the chain that can — so a page that does not parse fails for its author rather than for every reader. The server refuses to store one either way.
 
 ### Reserving a name
 
@@ -347,9 +370,12 @@ So anyone can lie to an Internet Server about who they are, and nobody can produ
 
 Pages are filed under the **site**, not under the name. Renaming a domain moves the website with it; a name somebody else picks up later starts empty rather than inheriting the last owner's pages.
 
+There is no directory. The Internet app is an address bar and a short history — you type a domain, the way you would say one out loud.
+
 ### For app authors
 
 - `api.web(action, payload)` reaches the Internet Server. There is one per network, so there is nothing to address.
+- `api.browse(domain)` opens a website. The phone runs it, sandboxed; the app never sees the code.
 - `api.save(table)` / `api.load()` keep something on this phone — one file per app, up to 8 KB, deleted with the app. The Bank's app records are for things other people have to see.
 
 ## Easy Deployment
@@ -411,7 +437,7 @@ Local configuration survives: each device merges the published config over its o
 
 The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
 
-Because each device stages only its own role, the worst-case update peaks at about 747 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 253 KiB for account data. That headroom is the Bank Core's alone: since 9.3 everything that grows without limit -- conversations, events, tickets, app records, and now the domain register -- lives on the Vault.
+Because each device stages only its own role, the worst-case update peaks at about 756 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 244 KiB for account data. The largest role is the PUMPE itself as of 10.1. That headroom is the Bank Core's alone: since 9.3 everything that grows without limit -- conversations, events, tickets, app records, and now the domain register -- lives on the Vault.
 
 ### Manifest layout
 
@@ -692,4 +718,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `10.0.1`, released as **10.0 Simple**.
+PUMPE Ecosystem `10.1.0`.

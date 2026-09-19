@@ -19,7 +19,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.0.1"
+local PROGRAM_VERSION = "10.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -27,9 +27,7 @@ local ui = require("lib.ui")
 
 local PROTOCOL = config.web_protocol or "PUMPE_WEB_V1"
 local HOSTNAME = config.web_hostname or "INTERNET_SERVER"
-local MAX_PAGES = tonumber(config.max_web_pages) or 3
-local MAX_BLOCKS = tonumber(config.max_web_blocks) or 14
-local MAX_TEXT = tonumber(config.max_web_text) or 240
+local MAX_BYTES = tonumber(config.max_web_bytes) or 8 * 1024
 local MAX_SITES = tonumber(config.max_web_sites) or 200
 
 local target = term.current()
@@ -85,25 +83,18 @@ local function askBank(action, payload)
     return nil, err or "The Bank did not answer", code
 end
 
--- Reading a page a PUMPE sent. Anything that is not a title or a line of
--- text is dropped rather than stored: this is a website, not a filesystem.
-local function readPage(raw, index)
-    need(type(raw) == "table", "BAD_PAGE", "Page " .. index .. " is not a page")
-    local title = util.safeText(util.trim(tostring(raw.title or "")), 40)
-    need(#title > 0, "BAD_PAGE", "Page " .. index .. " has no title")
-    local blocks = {}
-    for _, block in ipairs(type(raw.blocks) == "table" and raw.blocks or {}) do
-        if #blocks >= MAX_BLOCKS then break end
-        if type(block) == "table" then
-            local kind = block.kind == "title" and "title" or "text"
-            local text = util.safeText(util.trim(tostring(block.text or "")),
-                kind == "title" and 40 or MAX_TEXT)
-            if #text > 0 then
-                blocks[#blocks + 1] = { kind = kind, text = text }
-            end
-        end
-    end
-    return { title = title, blocks = blocks }
+-- Checking a website before it goes on the web. Compiling it here is the
+-- one place that can: a PUMPE app has no `load` of its own, and a page that
+-- does not parse would otherwise fail on every reader's phone instead of on
+-- its author's.
+local function compile(source)
+    need(type(source) == "string", "NO_SOURCE", "A website is a program now")
+    need(#source > 0, "NO_SOURCE", "There is nothing to publish")
+    need(#source <= MAX_BYTES, "TOO_BIG",
+        "A website is at most " .. math.floor(MAX_BYTES / 1024) .. " KB")
+    local built, err = load(source, "website", "t", {})
+    need(built, "BAD_SOURCE", tostring(err or "That does not parse"))
+    return source
 end
 
 local actions = {}
@@ -114,10 +105,19 @@ function actions.WEB_INFO()
         computer_id = os.getComputerID(),
         sites = #state.order,
         visits = state.visits,
-        max_pages = MAX_PAGES,
-        max_blocks = MAX_BLOCKS,
-        max_text = MAX_TEXT,
+        max_bytes = MAX_BYTES,
     }
+end
+
+-- Offered so Website Crafter can say what is wrong with a website before
+-- anybody publishes it, rather than after.
+function actions.WEB_CHECK(payload)
+    local ok, err = pcall(compile, payload.source)
+    if ok then return { ok = true, bytes = #tostring(payload.source) } end
+    if type(err) == "table" and err.pumpe then
+        return { ok = false, error = err.message, code = err.code }
+    end
+    return { ok = false, error = tostring(err) }
 end
 
 -- Publishing. The ticket is what proves this is the owner's site; the Bank
@@ -126,10 +126,7 @@ end
 function actions.WEB_PUBLISH(payload)
     local key = validDomain(payload.domain)
     need(key, "BAD_DOMAIN", "A domain is 3-20 letters, numbers or dashes")
-    local pages = type(payload.pages) == "table" and payload.pages or {}
-    need(#pages >= 1, "NO_PAGES", "A website needs at least a main page")
-    need(#pages <= MAX_PAGES, "TOO_MANY_PAGES",
-        "A website is a main page and up to " .. (MAX_PAGES - 1) .. " more")
+    local source = compile(payload.source)
 
     local claim, err, code = askBank("WEB_CLAIM",
         { domain = key, token = tostring(payload.token or "") })
@@ -142,8 +139,6 @@ function actions.WEB_PUBLISH(payload)
     -- that name, this server would have served them one owner's pages under
     -- another owner's domain.
     local siteId = tostring(claim.site_id or key)
-    local stored = {}
-    for index, raw in ipairs(pages) do stored[index] = readPage(raw, index) end
     local existing = state.sites[siteId]
     if not existing then
         need(#state.order < MAX_SITES, "SERVER_FULL",
@@ -154,14 +149,15 @@ function actions.WEB_PUBLISH(payload)
         site_id = siteId,
         domain = key,
         owner_name = claim.owner_name,
-        pages = stored,
+        source = source,
+        bytes = #source,
         updated_day = util.ingameDay(),
         revision = (existing and existing.revision or 0) + 1,
     }
     save()
     logActivity(key .. " published by " .. tostring(claim.owner_name),
         colors.lime)
-    return { domain = key, pages = #stored,
+    return { domain = key, bytes = #source,
         revision = state.sites[siteId].revision }
 end
 
@@ -209,44 +205,28 @@ function actions.WEB_SITE(payload)
         site.domain = key
         save()
     end
+    -- Published before 10.1, when a website was a page of text rather than
+    -- a program. Say so: the owner has to publish it again, and a reader
+    -- being told that is better than a reader being shown nothing.
+    if type(site.source) ~= "string" then
+        return { domain = key, owner_name = site.owner_name,
+            needs_update = true }
+    end
     state.visits = state.visits + 1
-    local wanted = math.max(1, math.min(tonumber(payload.page) or 1,
-        #site.pages))
-    local names = {}
-    for index, page in ipairs(site.pages) do names[index] = page.title end
     return {
         domain = key,
         owner_name = site.owner_name,
-        page = wanted,
-        pages = names,
-        title = site.pages[wanted].title,
-        blocks = site.pages[wanted].blocks,
+        source = site.source,
+        bytes = site.bytes or #site.source,
         updated_day = site.updated_day,
         revision = site.revision,
     }
 end
 
--- Everything this server is holding, so the Internet app has somewhere to
--- start rather than an empty box and a blinking cursor.
-function actions.WEB_DIRECTORY(payload)
-    local listed, skip = {}, math.max(0, tonumber(payload.offset) or 0)
-    for index = skip + 1, math.min(#state.order, skip + 12) do
-        local site = state.sites[state.order[index]]
-        -- The domain here is the last one this site was read or published
-        -- under. A rename nobody has visited yet still lists the old name;
-        -- opening it corrects both.
-        if site then
-            listed[#listed + 1] = {
-                domain = site.domain,
-                owner_name = site.owner_name,
-                title = site.pages[1] and site.pages[1].title or site.domain,
-                updated_day = site.updated_day,
-            }
-        end
-    end
-    return { sites = listed, total = #state.order,
-        next_offset = skip + #listed }
-end
+-- There is no directory. Up to 10.1 the Internet app opened on a list of
+-- every site on the server, which is a phone book nobody asked for and a
+-- front page belonging to whoever published first. You type a domain, the
+-- way you would say one out loud.
 
 local function route(sender, message)
     if type(message) ~= "table" or message.kind ~= "request"

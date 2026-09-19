@@ -61,16 +61,29 @@ end
 term = { current = function()
     return { getSize = function() return WIDTH, HEIGHT end }
 end }
+-- A filesystem real enough to watch a website arrive on the phone and leave
+-- again, which is the behaviour 10.1 is about.
+local directories = {}
 fs = {
     getDir = function() return "/pumpe" end,
     combine = function(left, right)
         return tostring(left):gsub("/+$", "") .. "/"
             .. tostring(right):gsub("^/+", "")
     end,
-    exists = function(path) return savedFiles[path] ~= nil end,
-    isDir = function() return false end,
-    makeDir = function() end,
-    delete = function(path) savedFiles[path] = nil end,
+    exists = function(path)
+        return savedFiles[path] ~= nil or directories[path] == true
+    end,
+    isDir = function(path) return directories[path] == true end,
+    makeDir = function(path) directories[path] = true end,
+    delete = function(path)
+        savedFiles[path], directories[path] = nil, nil
+        local prefix = tostring(path):gsub("/+$", "") .. "/"
+        for existing in pairs(savedFiles) do
+            if existing:sub(1, #prefix) == prefix then
+                savedFiles[existing] = nil
+            end
+        end
+    end,
     getFreeSpace = function() return 500000 end,
     getSize = function() return 100 end,
 }
@@ -284,25 +297,56 @@ function ui.scene()
 end
 package.loaded["lib.ui"] = ui
 
+-- The website under test. It draws one line, and it reaches for every door
+-- a page is not allowed through: the filesystem, the network, and `load`.
+-- What it finds is recorded so the test can check the sandbox rather than
+-- take its word for it.
+PAGE_SOURCE = table.concat({
+    "return function(api)",
+    "    local ui, target = api.ui, api.target",
+    "    ui.text(target, 2, 5, \"A page ran here\")",
+    "    ui.text(target, 2, 6, \"fs \" .. type(fs))",
+    "    ui.text(target, 2, 7, \"http \" .. type(http))",
+    "    ui.text(target, 2, 8, \"rednet \" .. type(rednet))",
+    "    ui.text(target, 2, 9, \"shell \" .. type(shell))",
+    "    ui.text(target, 2, 10, \"peri \" .. type(peripheral))",
+    "    ui.text(target, 2, 11, \"load \" .. type(load))",
+    "    ui.text(target, 2, 12, \"pin \" .. type(ui.pin))",
+    "    ui.text(target, 2, 13, \"bank \" .. type(api.bank))",
+    "    ui.text(target, 2, 14, \"req \" .. type(api.request))",
+    "    ui.text(target, 2, 15, \"login \" .. type(api.login))",
+    "end",
+}, "\n")
+
+-- Ana already has a site on the web before the phone starts: the probe
+-- above, published the way anything is published. The scripted run makes a
+-- second one by hand, so the editor and the sandbox are each tested against
+-- the thing they are for.
+do
+    bank.request("WEB_RESERVE", bank.as(ana, { domain = "probe" }))
+    local ticket = bank.request("WEB_TOKEN", bank.as(ana, { domain = "probe" }))
+    webServer.actions.WEB_PUBLISH({ domain = "probe", token = ticket.token,
+        source = PAGE_SOURCE })
+    harness.day = harness.day + 1
+end
+
 actions = {
     "login",
     "open:ext:WC",                     -- Website Crafter
     "new",                             -- reserve a domain
+    "pick:1",                          -- start from a template
     "site:1",                          -- open it
-    "page:1",                          -- the main page
-    "title", "text", "back",           -- write something
+    "edit",                            -- the code
+    "add",                             -- one more line
+    "back",
     "publish",                         -- and put it on the web
     "back",                            -- out of Website Crafter
     "open:ext:NET",                    -- the Internet app
-    "go",                              -- type the domain
-    "back",                            -- it is not open yet
-    "__day",
-    "again",                           -- back to it once it is
-    "back", "back",
+    "go",                              -- open the one already up
+    "back",
     "__terminate",
 }
-inputs = { "Ana Fox", "foxden", "Welcome", "The best den on the server.",
-    "foxden" }
+inputs = { "Ana Fox", "foxden", "-- one more line", "probe" }
 pins = { "1234" }
 
 local ok, err = pcall(assert(realLoadfile("../pumpe.lua")))
@@ -331,7 +375,9 @@ assert(drew("YOUR DOMAIN") and drew("foxden"),
     "and shows the name on a card")
 
 local mine = bank.request("WEB_MINE", bank.as(ana))
-assert(#mine.sites == 1 and mine.sites[1].domain == "foxden",
+local reserved = {}
+for _, site in ipairs(mine.sites) do reserved[site.domain] = true end
+assert(reserved.foxden,
     "the domain is reserved at the Bank, not just on the phone")
 
 -- The draft is on the device ------------------------------------------------------
@@ -350,20 +396,66 @@ assert(keptOnDevice,
 -- Publishing ----------------------------------------------------------------------
 
 assert(drew("Published"), "publishing says so")
-local live = webServer.state.sites
 local stored
-for _, site in pairs(live) do stored = site end
-assert(stored and stored.domain == "foxden",
-    "and the pages actually reached the Internet Server")
-assert(stored.pages[1].blocks[1].text == "Welcome"
-    and stored.pages[1].blocks[2].text == "The best den on the server.",
-    "with what was typed on them, in order")
+for _, site in pairs(webServer.state.sites) do
+    if site.domain == "foxden" then stored = site end
+end
+assert(stored, "and the program actually reached the Internet Server")
+assert(type(stored.source) == "string"
+    and stored.source:find("return function", 1, true),
+    "as source, because a website is a program now")
+assert(stored.source:find("-- one more line", 1, true),
+    "including the line that was typed into the editor")
 
--- Reading ---------------------------------------------------------------------------
+-- Running a page ---------------------------------------------------------------------
 
-assert(read("We're still preparing. Come back soon."),
-    "a site that has not opened yet says so rather than looking broken")
-assert(read("The best den on the server."),
-    "and once it opens, a stranger reads what was written on a pocket screen")
+assert(drew("A page ran here"),
+    "opening a website runs it: the page drew its own screen")
+
+-- ...and the box it ran in --------------------------------------------------------------
+-- The part that matters. A website is code a stranger wrote and you never
+-- chose to install, so what it cannot reach is the feature. The page reports
+-- by drawing, because it has no other way to reach this test -- which is
+-- itself the point.
+
+for _, door in ipairs({ "fs", "http", "rednet", "shell", "peri", "load" }) do
+    assert(drew(door .. " nil"),
+        "a website could see `" .. door .. "`, which is a website that can"
+            .. " reach past the phone it is being read on")
+end
+assert(drew("pin nil"),
+    "ui.pin returns the owner's PIN in the clear, so a page off the internet"
+        .. " is not handed the ui library whole")
+assert(drew("bank nil") and drew("req nil"),
+    "and none of the Bank: a page can be told who you are, never what you"
+        .. " have")
+assert(drew("login function"),
+    "but Foxy Signin is there, which is the one account a page gets")
+
+-- ...and that it is gone again ----------------------------------------------------------
+
+for path in pairs(savedFiles) do
+    assert(not path:find("/web/", 1, true),
+        "the website is still on the phone at " .. path
+            .. "; an app lives here, a page is a visit")
+end
+
+-- The templates it ships with ------------------------------------------------------------
+-- Website Crafter hands people a program to start from. One that does not
+-- parse is a broken website handed to somebody who did not write it.
+
+local crafter = assert(io.open("../wc.lua")):read("a")
+local block = crafter:match("local TEMPLATES = (%b{})")
+assert(block, "Website Crafter must ship templates")
+local templates = assert(load("return " .. block))()
+assert(#templates >= 2, "including a worked example, not just a blank")
+local named = {}
+for _, template in ipairs(templates) do
+    named[template.id] = true
+    local built, err = load(table.concat(template.lines, "\n"), template.id)
+    assert(built, "the " .. template.id .. " template does not parse: "
+        .. tostring(err))
+end
+assert(named.foxy, "and one of them is the Foxy page")
 
 print("host_web_app_test: OK")

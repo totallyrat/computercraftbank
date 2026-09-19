@@ -379,6 +379,18 @@ Run this after installing into a ComputerCraft world.
 - [ ] Confirm a Bank Server, App Server and kiosk all update themselves silently — none of them should be waiting for a tap.
 - [ ] With the modem off, confirm the PUMPE does not check for releases at all and Settings → Updates says so.
 
+## The web as code (10.1)
+
+- [ ] In Website Crafter, make a website and pick the **Foxy** template. Confirm the editor shows it a line at a time.
+- [ ] Tap **Check** and confirm it says the program parses. Break a line on purpose, check again, and confirm it names what is wrong.
+- [ ] Confirm publishing broken code is refused by the Internet Server rather than accepted.
+- [ ] Publish the Foxy page, wait for it to open, and visit it from **another** PUMPE. Confirm it draws, and that **Sign in with Foxy** raises the consent sheet and then shows your name.
+- [ ] Confirm the Internet app opens on an address bar and a short history, with **no list of every site**.
+- [ ] While a page is open, confirm `/pumpe/web/` on that computer holds the file; leave the page and confirm it is gone.
+- [ ] Restart a PUMPE and confirm `/pumpe/web/` is empty.
+- [ ] Publish a website that tries `fs.delete("/")` and confirm it stops with an error rather than doing anything.
+- [ ] Open a site that was published before 10.1 and confirm it says its owner has to publish it again.
+
 ## Search and App Actions (10.0 Simple)
 
 - [ ] Confirm the dock shows **search** first and three favourites after it, on every Home Screen page.
@@ -409,9 +421,9 @@ Run this after installing into a ComputerCraft world.
 - [ ] In Website Crafter, reserve a domain. Confirm the letters land one at a time, that it says **You're in, [your name]**, and that the domain appears on a card.
 - [ ] Confirm a name somebody else already has is refused, and so are `ab`, `two words`, `a.name` and `-dash`.
 - [ ] Reserve a second domain, then confirm a third is refused: two per account.
-- [ ] Write a title and some text on the main page, add a second page, and publish.
+- [ ] Start from a template, change a line, and publish.
 - [ ] In the Internet app on **another** PUMPE, go to the domain and confirm it says **We're still preparing. Come back soon.**
-- [ ] Wait two in-game hours and confirm the site opens, with the sub page reachable from the tabs along the bottom.
+- [ ] Wait two in-game hours and confirm the site opens and runs.
 - [ ] Edit the site and publish again. Confirm it goes down for half an in-game hour and comes back with the change.
 - [ ] Rename the domain. Confirm the website follows the new name, and that reserving the old name on another account gives an empty site rather than the first owner's pages.
 - [ ] Delete a website and confirm the name is free for somebody else.

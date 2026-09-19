@@ -1,5 +1,49 @@
 # Changelog
 
+## 10.1.0
+
+**A website is a program now.** Titles and lines of text got you one kind of
+page and no other; this gets you whatever you can write. Website Crafter is a
+code editor, the Internet app runs what it downloads, and the difference
+between a website and an app is the one that matters:
+
+**An app lives on your phone. A page is a visit.** A website is fetched when
+you open it, written down, run, and deleted -- whether it returned, errored
+or you closed it. Anything a previous visit left behind is swept at start-up,
+so a page that took the phone down with it is not still on it afterwards.
+
+**What a page cannot reach is the feature.** It is code a stranger wrote that
+you never chose to install, so it runs in a box with no filesystem, no
+rednet, no http, no shell and no peripheral -- absent rather than restricted.
+No `load`, so it cannot fetch more code and grow. Not the whole ui library
+either: `ui.pin` returns the owner's PIN in the clear, and handing that to a
+page off the internet is not a question worth asking twice. And nothing of
+the Bank.
+
+**Except Foxy Signin.** A page can know who you are, once you say so, with
+the same sheet and the same remembered answer an app gets. The grant is filed
+under the domain, so signing into one site says nothing about any other. A
+page can know who you are; it can never know what you have.
+
+- **The phone opens websites, not the Internet app.** An app has no
+  filesystem and no `load`, and giving one either so it could browse would
+  hand every app on the phone the means to run whatever it downloads. The
+  Internet app is an address bar and a short history.
+- **Website Crafter ships templates**, including a working Foxy page as the
+  worked example: signing in, drawing, and a button that does something.
+  Nobody writes a site from an empty screen on a 26 column editor, and they
+  are not meant to.
+- **The Internet Server compiles a website before it will store it.** It is
+  the only machine in the chain that can -- a PUMPE app has no `load` -- so a
+  page that does not parse fails for its author rather than for every reader.
+  Website Crafter's Check button asks the same question before publishing.
+- **The list of every website is gone.** It was a phone book nobody asked
+  for, and a front page belonging to whoever published first. You type a
+  domain, the way you would say one out loud.
+- A website published before 10.1 says so when it is opened, and its owner
+  has to publish it again. Being told that is better than opening an empty
+  screen.
+
 ## 10.0.1
 
 Called **10.0 Simple**. Ten built-in apps, nine screens in Settings and a

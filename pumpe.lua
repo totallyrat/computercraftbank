@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.0.1"
+local PROGRAM_VERSION = "10.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4115,6 +4115,162 @@ local function appStoreLoad(appId)
     return util.loadTable(appStorePath(appId), {})
 end
 
+-- The web ---------------------------------------------------------------------
+-- Since 10.1 a website is a program, which means running code a stranger
+-- wrote and you never chose to install. That is a different bargain from an
+-- app, so it gets a different box:
+--
+--   * No filesystem, no rednet, no http, no shell, no peripheral. Not
+--     restricted versions of them -- absent. A page cannot reach the
+--     network itself, so nothing it does can leave this phone.
+--   * No `load`, so it cannot fetch more code and grow.
+--   * Not the whole ui library either. ui.pin returns the owner's PIN, and
+--     handing that to a page off the internet is not a question worth
+--     asking twice.
+--   * Foxy Signin and nothing else of the Bank. A page can know who you
+--     are, once you say so. It can never know what you have.
+--
+-- And it is deleted the moment it stops running. An app lives on the phone;
+-- a page is a visit.
+local webpage = {}
+local webDir = fs.combine(ROOT, "web")
+
+-- Anything a previous visit left behind, because a page that took the phone
+-- down with it should not still be on it at the next start-up.
+function webpage.sweep()
+    if fs.exists(webDir) then pcall(fs.delete, webDir) end
+end
+
+function webpage.environment(api)
+    return {
+        api = api,
+        assert = assert, error = error, ipairs = ipairs, pairs = pairs,
+        next = next, pcall = pcall, select = select, tonumber = tonumber,
+        tostring = tostring, type = type, unpack = unpack,
+        setmetatable = setmetatable,
+        math = math, string = string, table = table,
+        sleep = sleep, colors = colors,
+        os = { time = os.time, day = os.day, clock = os.clock,
+            epoch = os.epoch },
+    }
+end
+
+-- The drawing half of the ui library. Built fresh per visit, so a page that
+-- writes into the table it was handed leaves nothing in it for the next one.
+function webpage.ui()
+    local safe = {}
+    for key, value in pairs(ui) do
+        if key ~= "pin" and key ~= "setIdleLock"
+            and key ~= "setBackgroundTask" then
+            safe[key] = value
+        end
+    end
+    return safe
+end
+
+function webpage.api(domain)
+    return {
+        ui = webpage.ui(),
+        util = util,
+        target = target,
+        colors = colors,
+        money = money,
+        domain = domain,
+        running = function() return running and sessionToken ~= nil end,
+        -- The one thing a page shares with an app: it can ask who you are,
+        -- with the same sheet and the same remembered answer. The grant is
+        -- filed under the domain, so signing into one site says nothing
+        -- about any other.
+        login = function(spec)
+            spec = type(spec) == "table" and spec or {}
+            spec.name = spec.name or domain
+            return foxyLogin("WEB-" .. tostring(domain), spec)
+        end,
+    }
+end
+
+-- Writes the page down, runs it, and takes it off the phone again. The file
+-- is the whole of what is downloaded, and deleting it is not best effort --
+-- it happens whether the page returned, errored, or was closed.
+function webpage.run(domain, source)
+    local path = fs.combine(webDir, tostring(domain) .. ".lua")
+    if not fs.exists(webDir) then fs.makeDir(webDir) end
+    if not pcall(util.writeFile, path, source) then
+        ui.message(target, "error", "No room for it",
+            "This PUMPE has no space to open a page", 2)
+        return
+    end
+    local body = util.readFile(path)
+    local api = webpage.api(domain)
+    local built, err = load(tostring(body or ""), "@" .. tostring(domain),
+        "t", webpage.environment(api))
+    if not built then
+        pcall(fs.delete, path)
+        ui.message(target, "error", "This page is broken",
+            ui.truncate(tostring(err), 60), 2.4)
+        return
+    end
+    local ok, result = pcall(built)
+    pcall(fs.delete, path)
+    if ok and type(result) == "function" then
+        ok, result = pcall(result, api)
+    end
+    if not ok then
+        ui.message(target, "error",
+            ui.truncate(tostring(domain), 12) .. " stopped",
+            ui.truncate(tostring(result), 60), 2.4)
+    end
+end
+
+-- The Internet app asks for this rather than doing it itself. An app has no
+-- filesystem and no `load`, and handing one either so it could open websites
+-- would hand every app on the phone the means to run whatever it downloads.
+function webpage.browse(domain)
+    domain = string.lower(util.trim(tostring(domain or "")))
+    if domain == "" then return end
+    if offline() then
+        ui.message(target, "warning", "Modem is off",
+            "Turn it on in Settings", 1.4)
+        return
+    end
+    webClient = webClient or net.client({
+        protocol = config.web_protocol or "PUMPE_WEB_V1",
+        hostname = config.web_hostname or "INTERNET_SERVER",
+    })
+    local found, err, code = webClient:request("WEB_SITE",
+        { domain = domain }, 6)
+    if not found then
+        ui.message(target, "error",
+            code == "NO_SUCH_DOMAIN" and "No such site" or "Cannot reach it",
+            err or "No Internet Server is running", 2.4)
+        return
+    end
+    if found.needs_update then
+        ui.message(target, "warning", ui.truncate(domain, 12),
+            "Made before the new web. Its owner has to publish it again.",
+            2.6)
+        return
+    end
+    if found.preparing then
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, ui.truncate(domain, 14), "Preparing",
+            util.formatClock())
+        ui.card(target, 2, 6, width - 2, 6, ui.theme.warning)
+        ui.wrappedText(target, 4, 7, "We're still preparing. Come back soon.",
+            width - 6, 3, ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 10, ui.truncate(tostring(found.owner_name
+            or "Somebody") .. " is building it", width - 6),
+            ui.theme.muted, ui.theme.panel)
+        local scene = ui.scene(target)
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        scene:wait({ tickRate = 5 })
+        return
+    end
+    webpage.run(domain, tostring(found.source or ""))
+end
+
 local function runInstalledApp(entry, wantedAction)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
@@ -4247,6 +4403,9 @@ local function runInstalledApp(entry, wantedAction)
             })
             return webClient:request(tostring(action), payload or {}, 6)
         end,
+        -- Opening a website. The phone does the running, not the app: see
+        -- the sandbox above for why an app is not given the means itself.
+        browse = function(domain) return webpage.browse(domain) end,
         -- This app's own corner of the phone.
         save = function(value) return appStoreSave(entry.app_id, value) end,
         load = function() return appStoreLoad(entry.app_id) end,
@@ -5507,6 +5666,10 @@ end
 -- nothing here should look like it is: the long screen belongs to an update
 -- and only to an update. A device still carrying an older shared library has
 -- no ui.splash, so it keeps the old progress-bar boot instead of crashing.
+-- Anything a website left behind last time. A page is a visit, not an
+-- install, so the folder it runs from starts every session empty.
+pcall(webpage.sweep)
+
 if type(ui.splash) == "function" then
     ui.splash(target, "PUMPE", "Small yet Mighty",
         { footnote = "v" .. config.version, blinks = 0, hold = 2 })

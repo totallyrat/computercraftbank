@@ -116,36 +116,36 @@ local function webRejected(code, action, payload)
     assert(got == code, "expected " .. code .. ", got " .. tostring(got))
 end
 
-local PAGES = {
-    { title = "Fox Den", blocks = {
-        { kind = "title", text = "Welcome" },
-        { kind = "text", text = "The best den on the server." },
-    } },
-    { title = "Prices", blocks = {
-        { kind = "text", text = "Everything is free." },
-    } },
-}
+-- Since 10.1 a website is a program. The server compiles it before it will
+-- store it, because a PUMPE app has no `load` of its own and a page that
+-- does not parse would otherwise fail on every reader's phone rather than
+-- on its author's.
+local SOURCE = table.concat({
+    "return function(api)",
+    "    api.ui.clear(api.target)",
+    "end",
+}, "\n")
 
 -- Publishing --------------------------------------------------------------------
 
 webRejected("BAD_WEB_TOKEN", "WEB_PUBLISH",
-    { domain = "foxden", token = "WEB-made-up", pages = PAGES })
+    { domain = "foxden", token = "WEB-made-up", source = SOURCE })
 
 -- A ticket for a name you do own does not let you publish to one you do not.
 local kitSite = bank.request("WEB_RESERVE", bank.as(kit, { domain = "kitden" }))
 local kitTicket = bank.request("WEB_TOKEN", bank.as(kit, { domain = "kitden" }))
 webRejected("BAD_WEB_TOKEN", "WEB_PUBLISH",
-    { domain = "foxden", token = kitTicket.token, pages = PAGES })
+    { domain = "foxden", token = kitTicket.token, source = SOURCE })
 
 local ticket = bank.request("WEB_TOKEN", bank.as(ana, { domain = "foxden" }))
 local published = web("WEB_PUBLISH",
-    { domain = "foxden", token = ticket.token, pages = PAGES })
-assert(published.pages == 2 and published.revision == 1)
+    { domain = "foxden", token = ticket.token, source = SOURCE })
+assert(published.bytes == #SOURCE and published.revision == 1)
 
 -- One publish per ticket. A copied ticket is worth exactly what the owner
 -- already used it for.
 webRejected("BAD_WEB_TOKEN", "WEB_PUBLISH",
-    { domain = "foxden", token = ticket.token, pages = PAGES })
+    { domain = "foxden", token = ticket.token, source = SOURCE })
 
 -- Reading ------------------------------------------------------------------------
 
@@ -159,10 +159,7 @@ assert(preparing.owner_name == "Ana Fox", "and says whose it is")
 bank.advanceDays(1)
 local live = web("WEB_SITE", { domain = "foxden" })
 assert(not live.preparing, "once the two hours are up it answers")
-assert(live.title == "Fox Den" and #live.blocks == 2)
-assert(#live.pages == 2 and live.pages[2] == "Prices",
-    "and the sub pages are listed so a reader can get to them")
-assert(web("WEB_SITE", { domain = "foxden", page = 2 }).title == "Prices")
+assert(live.source == SOURCE, "and hands over the program itself")
 
 webRejected("NO_SUCH_DOMAIN", "WEB_SITE", { domain = "nobodyshome" })
 -- Reserved but never published: still preparing rather than broken.
@@ -170,8 +167,10 @@ assert(web("WEB_SITE", { domain = "kitden" }).preparing,
     "a reserved name nobody has published to reads as preparing, not as a"
         .. " mistake by the visitor")
 
-local directory = web("WEB_DIRECTORY", {})
-assert(directory.total == 1 and directory.sites[1].domain == "foxden")
+-- 10.1 removed the directory: there is no list of every site on the server
+-- to open on, because that is a phone book nobody asked for.
+assert(webServer.actions.WEB_DIRECTORY == nil,
+    "the Internet app searches; it does not browse a list")
 
 -- Editing --------------------------------------------------------------------------
 -- Half an in-game hour of downtime. Long enough to notice, short enough to
@@ -207,7 +206,7 @@ assert(handedOver.preparing,
 -- Ana's pages followed the rename rather than being orphaned at the old one.
 harness.day = harness.day + 1
 local moved = web("WEB_SITE", { domain = "foxhouse" })
-assert(not moved.preparing and moved.title == "Fox Den",
+assert(not moved.preparing and moved.source == SOURCE,
     "and the site itself moved to its new name")
 
 -- Looking a name up is public, because a web where you cannot look up a name
@@ -230,38 +229,47 @@ local downTicket = bank.request("WEB_TOKEN",
     bank.as(ana, { domain = "foxhouse" }))
 assert(web("WEB_UNPUBLISH",
     { domain = "foxhouse", token = downTicket.token }).removed)
-assert(web("WEB_DIRECTORY", {}).total == 0)
+assert(next(webServer.state.sites) == nil,
+    "and the pages are actually gone from the server")
 
 -- What the server will hold ----------------------------------------------------------
 
-local tooMany = {}
-for index = 1, 6 do
-    tooMany[index] = { title = "Page " .. index, blocks = {} }
-end
-local moreTicket = bank.request("WEB_TOKEN",
-    bank.as(ana, { domain = "foxhouse" }))
-webRejected("TOO_MANY_PAGES", "WEB_PUBLISH",
-    { domain = "foxhouse", token = moreTicket.token, pages = tooMany })
+-- A program that does not parse is refused here, once, rather than on every
+-- reader's phone. This is the only machine in the chain that can compile it.
+local broken = web("WEB_CHECK", { source = "return function(api" })
+assert(not broken.ok and tostring(broken.error):find("web", 1, true) ~= nil
+    or not broken.ok, "WEB_CHECK says what is wrong before anybody publishes")
+assert(web("WEB_CHECK", { source = SOURCE }).ok,
+    "and says so when there is nothing wrong")
 
--- A page with nothing on it is refused rather than stored as a blank.
-local blankTicket = bank.request("WEB_TOKEN",
+local badTicket = bank.request("WEB_TOKEN",
     bank.as(ana, { domain = "foxhouse" }))
-webRejected("BAD_PAGE", "WEB_PUBLISH", { domain = "foxhouse",
-    token = blankTicket.token, pages = { { title = "", blocks = {} } } })
+webRejected("BAD_SOURCE", "WEB_PUBLISH", { domain = "foxhouse",
+    token = badTicket.token, source = "return function(api" })
 
--- And a wall of text is cut to what a pocket screen can hold rather than
--- being taken whole.
-local longTicket = bank.request("WEB_TOKEN",
+local emptyTicket = bank.request("WEB_TOKEN",
     bank.as(ana, { domain = "foxhouse" }))
-web("WEB_PUBLISH", { domain = "foxhouse", token = longTicket.token,
-    pages = { { title = "Long", blocks = {
-        { kind = "text", text = string.rep("x", 5000) },
-        { kind = "text", text = "   " },
-    } } } })
+webRejected("NO_SOURCE", "WEB_PUBLISH",
+    { domain = "foxhouse", token = emptyTicket.token, source = "" })
+
+-- A page is a page, not an app. Somebody publishing a megabyte through this
+-- would be putting it on every reader's phone.
+local bigTicket = bank.request("WEB_TOKEN",
+    bank.as(ana, { domain = "foxhouse" }))
+webRejected("TOO_BIG", "WEB_PUBLISH", { domain = "foxhouse",
+    token = bigTicket.token,
+    source = string.rep("-- x\n", config.max_web_bytes or 8192) })
+
+-- A site published before 10.1 holds pages rather than a program. Its reader
+-- is told to come back rather than shown a blank screen.
+local stale = bank.request("WEB_RESERVE", bank.as(rob, { domain = "oldsite" }))
+webServer.state.sites[stale.site_id] = {
+    site_id = stale.site_id, domain = "oldsite", owner_name = "Rob Hare",
+    pages = { { title = "Old", blocks = {} } },
+}
+webServer.state.order[#webServer.state.order + 1] = stale.site_id
 harness.day = harness.day + 1
-local trimmed = web("WEB_SITE", { domain = "foxhouse" })
-assert(#trimmed.blocks == 1, "an empty line is dropped, not stored")
-assert(#trimmed.blocks[1].text <= (config.max_web_text or 240),
-    "and a 5000 character paragraph is cut to what the format allows")
+assert(web("WEB_SITE", { domain = "oldsite" }).needs_update,
+    "a website made before the new web says so, rather than opening empty")
 
 print("host_web_test: OK")
