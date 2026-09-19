@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.0.0"
+local PROGRAM_VERSION = "10.0.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -34,6 +34,8 @@ if device.modem_on == nil then device.modem_on = true end
 -- switch is no longer read: "never" was never a good answer, and a phone
 -- carrying it is asked from now on instead of sitting on an old release.
 if device.update_mode ~= "auto" then device.update_mode = "ask" end
+device.reminders = device.reminders or {}
+device.shortcuts = device.shortcuts or {}
 
 -- Off the network, not out of the phone. The switch stops everything that
 -- needs a server and nothing else: what is already on the device still
@@ -89,6 +91,9 @@ local favouritesPicker
 local appBrowser
 local connectedApps
 local appSettingsScreen
+-- Reminders and QuickActions. Declared here because the Home Screen builds
+-- its icon grid from them, and that happens further up the file than they do.
+local agenda
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -3277,28 +3282,92 @@ local function updatesScreen()
     end
 end
 
+-- Every setting as an action of its own. Settings draws this list, search
+-- searches it, and a QuickAction can name one -- off one table rather than
+-- three that drift apart.
+local SETTINGS_ACTIONS = {
+    { id = "network", label = "Network", hint = "Modem on or off" },
+    { id = "storage", label = "Storage", hint = "What is on this PUMPE" },
+    { id = "updates", label = "Updates", hint = "Ask first, or automatic" },
+    { id = "apps", label = "App Settings", hint = "What apps may do" },
+    { id = "connected", label = "Connected Apps", hint = "Who you signed in" },
+    { id = "guide", label = "How PUMPE Works", hint = "The tour" },
+    { id = "dock", label = "Edit Your Dock", hint = "Your favourites" },
+    { id = "logout", label = "Sign Out", hint = "Leave this session" },
+    { id = "close", label = "Close PUMPE", hint = "Stop the program" },
+}
+
 -- Settings is a list now rather than a handful of buttons: 9.0 added
 -- enough to it that a fixed layout stopped fitting a 20-row pocket screen,
 -- and paging works on any size rather than only the two I happened to try.
-local function settingsScreen()
-    local page = 1
+-- 10.0 Simple put a search bar on top of it, because nine screens behind two
+-- page turns is nine screens you have to already know the position of.
+local function settingsScreen(wanted)
+    local page, filter = 1, nil
+
+    local function settingValue(id)
+        if id == "network" then
+            return device.modem_on == false and "Off" or "On",
+                device.modem_on == false
+        elseif id == "updates" then
+            return device.update_mode == "auto" and "Auto" or "Ask", false
+        end
+        return "", false
+    end
+
+    -- One place that knows what each setting opens, so the list, the search
+    -- results and a QuickAction all reach the same screen.
+    local function openSetting(id)
+        if id == "network" then
+            networkScreen()
+            if not sessionToken and not offline() then return "exit" end
+        elseif id == "storage" then storageScreen()
+        elseif id == "updates" then updatesScreen()
+        elseif id == "apps" then appSettingsScreen()
+        elseif id == "connected" then connectedApps()
+        elseif id == "guide" then guideScreen(true)
+        elseif id == "dock" then favouritesPicker()
+        elseif id == "logout" then
+            if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
+                "Sign Out", "Back") then
+                sessionToken, betAccessToken, account = nil, nil, nil
+                disableDeviceLock()
+                return "exit"
+            end
+        elseif id == "close" then
+            if ui.confirm(target, "Close PUMPE", "Shut down the PUMPE app?",
+                "CLOSE", "BACK") then
+                running = false
+                return "exit"
+            end
+        end
+    end
+
+    -- Opened from search or a QuickAction: go straight there and come back
+    -- out, rather than dropping somebody into a list they did not ask for.
+    if wanted then
+        for _, item in ipairs(SETTINGS_ACTIONS) do
+            if item.id == wanted then
+                openSetting(wanted)
+                return
+            end
+        end
+    end
+
     while running and (sessionToken or offline()) do
         if not account then account = cachedProfile() end
         local width, height = target.getSize()
-        local entries = {
-            { id = "network", label = "Network",
-              value = device.modem_on == false and "Off" or "On",
-              warn = device.modem_on == false },
-            { id = "storage", label = "Storage", value = "" },
-            { id = "updates", label = "Updates",
-              value = device.update_mode == "auto" and "Auto" or "Ask" },
-            { id = "apps", label = "App Settings", value = "" },
-            { id = "connected", label = "Connected Apps", value = "" },
-            { id = "guide", label = "How PUMPE Works", value = "" },
-            { id = "dock", label = "Edit Your Dock", value = "" },
-            { id = "logout", label = "Sign Out", value = "" },
-            { id = "close", label = "Close PUMPE", value = "" },
-        }
+        local entries = {}
+        local needle = filter and string.lower(filter) or nil
+        for _, item in ipairs(SETTINGS_ACTIONS) do
+            local value, warn = settingValue(item.id)
+            if not needle
+                or string.lower(item.label):find(needle, 1, true)
+                or string.lower(item.hint):find(needle, 1, true) then
+                entries[#entries + 1] = { id = item.id, label = item.label,
+                    value = value, warn = warn }
+            end
+        end
         ui.clear(target)
         ui.header(target, "Settings", account.name, util.formatClock())
         ui.card(target, 2, 5, width - 2, 3, ui.theme.accent)
@@ -3315,6 +3384,13 @@ local function settingsScreen()
         local pages = math.max(1, math.ceil(#entries / perPage))
         page = math.max(1, math.min(page, pages))
         local scene = ui.scene(target)
+        scene:button("find", 2, top - 1, width - 2, 1,
+            ui.truncate(filter and ("Q  " .. filter) or "Q  Search settings",
+                width - 4),
+            { background = filter and ui.theme.accentDark or ui.theme.panel })
+        if #entries == 0 then
+            ui.text(target, 2, top + 1, "Nothing matches", ui.theme.muted)
+        end
         for slot = 1, perPage do
             local entry = entries[(page - 1) * perPage + slot]
             if not entry then break end
@@ -3345,28 +3421,16 @@ local function settingsScreen()
         if action == "back" or action == "__terminate" then return end
         if action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
-        elseif action == "network" then
-            networkScreen()
-            if not sessionToken and not offline() then return end
-        elseif action == "storage" then storageScreen()
-        elseif action == "updates" then updatesScreen()
-        elseif action == "apps" then appSettingsScreen()
-        elseif action == "connected" then connectedApps()
-        elseif action == "guide" then guideScreen(true)
-        elseif action == "dock" then favouritesPicker()
-        elseif action == "logout" then
-            if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
-                "Sign Out", "Back") then
-                sessionToken, betAccessToken, account = nil, nil, nil
-                disableDeviceLock()
-                return
-            end
-        elseif action == "close" then
-            if ui.confirm(target, "Close PUMPE", "Shut down the PUMPE app?",
-                "CLOSE", "BACK") then
-                running = false
-                return
-            end
+        elseif action == "find" then
+            local typed = ui.input(target, "Search settings", {
+                hint = "Leave it empty to see all", initial = filter,
+                maxLength = 20, allowSpace = true,
+            })
+            filter = typed and util.trim(typed) ~= "" and util.trim(typed)
+                or nil
+            page = 1
+        elseif openSetting(action) == "exit" then
+            return
         end
     end
 end
@@ -3384,7 +3448,10 @@ end
 
 
 -- One entry point for everything social.
-local function friendsApp()
+local function friendsApp(action)
+    if action == "messages" then messagesScreen() return end
+    if action == "people" then friendsScreen() return end
+    if action == "urgent" then urgentScreen() return end
     while running and sessionToken do
         local width, height = target.getSize()
         local poll = request("PUMPE_POLL", {}, true) or {}
@@ -3416,7 +3483,9 @@ local function friendsApp()
     end
 end
 
-local function ticketsApp()
+local function ticketsApp(action)
+    if action == "events" then eventsScreen() return end
+    if action == "mine" then myTicketsScreen() return end
     while running and sessionToken do
         local width, height = target.getSize()
         ui.clear(target)
@@ -3437,7 +3506,9 @@ local function ticketsApp()
     end
 end
 
-local function customsApp()
+local function customsApp(action)
+    if action == "visas" then visasScreen() return end
+    if action == "territories" then customsScreen() return end
     while running and sessionToken do
         local width, height = target.getSize()
         ui.clear(target)
@@ -3906,9 +3977,42 @@ local transferIntent, transferMoved
 -- A bank app declares itself in its own first lines. Read from the file on
 -- disk rather than from the catalogue entry, so an app installed before this
 -- release -- whose entry records no bank name -- is still recognised.
+-- An app says what it can be asked to do in its own first lines:
+--
+--     -- PUMPE APP ACTION: cash | Foxy Cash | Send money to a friend
+--
+-- Read off the file rather than asked for at runtime, because search has to
+-- know what an app does without running it, and an app that is not installed
+-- has nothing to ask.
+-- Reading an app's own file. Wrapped, because a file that is missing or
+-- damaged is a reason to know less about that app, never a reason to take
+-- the Home Screen down on the way past.
+local function appHeader(appId)
+    local ok, body = pcall(util.readFile, appPath(appId))
+    return ok and type(body) == "string" and body or nil
+end
+
+local function declaredActions(appId)
+    local body = appHeader(appId)
+    if not body then return {} end
+    local found = {}
+    for line in body:sub(1, 2000):gmatch("[^\r\n]+") do
+        local id, label, hint = line:match(
+            "^%-%-%s*PUMPE APP ACTION:%s*([%w_]+)%s*|%s*([^|]+)|?(.*)$")
+        if id and #found < 8 then
+            found[#found + 1] = {
+                id = id,
+                label = util.trim(label),
+                hint = util.trim(hint or ""),
+            }
+        end
+    end
+    return found
+end
+
 local function declaredBank(appId)
-    local body = util.readFile(appPath(appId))
-    if type(body) ~= "string" then return nil end
+    local body = appHeader(appId)
+    if not body then return nil end
     local name = body:sub(1, 400):match("%-%-%s*PUMPE BANK APP:%s*([^\r\n]+)")
     return name and util.trim(name) or nil
 end
@@ -4011,7 +4115,7 @@ local function appStoreLoad(appId)
     return util.loadTable(appStorePath(appId), {})
 end
 
-local function runInstalledApp(entry)
+local function runInstalledApp(entry, wantedAction)
     local loader, loadError = loadfile(appPath(entry.app_id))
     if not loader then
         ui.message(target, "error", entry.name .. " is damaged",
@@ -4160,6 +4264,10 @@ local function runInstalledApp(entry)
             })
             return client:request(tostring(action), payload or {}, 6)
         end,
+        -- Which of this app's declared actions the phone was asked for,
+        -- or nil for the front door. An app that does not check simply
+        -- opens normally, which is what every app did before 10.0.
+        action = function() return wantedAction end,
         app_id = entry.app_id,
     })
     if not ok then
@@ -4256,6 +4364,7 @@ local function installApp(app)
         -- opening its file. Apps installed before 9.5 have none, and are
         -- read off disk instead.
         bank_name = app.bank_name,
+        actions = declaredActions(app.app_id),
     }
     saveApps()
     -- The tick draws itself, one stroke at a time.
@@ -4339,35 +4448,62 @@ local function appDetail(app, mine)
     end
 end
 
-appBrowser = function()
+-- `wanted` is a search: "search" opens the box, anything else is the term
+-- itself, which is how a systemwide search hands its query over.
+appBrowser = function(wanted)
     -- Only a developer sees the delete button, and only on their own apps.
     local mine = request("DEV_MINE", {}, true)
     local page, reload = 1, true
-    local apps = {}
+    local everything, apps = {}, {}
+    local filter = wanted and wanted ~= "search" and util.trim(wanted) or nil
+    if wanted == "search" then
+        filter = ui.input(target, "Search apps",
+            { hint = "What are you after?", maxLength = 20,
+              allowSpace = true })
+        filter = filter and util.trim(filter) ~= "" and util.trim(filter)
+            or nil
+    end
     while running do
         if reload then
             local listed = storeRequest("APP_LIST", {}, true)
-            apps = listed and listed.apps or {}
+            everything = listed and listed.apps or {}
             reload = false
+        end
+        apps = {}
+        local needle = filter and string.lower(filter) or nil
+        for _, app in ipairs(everything) do
+            if not needle
+                or string.lower(tostring(app.name)):find(needle, 1, true)
+                or string.lower(tostring(app.description or ""))
+                    :find(needle, 1, true) then
+                apps[#apps + 1] = app
+            end
         end
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "App Browser", #apps .. " available",
-            util.formatClock())
+        ui.header(target, "App Browser", filter and (#apps .. " found")
+            or (#apps .. " available"), util.formatClock())
         local scene = ui.scene(target)
+        scene:button("find", 2, 4, width - 2, 1,
+            ui.truncate(filter and ("Q  " .. filter) or "Q  Search apps",
+                width - 4),
+            { background = filter and ui.theme.accentDark or ui.theme.panel })
         local shown, actualPage, pages = util.page(apps, page, 4)
         page = actualPage
         if #apps == 0 then
-            ui.center(target, 9, "Nothing published yet", ui.theme.ink)
-            ui.wrappedText(target, 2, 11,
-                "Apps come from the App Server. Ask a shopkeeper to publish"
-                    .. " one from Dev Mode.", width - 2, 4, ui.theme.muted)
+            ui.center(target, 9, filter and "Nothing matches"
+                or "Nothing published yet", ui.theme.ink)
+            ui.wrappedText(target, 2, 11, filter
+                and "No app here is called that. Try a shorter word."
+                or "Apps come from the App Server. Ask a shopkeeper to"
+                    .. " publish one from Dev Mode.", width - 2, 4,
+                ui.theme.muted)
         end
         for index, app in ipairs(shown) do
             local here = installedApp(app.app_id)
             local mark = here and (here.version == app.version and "*" or "^")
                 or "+"
-            scene:button("open:" .. app.app_id, 2, 4 + (index - 1) * 3,
+            scene:button("open:" .. app.app_id, 2, 6 + (index - 1) * 3,
                 width - 2, 2,
                 mark .. " " .. ui.truncate(app.name, width - 6) .. "\n"
                     .. ui.truncate(app.description or "", width - 6),
@@ -4386,6 +4522,14 @@ appBrowser = function()
         local action = scene:wait({ tickRate = 5 })
         if action == "back" or action == "__terminate" then return
         elseif action == "refresh" then reload = true
+        elseif action == "find" then
+            local typed = ui.input(target, "Search apps", {
+                hint = "Leave it empty to see all", initial = filter,
+                maxLength = 20, allowSpace = true,
+            })
+            filter = typed and util.trim(typed) ~= "" and util.trim(typed)
+                or nil
+            page = 1
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
         else
@@ -4403,22 +4547,47 @@ appBrowser = function()
 end
 
 -- The app catalogue the Home Screen, the dock and the picker share.
+-- App Actions. Every app can be opened, and most of them can be opened at a
+-- particular place instead of at their front door. Search finds these, and a
+-- QuickAction is a list of them, so the one list below is what makes both
+-- work without either knowing anything about the apps themselves.
 local APPS = {
     friends = { name = "Friends", glyph = "@", color = colors.cyan,
-        open = friendsApp },
+        open = friendsApp, actions = {
+            { id = "messages", label = "Messages", hint = "Open a chat" },
+            { id = "people", label = "Friends", hint = "Add or find someone" },
+            { id = "urgent", label = "Urgent Contact",
+              hint = "Reach a friend fast" },
+        } },
     tickets = { name = "Tickets", glyph = "#", color = colors.orange,
-        open = ticketsApp },
+        open = ticketsApp, actions = {
+            { id = "events", label = "Browse Events", hint = "What is on" },
+            { id = "mine", label = "My Tickets", hint = "What you hold" },
+        } },
     customs = { name = "Customs", glyph = "=", color = colors.lightBlue,
-        open = customsApp },
+        open = customsApp, actions = {
+            { id = "visas", label = "My Visas", hint = "Travel papers" },
+            { id = "territories", label = "Territories",
+              hint = "Land you own" },
+        } },
     bet = { name = "Bet", glyph = "?", color = colors.magenta },
     tax = { name = "Tax", glyph = "%", color = colors.orange },
     subs = { name = "Subs", glyph = "~", color = colors.magenta },
-    browser = { name = "Apps", glyph = "+", color = colors.blue },
+    browser = { name = "Apps", glyph = "+", color = colors.blue, actions = {
+        { id = "search", label = "Search apps", hint = "Find something new" },
+    } },
+    reminders = { name = "Reminders", glyph = "!", color = colors.yellow,
+        actions = {
+            { id = "new", label = "New reminder", hint = "Something later" },
+        } },
+    quick = { name = "Quick", glyph = "&", color = colors.lime, actions = {
+        { id = "new", label = "New QuickAction", hint = "A few steps in a row" },
+    } },
     settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
     "friends", "tickets", "customs", "bet", "tax", "subs",
-    "browser", "settings",
+    "reminders", "quick", "browser", "settings",
 }
 
 -- Anything installed from the App Browser joins the Home Screen beside the
@@ -4430,20 +4599,45 @@ local EXTRA_COLORS = {
 
 local function refreshInstalledApps()
     for id in pairs(APPS) do
-        if id:sub(1, 4) == "ext:" then APPS[id] = nil end
+        if id:sub(1, 4) == "ext:" or id:sub(1, 6) == "quick:" then
+            APPS[id] = nil
+        end
     end
     for index = #APP_ORDER, 1, -1 do
-        if APP_ORDER[index]:sub(1, 4) == "ext:" then
+        local id = APP_ORDER[index]
+        if id:sub(1, 4) == "ext:" or id:sub(1, 6) == "quick:" then
             table.remove(APP_ORDER, index)
+        end
+    end
+    -- A QuickAction on the Home Screen is an icon that does something rather
+    -- than opening something. It is still an app as far as the grid, the
+    -- dock and search are concerned, which is the point.
+    for index, item in ipairs(device.shortcuts or {}) do
+        if item.on_home then
+            local id = "quick:" .. index
+            APPS[id] = {
+                name = item.name,
+                glyph = string.upper(tostring(item.name):sub(1, 1)),
+                color = colors.lime,
+                open = function() agenda.run(item) end,
+            }
+            table.insert(APP_ORDER, #APP_ORDER - 1, id)
         end
     end
     for index, entry in ipairs(installed.list) do
         local id = "ext:" .. entry.app_id
+        -- An app installed before 10.0 has no actions recorded, so they are
+        -- read off its file the first time the Home Screen is built.
+        if not entry.actions then
+            entry.actions = declaredActions(entry.app_id)
+            saveApps()
+        end
         APPS[id] = {
             name = entry.name,
             glyph = string.upper(entry.name:sub(1, 1)),
             color = EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
-            open = function() runInstalledApp(entry) end,
+            actions = entry.actions,
+            open = function(action) runInstalledApp(entry, action) end,
         }
         table.insert(APP_ORDER, #APP_ORDER - 1, id)
     end
@@ -4462,10 +4656,17 @@ local function badgeText(count)
     return count > 9 and "9+" or (" " .. count)
 end
 
+-- One of the four dock slots belongs to search. Somewhere you can always
+-- reach, on every page, without knowing where the thing you want lives --
+-- which is the whole point of it.
+local FAVOURITE_SLOTS = DOCK_SLOTS - 1
+
 local function favouriteIds()
     local chosen = {}
     for _, id in ipairs(device.favorites or {}) do
-        if APPS[id] and #chosen < DOCK_SLOTS then chosen[#chosen + 1] = id end
+        if APPS[id] and #chosen < FAVOURITE_SLOTS then
+            chosen[#chosen + 1] = id
+        end
     end
     return chosen
 end
@@ -4477,7 +4678,8 @@ favouritesPicker = function()
         for _, id in ipairs(chosen) do lookup[id] = true end
         ui.clear(target)
         ui.header(target, "Your Dock",
-            #chosen .. " of " .. DOCK_SLOTS .. " chosen", util.formatClock())
+            #chosen .. " of " .. FAVOURITE_SLOTS .. " chosen",
+            util.formatClock())
         local scene = ui.scene(target)
         local tileWidth = math.floor((width - 3) / 2)
         for index, id in ipairs(APP_ORDER) do
@@ -4504,7 +4706,7 @@ favouritesPicker = function()
                         table.remove(device.favorites, index)
                     end
                 end
-            elseif #chosen < DOCK_SLOTS then
+            elseif #chosen < FAVOURITE_SLOTS then
                 device.favorites[#device.favorites + 1] = id
             end
             saveDevice()
@@ -4515,12 +4717,16 @@ end
 -- Home Screen geometry. Small icons in a grid with the name underneath and a
 -- dock pinned above the page dots, all measured off the screen so a 26x20
 -- pocket and a wide desktop both land on whole rows.
+-- 10.0 Simple: icons pack three rows apart instead of four, and start one
+-- row higher. Two more apps arrived this release and the answer to "a bunch
+-- of pages" could not be another page -- a pocket screen now holds twelve
+-- apps where it held nine.
 local function homeLayout(width, height)
     local columns = width >= 40 and 5 or 3
     local cell = math.max(4, math.floor((width - 1) / columns))
     local dockY = height - 3
-    local top = 5
-    local rows = math.max(1, math.floor((dockY - top) / 4))
+    local top = 4
+    local rows = math.max(1, math.floor((dockY - 1 - top) / 3))
     return {
         columns = columns,
         rows = rows,
@@ -4563,8 +4769,10 @@ local function drawDock(scene, layout, poll, width)
     local left = math.max(1, math.floor((width - span) / 2) + 1)
     ui.fill(target, 2, layout.dividerY, width - 2, 1, ui.theme.panel)
     local chosen = favouriteIds()
-    for slot = 1, DOCK_SLOTS do
-        local x = left + (slot - 1) * (slotWidth + 1)
+    scene:button("search", left, layout.dockY, slotWidth, 2, "Q",
+        { background = ui.theme.accentDark })
+    for slot = 1, FAVOURITE_SLOTS do
+        local x = left + slot * (slotWidth + 1)
         local id = chosen[slot]
         if id then
             scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
@@ -4670,6 +4878,499 @@ local function ensureFoxy()
     end
 end
 
+-- Finding things --------------------------------------------------------------
+-- 10.0 Simple. Three pages of apps, nine screens in Settings and a catalogue
+-- that keeps growing -- and paging through all of it to reach one switch is
+-- the part that got tiring. Everything this phone can do is a labelled
+-- action now, and one box in the dock finds them.
+
+local function openApp(id, action)
+    local app = APPS[id]
+    if not app or not app.open then return false end
+    phoneTransition(app.name, app.color)
+    app.open(action)
+    refreshInstalledApps()
+    refreshSummary(true)
+    return true
+end
+
+local finder = {}
+
+-- Everything the phone can be asked to do, flattened. Rebuilt per search
+-- rather than cached: it is a walk over a handful of tables, and a cache
+-- would be one more thing to be wrong after an app is installed.
+function finder.everything()
+    local found = {}
+    for _, id in ipairs(APP_ORDER) do
+        local app = APPS[id]
+        if app then
+            found[#found + 1] = { label = app.name, hint = "Open the app",
+                kind = "App", app = id }
+            for _, item in ipairs(app.actions or {}) do
+                found[#found + 1] = { label = item.label, app = id,
+                    hint = item.hint ~= "" and item.hint or app.name,
+                    kind = app.name, action = item.id }
+            end
+        end
+    end
+    for _, item in ipairs(SETTINGS_ACTIONS) do
+        found[#found + 1] = { label = item.label, hint = item.hint,
+            kind = "Settings", app = "settings", action = item.id }
+    end
+    return found
+end
+
+-- A name that starts with what was typed beats one that merely contains it,
+-- and both beat a match in the description. Nothing cleverer: on a phone the
+-- right answer is usually the first thing you half-remembered the name of.
+function finder.match(items, typed)
+    local wanted = string.lower(util.trim(tostring(typed or "")))
+    if wanted == "" then return {} end
+    local hits = {}
+    for _, item in ipairs(items) do
+        local at = string.lower(item.label):find(wanted, 1, true)
+        if at then
+            item.rank = at == 1 and 1 or 2
+            hits[#hits + 1] = item
+        elseif string.lower(item.hint or ""):find(wanted, 1, true) then
+            item.rank = 3
+            hits[#hits + 1] = item
+        end
+    end
+    table.sort(hits, function(a, b)
+        if a.rank ~= b.rank then return a.rank < b.rank end
+        return a.label < b.label
+    end)
+    return hits
+end
+
+-- The shared results list. Settings and the App Browser draw their own
+-- screens around one of these, and so does the dock.
+function finder.rows(scene, hits, top, rows, width)
+    for slot = 1, rows do
+        local hit = hits[slot]
+        if not hit then break end
+        local y = top + (slot - 1) * 2
+        ui.text(target, 2, y, ui.truncate(hit.label, width - 3), ui.theme.ink)
+        ui.text(target, 2, y + 1,
+            ui.truncate(tostring(hit.kind) .. "  " .. tostring(hit.hint or ""),
+                width - 3), ui.theme.muted)
+        scene:hotspot("hit:" .. slot, 2, y, width - 2, 2)
+    end
+end
+
+function finder.ask(initial)
+    return ui.input(target, "Search", {
+        hint = "Apps, actions, settings", initial = initial,
+        maxLength = 24, allowSpace = true,
+    })
+end
+
+function finder.screen()
+    local typed = finder.ask()
+    while running and typed do
+        local hits = finder.match(finder.everything(), typed)
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Search", #hits .. " result"
+            .. (#hits == 1 and "" or "s"), util.formatClock())
+        ui.text(target, 2, 5, ui.truncate(typed, width - 3), ui.theme.ink)
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 12) / 2))
+        finder.rows(scene, hits, 7, rows, width)
+        if #hits == 0 then
+            ui.wrappedText(target, 2, 8, "Nothing on this phone matches."
+                .. " The App Browser might have it.", width - 2, 4,
+                ui.theme.muted)
+        end
+        scene:button("store", 2, height - 5, width - 2, 2,
+            "Look in the App Browser", { background = ui.theme.panel })
+        scene:button("again", 2, height - 2, width - 2, 2, "New search",
+            { background = ui.theme.accentDark })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "again" then
+            typed = finder.ask(typed)
+        elseif action == "store" then
+            openApp("browser", typed)
+        else
+            local index = tonumber(action and action:match("^hit:(%d+)$"))
+            local hit = index and hits[index]
+            if hit then openApp(hit.app, hit.action) end
+        end
+    end
+end
+
+-- Reminders and QuickActions --------------------------------------------------
+-- Both live on the phone rather than at the Bank, and both are fired by the
+-- Home Screen's own tick. That is a real limit and worth saying plainly: a
+-- PUMPE that is switched off, or sitting on its lock screen, is not
+-- reminding anybody. It catches up the moment the Home Screen is open again.
+
+agenda = {}
+
+function agenda.save()
+    device.reminders = device.reminders or {}
+    device.shortcuts = device.shortcuts or {}
+    saveDevice()
+end
+
+function agenda.dueAt(day, hour)
+    return day * 24 + hour
+end
+
+-- A device left holding an older lib/util.lua after a partial install has no
+-- ingameTime. Reminders then land on the day rather than the hour, which is
+-- a worse reminder and not a crash on the Home Screen.
+function agenda.hour()
+    if type(util.ingameTime) ~= "function" then return 0 end
+    return tonumber(util.ingameTime()) or 0
+end
+
+function agenda.now()
+    return util.ingameDay() * 24 + agenda.hour()
+end
+
+function agenda.whenText(day, hour)
+    local today = util.ingameDay()
+    local when = string.format("%02d:00", math.floor(hour))
+    if day == today then return "Today " .. when end
+    if day == today + 1 then return "Tomorrow " .. when end
+    return "Day " .. day .. " " .. when
+end
+
+-- Running a QuickAction. A repeat step multiplies the step above it, which
+-- is the only shape of loop that fits on a screen this size and still reads
+-- as one thing after another.
+function agenda.run(item)
+    local index = 1
+    while index <= #(item.steps or {}) do
+        local step = item.steps[index]
+        local after = item.steps[index + 1]
+        local times = (after and after.kind == "repeat")
+            and math.max(1, math.min(10, tonumber(after.times) or 1)) or 1
+        if step.kind ~= "repeat" then
+            for _ = 1, times do
+                if step.kind == "open" then
+                    openApp(step.app, step.action)
+                elseif step.kind == "notify" then
+                    showBanner({ kind = "info", app_name = item.name,
+                        title = item.name, body = tostring(step.text or "") })
+                end
+            end
+        end
+        index = index + ((after and after.kind == "repeat") and 2 or 1)
+    end
+end
+
+-- Anything that has come due since the last look. Reminders fire once;
+-- an automatic QuickAction fires once per in-game day.
+function agenda.tick()
+    local now, today = agenda.now(), util.ingameDay()
+    local changed = false
+    for _, item in ipairs(device.reminders or {}) do
+        if not item.done and now >= agenda.dueAt(item.day, item.hour) then
+            item.done = true
+            changed = true
+            local note = { kind = "warning", app_name = "Reminder",
+                title = "Reminder", body = tostring(item.text or "") }
+            if item.style == "alert" then
+                showFullscreenAlert(note)
+            else
+                showBanner(note)
+            end
+        end
+    end
+    for _, item in ipairs(device.shortcuts or {}) do
+        if item.trigger == "auto" and item.last_day ~= today
+            and agenda.hour() >= (item.hour or 8) then
+            item.last_day = today
+            changed = true
+            agenda.run(item)
+        end
+    end
+    if changed then agenda.save() end
+end
+
+-- Hours from now rather than a date and a time. Two numbers on a pocket
+-- screen to say "in three hours" is one number too many.
+function agenda.newReminder()
+    local text = ui.input(target, "Remind me to", {
+        hint = "What should it say?", maxLength = 60,
+        allowSpace = true, minLength = 1 })
+    if not text then return end
+    local hours = ui.input(target, "In how many hours?", {
+        hint = "In-game hours, 1 to 240", mode = "number", maxLength = 3 })
+    hours = math.max(1, math.min(240, tonumber(hours) or 0))
+    local due = agenda.now() + hours
+    device.reminders = device.reminders or {}
+    device.reminders[#device.reminders + 1] = {
+        text = util.trim(text),
+        day = math.floor(due / 24),
+        hour = math.floor(due % 24),
+        style = ui.confirm(target, "How should it arrive?",
+            "A banner drops in and goes. A full screen alert waits for you.",
+            "Banner", "Full screen") and "banner" or "alert",
+    }
+    agenda.save()
+end
+
+function agenda.reminders(wanted)
+    if wanted == "new" then agenda.newReminder() return end
+    local width, height = target.getSize()
+    while running do
+        device.reminders = device.reminders or {}
+        local list = device.reminders
+        ui.clear(target)
+        ui.header(target, "Reminders", #list .. " set", util.formatClock())
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 9) / 2))
+        if #list == 0 then
+            ui.wrappedText(target, 2, 6, "Nothing to remember yet. Add one and"
+                .. " the phone will tell you.", width - 2, 4, ui.theme.muted)
+        end
+        for slot = 1, rows do
+            local item = list[slot]
+            if not item then break end
+            local y = 5 + (slot - 1) * 2
+            ui.text(target, 2, y, ui.truncate(item.text, width - 3),
+                item.done and ui.theme.muted or ui.theme.ink)
+            ui.text(target, 2, y + 1, ui.truncate((item.done and "Done  "
+                or agenda.whenText(item.day, item.hour) .. "  ")
+                .. (item.style == "alert" and "Full screen" or "Banner"),
+                width - 3), ui.theme.muted)
+            scene:hotspot("item:" .. slot, 2, y, width - 2, 2)
+        end
+        scene:button("new", 2, height - 2, width - 2, 2, "New reminder",
+            { background = ui.theme.accentDark })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "new" then
+            agenda.newReminder()
+        else
+            local index = tonumber(action and action:match("^item:(%d+)$"))
+            if index and list[index] then
+                if ui.confirm(target, "Remove this?",
+                    ui.truncate(list[index].text, 60), "Remove", "Keep") then
+                    table.remove(list, index)
+                    agenda.save()
+                end
+            end
+        end
+    end
+end
+
+-- Building one QuickAction. Steps are added in order and removed from the
+-- end, which is the whole editor: anything more would be a text editor on a
+-- 26 column screen, and that is what 10.0 Simple was trying to get away from.
+function agenda.edit(item)
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, ui.truncate(item.name, 14),
+            #item.steps .. " step" .. (#item.steps == 1 and "" or "s"),
+            util.formatClock())
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 13)))
+        for slot = 1, rows do
+            local step = item.steps[slot]
+            if not step then break end
+            local label = step.kind == "open" and ("Open  "
+                .. tostring(step.label or ""))
+                or step.kind == "notify" and ("Tell me  "
+                    .. tostring(step.text or ""))
+                or ("Repeat above x" .. tostring(step.times or 1))
+            ui.text(target, 2, 4 + slot, ui.truncate(label, width - 3),
+                ui.theme.ink)
+        end
+        if #item.steps == 0 then
+            ui.text(target, 2, 5, "No steps yet", ui.theme.muted)
+        end
+        local half = math.floor((width - 3) / 2)
+        scene:button("open", 2, height - 8, half, 1, "+ Open",
+            { background = ui.theme.panel })
+        scene:button("notify", 3 + half, height - 8, width - 3 - half, 1,
+            "+ Tell me", { background = ui.theme.panel })
+        scene:button("repeat", 2, height - 7, half, 1, "+ Repeat",
+            { background = ui.theme.panel, disabled = #item.steps == 0 })
+        scene:button("drop", 3 + half, height - 7, width - 3 - half, 1,
+            "- Last step", { background = ui.theme.panel,
+                disabled = #item.steps == 0 })
+        scene:button("when", 2, height - 5, width - 2, 2,
+            item.trigger == "auto"
+                and ("Every day at " .. string.format("%02d:00", item.hour))
+                or "On demand only",
+            { background = item.trigger == "auto" and ui.theme.success
+                or ui.theme.panel,
+              foreground = item.trigger == "auto" and colors.black
+                or colors.white })
+        scene:button("home", 2, height - 2, width - 2, 2,
+            item.on_home and "On the Home Screen" or "Not on the Home Screen",
+            { background = ui.theme.panel })
+        scene:button("back", 1, height, 8, 1, "< Done",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then
+            agenda.save()
+            return
+        end
+        if action == "open" then
+            local pick = agenda.pickAction()
+            if pick then item.steps[#item.steps + 1] = pick end
+        elseif action == "notify" then
+            local text = ui.input(target, "Tell me", {
+                hint = "What should it say?", maxLength = 60,
+                allowSpace = true, minLength = 1 })
+            if text then
+                item.steps[#item.steps + 1] =
+                    { kind = "notify", text = util.trim(text) }
+            end
+        elseif action == "repeat" then
+            local times = ui.input(target, "How many times?", {
+                hint = "2 to 10", mode = "number", maxLength = 2 })
+            times = math.max(2, math.min(10, tonumber(times) or 2))
+            item.steps[#item.steps + 1] = { kind = "repeat", times = times }
+        elseif action == "drop" then
+            table.remove(item.steps)
+        elseif action == "when" then
+            if item.trigger == "auto" then
+                item.trigger = "demand"
+            else
+                local hour = ui.input(target, "At what hour?", {
+                    hint = "0 to 23, in-game", mode = "number",
+                    maxLength = 2 })
+                item.trigger = "auto"
+                item.hour = math.max(0, math.min(23, tonumber(hour) or 8))
+                item.last_day = util.ingameDay()
+            end
+        elseif action == "home" then
+            item.on_home = not item.on_home
+            refreshInstalledApps()
+        end
+        agenda.save()
+    end
+end
+
+-- Choosing an app action to put in a QuickAction. The same list search uses,
+-- minus the plain "open the app" rows, because a shortcut that only opens an
+-- app is a favourite and the dock already does favourites.
+function agenda.pickAction()
+    local typed = ui.input(target, "Which action?", {
+        hint = "Search apps and settings", maxLength = 20, allowSpace = true })
+    if not typed then return nil end
+    local hits = {}
+    for _, hit in ipairs(finder.match(finder.everything(), typed)) do
+        if hit.action then hits[#hits + 1] = hit end
+    end
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Which action?", #hits .. " found",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 8) / 2))
+        finder.rows(scene, hits, 5, rows, width)
+        if #hits == 0 then
+            ui.text(target, 2, 6, "Nothing matches", ui.theme.muted)
+        end
+        scene:button("back", 1, height, 8, 1, "< Back",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return nil end
+        local index = tonumber(action and action:match("^hit:(%d+)$"))
+        local hit = index and hits[index]
+        if hit then
+            return { kind = "open", app = hit.app, action = hit.action,
+                label = hit.label }
+        end
+    end
+end
+
+function agenda.quick(wanted)
+    if wanted == "new" then
+        local name = ui.input(target, "Call it what?", {
+            hint = "Morning, Payday...", maxLength = 18,
+            allowSpace = true, minLength = 1 })
+        if name then
+            device.shortcuts = device.shortcuts or {}
+            local made = { name = util.trim(name), steps = {},
+                trigger = "demand", hour = 8 }
+            device.shortcuts[#device.shortcuts + 1] = made
+            agenda.save()
+            agenda.edit(made)
+        end
+        return
+    end
+    while running do
+        device.shortcuts = device.shortcuts or {}
+        local list = device.shortcuts
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "QuickActions", #list .. " saved", util.formatClock())
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 9) / 2))
+        if #list == 0 then
+            ui.wrappedText(target, 2, 6, "A QuickAction is a few app actions"
+                .. " in a row. Run it yourself, or every day.", width - 2, 5,
+                ui.theme.muted)
+        end
+        for slot = 1, rows do
+            local item = list[slot]
+            if not item then break end
+            local y = 5 + (slot - 1) * 2
+            scene:button("run:" .. slot, 2, y, width - 9, 1,
+                ui.truncate(item.name, width - 11),
+                { background = ui.theme.accentDark })
+            scene:button("edit:" .. slot, width - 6, y, 6, 1, "Edit",
+                { background = ui.theme.panel })
+            ui.text(target, 2, y + 1, ui.truncate(#item.steps .. " step"
+                .. (#item.steps == 1 and "" or "s") .. "  "
+                .. (item.trigger == "auto"
+                    and ("daily " .. string.format("%02d:00", item.hour))
+                    or "on demand")
+                .. (item.on_home and "  home" or ""), width - 3),
+                ui.theme.muted)
+        end
+        scene:button("new", 2, height - 2, width - 2, 2, "New QuickAction",
+            { background = ui.theme.accentDark })
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return end
+        if action == "new" then
+            local name = ui.input(target, "Call it what?", {
+                hint = "Morning, Payday...", maxLength = 18,
+                allowSpace = true, minLength = 1 })
+            if name then
+                local item = { name = util.trim(name), steps = {},
+                    trigger = "demand", hour = 8 }
+                list[#list + 1] = item
+                agenda.save()
+                agenda.edit(item)
+            end
+        else
+            local run = tonumber(action and action:match("^run:(%d+)$"))
+            local edit = tonumber(action and action:match("^edit:(%d+)$"))
+            if run and list[run] then
+                agenda.run(list[run])
+            elseif edit and list[edit] then
+                if ui.confirm(target, list[edit].name, "Edit it, or delete it?",
+                    "Edit", "Delete") then
+                    agenda.edit(list[edit])
+                else
+                    table.remove(list, edit)
+                    agenda.save()
+                    refreshInstalledApps()
+                end
+            end
+        end
+    end
+end
+
 local function mainMenu()
     -- The apps that are not hubs are wired here, where their screens exist.
     APPS.bet.open = betApp
@@ -4677,6 +5378,8 @@ local function mainMenu()
     APPS.subs.open = subscriptionsScreen
     APPS.settings.open = settingsScreen
     APPS.browser.open = appBrowser
+    APPS.reminders.open = agenda.reminders
+    APPS.quick.open = agenda.quick
     pcall(ensureFoxy)
     refreshInstalledApps()
 
@@ -4733,7 +5436,7 @@ local function mainMenu()
                     drawIcon(scene, "open:" .. id, APPS[id],
                         layout.left + column * layout.cell
                             + math.floor((layout.cell - layout.iconWidth) / 2),
-                        layout.top + row * 4, layout, appBadge(id, poll))
+                        layout.top + row * 3, layout, appBadge(id, poll))
                 end
             end
             drawDock(scene, layout, poll, width)
@@ -4759,6 +5462,7 @@ local function mainMenu()
             page, alertOffset = math.max(1, page - 1), 0
         elseif action == "next" then
             page, alertOffset = math.min(pages, page + 1), 0
+        elseif action == "search" then finder.screen()
         elseif action == "lock" then lockScreen(true)
         elseif action == "edit" then favouritesPicker()
         elseif action == "scrollup" then
@@ -4786,6 +5490,7 @@ local function mainMenu()
 
         if action == "__tick" or action == "__idle" or action == "__wake" then
             tick = tick + 1
+            agenda.tick()
             checkForUpdate(false)
         end
         -- The OS poll drives the badges, the balance and the alert dot.

@@ -1,4 +1,5 @@
 -- PUMPE APP: Internet
+-- PUMPE APP ACTION: go | Go to a domain | Type an address
 -- Reading the web. Type a domain, or pick one off the list of what is out
 -- there, and the pages arrive from whichever Internet Server the network is
 -- running.
@@ -132,6 +133,14 @@ return function(api)
     end
 
     -- The app ---------------------------------------------------------------------
+
+    if type(api.action) == "function" and api.action() == "go" then
+        local typed = ui.input(target, "Go to", {
+            hint = "A domain, like foxnews", maxLength = 20,
+        })
+        if typed then visit(typed) end
+        return
+    end
 
     local offset = 0
     while running() do

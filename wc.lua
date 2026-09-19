@@ -1,4 +1,6 @@
 -- PUMPE APP: Website Crafter
+-- PUMPE APP ACTION: new | New website | Reserve a domain
+-- PUMPE APP ACTION: sites | My websites | Edit what you have made
 -- Writing a website on a pocket computer. Titles and lines of text, a main
 -- page and up to two more, and a name of your own on the network.
 --
@@ -328,6 +330,12 @@ return function(api)
     end
 
     -- The app ------------------------------------------------------------------
+
+    local wanted = type(api.action) == "function" and api.action() or nil
+    if wanted == "new" then
+        reserveScreen()
+        return
+    end
 
     while running() do
         local width, height = target.getSize()

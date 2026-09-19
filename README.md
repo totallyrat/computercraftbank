@@ -31,7 +31,7 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
-- Up to four favourites live in **the dock**, under every app page rather than on a page of their own. An empty dock slot opens the picker, and so does **Edit Your Dock** in Settings.
+- The **dock** sits under every app page: search first, then up to three favourites. An empty slot opens the picker, and so does **Edit Your Dock** in Settings.
 - Unread counts appear as a badge in an icon's corner.
 - **Foxy** is the bank. Since 9.4 the balance, your accounts, Foxy Cash, the Bet Wallet, Activity, cashing out and the Account ID all live in its bank section; there is no Bank app on the Home Screen. (It was BuckApp until 9.0, then a built-in Bank tab until 9.4.)
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
@@ -41,6 +41,25 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 - **Turning the modem off leaves you signed in.** Settings → Network takes the phone off the network; since 9.5 that is all it does. The Home Screen, Settings and everything already downloaded keep working, the header reads **Offline** where the balance goes, and anything needing a server says so instead of hanging. A phone that starts up with the modem off opens the same way, under the name it last signed in as — a label, not a session, and the first thing it can do back on the network is sign in properly. Off the network the Lock Screen opens on a tap, because the PIN is checked by the Bank and there is no Bank to check it.
+
+## Search, App Actions and QuickActions
+
+Since 10.0 Simple, everything the phone can do is a **labelled action**. Opening an app is one; so is Foxy Cash, My Tickets or Network.
+
+An app declares its own in its first lines, the same way a bank app declares itself:
+
+```lua
+-- PUMPE APP ACTION: cash | Foxy Cash | Send money to a friend
+```
+
+The phone reads that off the file rather than asking the app at runtime, because search has to know what an app does without running it. An app opened at an action receives it from `api.action()`, goes straight there, and closes when it is done.
+
+- **Search** sits in the dock, on every page, beside three favourites. It finds apps, app actions and every setting, ranking a name that starts with what you typed above one that merely contains it. What is not installed is one tap further on, in the App Browser with the same words already filled in.
+- **Settings** and the **App Browser** have their own search bars over the same lists.
+- **QuickActions** strings app actions together. Add steps, add a **Repeat** to multiply the step above it, then run it yourself or have it run every day at an hour you pick. A QuickAction can sit on the Home Screen as an icon that does something rather than opening something.
+- **Reminders** arrive as a banner or as a full screen alert, set in in-game hours from now.
+
+Reminders and QuickActions are kept on the phone and fired by the Home Screen's own tick. A PUMPE that is switched off, or sitting on its lock screen, is not reminding anybody — it catches up when the Home Screen is next open.
 
 ## Friends, Messages, and Urgent Contact
 
@@ -673,4 +692,4 @@ pumpe/
 
 ## Version
 
-PUMPE Ecosystem `10.0.0`, the **Web Update**.
+PUMPE Ecosystem `10.0.1`, released as **10.0 Simple**.

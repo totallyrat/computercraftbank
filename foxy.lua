@@ -1,4 +1,9 @@
 -- PUMPE APP: Foxy
+-- PUMPE APP ACTION: bank | Foxy Bank | Your balance and accounts
+-- PUMPE APP ACTION: cash | Foxy Cash | Send money to a friend
+-- PUMPE APP ACTION: wallet | Bet Wallet | Game money
+-- PUMPE APP ACTION: activity | Activity | What you have spent
+-- PUMPE APP ACTION: id | Account ID | Your sixteen digits
 -- The Foxy Account and the bank behind it, in one place. Downloaded from the
 -- App Server rather than shipped with the PUMPE, so it can move faster than
 -- the phone underneath it.
@@ -1041,6 +1046,27 @@ return function(api)
     end
 
     -- Home --------------------------------------------------------------------
+
+    -- Opened by name from search or a QuickAction: go straight to the thing
+    -- that was asked for, and close when it is done. Nobody who searched for
+    -- "Foxy Cash" wanted two taps of Foxy's front door first.
+    local wanted = type(api.action) == "function" and api.action() or nil
+    if wanted then
+        local jump = {
+            bank = bankScreen,
+            cash = function()
+                local overview = request("FOXY_OVERVIEW", {}, true)
+                if overview then foxyCash(overview) end
+            end,
+            wallet = betWalletScreen,
+            activity = historyScreen,
+            id = accountIdScreen,
+        }
+        if jump[wanted] then
+            jump[wanted]()
+            return
+        end
+    end
 
     ui.clear(target)
     sweepIn("FOXY", 8, FOX)

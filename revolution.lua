@@ -1,6 +1,9 @@
 -- PUMPE BANK APP: Revolution
 -- PUMPE BANK CLEARING: 1
 -- PUMPE BANK FEE: 0
+-- PUMPE APP ACTION: take | Take a payment | Charge somebody nearby
+-- PUMPE APP ACTION: bring | Bring money in | Move an account here
+-- PUMPE APP ACTION: id | My Account ID | Sixteen digits
 --
 -- A bank for people who take money on their phone.
 --
@@ -470,6 +473,17 @@ return function(api)
     -- The phone opened this app with one job to do: push what it is holding
     -- back where it came from, and say how much went.
     if fulfilIntent() then return end
+
+    -- Or opened by name from search. Do that one thing and close.
+    local wanted = type(api.action) == "function" and api.action() or nil
+    if wanted and refresh() then
+        local jump = { take = takeScreen, bring = bringMoneyIn,
+            id = accountIdScreen }
+        if jump[wanted] then
+            jump[wanted]()
+            return
+        end
+    end
 
     while running() and session do
         local width, height = target.getSize()

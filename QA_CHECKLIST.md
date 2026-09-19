@@ -379,6 +379,27 @@ Run this after installing into a ComputerCraft world.
 - [ ] Confirm a Bank Server, App Server and kiosk all update themselves silently — none of them should be waiting for a tap.
 - [ ] With the modem off, confirm the PUMPE does not check for releases at all and Settings → Updates says so.
 
+## Search and App Actions (10.0 Simple)
+
+- [ ] Confirm the dock shows **search** first and three favourites after it, on every Home Screen page.
+- [ ] Search for `cash` and confirm **Foxy Cash** is offered. Tap it and confirm Foxy opens **at Foxy Cash**, not at its front door, and closes when you leave it.
+- [ ] Search for `modem` and confirm **Network** is offered under Settings; tap it and confirm you land on the modem switch.
+- [ ] Search for something that is not installed and confirm **Look in the App Browser** carries the words over.
+- [ ] In Settings, search `up` and confirm only Updates is left. Clear it and confirm the full list returns.
+- [ ] In the App Browser, search for part of an app's name and confirm the list narrows.
+- [ ] Confirm the Home Screen holds twelve apps per page rather than nine.
+
+## Reminders and QuickActions (10.0 Simple)
+
+- [ ] Set a reminder for one in-game hour from now as a **banner**. Wait it out on the Home Screen and confirm it drops in and goes.
+- [ ] Set another as a **full screen alert** and confirm it waits for Got it.
+- [ ] Confirm a reminder that has fired is marked Done and does not come back.
+- [ ] Build a QuickAction with a **Tell me** step and a **Repeat x3**, run it on demand, and confirm the banner appears three times.
+- [ ] Add an **Open** step pointing at an app action and confirm running the QuickAction opens that app there.
+- [ ] Set a QuickAction to run every day at the current hour, leave the Home Screen open, and confirm it runs once and not again until the next in-game day.
+- [ ] Put a QuickAction on the Home Screen and confirm its icon runs it rather than opening anything.
+- [ ] Delete a QuickAction that was on the Home Screen and confirm the icon goes with it.
+
 ## The web (10.0)
 
 - [ ] From Easy Deployment, open **SERVERS** and confirm it lists Bank Server, Bank Vault, App Server, Internet Server and CCG Server.

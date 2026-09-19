@@ -1,5 +1,50 @@
 # Changelog
 
+## 10.0.1
+
+Called **10.0 Simple**. Ten built-in apps, nine screens in Settings and a
+catalogue that keeps growing -- and the way to reach any of it was to know
+which page it was on. One idea fixes all of that.
+
+**Everything this phone can do is a labelled action.** Opening an app is one.
+So is Foxy Cash, so is Network, so is My Tickets. An app declares its own in
+its first lines:
+
+    -- PUMPE APP ACTION: cash | Foxy Cash | Send money to a friend
+
+Read off the file rather than asked for at runtime, because search has to
+know what an app does without running it. Open one and the app goes straight
+there and closes when it is done -- nobody who searched for Foxy Cash wanted
+two taps of Foxy's front door first.
+
+**Search lives in the dock**, on every page, next to three favourites instead
+of four. It finds apps, app actions and every setting. What it does not find
+is one tap from the results: the App Browser, with the same words already
+typed in.
+
+- **Settings has a search bar**, over one list that search, Settings itself
+  and a QuickAction all read. Nine screens behind two page turns is nine
+  screens you have to already know the position of.
+- **So does the App Browser.**
+- **The Home Screen holds twelve apps instead of nine.** Icons sit three rows
+  apart rather than four. Two apps arrived this release and the answer to "a
+  bunch of pages" could not be another page.
+
+**QuickActions** is a few app actions in a row. Add steps, add a Repeat to
+multiply the step above it, then either run it yourself or have it run every
+day at an hour you pick. A QuickAction can sit on the Home Screen as an icon
+that *does* something rather than opening something.
+
+**Reminders** tell you something later, as a banner that drops in and goes or
+as a full screen alert that waits for you. Say it in hours rather than
+picking a date: two numbers on a pocket screen to mean "in three hours" is
+one number too many.
+
+Both are kept on the phone and fired by the Home Screen's own tick, which is
+a real limit worth saying plainly: a PUMPE that is switched off, or sitting
+on its lock screen, is not reminding anybody. It catches up the moment the
+Home Screen is open again.
+
 ## 10.0.0
 
 **The Web Update.** Apps are hard to write. A website is not, and now there

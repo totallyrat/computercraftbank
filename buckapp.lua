@@ -1,4 +1,6 @@
 -- PUMPE BANK APP: BuckApp
+-- PUMPE APP ACTION: send | Send money | Pay somebody at BuckApp
+-- PUMPE APP ACTION: id | My Account ID | Sixteen digits
 --
 -- BuckApp used to be the icon on every PUMPE. In 9.0 it left the home screen
 -- and became a bank of its own: its own server, its own accounts, its own
@@ -253,6 +255,15 @@ return function(api)
 
     if not welcome() then return end
     if fulfilIntent() then return end
+
+    local wanted = type(api.action) == "function" and api.action() or nil
+    if wanted and refresh() then
+        local jump = { send = sendMoney, id = accountIdScreen }
+        if jump[wanted] then
+            jump[wanted]()
+            return
+        end
+    end
 
     while running() and session do
         local width, height = target.getSize()
