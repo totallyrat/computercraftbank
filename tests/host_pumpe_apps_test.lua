@@ -250,6 +250,10 @@ function ui.pin() return "1234" end
 inputs = { "FoxyUser", "Holiday", "60", "100" }
 function ui.input() return table.remove(inputs, 1) end
 function ui.networkError(_, err) error("network error: " .. tostring(err)) end
+-- 11.0: the one piece of the real ui every app shares, run against this
+-- stub scene so its layout is bounds checked here too.
+local realUi = dofile("real_ui.lua")
+ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 
 actions = {
     "login",
@@ -257,8 +261,7 @@ actions = {
     "open:NOTES", "get",                 -- install one; that closes it
     "open:ROTTEN", "get", "back",        -- one that arrives damaged
     "back",                              -- leave the browser
-    "open:ext:FOXY",                     -- the installed app
-    "bank",                              -- the card, balance and accounts
+    "open:ext:FOXY",                     -- 11.0: opens on its Bank tab
     "new",                               -- open another account
     "down", "up",                        -- scroll the account column
     "pot:POT00000001", "move", "pick:main",
@@ -269,9 +272,8 @@ actions = {
     -- is what proves they are reachable from inside Foxy. 9.5 added Bring
     -- money in below them.
     "down", "down", "down", "down", "down",
-    "back",                              -- leave the bank
-    "account", "back",                   -- the account section
-    "back",                              -- leave Foxy
+    "tab:account",                       -- the Account tab
+    "home",                              -- home, from the top-left mark
     "open:ext:MAIL",                     -- 11.0: installed at sign-in
     -- 9.4: there is no Bank tab to open. Foxy is the bank, and the Home
     -- Screen has one fewer built-in app than it had.

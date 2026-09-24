@@ -7,17 +7,21 @@ local actions = {
     "create",                                        -- new account
     "next", "next", "next", "next", "next", "next",  -- the six guide steps
     "edit", "pick:tickets", "pick:friends", "back",  -- fill the dock
-    "open:tickets", "back",                          -- an app from the dock
+    "open:tickets", "home",                          -- an app from the dock
     -- 9.4: there is no Bank tab. Payments, the bet wallet and activity all
     -- live in the Foxy app now, and host_pumpe_apps_test walks them there,
     -- with the app actually installed.
-    "open:tickets", "browse", "event:EVT000001", "back", "back",
-    "mine", "back", "back",                          -- Tickets hub
+    -- 11.0: no hubs. Tickets opens on Events with My tickets as a tab;
+    -- Customs on Visas with Territories as a tab; home leaves either.
+    "open:tickets", "event:EVT000001", "back",
+    "tab:mine", "home",
+    -- No tickets now. The tab says so and stays; leaving it closes nothing.
+    "open:tickets", "tab:mine", "tab:events", "home",
     "open:customs",
-    "visas", "documents", "back", "applications", "back", "back",
-    "territories", "territory:TER000001", "citizens", "back",
-    "applications", "back", "roam", "back", "back", "back",
-    "back",                                          -- leave the Customs hub
+    "documents", "back", "applications", "back",
+    "tab:territories", "territory:TER000001", "citizens", "back",
+    "applications", "back", "roam", "back", "back",
+    "home",                                          -- leave Customs
     "open:bet", "pick:heads", "__tick", "done",
     "open:tax",                                      -- returns on its own
     "open:subs", "back",
@@ -29,6 +33,7 @@ local actions = {
     "dock", "back", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
+ticketVisits = 0
 local savedDevice
 local lockSeconds
 local betStatusCalls = 0
@@ -180,6 +185,9 @@ local client = {
                 },
             }
         elseif action == "MY_TICKETS" then
+            ticketVisits = (ticketVisits or 0) + 1
+            -- The second visit finds none: a tab stays open when empty.
+            if ticketVisits == 2 then return { tickets = {} } end
             return {
                 tickets = {
                     {
@@ -667,6 +675,12 @@ function ui.scene()
     return scene
 end
 
+-- 11.0: the tab bar and tab host every app shares, run for real against
+-- this stub's scenes.
+do
+    local realUi = dofile("real_ui.lua")
+    ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
+end
 package.loaded["lib.ui"] = ui
 
 assert(loadfile("../pumpe.lua"))()

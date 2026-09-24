@@ -255,8 +255,7 @@ function ui.confirm() return false end
 
 actions = {
     "login",                    -- the welcome screen
-    "open:friends",             -- the one social app, straight off page one
-    "messages",                 -- its Messages entry
+    "open:friends",             -- opens on its Chats tab since 11.0
     "open:CHAT0001",            -- chat list
     "type",                     -- send a message
     "money", "ask",             -- ask for money
@@ -267,18 +266,16 @@ actions = {
     "pick:ACC000007",           -- only reachable once paging works
     "create",
     "back",                     -- leave the new group chat
-    "back",                     -- leave Messages
     "__ring",                   -- a friend reaches us from inside the app
     "accept",                   -- answer the Urgent Contact
     "type",                     -- talk
     "save",                     -- vote to save
     "hang",                     -- hang up
-    "people",                   -- the Friends list inside the same app
+    "tab:people",               -- the Friends tab of the same app
     "add",                      -- search
     "add:ACC000005",            -- send a request
     "back",                     -- leave search
-    "back",                     -- leave the Friends list
-    "back",                     -- leave the social app
+    "home",                     -- leave the app from the top-left mark
     "next",                     -- the notification centre renders too
     "__terminate",
 }
@@ -316,6 +313,12 @@ function ui.scene()
     end
     return scene
 end
+-- 11.0: the tab bar and tab host every app shares, run for real against
+-- this stub's scenes.
+do
+    local realUi = dofile("real_ui.lua")
+    ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
+end
 package.loaded["lib.ui"] = ui
 
 local ok, err = pcall(assert(loadfile("../pumpe.lua")))
@@ -349,9 +352,11 @@ for _, item in ipairs(drawnText) do
     if item == " 3" then badged = true end
 end
 assert(badged, "unread messages and friend requests badge the Friends icon")
-assert(pressed("Messages (2)"), "the hub shows what is waiting in Messages")
-assert(pressed("Friends (+1)"), "and the requests waiting in Friends")
-assert(pressed("Urgent Contact"), "Urgent Contact lives in the same app")
+-- 11.0: no hub. The Chats tab says what is waiting, the Friends page says
+-- who wants to be a friend, and Urgent Contact is a tab of the same app.
+assert(pressed("Chats 2"), "the Chats tab shows what is waiting")
+assert(pressed("Requests 1"), "and the Friends page the requests waiting")
+assert(pressed("Urgent"), "Urgent Contact lives in the same app")
 
 -- Messages
 assert(asked("CHAT_LIST") and asked("CHAT_OPEN") and asked("CHAT_SEND"))

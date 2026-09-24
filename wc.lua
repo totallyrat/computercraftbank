@@ -456,8 +456,8 @@ return function(api)
             ui.card(target, 2, 5, width - 2, 5, WC)
             ui.text(target, 4, 5, "MAKE A WEBSITE", ui.theme.muted,
                 ui.theme.panel)
-            ui.wrappedText(target, 4, 7, "Pick a name, start from a template,"
-                .. " and put it on the network.", width - 6, 3,
+            ui.wrappedText(target, 4, 7, "Tap New: pick a name, start from a"
+                .. " template, put it on the network.", width - 6, 3,
                 ui.theme.muted, ui.theme.panel)
         else
             local row = 5
@@ -472,15 +472,21 @@ return function(api)
                 row = row + 3
             end
         end
-        scene:button("new", 2, height - 5, width - 2, 2, "New website",
-            { background = WC, foreground = colors.black,
-              disabled = not mine or #mine.sites >= mine.limit })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
+        -- 11.0: the standard tab bar. Your sites, and a new one.
+        ui.tabBar(scene, target, { { id = "sites", label = "Sites" },
+            { id = "new", label = "New" } }, "sites", WC)
         local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "new" then
-            reserveScreen()
+        if action == "home" or action == "__terminate" then return end
+        if action == "tab:new" then
+            if not mine then
+                ui.message(target, "error", "Offline",
+                    "The Bank is not answering", 1.6)
+            elseif #mine.sites >= mine.limit then
+                ui.message(target, "info", "That is the most",
+                    mine.limit .. " websites per account", 1.8)
+            else
+                reserveScreen()
+            end
         else
             local index = tonumber(action and action:match("^site:(%d+)$"))
             local site = index and mine and mine.sites[index]

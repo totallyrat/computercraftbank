@@ -18,6 +18,8 @@ return function(api)
 
     local FOX = colors.orange
     local INK = colors.white
+    local TABS = { { id = "bank", label = "Bank" },
+        { id = "account", label = "Account" } }
 
     local function running()
         return api.running()
@@ -825,18 +827,20 @@ return function(api)
                     .. " use this account again.", width - 6, 2,
                     ui.theme.muted, ui.theme.panel)
                 local closed = ui.scene(target)
-                closed:button("home", 2, height - 8, width - 2, 2,
+                closed:button("bringback", 2, height - 8, width - 2, 2,
                     "Bring it back here",
                     { background = FOX, foreground = colors.black })
                 closed:button("id", 2, height - 5, width - 2, 2,
                     "Show my Account ID", { background = ui.theme.panel })
-                closed:button("back", 1, height, 8, 1, "< Foxy",
-                    { background = ui.theme.panel })
+                ui.tabBar(closed, target, TABS, "bank", FOX)
                 local closedAction = closed:wait({ tickRate = 5 })
-                if closedAction == "home" then
+                if closedAction == "bringback" then
                     bringMoneyIn(here.moved_to_name)
                 elseif closedAction == "id" then accountIdScreen()
-                else return end
+                elseif closedAction == "home" or closedAction == "__terminate"
+                    or (closedAction or ""):match("^tab:") then
+                    return closedAction
+                end
             else
             local overview = request("FOXY_OVERVIEW", {}, true)
             if not overview then return end
@@ -885,7 +889,7 @@ return function(api)
             for slot = 1, perView do
                 local row = rows[offset + slot]
                 if row then
-                    local y = 14 + (slot - 1) * 2
+                    local y = 13 + (slot - 1) * 2
                     if row.kind == "new" then
                         scene:button("new", 2, y, width - 2, 2,
                             "+  New account",
@@ -928,15 +932,16 @@ return function(api)
                     end
                 end
             end
-            scene:button("up", width - 8, height, 3, 1, "^",
+            scene:button("up", width - 8, height - 1, 3, 1, "^",
                 { background = ui.theme.panel, disabled = offset <= 0 })
-            scene:button("down", width - 4, height, 3, 1, "v",
+            scene:button("down", width - 4, height - 1, 3, 1, "v",
                 { background = ui.theme.panel,
                   disabled = offset + perView >= #rows })
-            scene:button("back", 1, height, 8, 1, "< Foxy",
-                { background = ui.theme.panel })
+            ui.tabBar(scene, target, TABS, "bank", FOX)
             local action = scene:wait({ tickRate = 5 })
-            if action == "back" or action == "__terminate" then return
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
             elseif action == "up" then offset = offset - 1
             elseif action == "down" then offset = offset + 1
             elseif action == "cash" then foxyCash(overview)
@@ -999,10 +1004,12 @@ return function(api)
                 { background = ui.theme.panel })
             ui.wrappedText(target, 2, 17, "More coming to your account soon.",
                 width - 2, 2, ui.theme.muted)
-            scene:button("back", 1, height, 8, 1, "< Foxy",
-                { background = ui.theme.panel })
+            ui.tabBar(scene, target, TABS, "account", FOX)
             local action = scene:wait({ tickRate = 5 })
-            if action == "back" or action == "__terminate" then return end
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
+            end
             if action == "name" then
                 local name = ui.input(target, "Change your name", {
                     hint = "2-20 characters", initial = account.name,
@@ -1073,22 +1080,19 @@ return function(api)
     sweepIn("small bank, big vault", 10, ui.theme.muted)
     sleep(0.5)
 
+    -- 11.0: Bank and Account along the bottom, the way every app is laid
+    -- out now. Foxy opens on the bank, which is what it is opened for.
+    local tab = "bank"
     while running() do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Foxy", api.account().name, util.formatClock())
-        ui.center(target, 5, "FOXY", FOX, ui.theme.background)
-        local scene = ui.scene(target)
-        scene:button("bank", 2, 8, width - 2, 4, "Bank\nBalance, accounts, cash",
-            { background = FOX, foreground = colors.black, shadow = true })
-        scene:button("account", 2, 13, width - 2, 4,
-            "Account\nYour details", { background = ui.theme.panel,
-                shadow = true })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "bank" then bankScreen()
-        elseif action == "account" then accountScreen() end
+        local switched
+        if tab == "account" then
+            switched = accountScreen()
+        else
+            switched = bankScreen()
+        end
+        local nextTab = type(switched) == "string"
+            and switched:match("^tab:(.+)$")
+        if not nextTab then return end
+        tab = nextTab
     end
 end

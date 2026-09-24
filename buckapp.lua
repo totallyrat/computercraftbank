@@ -265,6 +265,10 @@ return function(api)
         end
     end
 
+    -- 11.0: Money and Account along the bottom, like every app.
+    local TABS = { { id = "money", label = "Money" },
+        { id = "account", label = "Account" } }
+    local tab = "money"
     while running() and session do
         local width, height = target.getSize()
         if not refresh() then
@@ -279,28 +283,31 @@ return function(api)
         ui.text(target, 4, 6, money(me.balance), ui.theme.ink, ui.theme.panel)
         ui.text(target, 4, 7, ui.truncate("ID " .. me.formatted, width - 6),
             ui.theme.muted, ui.theme.panel)
-        if (me.balance or 0) == 0 then
-            ui.wrappedText(target, 2, 10, "Empty. Move money here from Foxy"
-                .. " using the Account ID above.", width - 2, 3,
-                ui.theme.muted)
-        end
         local scene = ui.scene(target)
-        local half = math.floor((width - 3) / 2)
-        scene:button("send", 2, 13, half, 2, "Send",
-            { background = BUCK, foreground = colors.black })
-        scene:button("history", 3 + half, 13, width - 3 - half, 2, "Activity",
-            { background = ui.theme.panel })
-        scene:button("id", 2, 16, half, 2, "My ID",
-            { background = ui.theme.panel })
-        scene:button("move", 3 + half, 16, width - 3 - half, 2, "Move out",
-            { background = ui.theme.warning, foreground = colors.black })
-        scene:button("out", 2, height - 1, 12, 1, "Sign out",
-            { background = ui.theme.panel })
-        scene:button("back", width - 9, height - 1, 9, 1, "< Home",
-            { background = ui.theme.panel })
+        if tab == "money" then
+            if (me.balance or 0) == 0 then
+                ui.wrappedText(target, 2, 10, "Empty. Move money here from"
+                    .. " Foxy using the Account ID above.", width - 2, 3,
+                    ui.theme.muted)
+            end
+            scene:button("send", 2, 13, width - 2, 2, "Send",
+                { background = BUCK, foreground = colors.black })
+            scene:button("history", 2, 16, width - 2, 2, "Activity",
+                { background = ui.theme.panel })
+        else
+            scene:button("id", 2, 10, width - 2, 2, "My Account ID",
+                { background = ui.theme.panel })
+            scene:button("move", 2, 13, width - 2, 2, "Move money out",
+                { background = ui.theme.warning, foreground = colors.black })
+            scene:button("out", 2, 16, width - 2, 2, "Sign out",
+                { background = ui.theme.panel })
+        end
+        ui.tabBar(scene, target, TABS, tab, BUCK)
         local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "send" then sendMoney()
+        if action == "home" or action == "__terminate" then return end
+        local picked = (action or ""):match("^tab:(.+)$")
+        if picked then tab = picked
+        elseif action == "send" then sendMoney()
         elseif action == "history" then historyScreen()
         elseif action == "id" then accountIdScreen()
         elseif action == "move" then transferOut()

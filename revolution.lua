@@ -485,6 +485,11 @@ return function(api)
         end
     end
 
+    -- 11.0: three tabs along the bottom instead of seven buttons in a
+    -- grid. Take is what Revolution is for, so it opens there.
+    local TABS = { { id = "take", label = "Take" }, { id = "pay", label = "Pay" },
+        { id = "account", label = "Account" } }
+    local tab = "take"
     while running() and session do
         local width, height = target.getSize()
         if not refresh() then
@@ -501,30 +506,30 @@ return function(api)
             and (money(me.pending) .. " clearing") or "Nothing clearing",
             width - 6), ui.theme.muted, ui.theme.panel)
         local scene = ui.scene(target)
-        -- Every row accounted for on a 20-row pocket screen. Move out used
-        -- to start on the last row and run two rows deep, so half of it was
-        -- off the bottom and the other half sat on top of Home.
-        scene:button("take", 2, 9, width - 2, 3, "Take a payment\n0% fee",
-            { background = REVO, foreground = colors.white })
-        local half = math.floor((width - 3) / 2)
-        scene:button("pay", 2, 13, half, 2, "Pay\nnearby",
-            { background = ui.theme.success, foreground = colors.black })
-        scene:button("code", 3 + half, 13, width - 3 - half, 2,
-            "Pay kiosk\nby code",
-            { background = colors.blue })
-        scene:button("clearing", 2, 16, half, 2, "Clearing",
-            { background = ui.theme.panel })
-        scene:button("id", 3 + half, 16, width - 3 - half, 2, "My ID",
-            { background = ui.theme.panel })
-        scene:button("bring", 2, 19, half, 1, "Bring in",
-            { background = ui.theme.success, foreground = colors.black })
-        scene:button("move", 3 + half, 19, width - 3 - half, 1, "Move out",
-            { background = ui.theme.warning, foreground = colors.black })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
+        if tab == "take" then
+            scene:button("take", 2, 10, width - 2, 4, "Take a payment\n0% fee",
+                { background = REVO, foreground = colors.white, shadow = true })
+            scene:button("clearing", 2, 15, width - 2, 2, "Clearing",
+                { background = ui.theme.panel })
+        elseif tab == "pay" then
+            scene:button("pay", 2, 10, width - 2, 3, "Pay nearby",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("code", 2, 14, width - 2, 3, "Pay kiosk by code",
+                { background = colors.blue })
+        else
+            scene:button("id", 2, 10, width - 2, 2, "My Account ID",
+                { background = ui.theme.panel })
+            scene:button("bring", 2, 13, width - 2, 2, "Bring money in",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("move", 2, 16, width - 2, 2, "Move money out",
+                { background = ui.theme.warning, foreground = colors.black })
+        end
+        ui.tabBar(scene, target, TABS, tab, REVO)
         local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "take" then takeScreen()
+        if action == "home" or action == "__terminate" then return end
+        local picked = (action or ""):match("^tab:(.+)$")
+        if picked then tab = picked
+        elseif action == "take" then takeScreen()
         elseif action == "pay" then payScreen()
         elseif action == "code" then codePayScreen()
         elseif action == "clearing" then pendingScreen()

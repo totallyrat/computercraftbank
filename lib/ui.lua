@@ -446,23 +446,52 @@ function ui.tabBar(scene, target, tabs, active, accent)
     end
     local spare = width - needed
     local each, over = math.floor(spare / count), spare % count
+    -- Black reads on orange and cyan, not on purple or blue.
+    local shade = accent or ui.theme.accent
+    local ink = (shade == colors.purple or shade == colors.blue
+        or shade == colors.red or shade == colors.green
+        or shade == colors.brown or shade == colors.gray
+        or shade == colors.black) and colors.white or colors.black
     local x = 1
     for index, tab in ipairs(tabs) do
         local tabWidth = widths[index] + each + (index <= over and 1 or 0)
         local on = tab.id == active
         scene:button("tab:" .. tab.id, x, height, tabWidth, 1,
             ui.truncate(tostring(tab.label), math.max(1, tabWidth - 2)), {
-                background = on and (accent or ui.theme.accent)
-                    or ui.theme.panel,
-                foreground = on and colors.black or colors.white,
+                background = on and shade or ui.theme.panel,
+                foreground = on and ink or colors.white,
             })
         x = x + tabWidth
     end
     scene:button("home", 1, 1, 1, 1, "<", {
-        background = accent or ui.theme.accent, foreground = colors.black,
-        flash = false,
+        background = shade, foreground = ink, flash = false,
     })
     scene:hotspot("home", 2, 1, 5, 1)
+end
+
+-- Runs an app made of tab pages. `spec.pages[id]` draws its page with the
+-- tab bar -- it is handed `spec` itself, which carries `list`, `active` and
+-- `color` for ui.tabBar -- and returns what was tapped. "tab:<id>" moves to
+-- that page; anything else leaves the app and is returned.
+--
+-- A tab named in `spec.once` is a thing to do rather than a place to be --
+-- write a message, place a call. It runs, and the tab before it comes back.
+function ui.runTabs(spec)
+    local first = spec.list[1].id
+    local tab, previous = spec.start or first, nil
+    while not spec.running or spec.running() do
+        spec.active = tab
+        -- A chance to relabel the tabs -- an unread count -- each time.
+        if spec.refresh then spec.refresh(spec) end
+        local switched = spec.pages[tab](spec)
+        local once = spec.once and spec.once[tab]
+        if once then switched = "tab:" .. (previous or first) end
+        local nextTab = type(switched) == "string"
+            and switched:match("^tab:(.+)$")
+        if not nextTab or not spec.pages[nextTab] then return switched end
+        if not once then previous = tab end
+        tab = nextTab
+    end
 end
 
 function ui.progress(target, x, y, width, value, maximum, foreground, background)

@@ -66,6 +66,51 @@ for _, size in ipairs({ { 26, 20 }, { 51, 19 } }) do
     ui.usePhoneStyle(false)
 end
 
+-- The tab host: each page returns what was tapped. A "once" tab is a thing
+-- to do, after which the tab before it comes back; anything that is not a
+-- known tab leaves, and is handed back to whoever opened the app.
+do
+    local visited, refreshed = {}, 0
+    -- Chats taps Urgent; Urgent returns something that is ignored; Chats is
+    -- back and taps Friends; Friends taps a tab nobody has.
+    local script = { "tab:urgent", "ignored", "tab:people", "tab:nowhere" }
+    local function page(name)
+        return function(spec)
+            visited[#visited + 1] = name .. ":" .. spec.active
+            return table.remove(script, 1)
+        end
+    end
+    local left = ui.runTabs({
+        list = { { id = "chats", label = "Chats" }, { id = "people", label = "Friends" },
+            { id = "urgent", label = "Urgent" } },
+        start = "chats",
+        pages = { chats = page("chats"), people = page("people"),
+            urgent = page("urgent") },
+        once = { urgent = true },
+        refresh = function() refreshed = refreshed + 1 end,
+    })
+    assert(table.concat(visited, ",")
+        == "chats:chats,urgent:urgent,chats:chats,people:people",
+        "urgent ran once and chats came back: " .. table.concat(visited, ","))
+    assert(left == "tab:nowhere", "an unknown tab leaves the app")
+    assert(refreshed == 4, "the labels are refreshed before every page")
+end
+
+-- The active tab's writing reads on its colour: white on purple, black on
+-- orange.
+do
+    local drawn = {}
+    local recorder = { button = function(_, id, _, _, _, _, _, spec)
+        drawn[id] = spec
+    end, hotspot = function() end }
+    local screen = { getSize = function() return 26, 20 end }
+    local list = { { id = "a", label = "Take" }, { id = "b", label = "Pay" } }
+    ui.tabBar(recorder, screen, list, "a", colors.purple)
+    assert(drawn["tab:a"].foreground == colors.white, "white on purple")
+    ui.tabBar(recorder, screen, list, "a", colors.orange)
+    assert(drawn["tab:a"].foreground == colors.black, "black on orange")
+end
+
 local wrapped = ui.wrap(
     "Processing fees and payment totals stay readable on pocket screens", 22)
 assert(#wrapped == 4)

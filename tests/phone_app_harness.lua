@@ -156,6 +156,9 @@ function phone.run(options)
         save = function(value) options.kept.value = util.copy(value) return true end,
         load = function() return util.copy(options.kept.value or {}) end,
         action = function() return options.wanted end,
+        -- A bank app's own 3rd Party Bank Server, when the test has one.
+        bank = options.bank_app,
+        banks = function() return {} end,
         app_id = appId,
     }
     assert(loadfile(options.file))()(api)

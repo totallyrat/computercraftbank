@@ -301,16 +301,23 @@ disableDeviceLock = function()
     if canRingAnywhere then ui.setBackgroundTask(nil) end
 end
 
-local function pageFooter(scene, page, pages)
+-- 11.0: a page of an app with tabs has them on the bottom row and its page
+-- arrows one row up; anything else keeps Home down there.
+local function pageFooter(scene, page, pages, tabs)
     local width, height = scene.width, scene.height
-    scene:button("back", 1, height, 8, 1, "< Home",
-        { background = ui.theme.panel })
+    local row = tabs and height - 1 or height
+    if tabs then
+        ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+    else
+        scene:button("back", 1, height, 8, 1, "< Home",
+            { background = ui.theme.panel })
+    end
     if pages and pages > 1 then
-        scene:button("prev", width - 15, height, 4, 1, "<",
+        scene:button("prev", width - 15, row, 4, 1, "<",
             { background = ui.theme.panel, disabled = page <= 1 })
-        ui.text(scene.target, width - 10, height,
+        ui.text(scene.target or target, width - 10, row,
             page .. "/" .. pages, ui.theme.muted)
-        scene:button("next", width - 4, height, 4, 1, ">",
+        scene:button("next", width - 4, row, 4, 1, ">",
             { background = ui.theme.panel, disabled = page >= pages })
     end
 end
@@ -631,7 +638,7 @@ local function ticketTypeScreen(event, ticketTypes)
     end
 end
 
-local function eventsScreen()
+local function eventsScreen(tabs)
     local result = request("LIST_EVENTS")
     if not result then return end
     local events, page, blink = result.events, 1, true
@@ -674,9 +681,12 @@ local function eventsScreen()
             ui.wrappedText(target, 4, y + 4, event.location,
                 width - 6, 2, ui.theme.muted, ui.theme.panel)
         end
-        pageFooter(scene, page, pages)
+        pageFooter(scene, page, pages, tabs)
         local action = scene:wait({ tickRate = 0.5, flash = false })
         blink = not blink
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            return action
+        end
         if action == "back" or action == "__terminate" then return
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
@@ -724,13 +734,31 @@ local function drawTicket(ticket, blink)
     end
 end
 
-local function myTicketsScreen()
+local function myTicketsScreen(tabs)
     local result = request("MY_TICKETS")
     if not result then return end
     local tickets = result.tickets
     if #tickets == 0 then
-        ui.message(target, "info", "NO TICKETS YET", "Find one under Events", 1.2)
-        return
+        if not tabs then
+            ui.message(target, "info", "NO TICKETS YET",
+                "Find one under Events", 1.2)
+            return
+        end
+        -- A tab cannot leave just because it is empty: that would close the
+        -- whole app. It says so and waits.
+        while true do
+            ui.clear(target)
+            ui.header(target, "My Tickets", "Nothing yet", util.formatClock())
+            ui.center(target, 9, "NO TICKETS YET", ui.theme.ink)
+            ui.center(target, 11, "Find one under Events", ui.theme.muted)
+            local scene = ui.scene(target)
+            ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+            local action = scene:wait()
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
+            end
+        end
     end
     local index, blink = 1, true
     while true do
@@ -740,15 +768,24 @@ local function myTicketsScreen()
         drawTicket(ticket, blink)
         local width, height = target.getSize()
         local scene = ui.scene(target)
-        scene:button("back", 1, height, 7, 1, "<Back",
-            { background = ui.theme.panel })
-        scene:button("prev", width - 12, height, 4, 1, "<",
+        local row = tabs and height - 1 or height
+        if tabs then
+            ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+        else
+            scene:button("back", 1, height, 7, 1, "<Back",
+                { background = ui.theme.panel })
+        end
+        scene:button("prev", width - 12, row, 4, 1, "<",
             { background = ui.theme.panel, disabled = index <= 1 })
-        ui.text(target, width - 7, height, index .. "/" .. #tickets, ui.theme.muted)
-        scene:button("next", width - 3, height, 3, 1, ">",
+        ui.text(target, width - 7, row, index .. "/" .. #tickets, ui.theme.muted)
+        scene:button("next", width - 3, row, 3, 1, ">",
             { background = ui.theme.panel, disabled = index >= #tickets })
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            stopPresenting()
+            return action
+        end
         if action == "back" or action == "__terminate" then
             stopPresenting()
             return
@@ -1124,7 +1161,7 @@ local function visaApplyScreen(overview)
     end
 end
 
-local function visasScreen()
+local function visasScreen(tabs)
     while sessionToken do
         local overview = request("VISA_OVERVIEW")
         if not overview then return end
@@ -1148,9 +1185,16 @@ local function visasScreen()
             "Apply for Visa", { background = ui.theme.accentDark })
         scene:button("applications", 2, 16, width - 2, 2,
             "Applications", { background = ui.theme.panel })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
+        if tabs then
+            ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+        else
+            scene:button("back", 1, height, 8, 1, "< Home",
+                { background = ui.theme.panel })
+        end
         local action = scene:wait()
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            return action
+        end
         if action == "documents" then
             travelDocumentScreen(overview.documents)
         elseif action == "apply" then
@@ -1450,7 +1494,7 @@ local function createTerritory()
     end
 end
 
-local function customsScreen()
+local function customsScreen(tabs)
     while sessionToken do
         local overview = request("CUSTOMS_OVERVIEW")
         if not overview then return end
@@ -1487,9 +1531,16 @@ local function customsScreen()
                     "+ New Territory", { background = ui.theme.panel })
             end
         end
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
+        if tabs then
+            ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+        else
+            scene:button("back", 1, height, 8, 1, "< Home",
+                { background = ui.theme.panel })
+        end
         local action = scene:wait()
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            return action
+        end
         local territoryId = action
             and action:match("^territory:(.+)$")
         if territoryId then
@@ -2034,7 +2085,7 @@ local function friendRequestsScreen(incoming)
     end
 end
 
-local function friendsScreen()
+local function friendsScreen(tabs)
     local page = 1
     while true do
         local overview = request("FRIEND_OVERVIEW")
@@ -2066,8 +2117,11 @@ local function friendsScreen()
             scene:button("drop:" .. friend.account_id, width - 6, y, 6, 3,
                 "X", { background = ui.theme.danger })
         end
-        pageFooter(scene, page, pages)
+        pageFooter(scene, page, pages, tabs)
         local action = scene:wait({ tickRate = 0.5 })
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            return action
+        end
         if action == "back" or action == "__terminate" then return
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
@@ -2352,7 +2406,7 @@ local function newGroupScreen(friends)
     end
 end
 
-local function messagesScreen()
+local function messagesScreen(tabs)
     local page = 1
     while true do
         local list = request("CHAT_LIST")
@@ -2383,8 +2437,11 @@ local function messagesScreen()
                         or ui.theme.panel,
                 })
         end
-        pageFooter(scene, page, pages)
+        pageFooter(scene, page, pages, tabs)
         local action = scene:wait({ tickRate = 0.5 })
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            return action
+        end
         if action == "back" or action == "__terminate" then return
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
@@ -3448,84 +3505,54 @@ end
 
 
 -- One entry point for everything social.
+-- 11.0: the hubs are gone. Friends, Tickets and Customs open on their first
+-- page with the others as tabs along the bottom, and an app action -- "My
+-- Tickets" from search -- opens on that tab. Urgent Contact is something to
+-- do rather than somewhere to be, so tapping it places the call and brings
+-- the last tab back.
 local function friendsApp(action)
-    if action == "messages" then messagesScreen() return end
-    if action == "people" then friendsScreen() return end
     if action == "urgent" then urgentScreen() return end
-    while running and sessionToken do
-        local width, height = target.getSize()
-        local poll = request("PUMPE_POLL", {}, true) or {}
-        ui.clear(target)
-        ui.header(target, "Friends", "People and messages", util.formatClock())
-        local scene = ui.scene(target)
-        local unread = poll.unread_messages or 0
-        local requests = poll.friend_requests or 0
-        scene:button("messages", 2, 5, width - 2, 4,
-            unread > 0 and ("Messages (" .. unread .. ")") or "Messages", {
-                background = unread > 0 and ui.theme.accentDark or colors.cyan,
-                shadow = true,
-            })
-        scene:button("people", 2, 10, width - 2, 4,
-            requests > 0 and ("Friends (+" .. requests .. ")") or "Friends", {
-                background = requests > 0 and ui.theme.warning or colors.lime,
-                foreground = colors.black,
-                shadow = true,
-            })
-        scene:button("urgent", 2, 15, width - 2, 3, "Urgent Contact",
-            { background = ui.theme.danger, shadow = true })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 1 })
-        if action == "back" or action == "__terminate" then return
-        elseif action == "messages" then messagesScreen()
-        elseif action == "people" then friendsScreen()
-        elseif action == "urgent" then urgentScreen() end
-    end
+    ui.runTabs({
+        list = { { id = "messages", label = "Chats" },
+            { id = "people", label = "Friends" },
+            { id = "urgent", label = "Urgent" } },
+        color = colors.cyan,
+        start = action == "people" and "people" or "messages",
+        pages = { messages = messagesScreen, people = friendsScreen,
+            urgent = urgentScreen },
+        once = { urgent = true },
+        running = function() return running and sessionToken ~= nil end,
+        -- What the hub used to show on its Messages button: how much is
+        -- waiting. One digit, so the three tabs still fit a pocket.
+        refresh = function(spec)
+            local poll = request("PUMPE_POLL", {}, true) or {}
+            local unread = poll.unread_messages or 0
+            spec.list[1].label = unread > 0
+                and ("Chats " .. math.min(unread, 9)) or "Chats"
+        end,
+    })
 end
 
 local function ticketsApp(action)
-    if action == "events" then eventsScreen() return end
-    if action == "mine" then myTicketsScreen() return end
-    while running and sessionToken do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Tickets", "Events and your tickets",
-            util.formatClock())
-        local scene = ui.scene(target)
-        scene:button("browse", 2, 6, width - 2, 5, "Browse Events",
-            { background = colors.purple, shadow = true })
-        scene:button("mine", 2, 12, width - 2, 5, "My Tickets",
-            { background = colors.orange, foreground = colors.black,
-                shadow = true })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 1 })
-        if action == "back" or action == "__terminate" then return
-        elseif action == "browse" then eventsScreen()
-        elseif action == "mine" then myTicketsScreen() end
-    end
+    ui.runTabs({
+        list = { { id = "events", label = "Events" },
+            { id = "mine", label = "My tickets" } },
+        color = colors.orange,
+        start = action == "mine" and "mine" or "events",
+        pages = { events = eventsScreen, mine = myTicketsScreen },
+        running = function() return running and sessionToken ~= nil end,
+    })
 end
 
 local function customsApp(action)
-    if action == "visas" then visasScreen() return end
-    if action == "territories" then customsScreen() return end
-    while running and sessionToken do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Customs", "Territories and travel",
-            util.formatClock())
-        local scene = ui.scene(target)
-        scene:button("visas", 2, 6, width - 2, 5, "My Visas",
-            { background = colors.purple, shadow = true })
-        scene:button("territories", 2, 12, width - 2, 5, "Territories",
-            { background = colors.lightBlue, shadow = true })
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 1 })
-        if action == "back" or action == "__terminate" then return
-        elseif action == "visas" then visasScreen()
-        elseif action == "territories" then customsScreen() end
-    end
+    ui.runTabs({
+        list = { { id = "visas", label = "Visas" },
+            { id = "territories", label = "Territories" } },
+        color = colors.lightBlue,
+        start = action == "territories" and "territories" or "visas",
+        pages = { visas = visasScreen, territories = customsScreen },
+        running = function() return running and sessionToken ~= nil end,
+    })
 end
 
 -- Optional apps ---------------------------------------------------------------

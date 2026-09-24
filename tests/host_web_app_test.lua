@@ -295,6 +295,12 @@ function ui.scene()
     end
     return scene
 end
+-- 11.0: the tab bar and tab host every app shares, run for real against
+-- this stub's scenes.
+do
+    local realUi = dofile("real_ui.lua")
+    ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
+end
 package.loaded["lib.ui"] = ui
 
 -- The website under test. It draws one line, and it reaches for every door
@@ -349,14 +355,14 @@ end
 actions = {
     "login",
     "open:ext:WC",                     -- Website Crafter
-    "new",                             -- reserve a domain
+    "tab:new",                         -- reserve a domain (a tab since 11.0)
     "pick:1",                          -- start from a template
     "site:1",                          -- open it
     "edit",                            -- the code
     "add",                             -- one more line
     "back",
     "publish",                         -- and put it on the web
-    "back",                            -- out of Website Crafter
+    "home",                            -- out of Website Crafter
     "open:ext:NET",                    -- the Internet app
     "go",                              -- open the one already up
     "yes",                             -- the page asks who you are
