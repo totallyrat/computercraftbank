@@ -1,5 +1,85 @@
 # Changelog
 
+## 11.0.0
+
+A big one. Shop learns to give money back, the PUMPE gets email, every app
+is laid out the same way, search moves out of the dock, and a Bank Vault
+keeps itself up to date through its Core.
+
+**Returns in Shop.** Every order can be sent back for at least five days
+after it arrives -- stores can offer longer, up to thirty. The buyer asks
+from the order's page; the store refunds it from a Delivery Terminal once it
+has the goods back, or declines with a reason the buyer is told.
+
+**Cancel before an order is confirmed.** An order confirms two hours after
+checkout. A store can let buyers cancel until then, and while it can be
+cancelled the Bank holds the money rather than the store, so a cancellation
+is always refunded in full.
+
+**Stores can refund too.** Cancel and refund any open order from the
+Delivery Terminal -- sold out, say. Refunds go back to whichever bank paid,
+and are retried until that bank answers.
+
+**FoxMail, on every PUMPE.** Email. Everybody can have an address at
+foxy.com, and anybody with one can write to anybody else. It installs itself
+at sign-in, like Foxy.
+
+**Company email.** A company registers a domain of its own --
+revolution.com -- with up to five addresses. Its owner reads them in FoxMail
+beside their own address, and its Service Kiosks read and write them too.
+
+**The Email API.** An app can send email from its company's address with
+api.mail.send -- a receipt, a reminder. Only its publisher's company's
+address, and fifty a day.
+
+**Tabs along the bottom, in every app.** The way Shop did it first: an app's
+parts in a row at the bottom. Friends, Tickets and Customs lose their hub
+pages and open straight onto their first tab.
+
+**The new Foxy.** Bank and Account, as tabs. It opens on the bank.
+
+**A way home from every app.** Tap the mark at the top left. Shop 10.2 had
+no way out but Ctrl+T, which was a mistake.
+
+**Search has a bar of its own.** A slim one, just above the dock, so all four
+dock slots are yours again and the app grid keeps every row.
+
+**Suggestions as you type.** Type "fox" and Foxy, Foxy Cash and FoxMail are
+already under the field. Tap one to go straight there.
+
+**Keyboards that can type an address.** The on-screen keyboard had no @, no
+full stop and no comma. FoxMail's has.
+
+**Bank Vaults update over the cable.** When the Core runs a newer release
+than its Vault, it sends the Vault that release down the pair cable, and the
+Vault installs it and restarts. A paired Vault no longer fetches its own, so
+the two halves always run the same release.
+
+- Two hours and five days are in-game time, like every clock in the Shop: a
+  Minecraft day is twenty real minutes, so an order can be cancelled for
+  about a minute and forty seconds of real time, and returned for about an
+  hour and forty minutes. Both are in config.lua (`shop_confirm_hours`,
+  `shop_min_return_days`) if your server wants them longer.
+- A return refunds the whole order, delivery included. Nothing checks that
+  the goods came back but the store: that is why it is the store that
+  presses REFUND, and why the buyer is told when it declines.
+- Terms are fixed when somebody pays: a store turning cancellations off, or
+  shortening its window, changes new orders only.
+- A refund owed to another bank that refuses it -- a closed account -- lands
+  in the buyer's Foxy account instead.
+- FoxMail keeps thirty messages per inbox and fifteen sent, 300 letters a
+  message, five recipients, forty sent a day per address. Mail lives on the
+  Vault in a file of its own.
+- Revolution is Take, Pay and Account; BuckApp is Money and Account; Website
+  Crafter is Sites and New. Apps with one screen -- Internet, Tax, Subs,
+  Reminders, QuickActions, Settings -- keep their Home button rather than
+  growing tabs they have nothing to put in.
+- The Vault only takes a release from its own Core, only a newer one, only
+  the files a Vault installs, each checked against what the Core announced.
+  config.lua is merged with the Vault's own settings, and every file goes in
+  or none do. The first move to 11.0 happens the old way; after that, the
+  cable.
+
 ## 10.2.0
 
 Called **10.2 Shop**. Buying something used to mean walking to the store and

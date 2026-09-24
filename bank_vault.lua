@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "10.2.0"
+local PROGRAM_VERSION = "11.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4026,6 +4026,107 @@ function vault.VAULT_MIGRATE(payload, sender)
     return { table = name, accepted = accepted }
 end
 
+-- Updates over the cable, 11.0 ------------------------------------------------------
+-- The Core sends this Vault the release it runs, down the pair cable: see
+-- pair.updateVault in bank_server.lua for why. Taken only from this Vault's
+-- own Core, only newer than what runs here, only the files a Vault installs,
+-- each checked against what the Core announced; then installed exactly as
+-- an update from the internet is -- config.lua merged with this computer's
+-- own settings, every file swapped in or none -- and the Vault restarts.
+local wire = { incoming = nil, restart = false }
+
+local function wireAllowed()
+    local update = require("lib.update")
+    local allowed = {}
+    for _, path in ipairs(update.rolePaths("vault") or {}) do
+        allowed[update.installPath(path)] = true
+    end
+    return allowed, update
+end
+
+function vault.VAULT_UPDATE_BEGIN(payload, sender)
+    need(sender == core.id, "NOT_MY_CORE", "This Vault belongs to another Bank")
+    local version = tostring(payload.version or "")
+    need(net.isNewerVersion(version, PROGRAM_VERSION), "NOT_NEWER",
+        "This Vault already runs v" .. PROGRAM_VERSION)
+    local allowed, update = wireAllowed()
+    local files, total = {}, 0
+    for _, file in ipairs(type(payload.files) == "table" and payload.files or {}) do
+        local path = tostring(file.path or "")
+        need(allowed[path], "BAD_PATH", "A Vault does not install " .. path)
+        local size = math.floor(tonumber(file.size) or -1)
+        need(size >= 0 and type(file.checksum) == "string", "BAD_FILE",
+            path .. " was announced without a size or checksum")
+        files[path] = { size = size, checksum = file.checksum, parts = {},
+            received = 0 }
+        total = total + size
+    end
+    need(files["bank_vault.lua"] and files["config.lua"], "INCOMPLETE",
+        "An update needs the program and its config")
+    need(update.hasFreeSpace(ROOT, total), "NO_SPACE",
+        "Not enough room on the Vault for v" .. version)
+    wire.incoming = { version = version, files = files }
+    logActivity("Receiving v" .. version .. " over the cable", colors.cyan)
+    return { ready = true }
+end
+
+function vault.VAULT_UPDATE_CHUNK(payload, sender)
+    need(sender == core.id, "NOT_MY_CORE", "This Vault belongs to another Bank")
+    local incoming = wire.incoming
+    need(incoming, "NO_UPDATE", "No update was started")
+    local file = incoming.files[tostring(payload.path or "")]
+    need(file, "BAD_PATH", "That file is not part of this update")
+    local data = tostring(payload.data or "")
+    need(tonumber(payload.offset) == file.received + 1, "OUT_OF_ORDER",
+        "Pieces arrived out of order")
+    need(file.received + #data <= file.size, "TOO_LONG",
+        "More arrived than was announced")
+    file.parts[#file.parts + 1] = data
+    file.received = file.received + #data
+    return { received = file.received }
+end
+
+function vault.VAULT_UPDATE_COMMIT(payload, sender)
+    need(sender == core.id, "NOT_MY_CORE", "This Vault belongs to another Bank")
+    local incoming = wire.incoming
+    need(incoming and incoming.version == tostring(payload.version or ""),
+        "NO_UPDATE", "No update was started")
+    wire.incoming = nil
+    local _, update = wireAllowed()
+    local staging = fs.combine(ROOT, ".wire_update")
+    local backup = fs.combine(ROOT, ".wire_backup")
+    local function abandon(code, message)
+        if fs.exists(staging) then fs.delete(staging) end
+        reject(code, message)
+    end
+    if fs.exists(staging) then fs.delete(staging) end
+    local plan = { files = {} }
+    for path, file in pairs(incoming.files) do
+        local body = table.concat(file.parts)
+        if #body ~= file.size or util.checksum(body) ~= file.checksum then
+            abandon("DAMAGED", path .. " arrived damaged. Nothing was changed")
+        end
+        local wrote = pcall(util.writeFile, fs.combine(staging, path), body)
+        if not wrote then abandon("NO_SPACE", "Could not stage " .. path) end
+        plan.files[#plan.files + 1] = { path = path }
+    end
+    local merged, mergeError = update.mergeConfig(
+        fs.combine(staging, "config.lua"), config, incoming.version)
+    if not merged then abandon("BAD_CONFIG", tostring(mergeError)) end
+    save()
+    saveMail()
+    local committed, commitError = update.commitRelease(plan, staging, ROOT,
+        backup)
+    need(committed, "NOT_INSTALLED", tostring(commitError))
+    wire.restart = true
+    logActivity("Installed v" .. incoming.version .. "; restarting", colors.lime)
+    return { installed = incoming.version }
+end
+
+-- Paired, the Vault runs whatever its Core runs, brought over the cable.
+-- Unpaired, there is no Core to bring it, so it keeps itself up to date.
+local function updatesItself() return core.id == nil end
+
 function vault.VAULT_STATUS(payload, sender)
     return {
         version = PROGRAM_VERSION,
@@ -4054,6 +4155,8 @@ if TEST_MODE then
         cleanup_calls = cleanupUrgentCalls,
         sweep_orders = sweepOrders,
         mail = mail,
+        wire = wire,
+        updates_itself = updatesItself,
     }
 end
 
@@ -4090,6 +4193,13 @@ end
 local function sweepLoop()
     local everyMinute = 0
     while running do
+        -- A release came over the cable. The reply has gone; start it.
+        if wire.restart then
+            save()
+            saveMail()
+            sleep(0.5)
+            os.reboot()
+        end
         pcall(cleanupUrgentCalls)
         pcall(syncWaiting)
         pcall(pushBadges)
@@ -4105,8 +4215,10 @@ end
 
 local function updateLoop()
     while running do
-        net.autoUpdate(config, "vault", ROOT, nil,
-            { programVersion = PROGRAM_VERSION })
+        if updatesItself() then
+            net.autoUpdate(config, "vault", ROOT, nil,
+                { programVersion = PROGRAM_VERSION })
+        end
         sleep(10)
     end
 end

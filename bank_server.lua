@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.2.0"
+local PROGRAM_VERSION = "11.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -5629,6 +5629,7 @@ local function schedulerLoop()
         pcall(ledger.sweep)
         pcall(shop.reconcile)
         pcall(shop.release)
+        pcall(pair.updateVault)
         sleep(10)
     end
 end
@@ -6245,6 +6246,98 @@ function pair.forward(action, payload, caller)
     if data then return data end
     if code then reject(code, err or "The Vault refused that") end
     reject("VAULT_OFFLINE", err or "The Vault is not answering")
+end
+
+-- Updates over the cable, 11.0 ------------------------------------------------------
+-- When this Bank runs a newer release than its Vault, it sends the Vault
+-- that release down the cable. The two halves then never disagree about a
+-- release: a Vault that fetched its own could run ahead of a Core that has
+-- not updated yet, and the cable between them would be carrying one
+-- release's questions to another's answers. It is also quicker -- a wire
+-- is not the internet -- and a Vault needs no internet at all.
+--
+-- Only the release this Core runs is ever sent, file by file as published,
+-- each checked against the manifest. A file this computer already holds as
+-- published is read off its own disk; anything else -- the Vault's program,
+-- and config.lua, which here is this Bank's own settings merged in -- is
+-- downloaded. Nothing is cached in /updates, which is what clients are
+-- served from.
+local VAULT_CHUNK = 12 * 1024
+
+local function releaseFiles(paths)
+    local manifestUrl = tostring(config.update_manifest_url or "")
+    if manifestUrl == "" then return nil, "no release address" end
+    local manifest, err = onlineUpdate.fetchManifest(manifestUrl,
+        RELEASE.published, config.update_channel or "stable", RELEASE.optional)
+    if not manifest then return nil, err or "no manifest" end
+    if manifest.version ~= config.version then
+        return nil, "the release moved on; this Bank updates first"
+    end
+    local byPath = {}
+    for _, file in ipairs(manifest.files) do byPath[file.path] = file end
+    local out = {}
+    for _, path in ipairs(paths) do
+        local file = byPath[path]
+        if not file then return nil, path .. " is not in the release" end
+        local installed = onlineUpdate.installPath(path)
+        local body = util.readFile(fs.combine(ROOT, installed))
+        if not body or #body ~= file.size or util.checksum(body) ~= file.checksum then
+            body = onlineUpdate.fetchFile(manifestUrl, file, manifest.version)
+        end
+        if not body then return nil, "could not fetch " .. path end
+        out[#out + 1] = { path = installed, body = body, size = #body,
+            checksum = util.checksum(body) }
+    end
+    return out
+end
+
+-- Checked by the scheduler once a minute; `force` skips the wait.
+function pair.updateVault(force)
+    if not pair.paired() then return false, "no Vault" end
+    local now = util.nowMs()
+    if not force and pair.nextVaultUpdate and now < pair.nextVaultUpdate then
+        return false, "later"
+    end
+    pair.nextVaultUpdate = now + 60 * 1000
+    local status = pair.ask("VAULT_STATUS", {}, 3)
+    if type(status) ~= "table" or not status.version then
+        return false, "the Vault is not answering"
+    end
+    if not net.isNewerVersion(config.version, status.version) then
+        return false, "current"
+    end
+    local function stop(why)
+        -- A release that cannot be sent now is tried again, not hammered.
+        pair.nextVaultUpdate = now + 10 * 60 * 1000
+        logActivity("Vault update waits: " .. tostring(why), colors.orange)
+        return false, why
+    end
+    local files, why = releaseFiles(onlineUpdate.rolePaths("vault") or {})
+    if not files then return stop(why) end
+    local listed = {}
+    for _, file in ipairs(files) do
+        listed[#listed + 1] = { path = file.path, size = file.size,
+            checksum = file.checksum }
+    end
+    local began, beginError = pair.ask("VAULT_UPDATE_BEGIN",
+        { version = config.version, files = listed }, 6)
+    if not began then return stop(beginError) end
+    for _, file in ipairs(files) do
+        local offset = 1
+        repeat
+            local piece = file.body:sub(offset, offset + VAULT_CHUNK - 1)
+            local sent, sendError = pair.ask("VAULT_UPDATE_CHUNK", {
+                path = file.path, offset = offset, data = piece }, 6)
+            if not sent then return stop(sendError) end
+            offset = offset + #piece
+        until offset > #file.body
+    end
+    local done, doneError = pair.ask("VAULT_UPDATE_COMMIT",
+        { version = config.version }, 15)
+    if not done then return stop(doneError) end
+    logActivity("Vault v" .. tostring(status.version) .. " -> v" .. config.version
+        .. " over the cable", colors.lime)
+    return true
 end
 
 function pair.loop()

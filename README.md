@@ -17,7 +17,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
 | `internet_server.lua` | Advanced Computer + wireless/Ender modem | Holds and serves every website on the network. The Bank Vault keeps the names |
 | `delivery_terminal.lua` | Advanced Computer or Advanced Pocket Computer + wireless/Ender modem; chests on networking cable for a pickup point | A company's delivery board: every Shop order, its stages, and DONE. Becomes a self-service pickup point |
-| `shop.lua` | Downloaded to a PUMPE from the App Browser | Online stores: a basket, home delivery or pickup, Foxy or another bank, live delivery tracking |
+| `shop.lua` | Downloaded to a PUMPE from the App Browser | Online stores: a basket, home delivery or pickup, Foxy or another bank, live delivery tracking, cancelling and returns |
+| `foxmail.lua` | Installed on every PUMPE at sign-in | Email: an address at foxy.com for everybody, company domains, mail from kiosks and apps |
 | `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
@@ -56,12 +57,45 @@ An app declares its own in its first lines, the same way a bank app declares its
 
 The phone reads that off the file rather than asking the app at runtime, because search has to know what an app does without running it. An app opened at an action receives it from `api.action()`, goes straight there, and closes when it is done.
 
-- **Search** sits in the dock, on every page, beside three favourites. It finds apps, app actions and every setting, ranking a name that starts with what you typed above one that merely contains it. What is not installed is one tap further on, in the App Browser with the same words already filled in.
+- **Search** has a slim bar of its own just above the dock, on every page (since 11.0 — it used to take a dock slot, so the dock is four favourites now). It finds apps, app actions and every setting, ranking a name that starts with what you typed above one that merely contains it. **Suggestions appear under the field as you type** — "fox" already offers Foxy, Foxy Cash and FoxMail — and tapping one goes straight there; DONE shows every match. What is not installed is one tap further on, in the App Browser with the same words already filled in.
 - **Settings** and the **App Browser** have their own search bars over the same lists.
 - **QuickActions** strings app actions together. Add steps, add a **Repeat** to multiply the step above it, then run it yourself or have it run every day at an hour you pick. A QuickAction can sit on the Home Screen as an icon that does something rather than opening something.
 - **Reminders** arrive as a banner or as a full screen alert, set in in-game hours from now.
 
 Reminders and QuickActions are kept on the phone and fired by the Home Screen's own tick. A PUMPE that is switched off, or sitting on its lock screen, is not reminding anybody — it catches up when the Home Screen is next open.
+
+## How apps are laid out, since 11.0
+
+**Tabs along the bottom are the standard.** An app with more than one part puts its parts in a row on the bottom line, the way Shop did first, and **the mark at the top left (`<PUMPE`) goes home** from any of them.
+
+| App | Tabs |
+| --- | --- |
+| Foxy | Bank, Account |
+| FoxMail | Inbox, Sent, Write, Me |
+| Shop | Stores, Delivery, Places |
+| Friends | Chats (with the unread count), Friends, Urgent |
+| Tickets | Events, My tickets |
+| Customs | Visas, Territories |
+| Revolution | Take, Pay, Account |
+| BuckApp | Money, Account |
+| Website Crafter | Sites, New |
+
+An app with one screen — Internet, Tax, Subs, Reminders, QuickActions, Settings — keeps its **< Home** button rather than tabs it has nothing to put in. An app opened at an action from search opens on that tab.
+
+For app authors, `ui.tabBar(scene, target, tabs, active, color)` draws the bar (each tab as wide as its label needs, the rest shared out) and `ui.runTabs{ list = , pages = , start = , once = }` runs an app made of tab pages; a tab listed in `once` is a thing to do — write a message, place a call — rather than a place to be.
+
+`ui.input` has two more keyboards: `mode = "email"` (with `@`, `.` and `_`) and `mode = "text"` (with `' , . ?`), both typing lower case from the touch keys. And `suggest = function(value) return { { label =, detail = }, ... } end` lists suggestions under the field as you type; tapping one returns the text *and* the item.
+
+## FoxMail
+
+New in 11.0, and installed on every PUMPE at sign-in, like Foxy.
+
+- **Your address.** Everybody can claim one at `foxy.com` — 2 to 16 letters, numbers, dots, dashes or underscores. Anybody with an address can write to anybody else.
+- **Company email.** A company's owner registers a domain for it on FoxMail's **Me** tab — `revolution.com`, say — and up to five addresses on it (`hello@`, `support@`...). The owner reads and sends as them beside their own address: the Me tab switches between them. `foxy.com` is the Bank's own and cannot be taken.
+- **At the till.** A Service Kiosk linked to the company reads and writes the company's addresses from **S → COMPANY MAIL**, and nobody's personal mail.
+- **From apps.** `api.mail.send{ from = "news@yourcompany.com", to = "kit@foxy.com", subject = "...", body = "..." }` sends from an address on the domain of the company that **published the app**, and no other; fifty a day per app, however many phones it runs on.
+
+Limits, because mail is the first thing here anybody can make more of just by typing: thirty messages per inbox (the oldest goes), fifteen in Sent, 300 letters a message, five recipients, forty sent a day per address. Mail is kept on the Vault in a file of its own, and a message sent to three people is stored once.
 
 ## Friends, Messages, and Urgent Contact
 
@@ -199,6 +233,8 @@ Three rules make that safe. The Vault never touches a balance — when something
 Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever pressed the button. The one that becomes the Vault fetches `bank_vault.lua` over the cable and restarts into it by itself. Clients never learn any of this — a PUMPE asks the Bank, as it always has.
 
 If a Vault is destroyed or a cable is cut, the Bank Server's dashboard shows it, and its **PAIR** button pairs a replacement.
+
+**Updates travel down the cable (11.0).** When the Core runs a newer release than its Vault, it sends the Vault that release over the pair cable — the Vault's program and the shared files, each checked against the published manifest — and the Vault installs it the way an internet update is installed (its own `config.lua` settings kept, every file swapped in or none) and restarts. A paired Vault no longer fetches its own, so the two halves always run the same release; an unpaired one still updates itself. The Vault takes a release only from its own Core, and only a newer one.
 
 ### Third-party banks
 
@@ -397,6 +433,15 @@ A store belongs to a company, so it is opened from a **Service Kiosk linked to t
 - **Open.** A store with nothing online, or no way to deliver, cannot open.
 
 The money for every order goes to the company owner's Foxy account, fee included, with a **New order** notification.
+
+### Cancelling and returns (11.0)
+
+- **Returns.** Every order can be returned for at least **five days** after it arrives; the kiosk's **RETURNS** button sets up to thirty. The buyer asks from the order's page in Shop, with a reason. The store sees it at the top of its Delivery Terminal and presses **REFUND RETURN** once the goods are back — the whole order, delivery included, comes out of the owner's account — or **DECLINE** with a reason the buyer is told.
+- **Cancelling.** An order **confirms two hours** after checkout. With **CANCELLING ON**, a buyer can cancel until then from the order's page. While an order can be cancelled, the Bank holds its money rather than the store, so a cancellation is always refunded in full; the kiosk shows what is waiting, and the store is paid the moment the order confirms. The Delivery Terminal shows *Buyer can cancel for 1h 20m*, so staff know not to ship it yet.
+- **The store refunds.** **CANCEL + REFUND** on any open order at the Delivery Terminal — sold out, say.
+- Refunds go back to whichever bank paid. One to another bank is retried until that bank answers, and lands in the buyer's Foxy account if that bank refuses it outright.
+- A store's terms are fixed when somebody pays; changing them changes new orders only.
+- **The two hours and five days are in-game time**, like every clock in the Shop. A Minecraft day is twenty real minutes, so that is about 1m40s and 1h40m of real time. `shop_confirm_hours`, `shop_min_return_days` and `shop_max_return_days` in `config.lua` change them.
 
 ### Buying
 

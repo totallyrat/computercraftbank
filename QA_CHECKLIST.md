@@ -7,6 +7,40 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## 11.0
+
+### Cancelling and returns
+
+- [ ] On the store's kiosk (S → ONLINE STORE), confirm **CANCELLING OFF** and **RETURNS: 5 DAYS** to start with, and that 3 days is refused.
+- [ ] Turn cancelling on. Order from a PUMPE and confirm the kiosk shows the money as waiting, not in the owner's balance, and that the order's page offers **Cancel order** with the time left.
+- [ ] Cancel it. Confirm the buyer has every coin back, both sides are notified, and the Delivery Terminal shows it cancelled.
+- [ ] Order again and wait two in-game hours. Confirm the owner is paid then, and the order can no longer be cancelled.
+- [ ] Mark it DONE, then from the order's page press **Return it** with a reason. Confirm the owner is notified and the return is at the top of the Delivery Terminal (under any open orders).
+- [ ] **REFUND RETURN** and confirm the money moves from the owner to the buyer. Do another and **DECLINE** it, and confirm the buyer sees the reason.
+- [ ] **CANCEL + REFUND** an open order at the Delivery Terminal and confirm the buyer is refunded.
+- [ ] Pay from Revolution, cancel, and confirm the refund lands in the Revolution account.
+
+### FoxMail
+
+- [ ] Sign in on a fresh PUMPE and confirm **FoxMail** is on the Home Screen without visiting the App Browser.
+- [ ] Claim an address; confirm the keyboard has @ and a full stop. Try to claim one somebody else has.
+- [ ] As a company owner, register a domain on the **Me** tab, add a second address, and switch between them.
+- [ ] Write from one PUMPE to another; confirm a notification arrives, the inbox shows it bold until read, and **Reply** fills in the address and "Re:".
+- [ ] On the company's Service Kiosk, open **S → COMPANY MAIL**, read the company's mail and reply from it. Confirm the owner's personal mail is not there.
+- [ ] Publish an app that calls `api.mail.send` from the company domain and confirm the mail arrives marked with the app's name; confirm it cannot send from anybody else's address.
+
+### Tabs, home and search
+
+- [ ] Open Foxy, Friends, Tickets, Customs, Shop, FoxMail, Revolution, BuckApp and Website Crafter; confirm each has its tabs along the bottom and that the top-left mark goes home from every tab.
+- [ ] From search, open **My tickets** and **Foxy Cash** and confirm each opens on that tab or action.
+- [ ] Confirm the search bar sits above the dock, the dock takes four favourites, and typing "fox" lists Foxy, Foxy Cash and FoxMail under the field before pressing anything.
+
+### Bank Vault updates
+
+- [ ] With a paired Bank on 11.0, publish a newer release. Confirm the Core updates itself, then within a minute or so the Vault's dashboard says it is receiving the release over the cable, restarts, and shows the new version.
+- [ ] Confirm the Vault kept its own settings in config.lua, and that its data (chats, mail, orders) is all still there.
+- [ ] Unpair the Vault and confirm it goes back to checking for updates on its own.
+
 ## Shop (10.2)
 
 - [ ] On a Service Kiosk linked to a company, open **S → ONLINE STORE**. Confirm **OPEN STORE** is refused with nothing online, and again with neither home delivery nor pickup on.

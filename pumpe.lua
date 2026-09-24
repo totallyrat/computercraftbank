@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.2.0"
+local PROGRAM_VERSION = "11.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -5112,8 +5112,14 @@ local function ensureFoxy()
     end
     if next(missing) == nil then return end
     local listed = storeRequest("APP_LIST", {}, true)
+    local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
     for _, app in ipairs(listed and listed.apps or {}) do
-        if missing[app.app_id] then installApp(app) end
+        -- Foxy is how this phone sees its money, so it always goes in.
+        -- FoxMail waits quietly for a free slot rather than saying "no room"
+        -- at every sign-in.
+        if missing[app.app_id] and (app.app_id == "FOXY" or room > 0) then
+            if installApp(app) then room = room - 1 end
+        end
     end
 end
 
