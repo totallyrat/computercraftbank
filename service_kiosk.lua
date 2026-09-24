@@ -1201,6 +1201,146 @@ local function onlineStore()
     end
 end
 
+-- Company mail, 11.0 ---------------------------------------------------------------
+-- The same FoxMail the owner has on their phone, as the company: a kiosk
+-- reads and writes the company's addresses and nobody's own. The domain and
+-- its addresses are set up by the owner in FoxMail; a kiosk only uses them.
+
+local function kioskMailWrite(address, draft)
+    draft = draft or {}
+    local to = ui.input(target, "TO", { hint = "Addresses, spaces between",
+        mode = "email", maxLength = 120, allowSpace = true, scrollToEnd = true,
+        initial = draft.to })
+    if not to then return false end
+    local subject = ui.input(target, "SUBJECT", { mode = "text",
+        maxLength = 40, allowSpace = true, minLength = 0,
+        initial = draft.subject })
+    if not subject then return false end
+    local body = ui.input(target, "MESSAGE", { hint = "Up to 300 letters",
+        mode = "text", maxLength = 300, allowSpace = true, scrollToEnd = true,
+        minLength = 0 })
+    if not body then return false end
+    local sent, err = request("KIOSK_MAIL_SEND", { from = address, to = to,
+        subject = subject, body = body, reply_to = draft.reply_to }, true)
+    if not sent then
+        ui.message(target, "error", "NOT SENT", err, 1.8)
+        return false
+    end
+    ui.message(target, "success", "SENT", "From " .. address, 1.2)
+    return true
+end
+
+local function kioskMailRead(address, id, box)
+    local got, err = request("KIOSK_MAIL_READ", { address = address, id = id },
+        true)
+    if not got then
+        ui.message(target, "error", "CANNOT OPEN IT", err, 1.6)
+        return
+    end
+    local message = got.message
+    while true do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, ui.truncate(message.subject, width - 9),
+            ui.truncate("From " .. message.from .. "  to "
+                .. table.concat(message.to, ", "), width - 3),
+            util.formatClock())
+        ui.wrappedText(target, 2, 5, message.body ~= "" and message.body
+            or "(nothing written)", width - 2, math.max(1, height - 9),
+            ui.theme.ink)
+        local scene = ui.scene(target)
+        scene:button("reply", 2, height - 3, 16, 2, box == "inbox" and "REPLY"
+            or "WRITE AGAIN", { background = colors.cyan,
+                foreground = colors.black })
+        scene:button("delete", 19, height - 3, 12, 2, "DELETE",
+            { background = ui.theme.danger })
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "back" or action == "__terminate" then return end
+        if action == "reply" then
+            local subject = message.subject
+            if box == "inbox" and not subject:match("^Re: ") then
+                subject = ("Re: " .. subject):sub(1, 40)
+            end
+            if kioskMailWrite(address, { to = box == "inbox" and message.from
+                or table.concat(message.to, " "), subject = subject,
+                reply_to = box == "inbox" and message.id or nil }) then
+                return
+            end
+        elseif action == "delete" and ui.confirm(target, "DELETE IT?",
+            "It is gone from this box for good.", "DELETE", "KEEP") then
+            if request("KIOSK_MAIL_DELETE", { address = address, id = id },
+                true) then
+                return
+            end
+        end
+    end
+end
+
+local function kioskMail()
+    local mine, err = request("KIOSK_MAIL_ME", {}, true)
+    if not mine then
+        ui.message(target, "error", "MAIL UNAVAILABLE", err, 1.6)
+        return
+    end
+    if #mine.addresses == 0 then
+        ui.message(target, "info", "NO COMPANY EMAIL",
+            "The owner sets one up in FoxMail, on the Me tab", 2.4)
+        return
+    end
+    local which, box = 1, "inbox"
+    while true do
+        local width, height = target.getSize()
+        local address = mine.addresses[which].address
+        local listed = request("KIOSK_MAIL_LIST", { address = address,
+            box = box }, true)
+        local messages = listed and listed.messages or {}
+        ui.clear(target)
+        ui.header(target, box == "inbox" and "MAIL" or "SENT MAIL",
+            ui.truncate(address .. ((listed and listed.unread or 0) > 0
+                and ("  " .. listed.unread .. " new") or ""), width - 3),
+            util.formatClock())
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 5) / 3))
+        for slot = 1, rows do
+            local message = messages[slot]
+            if not message then break end
+            local fresh = box == "inbox" and not message.read
+            scene:button("open:" .. slot, 2, 1 + slot * 3, width - 2, 2,
+                ui.truncate((box == "inbox" and message.from
+                    or ("To " .. table.concat(message.to, ", "))) .. "  "
+                    .. message.subject, width - 4), {
+                        background = fresh and colors.cyan or ui.theme.panel,
+                        foreground = fresh and colors.black or colors.white })
+        end
+        if #messages == 0 then
+            ui.center(target, 8, listed and "Nothing here yet"
+                or "The Bank is not answering", ui.theme.muted)
+        end
+        local tabs = { { id = "inbox", label = "INBOX" },
+            { id = "sent", label = "SENT" }, { id = "write", label = "WRITE" } }
+        if #mine.addresses > 1 then
+            tabs[#tabs + 1] = { id = "switch", label = "NEXT ADDRESS" }
+        end
+        ui.tabBar(scene, target, tabs, box, colors.cyan)
+        local action = scene:wait({ tickRate = 5 })
+        if action == "home" or action == "__terminate" then return end
+        if action == "tab:inbox" or action == "tab:sent" then
+            box = action:sub(5)
+        elseif action == "tab:write" then
+            kioskMailWrite(address)
+        elseif action == "tab:switch" then
+            which = which % #mine.addresses + 1
+        else
+            local slot = tonumber(action and action:match("^open:(%d+)$"))
+            if slot and messages[slot] then
+                kioskMailRead(address, messages[slot].id, box)
+            end
+        end
+    end
+end
+
 local function settingsScreen()
     while true do
         local width, height = target.getSize()
@@ -1221,13 +1361,15 @@ local function settingsScreen()
             { "dev", kiosk.developer_id and "DEV MODE" or "ENTER DEV MODE",
                 colors.purple },
             { "store", "ONLINE STORE", colors.cyan },
+            { "mail", "COMPANY MAIL", colors.orange },
             { "close", "CLOSE KIOSK", ui.theme.danger },
         }
+        -- Four rows since 11.0 brought a tenth entry.
         for index, entry in ipairs(entries) do
             local column = (index - 1) % 3
             local row = math.floor((index - 1) / 3)
             scene:button(entry[1], 2 + column * (buttonWidth + 1),
-                5 + row * 4, buttonWidth, 3, entry[2], {
+                5 + row * 3, buttonWidth, 2, entry[2], {
                     background = entry[3],
                     foreground = (entry[1] == "balance"
                         or entry[1] == "company")
@@ -1248,6 +1390,7 @@ local function settingsScreen()
         elseif action == "withdraw" then directWithdrawal()
         elseif action == "products" then productManager()
         elseif action == "store" then onlineStore()
+        elseif action == "mail" then kioskMail()
         elseif action == "company" then companyOnboarding(true)
         elseif action == "display" then
             findCustomerMonitor()

@@ -10,6 +10,9 @@ local actions = {
     "store", "color", "products", "item:1", "back", "open",
     -- 11.0: the buyer's rights. Too short a window is refused, then set.
     "cancel", "returns", "returns", "back",
+    -- 11.0: company mail. Reply to what came in, look at Sent, move on to
+    -- the company's other address, and leave by the top-left mark.
+    "mail", "open:1", "reply", "tab:sent", "tab:switch", "home",
     "close",
 }
 local buttonLabels, requests = {}, {}
@@ -109,6 +112,8 @@ package.loaded["lib.util"] = {
 storeSettings = { open = false, color = "orange", tagline = "",
     home = true, pickup = false, fee = 0, cancel = false, return_days = 5 }
 typedWindows = { "3", "14" }
+typedMail = { TO = "kit@foxy.com", SUBJECT = "Re: Order", MESSAGE = "on its way" }
+mailSent, mailListed = {}, {}
 shopSetups = {}
 function storeOnline()
     local count = 0
@@ -168,6 +173,21 @@ local client = {
                 end
             end
             error("no such product " .. tostring(payload.item_id))
+        elseif action == "KIOSK_MAIL_ME" then
+            return { addresses = { { address = "hello@foxcafe.com", unread = 1 },
+                { address = "orders@foxcafe.com", unread = 0 } } }
+        elseif action == "KIOSK_MAIL_LIST" then
+            mailListed[#mailListed + 1] = payload.address .. "/" .. payload.box
+            return { unread = 1, messages = { { id = "MAIL00000001",
+                from = "kit@foxy.com", to = { payload.address },
+                subject = "Order", read = false } } }
+        elseif action == "KIOSK_MAIL_READ" then
+            return { message = { id = payload.id, from = "kit@foxy.com",
+                to = { payload.address }, subject = "Order",
+                body = "Where is my coffee?", day = 300, time = "12:00" } }
+        elseif action == "KIOSK_MAIL_SEND" then
+            mailSent[#mailSent + 1] = copy(payload)
+            return { id = "MAIL00000002", to = { payload.to } }
         elseif action == "SET_PRODUCT_FAVORITE" then
             assert(payload.item_id == "P1")
             products[1].favorite = payload.favorite
@@ -245,10 +265,22 @@ function ui.truncate(value, maximum)
     return tostring(value or ""):sub(1, math.max(0, maximum))
 end
 function ui.confirm() return true end
-function ui.input(_, title)
+function ui.input(_, title, spec)
+    if typedMail[title] then
+        -- An address needs @ and a full stop; the plain keyboard has neither.
+        assert(title ~= "TO" or spec.mode == "email", "the TO box types addresses")
+        local typed = typedMail[title]
+        assert(title ~= "TO" or spec.initial == typed, "a reply is addressed back")
+        return typed
+    end
     assert(title == "RETURN WINDOW", "unexpected text box " .. tostring(title))
     return table.remove(typedWindows, 1)
 end
+function ui.wrappedText(surface, x, y, _, width, lines)
+    ui.fill(surface, x, y, width, lines)
+end
+-- The real tab bar, bounds checked by this stub's own scene.
+ui.tabBar = dofile("../lib/ui.lua").tabBar
 function ui.message() end
 function ui.networkError(_, err) error(err) end
 
@@ -259,6 +291,9 @@ function ui.scene(surface)
         assert(#wrap(label, math.max(1, width - 2)) <= height,
             "button label clipped: " .. tostring(label))
         buttonLabels[#buttonLabels + 1] = tostring(label or "")
+    end
+    function scene:hotspot(_, x, y, width, height)
+        assertBox(surface, "hotspot", x, y, width, height)
     end
     function scene:wait()
         local action = table.remove(actions, 1)
@@ -288,6 +323,12 @@ assert(contains(buttonLabels, "Subscriptions"))
 -- kept on the kiosk: a store is the company's, and a company has more than
 -- one till.
 assert(contains(buttonLabels, "ONLINE STORE"), "Settings offers the store")
+assert(contains(buttonLabels, "COMPANY MAIL"), "and the company's mail")
+assert(#mailSent == 1 and mailSent[1].from == "hello@foxcafe.com"
+    and mailSent[1].to == "kit@foxy.com" and mailSent[1].reply_to == "MAIL00000001",
+    "a reply goes out from the company address, marked as a reply")
+assert(mailListed[#mailListed] == "orders@foxcafe.com/sent",
+    "Sent, then the company's other address")
 assert(contains(buttonLabels, "OPEN STORE"), "which starts closed")
 local changedColour, opened = false, false
 for _, setup in ipairs(shopSetups) do

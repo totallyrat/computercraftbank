@@ -63,6 +63,8 @@ const forwardOptionalFiles = [
   // app that places them.
   "delivery_terminal.lua",
   "shop.lua",
+  // FoxMail, 11.0: installed on every PUMPE, shipped by the App Server.
+  "foxmail.lua",
 ];
 
 function checksum(buffer) {

@@ -17,6 +17,8 @@ local util = require("lib.util")
 os.time = function() return harness.time end
 
 local WIDTH, HEIGHT = 26, 20
+-- The real ui library, for the one piece of it apps share: the tab bar.
+local realUi = dofile("../lib/ui.lua")
 
 -- A store, and the terminal that delivers for it ----------------------------------
 
@@ -162,13 +164,21 @@ local function runApp(script, wanted)
             and #(no or "NO") <= buttonWidth - 2, "confirm label clipped")
         return take(script.confirms, "confirmation: " .. title)
     end
+    -- The real tab bar, run against this stub scene, so its layout is
+    -- bounds checked here like everything else the app draws.
+    ui.tabBar = realUi.tabBar
     function ui.scene()
-        local scene = {}
-        function scene:button(_, x, y, width, height, label)
+        local scene, tappable = {}, {}
+        function scene:button(id, x, y, width, height, label, options)
             box("button " .. tostring(label), x, y, width, height)
             assert(#wrap(label, math.max(1, width - 2)) <= height,
                 "button label clipped: " .. tostring(label))
             draw(label)
+            if not (options and options.disabled) then tappable[id] = true end
+        end
+        function scene:hotspot(id, x, y, width, height)
+            box("hotspot " .. tostring(id), x, y, width, height)
+            tappable[id] = true
         end
         function scene:wait(options)
             local action = take(script.actions, "tap")
@@ -176,6 +186,9 @@ local function runApp(script, wanted)
             -- that is the whole of how a page is live.
             assert(action ~= "__tick" or (options and options.tickRate),
                 "a tick reached a screen that never asked to refresh")
+            -- And a tap only lands on something that is there to tap.
+            assert(action:sub(1, 2) == "__" or tappable[action],
+                "tapped " .. action .. ", which is not on the screen")
             return action
         end
         return scene
@@ -383,7 +396,9 @@ assert(count == countBefore, "and no order is left behind")
 -- Opened from search as "My deliveries" --------------------------------------------------
 
 script = newScript()
-push(script.actions, "__terminate")
+-- Leaving by the top-left mark, the way home every tabbed app has since
+-- 11.0. Shop 10.2 had no way out but Ctrl+T.
+push(script.actions, "home")
 seen = runApp(script, "delivery")
 assert(has(seen.frames[1], "Delivery") and has(seen.frames[1], "2 on the way"),
     "the app opens on the Delivery page, with both orders on their way")
@@ -403,8 +418,9 @@ end, "basket", "checkout", "pick:1", "pick:1")
 push(script.confirms, true)
 push(script.pins, "5678")
 push(script.actions, function(seen)
-    for id, order in pairs(orders) do
-        if order.status == "open" and id ~= secondOrder then cancelledOrder = id end
+    -- The newest order: ids count up, and pairs() has no order of its own.
+    for id in pairs(orders) do
+        if not cancelledOrder or id > cancelledOrder then cancelledOrder = id end
     end
     assert(has(seen.frames[#seen.frames], "Cancel order (2h 0m)"),
         "a new order says how long it can be cancelled for")

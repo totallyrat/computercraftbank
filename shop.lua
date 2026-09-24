@@ -142,7 +142,7 @@ return function(api)
                 page = page + 1
             elseif action == "__tick" then
                 return "__tick"
-            elseif action and action:match("^tab:") then
+            elseif action == "home" or (action and action:match("^tab:")) then
                 return action
             else
                 local index = tonumber(action and action:match("^pick:(%d+)$"))
@@ -702,21 +702,15 @@ return function(api)
 
     -- The tab bar ------------------------------------------------------------------
 
+    -- The tab bar every app uses since 11.0, which Shop's was the model
+    -- for. It also gives the app a way home: the top-left mark.
     local tab = "stores"
+    local TABS = { { id = "stores", label = "Stores" },
+        { id = "delivery", label = "Delivery" },
+        { id = "places", label = "Places" } }
     local tabs = {}
     function tabs.draw(scene)
-        local width, height = target.getSize()
-        local side = math.floor((width - 10) / 2)
-        for _, spec in ipairs({
-            { "stores", "Stores", 1, side },
-            { "delivery", "Delivery", 1 + side, width - 2 * side },
-            { "places", "Places", 1 + width - side, side },
-        }) do
-            scene:button("tab:" .. spec[1], spec[3], height, spec[4], 1,
-                spec[2], { background = tab == spec[1] and SHOP
-                    or ui.theme.panel, foreground = tab == spec[1]
-                    and colors.black or colors.white })
-        end
+        ui.tabBar(scene, target, TABS, tab, SHOP)
     end
 
     -- Opened from search by name: straight to what was asked for.
@@ -732,6 +726,7 @@ return function(api)
         else
             switched = storesPage(tabs)
         end
+        -- "home", or anything that is not a tab, leaves the app.
         local nextTab = type(switched) == "string"
             and switched:match("^tab:(.+)$")
         if not nextTab then return end

@@ -358,6 +358,7 @@ update.PUBLISHED_OPTIONAL = {
     "internet.lua",
     "delivery_terminal.lua",
     "shop.lua",
+    "foxmail.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -398,7 +399,7 @@ end
 -- Server ships with Foxy so its catalogue is never empty on a fresh world.
 local ROLE_EXTRA_FILES = {
     apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
-        "internet.lua", "shop.lua" },
+        "internet.lua", "shop.lua", "foxmail.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

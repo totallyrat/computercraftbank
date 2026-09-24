@@ -417,6 +417,54 @@ function Scene:wait(options)
     end
 end
 
+-- Tabs, 11.0 ----------------------------------------------------------------------
+-- Every app with more than one part puts its parts in a row along the
+-- bottom, the way Shop did first. `tabs` is a list of { id = , label = };
+-- tapping one returns "tab:<id>". Each tab is as wide as its label needs,
+-- and whatever is left over is shared out, so a short list does not leave
+-- a gap at the end and a long one still fits.
+--
+-- Home is the mark at the top left, drawn as "<PUMPE" over the phone's own
+-- status bar: it returns "home", which every app with tabs takes as "leave".
+-- It costs the tab row nothing, which is why it is up there.
+--
+-- Only scene:button, scene:hotspot and the target's size are used, so a
+-- test can run this exact function against a stub scene.
+function ui.tabBar(scene, target, tabs, active, accent)
+    local width, height = target.getSize()
+    local count = #tabs
+    if count == 0 then return end
+    local widths, needed = {}, 0
+    for index, tab in ipairs(tabs) do
+        widths[index] = #tostring(tab.label) + 2
+        needed = needed + widths[index]
+    end
+    if needed > width then
+        -- Too many to spell out in full: equal shares, labels cut to fit.
+        for index = 1, count do widths[index] = math.floor(width / count) end
+        needed = math.floor(width / count) * count
+    end
+    local spare = width - needed
+    local each, over = math.floor(spare / count), spare % count
+    local x = 1
+    for index, tab in ipairs(tabs) do
+        local tabWidth = widths[index] + each + (index <= over and 1 or 0)
+        local on = tab.id == active
+        scene:button("tab:" .. tab.id, x, height, tabWidth, 1,
+            ui.truncate(tostring(tab.label), math.max(1, tabWidth - 2)), {
+                background = on and (accent or ui.theme.accent)
+                    or ui.theme.panel,
+                foreground = on and colors.black or colors.white,
+            })
+        x = x + tabWidth
+    end
+    scene:button("home", 1, 1, 1, 1, "<", {
+        background = accent or ui.theme.accent, foreground = colors.black,
+        flash = false,
+    })
+    scene:hotspot("home", 2, 1, 5, 1)
+end
+
 function ui.progress(target, x, y, width, value, maximum, foreground, background)
     maximum = maximum == 0 and 1 or maximum
     local fraction = util.clamp((value or 0) / (maximum or 1), 0, 1)
@@ -614,6 +662,14 @@ local function keyboardRows(mode)
     if mode == "integer" then return { "123", "456", "789", "-0<" } end
     if mode == "number" then return { "123", "456", "789", ".0<" } end
     if mode == "code" then return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM<" } end
+    -- 11.0, for FoxMail. Neither an address nor a sentence can be typed on
+    -- the plain keyboard: it has no @, no full stop, no comma.
+    if mode == "email" then
+        return { "1234567890", "QWERTYUIOP", "ASDFGHJKL@", "ZXCVBNM._<" }
+    end
+    if mode == "text" then
+        return { "1234567890", "QWERTYUIOP", "ASDFGHJKL'", "ZXCVBNM,.?<" }
+    end
     return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_<" }
 end
 
@@ -720,6 +776,10 @@ function ui.input(target, title, options)
                     end
                 elseif options.mode == "code" then
                     if character:match("[%w]") then value = value .. string.upper(character) end
+                elseif (options.mode == "email" or options.mode == "text") and key then
+                    -- The keys are drawn in capitals; people write mail in
+                    -- lower case. A real keyboard types what it types.
+                    value = value .. string.lower(character)
                 else
                     value = value .. character
                 end

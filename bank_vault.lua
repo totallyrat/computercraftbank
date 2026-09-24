@@ -3591,6 +3591,367 @@ function actions.PICKUP_COLLECT(payload, caller)
         lines = util.copy(found.lines), buyer_name = found.buyer_name }
 end
 
+-- FoxMail -----------------------------------------------------------------------
+-- 11.0. Email for people, companies and apps.
+--
+--   * A person claims one address at the Bank's own domain: kit@foxy.com.
+--   * A company registers a domain of its own -- revolution.com -- and up to
+--     five addresses on it. Its owner reads and sends as them from FoxMail,
+--     beside their own; its Service Kiosks do the same from the till.
+--   * An app sends from its company's domain, never anybody else's: the
+--     Core only lets an app name addresses its publisher's companies own.
+--
+-- Mail is the first thing here that anybody can make more of just by
+-- typing, so it lives in a file of its own -- a message sent never has to
+-- write the rest of the Vault out again -- and every mailbox has a cap. A
+-- message is kept once however many boxes hold it, and goes when the last
+-- of them lets go.
+
+local MAIL = {
+    personal_domain = string.lower(tostring(config.mail_domain or "foxy.com")),
+    inbox = 30, sent = 15, subject = 40, body = 300, recipients = 5,
+    per_domain = 5, per_day = 40,
+    reserved = { ["foxy.com"] = true, ["pumpe.com"] = true },
+}
+local MAIL_FILE = fs.combine(ROOT, "bank_vault_mail_v1.dat")
+local mail = util.loadTable(MAIL_FILE, {})
+mail.addresses = mail.addresses or {}
+mail.personal = mail.personal or {}
+mail.domains = mail.domains or {}
+mail.boxes = mail.boxes or {}
+mail.messages = mail.messages or {}
+mail.sent_today = mail.sent_today or {}
+mail.sequence = mail.sequence or 0
+
+local function saveMail() pcall(util.saveTable, MAIL_FILE, mail) end
+
+local function mailAddress(value)
+    return string.lower(util.trim(tostring(value or "")))
+end
+
+local function mailLocal(value)
+    local wanted = mailAddress(value)
+    need(#wanted >= 2 and #wanted <= 16
+        and wanted:match("^[a-z0-9][a-z0-9%._%-]*$") ~= nil, "BAD_ADDRESS",
+        "2 to 16 letters, numbers, dots, dashes or underscores")
+    return wanted
+end
+
+local function mailDomain(value)
+    local wanted = mailAddress(value)
+    local ending = wanted:match("%.([a-z]+)$")
+    need(#wanted <= 24 and ending and #ending >= 2 and #ending <= 6
+        and wanted:match("^[a-z0-9][a-z0-9%-]*%.[a-z]+$") ~= nil, "BAD_DOMAIN",
+        "A name and an ending, like revolution.com")
+    need(not MAIL.reserved[wanted] and wanted ~= MAIL.personal_domain,
+        "DOMAIN_TAKEN", wanted .. " is the Bank's own")
+    return wanted
+end
+
+-- The addresses whoever is asking may read and send as. A terminal gets its
+-- company's; a person gets their own and those of the companies the Core
+-- says they own.
+local function mailIdentity(caller)
+    local allowed = {}
+    if type(caller) == "table" and caller.kind == "terminal" then
+        for address, entry in pairs(mail.addresses) do
+            if entry.company_id == caller.company_id then allowed[address] = entry end
+        end
+        return allowed
+    end
+    local person = whoIsAsking(caller)
+    local mine = mail.personal[person.account_id]
+    if mine and mail.addresses[mine] then allowed[mine] = mail.addresses[mine] end
+    local owned = {}
+    for _, company in ipairs(type(caller.companies) == "table"
+        and caller.companies or {}) do
+        owned[tostring(company.company_id)] = true
+    end
+    for address, entry in pairs(mail.addresses) do
+        if entry.company_id and owned[entry.company_id] then
+            allowed[address] = entry
+        end
+    end
+    return allowed
+end
+
+local function mailbox(address)
+    mail.boxes[address] = mail.boxes[address] or { inbox = {}, sent = {} }
+    return mail.boxes[address]
+end
+
+local function letGo(id)
+    local message = mail.messages[id]
+    if not message then return end
+    message.refs = (message.refs or 1) - 1
+    if message.refs <= 0 then mail.messages[id] = nil end
+end
+
+local function fileMail(list, entry, cap)
+    table.insert(list, 1, entry)
+    while #list > cap do letGo(table.remove(list).id) end
+end
+
+local function unreadIn(address)
+    local count = 0
+    for _, entry in ipairs(mailbox(address).inbox) do
+        if not entry.read then count = count + 1 end
+    end
+    return count
+end
+
+-- Who hears that a message arrived: the person, or the company's owner.
+local function mailReader(address)
+    local entry = mail.addresses[address]
+    if not entry then return nil end
+    if entry.account_id then return entry.account_id end
+    local domain = mail.domains[entry.domain or ""]
+    return domain and domain.owner_account_id
+end
+
+local function sendMail(from, rawTo, subject, body, extra)
+    extra = extra or {}
+    need(mail.addresses[from], "NO_SUCH_ADDRESS", "Send from an address you have")
+    local text = type(rawTo) == "table" and table.concat(rawTo, ",")
+        or tostring(rawTo or "")
+    local to, seen = {}, {}
+    for piece in text:gmatch("[^,;%s]+") do
+        local address = mailAddress(piece)
+        if not seen[address] then
+            seen[address] = true
+            need(mail.addresses[address], "NO_SUCH_ADDRESS",
+                "Nobody has the address " .. address)
+            to[#to + 1] = address
+        end
+    end
+    need(#to >= 1, "NO_RECIPIENT", "Who is it to?")
+    need(#to <= MAIL.recipients, "TOO_MANY_RECIPIENTS",
+        MAIL.recipients .. " people at most")
+    subject = util.safeText(util.trim(tostring(subject or "")), MAIL.subject)
+    body = util.safeText(util.trim(tostring(body or "")), MAIL.body)
+    need(#subject > 0 or #body > 0, "EMPTY_MAIL", "Write something first")
+    if #subject == 0 then subject = "(no subject)" end
+    local today = util.ingameDay()
+    local sent = mail.sent_today[from]
+    if not sent or sent.day ~= today then sent = { day = today, count = 0 } end
+    need(sent.count < MAIL.per_day, "MAIL_LIMIT",
+        "That address has sent all it can today")
+    sent.count = sent.count + 1
+    mail.sent_today[from] = sent
+
+    mail.sequence = mail.sequence + 1
+    local id = string.format("MAIL%08d", mail.sequence)
+    mail.messages[id] = {
+        id = id, from = from, to = to, subject = subject, body = body,
+        day = util.ingameDay(), time = util.formatClock(),
+        refs = #to + 1, app_name = extra.app_name,
+        reply_to = extra.reply_to and tostring(extra.reply_to) or nil,
+    }
+    fileMail(mailbox(from).sent, { id = id }, MAIL.sent)
+    for _, address in ipairs(to) do
+        fileMail(mailbox(address).inbox, { id = id, read = false }, MAIL.inbox)
+        local reader = mailReader(address)
+        if reader then
+            core.notify(reader, "Mail to " .. address, from .. ": " .. subject,
+                "info", { mail_id = id, address = address })
+        end
+    end
+    saveMail()
+    return { id = id, to = to }
+end
+
+local function mailSummary(message, read)
+    return {
+        id = message.id, from = message.from, to = util.copy(message.to),
+        subject = message.subject, day = message.day, time = message.time,
+        read = read, app_name = message.app_name,
+        preview = message.body:sub(1, 48),
+    }
+end
+
+-- Where a message sits in one of the caller's boxes, or a refusal.
+local function mailEntry(caller, payload)
+    local address = mailAddress(payload.address)
+    need(mailIdentity(caller)[address], "NOT_YOURS",
+        "That is not one of your addresses")
+    local box = mailbox(address)
+    local id = tostring(payload.id or "")
+    for _, name in ipairs({ "inbox", "sent" }) do
+        for index, entry in ipairs(box[name]) do
+            if entry.id == id and mail.messages[id] then
+                return address, name, index, entry, mail.messages[id]
+            end
+        end
+    end
+    reject("NO_SUCH_MAIL", "That message is gone")
+end
+
+function actions.MAIL_ME(payload, caller)
+    local allowed = mailIdentity(caller)
+    local list = {}
+    for address, entry in pairs(allowed) do
+        local domain = entry.domain and mail.domains[entry.domain]
+        list[#list + 1] = { address = address, kind = entry.kind,
+            company_name = domain and domain.company_name or nil,
+            unread = unreadIn(address) }
+    end
+    table.sort(list, function(a, b)
+        if (a.kind == "personal") ~= (b.kind == "personal") then
+            return a.kind == "personal"
+        end
+        return a.address < b.address
+    end)
+    local companies = {}
+    if type(caller) == "table" and caller.kind ~= "terminal" then
+        for _, company in ipairs(type(caller.companies) == "table"
+            and caller.companies or {}) do
+            local domain
+            for name, entry in pairs(mail.domains) do
+                if entry.company_id == company.company_id then domain = name end
+            end
+            companies[#companies + 1] = { company_id = company.company_id,
+                name = company.name, domain = domain }
+        end
+    end
+    return { personal_domain = MAIL.personal_domain, addresses = list,
+        companies = companies,
+        personal = caller.kind ~= "terminal"
+            and mail.personal[whoIsAsking(caller).account_id] or nil }
+end
+
+function actions.MAIL_CLAIM(payload, caller)
+    local person = whoIsAsking(caller)
+    need(not mail.personal[person.account_id], "HAS_ADDRESS",
+        "You already have " .. tostring(mail.personal[person.account_id]))
+    local address = mailLocal(payload.name) .. "@" .. MAIL.personal_domain
+    need(not mail.addresses[address], "ADDRESS_TAKEN",
+        address .. " is taken")
+    mail.addresses[address] = { address = address, kind = "personal",
+        account_id = person.account_id, domain = MAIL.personal_domain,
+        created_day = util.ingameDay() }
+    mail.personal[person.account_id] = address
+    saveMail()
+    return { address = address }
+end
+
+local function ownedCompany(caller, companyId)
+    for _, company in ipairs(type(caller) == "table"
+        and type(caller.companies) == "table" and caller.companies or {}) do
+        if company.company_id == companyId then return company end
+    end
+    reject("NOT_OWNER", "You do not own that company")
+end
+
+function actions.MAIL_DOMAIN(payload, caller)
+    local person = whoIsAsking(caller)
+    local company = ownedCompany(caller, tostring(payload.company_id or ""))
+    for name, entry in pairs(mail.domains) do
+        need(entry.company_id ~= company.company_id, "HAS_DOMAIN",
+            company.name .. " already has " .. name)
+    end
+    local domain = mailDomain(payload.domain)
+    need(not mail.domains[domain], "DOMAIN_TAKEN", domain .. " is taken")
+    local first = mailLocal(payload.name or "hello") .. "@" .. domain
+    mail.domains[domain] = { domain = domain, company_id = company.company_id,
+        company_name = company.name, owner_account_id = person.account_id,
+        created_day = util.ingameDay() }
+    mail.addresses[first] = { address = first, kind = "company",
+        company_id = company.company_id, domain = domain,
+        created_day = util.ingameDay() }
+    saveMail()
+    return { domain = domain, address = first }
+end
+
+function actions.MAIL_ADDRESS(payload, caller)
+    whoIsAsking(caller)
+    local domain = mailAddress(payload.domain)
+    local entry = mail.domains[domain]
+    need(entry, "NO_DOMAIN", "Register the domain first")
+    ownedCompany(caller, entry.company_id)
+    local count = 0
+    for _, address in pairs(mail.addresses) do
+        if address.domain == domain then count = count + 1 end
+    end
+    need(count < MAIL.per_domain, "TOO_MANY_ADDRESSES",
+        MAIL.per_domain .. " addresses per domain")
+    local address = mailLocal(payload.name) .. "@" .. domain
+    need(not mail.addresses[address], "ADDRESS_TAKEN", address .. " is taken")
+    mail.addresses[address] = { address = address, kind = "company",
+        company_id = entry.company_id, domain = domain,
+        created_day = util.ingameDay() }
+    saveMail()
+    return { address = address }
+end
+
+function actions.MAIL_LIST(payload, caller)
+    local address = mailAddress(payload.address)
+    need(mailIdentity(caller)[address], "NOT_YOURS",
+        "That is not one of your addresses")
+    local box = payload.box == "sent" and "sent" or "inbox"
+    local list = {}
+    for _, entry in ipairs(mailbox(address)[box]) do
+        local message = mail.messages[entry.id]
+        if message then
+            list[#list + 1] = mailSummary(message, box == "sent" or entry.read)
+        end
+    end
+    return { address = address, box = box, messages = list,
+        unread = unreadIn(address) }
+end
+
+function actions.MAIL_READ(payload, caller)
+    local _, box, _, entry, message = mailEntry(caller, payload)
+    if box == "inbox" and not entry.read then
+        entry.read = true
+        saveMail()
+    end
+    local full = mailSummary(message, true)
+    full.body = message.body
+    full.reply_to = message.reply_to
+    return { message = full }
+end
+
+function actions.MAIL_SEND(payload, caller)
+    local from = mailAddress(payload.from)
+    need(mailIdentity(caller)[from], "NOT_YOURS",
+        "You cannot send as " .. from)
+    return sendMail(from, payload.to, payload.subject, payload.body,
+        { reply_to = payload.reply_to })
+end
+
+function actions.MAIL_DELETE(payload, caller)
+    local address, box, index, entry = mailEntry(caller, payload)
+    table.remove(mailbox(address)[box], index)
+    letGo(entry.id)
+    saveMail()
+    return { deleted = true }
+end
+
+-- A Service Kiosk reads and writes its company's mail with the same rules:
+-- its identity is the company it is linked to.
+actions.KIOSK_MAIL_ME = actions.MAIL_ME
+actions.KIOSK_MAIL_LIST = actions.MAIL_LIST
+actions.KIOSK_MAIL_READ = actions.MAIL_READ
+actions.KIOSK_MAIL_SEND = actions.MAIL_SEND
+actions.KIOSK_MAIL_DELETE = actions.MAIL_DELETE
+
+-- An app sending, as the Core allows it: from an address on a domain that
+-- belongs to a company its publisher owns, and nothing else.
+function actions.VAULT_MAIL_APP_SEND(payload)
+    local from = mailAddress(payload.from)
+    local entry = mail.addresses[from]
+    need(entry and entry.kind == "company", "NOT_YOURS",
+        "An app sends from its company's own address")
+    local allowed = false
+    for _, company in ipairs(type(payload.companies) == "table"
+        and payload.companies or {}) do
+        if company.company_id == entry.company_id then allowed = true end
+    end
+    need(allowed, "NOT_YOURS", "That address is not this app's company's")
+    return sendMail(from, payload.to, payload.subject, payload.body,
+        { app_name = util.safeText(tostring(payload.app_name or "An app"), 18) })
+end
+
 -- What this Vault answers ------------------------------------------------------
 local vault = {}
 
@@ -3692,6 +4053,7 @@ if TEST_MODE then
         sweep_travel = sweepTravel,
         cleanup_calls = cleanupUrgentCalls,
         sweep_orders = sweepOrders,
+        mail = mail,
     }
 end
 

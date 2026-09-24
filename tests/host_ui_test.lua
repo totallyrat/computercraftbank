@@ -39,6 +39,33 @@ term = { current = function() return mockTerminal(51, 19) end }
 
 local ui = require("lib.ui")
 
+-- The bottom tab bar, 11.0: every app's parts in one row, each tab as wide
+-- as its label needs, the leftovers shared out, and home at the top left.
+for _, size in ipairs({ { 26, 20 }, { 51, 19 } }) do
+    local display = mockTerminal(size[1], size[2])
+    ui.usePhoneStyle(true)
+    ui.clear(display)
+    ui.header(display, "Shop", "Tabs", "12:00")
+    local bar = ui.scene(display)
+    ui.tabBar(bar, display, { { id = "stores", label = "Stores" },
+        { id = "delivery", label = "Delivery" },
+        { id = "places", label = "Places" } }, "delivery", colors.orange)
+    assert(bar:hit(1, size[2]) == "tab:stores")
+    assert(bar:hit(size[1], size[2]) == "tab:places", "the row is filled to the edge")
+    local seen = {}
+    for x = 1, size[1] do seen[bar:hit(x, size[2]) or "gap"] = true end
+    assert(seen["tab:delivery"] and not seen.gap, "no gaps between tabs")
+    assert(bar:hit(1, 1) == "home" and bar:hit(4, 1) == "home",
+        "the PUMPE mark at the top left goes home")
+    -- More tabs than fit: equal shares, still the whole row.
+    local crowded = ui.scene(display)
+    ui.tabBar(crowded, display, { { id = "a", label = "Messages" },
+        { id = "b", label = "Friends" }, { id = "c", label = "Urgent" },
+        { id = "d", label = "Requests" } }, "a")
+    assert(crowded:hit(size[1], size[2]) == "tab:d")
+    ui.usePhoneStyle(false)
+end
+
 local wrapped = ui.wrap(
     "Processing fees and payment totals stay readable on pocket screens", 22)
 assert(#wrapped == 4)
@@ -141,6 +168,31 @@ assert(ui.input(mockTerminal(26, 20), "Join CCG", {
     maxLength = math.huge,
     scrollToEnd = true,
 }) == string.upper(longCode))
+
+-- 11.0: an email address typed on the pocket keyboard. The email layout has
+-- @ and a full stop on it; the keys are drawn in capitals but type lower
+-- case, and a real keyboard types exactly what it types. On a 26x20 screen
+-- the keys are two wide from x=4, and the last two rows are y=17 and 18.
+local function key(index, row) return { "mouse_click", 1, 4 + (index - 1) * 2, row } end
+local mailEvents = {
+    key(8, 17),   -- K
+    key(10, 17),  -- @
+    key(4, 17),   -- F
+    key(8, 18),   -- .
+    key(3, 18),   -- C
+    { "char", "X" },
+    { "key", keys.enter },
+}
+local mailIndex = 0
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = function()
+    mailIndex = mailIndex + 1
+    assert(mailEvents[mailIndex], "email input requested too many events")
+    return table.unpack(mailEvents[mailIndex])
+end
+local typedMail = (ui.input(mockTerminal(26, 20), "To", { hint = "Address",
+    mode = "email", maxLength = 40 }))
+assert(typedMail == "k@f.cX")
 
 -- The PUMPE can opt into phone styling without changing the kiosk UI.
 ui.usePhoneStyle(true)

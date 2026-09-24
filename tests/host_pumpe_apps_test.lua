@@ -36,6 +36,8 @@ loadfile = function(path)
     if tostring(path):find("FOXY", 1, true) then
         return realLoadfile("../foxy.lua")
     end
+    -- Anything the phone downloaded in this run is on its in-memory disk.
+    if written[path] then return load(written[path], path) end
     return realLoadfile(path)
 end
 
@@ -100,6 +102,9 @@ local bankClient = {
             return { account = account }
         elseif action == "PUMPE_POLL" then
             return { balance = account.balance }
+        elseif action == "MAIL_APP_SEND" then
+            mailSent = payload
+            return { id = "MAIL00000001", to = { payload.to } }
         elseif action == "DEV_MINE" then
             return { developer_id = nil }
         elseif action == "FOXY_OVERVIEW" then
@@ -129,6 +134,13 @@ local APP = { app_id = "NOTES", name = "Notes", version = 1,
     author = "Shop Owner", description = "Jot things down",
     size = 20, checksum = nil }
 local BODY = "return function() end\n"
+-- 11.0: FoxMail is fetched at sign-in, unasked. Here it stands in as an app
+-- that uses the Email API -- and tries to send as Foxy while it is at it.
+local MAIL_BODY = "return function(api) MAILED = api.mail.send({ app_id = "
+    .. "'FOXY', from = 'news@notes.com', to = 'kit@foxy.com', subject = 'Hi',"
+    .. " body = 'Hello' }) end\n"
+local MAIL_APP = { app_id = "MAIL", name = "FoxMail", version = 1,
+    author = "PUMPE", description = "Email", size = #MAIL_BODY }
 APP.size = #BODY
 -- Advertised one way, served another: a download the PUMPE must refuse.
 local ROTTEN = { app_id = "ROTTEN", name = "Rotten", version = 1,
@@ -143,10 +155,10 @@ local storeClient = {
                 { app_id = "FOXY", name = "Foxy", version = 1,
                   author = "PUMPE", description = "Your Foxy Account",
                   size = 10, checksum = "0" },
-                APP, ROTTEN,
+                APP, ROTTEN, MAIL_APP,
             } }
         elseif action == "APP_CHUNK" then
-            local body = payload.app_id == "ROTTEN" and BODY or BODY
+            local body = payload.app_id == "MAIL" and MAIL_BODY or BODY
             return { app_id = payload.app_id, offset = 0, data = body,
                 next_offset = #body, total_size = #body, done = true }
         end
@@ -154,6 +166,7 @@ local storeClient = {
     end,
 }
 APP.checksum = package.loaded["lib.util"].checksum(BODY)
+MAIL_APP.checksum = package.loaded["lib.util"].checksum(MAIL_BODY)
 package.loaded["lib.net"] = {
     client = function(config)
         if config.protocol == "PUMPE_APPS_V1" then return storeClient end
@@ -259,6 +272,7 @@ actions = {
     "back",                              -- leave the bank
     "account", "back",                   -- the account section
     "back",                              -- leave Foxy
+    "open:ext:MAIL",                     -- 11.0: installed at sign-in
     -- 9.4: there is no Bank tab to open. Foxy is the bank, and the Home
     -- Screen has one fewer built-in app than it had.
     "__terminate",
@@ -318,6 +332,13 @@ end
 -- The App Browser talks to the App Server, never to the Bank.
 assert(drew("App Browser"))
 assert(asked(storeCalls, "APP_LIST") and asked(storeCalls, "APP_CHUNK"))
+assert(written["/pumpe/apps/MAIL.lua"] == MAIL_BODY,
+    "FoxMail is installed on sign-in, like Foxy, without visiting the browser")
+assert(mailSent and mailSent.app_id == "MAIL",
+    "an app's email goes to the Bank under its own id, whatever it claims")
+assert(mailSent.from == "news@notes.com" and mailSent.to == "kit@foxy.com"
+    and mailSent.subject == "Hi" and mailSent.body == "Hello")
+assert(MAILED and MAILED.id == "MAIL00000001", "and the app hears it was sent")
 assert(not asked(requests, "APP_LIST") and not asked(requests, "APP_CHUNK"),
     "app downloads must not touch the Bank")
 assert(written["/pumpe/apps/NOTES.lua"] == BODY,

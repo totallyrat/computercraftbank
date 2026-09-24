@@ -4441,6 +4441,18 @@ local function runInstalledApp(entry, wantedAction)
         -- Opening a website. The phone does the running, not the app: see
         -- the sandbox above for why an app is not given the means itself.
         browse = function(domain) return webpage.browse(domain) end,
+        -- FoxMail's Email API, 11.0. An app sends from an address on its
+        -- company's domain; the Bank decides which company that is from who
+        -- published the app, so an app cannot send as anybody else.
+        mail = {
+            send = function(spec)
+                spec = type(spec) == "table" and spec or {}
+                return request("MAIL_APP_SEND", {
+                    app_id = entry.app_id, from = spec.from, to = spec.to,
+                    subject = spec.subject, body = spec.body,
+                }, true)
+            end,
+        },
         -- This app's own corner of the phone.
         save = function(value) return appStoreSave(entry.app_id, value) end,
         load = function() return appStoreLoad(entry.app_id) end,
@@ -5061,14 +5073,18 @@ end
 -- is fetched on first sign-in rather than left in the App Browser for
 -- somebody to find. Quiet on failure: an App Server that is down is a
 -- reason to try again next time, not a reason to block the Home Screen.
+--
+-- FoxMail joined it in 11.0: mail is how companies and apps reach people,
+-- and a phone without it would miss their receipts.
 local function ensureFoxy()
-    if installedApp("FOXY") then return end
+    local missing = {}
+    for _, appId in ipairs({ "FOXY", "MAIL" }) do
+        if not installedApp(appId) then missing[appId] = true end
+    end
+    if next(missing) == nil then return end
     local listed = storeRequest("APP_LIST", {}, true)
     for _, app in ipairs(listed and listed.apps or {}) do
-        if app.app_id == "FOXY" then
-            installApp(app)
-            return
-        end
+        if missing[app.app_id] then installApp(app) end
     end
 end
 

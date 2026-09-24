@@ -139,6 +139,9 @@ local function seedShippedApps()
         -- New in 10.2: stores to order from, and the deliveries on the way.
         { file = "shop.lua", id = "SHOP", name = "Shop",
           description = "Order from stores. Home delivery or pickup." },
+        -- 11.0. Every PUMPE fetches it on sign-in, like Foxy.
+        { file = "foxmail.lua", id = "MAIL", name = "FoxMail",
+          description = "Email for people, companies and apps." },
     }) do
         local body = util.readFile(fs.combine(ROOT, shipped.file))
         local existing = state.apps[shipped.id]

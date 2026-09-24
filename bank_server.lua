@@ -101,6 +101,7 @@ RELEASE.depot_files = {
     "internet.lua",
     "delivery_terminal.lua",
     "shop.lua",
+    "foxmail.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -144,6 +145,7 @@ RELEASE.optional = {
     "internet.lua",
     "delivery_terminal.lua",
     "shop.lua",
+    "foxmail.lua",
 }
 
 RELEASE.programs = {
@@ -805,6 +807,20 @@ end
 -- What the Vault is told about who is asking. Never a session token: the
 -- Core has already decided this, and a Vault that has not been given the
 -- means to check cannot be talked into acting as somebody else.
+-- The active companies an account owns, as the Vault is told them.
+local function ownedCompanies(account)
+    local owned = {}
+    for _, company in pairs(state.companies) do
+        if company.owner_account_id == account.account_id
+            and company.status == "active" then
+            owned[#owned + 1] = { company_id = company.company_id,
+                name = company.name }
+        end
+    end
+    table.sort(owned, function(a, b) return a.name < b.name end)
+    return owned
+end
+
 local function vaultCaller(account, extra)
     local caller = {
         account_id = account.account_id,
@@ -4712,6 +4728,36 @@ function shop.release()
     if changed then save() end
 end
 
+-- FoxMail's Email API. An app on somebody's phone sends from its own
+-- company's address -- a receipt, a reminder -- to anybody. Which company is
+-- decided here, from who published the app, never by the app; and an app
+-- sends at most so many a day however many phones it runs on.
+function actions.MAIL_APP_SEND(payload)
+    requireSession(payload)
+    local appId = appstore.appId(payload)
+    local publisher = appstore.owners()[appId]
+    need(publisher, "NOT_PUBLISHED",
+        "Only an app published by a company can send email")
+    local owner = state.accounts[publisher.account_id]
+    need(owner and not owner.banned, "NOT_PUBLISHED",
+        "That app's publisher is not active")
+    state.app_mail = state.app_mail or {}
+    local today = util.ingameDay()
+    local sent = state.app_mail[appId]
+    if not sent or sent.day ~= today then sent = { day = today, count = 0 } end
+    need(sent.count < (tonumber(config.max_app_mail_per_day) or 50),
+        "MAIL_LIMIT", "That app has sent all the email it can today")
+    local result = pair.forward("VAULT_MAIL_APP_SEND", {
+        from = payload.from, to = payload.to, subject = payload.subject,
+        body = payload.body, app_name = publisher.app_name or appId,
+        companies = ownedCompanies(owner),
+    }, { kind = "core" })
+    sent.count = sent.count + 1
+    state.app_mail[appId] = sent
+    save()
+    return result
+end
+
 function actions.REMOVE_QUICK_ITEM(payload)
     local result = actions.REMOVE_PRODUCT(payload)
     result.quick_items = result.products
@@ -5290,6 +5336,21 @@ pair.routes = {
     PICKUP_STOCK = { auth = "terminal" },
     PICKUP_COLLECT = { auth = "terminal" },
     DELIVERY_RETURN_DECLINE = { auth = "terminal" },
+    -- FoxMail, 11.0. Kept in the Vault; a person's company addresses are
+    -- theirs because the Core says which companies they own.
+    MAIL_ME = { auth = "session", companies = true },
+    MAIL_CLAIM = { auth = "session", companies = true },
+    MAIL_DOMAIN = { auth = "session", companies = true },
+    MAIL_ADDRESS = { auth = "session", companies = true },
+    MAIL_LIST = { auth = "session", companies = true },
+    MAIL_READ = { auth = "session", companies = true },
+    MAIL_SEND = { auth = "session", companies = true },
+    MAIL_DELETE = { auth = "session", companies = true },
+    KIOSK_MAIL_ME = { auth = "terminal" },
+    KIOSK_MAIL_LIST = { auth = "terminal" },
+    KIOSK_MAIL_READ = { auth = "terminal" },
+    KIOSK_MAIL_SEND = { auth = "terminal" },
+    KIOSK_MAIL_DELETE = { auth = "terminal" },
 }
 
 -- Everything the Core checks before a question goes down the cable.
@@ -5332,6 +5393,9 @@ local function routeToVault(action, spec, payload)
         need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
     end
     local extra = {}
+    -- FoxMail: which companies this person owns, and so which company
+    -- addresses they may read and send as. Only the Core knows.
+    if spec.companies then extra.companies = ownedCompanies(account) end
     if spec.app == "required" then
         local appId = appstore.appId(payload)
         appstore.requireGrant(account, appId)
