@@ -239,6 +239,34 @@ local typedMail = (ui.input(mockTerminal(26, 20), "To", { hint = "Address",
     mode = "email", maxLength = 40 }))
 assert(typedMail == "k@f.cX")
 
+-- 11.0: suggestions under the field. Type "fo", let the cursor blink once,
+-- and tap the second suggestion -- row 9 on a pocket screen with a hint,
+-- the field taking rows 5 to 7.
+local suggestCalls = 0
+local suggestEvents = {
+    { "char", "f" }, { "char", "o" }, { "timer", 0 },
+    { "mouse_click", 1, 10, 9 },
+}
+local suggestIndex = 0
+os.startTimer = function() return 0 end
+os.pullEvent = function()
+    suggestIndex = suggestIndex + 1
+    assert(suggestEvents[suggestIndex], "suggest input requested too many events")
+    return table.unpack(suggestEvents[suggestIndex])
+end
+local typedSearch, chosen = ui.input(mockTerminal(26, 20), "Search", {
+    hint = "Apps", maxLength = 24,
+    suggest = function(value)
+        suggestCalls = suggestCalls + 1
+        return { { label = value .. "xy", detail = "App" },
+            { label = "Foxy Cash", detail = "Foxy" } }
+    end,
+})
+assert(typedSearch == "fo" and chosen and chosen.label == "Foxy Cash",
+    "tapping a suggestion returns it")
+assert(suggestCalls == 2, "worked out once per change of text, not per blink: "
+    .. suggestCalls)
+
 -- The PUMPE can opt into phone styling without changing the kiosk UI.
 ui.usePhoneStyle(true)
 local phoneDisplay = mockTerminal(26, 20)

@@ -739,6 +739,8 @@ assert(not find(buttonLabels, "!\nAlerts"),
 -- Favourites became the dock, so they sit under every app page instead of
 -- taking a page of their own; the notification centre is still the last one.
 assert(find(drawnText, "Your Dock"), "the dock picker is reachable")
+-- 11.0: search moved to a bar of its own, so the dock is four favourites.
+assert(find(drawnText, "0 of 4 chosen"), "all four dock slots are favourites")
 assert(find(drawnText, "Notifications"), "the notification centre is a page")
 assert(find(buttonLabels, "Mark all read"))
 assert(find(drawnText, "Welcome to your"),

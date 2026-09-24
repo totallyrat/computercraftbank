@@ -710,6 +710,11 @@ function ui.input(target, title, options)
     local maxLength = options.maxLength or 24
     local rows = keyboardRows(options.mode)
     local blink = true
+    -- 11.0: suggestions under the field as you type. `options.suggest(value)`
+    -- returns { label = , detail = } items; tapping one returns the text and
+    -- the item. Worked out again only when the text changes, not on every
+    -- blink of the cursor.
+    local suggestions, suggestedFor = {}, nil
 
     while true do
         ui.clear(target)
@@ -735,6 +740,29 @@ function ui.input(target, title, options)
         local keyBottom = (spaceY or actionY) - 1
         local startY = math.max(fieldY + 3, keyBottom - #rows + 1)
         local scene = ui.scene(target)
+        if options.suggest then
+            if value ~= suggestedFor then
+                suggestedFor = value
+                suggestions = #util.trim(value) > 0
+                    and (options.suggest(value) or {}) or {}
+            end
+            for index, item in ipairs(suggestions) do
+                local y = fieldY + 2 + index
+                if y > startY - 1 then break end
+                local detail = item.detail and tostring(item.detail) or ""
+                local labelRoom = math.max(1, width - 5 - #detail)
+                ui.fill(target, 2, y, width - 2, 1, index == 1
+                    and ui.theme.accentDark or ui.theme.panel)
+                ui.text(target, 3, y, ui.truncate(tostring(item.label),
+                    labelRoom), ui.theme.ink, index == 1 and ui.theme.accentDark
+                    or ui.theme.panel)
+                if #detail > 0 and #detail < width - 8 then
+                    ui.text(target, width - #detail, y, detail, ui.theme.muted,
+                        index == 1 and ui.theme.accentDark or ui.theme.panel)
+                end
+                scene:hotspot("suggest:" .. index, 2, y, width - 2, 1)
+            end
+        end
         for rowIndex, row in ipairs(rows) do
             local y = startY + rowIndex - 1
             if y <= keyBottom then
@@ -776,7 +804,10 @@ function ui.input(target, title, options)
             }),
             flash = false,
         })
-        if action == "__tick" then
+        local picked = tonumber(action and action:match("^suggest:(%d+)$"))
+        if picked and suggestions[picked] then
+            return value, suggestions[picked]
+        elseif action == "__tick" then
             blink = not blink
         elseif action == "cancel" or action == "__terminate" then
             return nil

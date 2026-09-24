@@ -4889,10 +4889,9 @@ local function badgeText(count)
     return count > 9 and "9+" or (" " .. count)
 end
 
--- One of the four dock slots belongs to search. Somewhere you can always
--- reach, on every page, without knowing where the thing you want lives --
--- which is the whole point of it.
-local FAVOURITE_SLOTS = DOCK_SLOTS - 1
+-- Search had one of the four dock slots from 10.0 Simple. Since 11.0 it has
+-- a slim bar of its own just above the dock, so all four are favourites.
+local FAVOURITE_SLOTS = DOCK_SLOTS
 
 local function favouriteIds()
     local chosen = {}
@@ -5000,12 +4999,15 @@ local function drawDock(scene, layout, poll, width)
     local slotWidth = math.max(3, math.floor((width - 2) / DOCK_SLOTS) - 1)
     local span = DOCK_SLOTS * (slotWidth + 1) - 1
     local left = math.max(1, math.floor((width - span) / 2) + 1)
+    -- The search bar: one row where the divider line was, so the grid of
+    -- apps keeps every row it had. It looks like the field it opens.
     ui.fill(target, 2, layout.dividerY, width - 2, 1, ui.theme.panel)
+    ui.text(target, 3, layout.dividerY, ui.truncate("Q  Search everything",
+        width - 4), ui.theme.muted, ui.theme.panel)
+    scene:hotspot("search", 2, layout.dividerY, width - 2, 1)
     local chosen = favouriteIds()
-    scene:button("search", left, layout.dockY, slotWidth, 2, "Q",
-        { background = ui.theme.accentDark })
     for slot = 1, FAVOURITE_SLOTS do
-        local x = left + slot * (slotWidth + 1)
+        local x = left + (slot - 1) * (slotWidth + 1)
         local id = chosen[slot]
         if id then
             scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
@@ -5196,15 +5198,27 @@ function finder.rows(scene, hits, top, rows, width)
     end
 end
 
+-- 11.0: suggestions under the field as you type -- "fox" already offers
+-- Foxy, Foxy Cash and FoxMail. Tapping one opens it; DONE shows every match.
 function finder.ask(initial)
+    local everything = finder.everything()
     return ui.input(target, "Search", {
         hint = "Apps, actions, settings", initial = initial,
         maxLength = 24, allowSpace = true,
+        suggest = function(value)
+            local hits = finder.match(everything, value)
+            for _, hit in ipairs(hits) do hit.detail = hit.kind end
+            return hits
+        end,
     })
 end
 
 function finder.screen()
-    local typed = finder.ask()
+    local typed, picked = finder.ask()
+    if picked then
+        openApp(picked.app, picked.action)
+        return
+    end
     while running and typed do
         local hits = finder.match(finder.everything(), typed)
         local width, height = target.getSize()
@@ -5229,7 +5243,11 @@ function finder.screen()
         local action = scene:wait({ tickRate = 5 })
         if action == "back" or action == "__terminate" then return end
         if action == "again" then
-            typed = finder.ask(typed)
+            typed, picked = finder.ask(typed)
+            if picked then
+                openApp(picked.app, picked.action)
+                return
+            end
         elseif action == "store" then
             openApp("browser", typed)
         else

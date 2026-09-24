@@ -201,8 +201,20 @@ function ui.confirm()
     return answer
 end
 filterAt = 0
-function ui.input()
+suggested = {}
+function ui.input(_, _, spec)
     local value = table.remove(inputs, 1)
+    -- 11.0: an entry can name a suggestion to tap. The phone's own suggest
+    -- function is asked, exactly as the real field asks it on every key.
+    if type(value) == "table" then
+        local items = spec.suggest(value.typed)
+        suggested = items
+        for _, item in ipairs(items) do
+            if item.label == value.choose then return value.typed, item end
+        end
+        error("nothing called " .. value.choose .. " was suggested for "
+            .. value.typed)
+    end
     -- The moment Settings is handed a search term. Everything drawn before
     -- it is the unfiltered list, which would answer for the filtered one.
     if value == "modem" then filterAt = #buttonLabels end
@@ -252,11 +264,13 @@ actions = {
     "__tick",                          -- the reminder and the daily action
     "search", "hit:1",                 -- find an app action and run it
     "back",
+    "search",                          -- 11.0: tap a suggestion instead
     "open:quick:1",                    -- a QuickAction living on the grid
     "open:settings", "find", "back",   -- searching Settings
     "__terminate",
 }
-inputs = { "Ana Fox", "cash", "modem" }
+inputs = { "Ana Fox", "cash", { typed = "activ", choose = "Activity" },
+    "modem" }
 
 -- showBanner draws straight onto the screen rather than through ui.message,
 -- so the banner text lands in `drawn` like anything else.
@@ -287,6 +301,17 @@ assert(#openedWith > 0, "and opening it actually opened the app")
 assert(openedWith[1] == "cash",
     "at the action that was asked for, not at the app's front door -- the"
         .. " app was handed " .. tostring(openedWith[1]))
+
+-- 11.0: the search bar sits above the dock, and suggests as you type.
+assert(drew("Q  Search everything"), "the Home Screen has a search bar")
+local offered
+for _, item in ipairs(suggested) do
+    if item.label == "Activity" then offered = item end
+end
+assert(offered and offered.detail == "Test App",
+    "typing offered the app's action, saying whose it is")
+assert(openedWith[2] == "ledger",
+    "and tapping the suggestion opened the app at that action")
 
 -- Everything on the phone is searchable ------------------------------------------
 
