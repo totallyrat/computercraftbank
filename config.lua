@@ -8,6 +8,12 @@ return {
     -- update replaces it rather than preserving it like a local setting.
     release_name = "10.2 Shop",
     protocol = "PUMPE_BANK_V5",
+    -- Shop, 11.0. In in-game time, like the rest of the Shop: a Minecraft
+    -- day is twenty real minutes, so two hours is about a minute and forty
+    -- seconds of real time, and five days about an hour and forty minutes.
+    shop_confirm_hours = 2,
+    shop_min_return_days = 5,
+    shop_max_return_days = 30,
     hostname = "BANK_SERVER",
 
     -- Every bank on the network, Foxy and third-party alike, speaks this one

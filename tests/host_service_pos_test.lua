@@ -7,7 +7,9 @@ local actions = {
     "tab:subscriptions",
     "settings",
     -- 10.2: the online store, from a company-linked kiosk.
-    "store", "color", "products", "item:1", "back", "open", "back",
+    "store", "color", "products", "item:1", "back", "open",
+    -- 11.0: the buyer's rights. Too short a window is refused, then set.
+    "cancel", "returns", "returns", "back",
     "close",
 }
 local buttonLabels, requests = {}, {}
@@ -105,7 +107,8 @@ package.loaded["lib.util"] = {
 
 -- The store half of the company, as the Bank would hold it.
 storeSettings = { open = false, color = "orange", tagline = "",
-    home = true, pickup = false, fee = 0 }
+    home = true, pickup = false, fee = 0, cancel = false, return_days = 5 }
+typedWindows = { "3", "14" }
 shopSetups = {}
 function storeOnline()
     local count = 0
@@ -142,12 +145,17 @@ local client = {
             }
         elseif action == "SHOP_STATE" then
             return {
-                store = { name = "Fox Cafe", products = storeOnline() },
+                store = { name = "Fox Cafe", products = storeOnline(),
+                    confirm_hours = 2 },
+                held = storeSettings.cancel and 12 or 0,
                 settings = copy(storeSettings),
                 products = copy(products),
             }
         elseif action == "SHOP_SETUP" then
             shopSetups[#shopSetups + 1] = copy(payload)
+            if payload.return_days and payload.return_days < 5 then
+                return nil, "At least 5 days", "RETURNS_TOO_SHORT"
+            end
             for key, value in pairs(payload) do
                 if storeSettings[key] ~= nil then storeSettings[key] = value end
             end
@@ -237,6 +245,10 @@ function ui.truncate(value, maximum)
     return tostring(value or ""):sub(1, math.max(0, maximum))
 end
 function ui.confirm() return true end
+function ui.input(_, title)
+    assert(title == "RETURN WINDOW", "unexpected text box " .. tostring(title))
+    return table.remove(typedWindows, 1)
+end
 function ui.message() end
 function ui.networkError(_, err) error(err) end
 
@@ -284,6 +296,14 @@ for _, setup in ipairs(shopSetups) do
 end
 assert(changedColour, "the colour button moves to the next store colour")
 assert(opened, "and OPEN STORE asks the Bank to open it")
+assert(storeSettings.cancel == true, "CANCELLING ON asks, then turns it on")
+assert(storeSettings.return_days == 14, "a return window of 14 days is kept")
+local refused = false
+for _, setup in ipairs(shopSetups) do
+    if setup.return_days == 3 then refused = true end
+end
+assert(refused and #typedWindows == 0, "and 3 days was asked for and refused")
+assert(contains(buttonLabels, "RETURNS: 14 DAYS"))
 assert(products[1].online == true,
     "a product put online is put online at the Bank")
 assert(contains(buttonLabels, "+"))

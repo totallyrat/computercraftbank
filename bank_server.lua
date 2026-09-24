@@ -4191,6 +4191,10 @@ local shop = {
     max_lines = 10,
     max_quantity = 20,
     max_fee = 1000,
+    -- 11.0. In in-game hours and days, like every other clock in the Shop.
+    confirm_hours = tonumber(config.shop_confirm_hours) or 2,
+    min_return_days = tonumber(config.shop_min_return_days) or 5,
+    max_return_days = tonumber(config.shop_max_return_days) or 30,
 }
 
 function shop.settings(company)
@@ -4198,7 +4202,13 @@ function shop.settings(company)
         open = false, color = "orange", tagline = "",
         home = true, pickup = false, fee = 0,
     }
-    return company.shop
+    local settings = company.shop
+    -- Stores opened in 10.2 have neither. Cancelling is the store's choice,
+    -- so it starts off; the return window starts at the least there is.
+    if settings.cancel == nil then settings.cancel = false end
+    settings.return_days = math.max(shop.min_return_days,
+        math.floor(tonumber(settings.return_days) or shop.min_return_days))
+    return settings
 end
 
 function shop.online(company)
@@ -4225,6 +4235,9 @@ function shop.public(company)
         pickup = settings.pickup,
         fee = settings.fee,
         products = #shop.online(company),
+        cancel = settings.cancel,
+        return_days = settings.return_days,
+        confirm_hours = shop.confirm_hours,
     }
 end
 
@@ -4238,7 +4251,16 @@ end
 
 function actions.SHOP_STATE(payload)
     local _, company = requireStoreTerminal(payload)
+    -- Money from orders that can still be cancelled: bought, not yet the
+    -- store's.
+    local held = 0
+    for _, entry in pairs(state.shop_held or {}) do
+        if entry.company_id == company.company_id then
+            held = util.roundMoney(held + entry.amount)
+        end
+    end
     return {
+        held = held,
         store = shop.public(company),
         settings = util.copy(shop.settings(company)),
         products = util.copy(company.quick_items or {}),
@@ -4262,6 +4284,14 @@ function actions.SHOP_SETUP(payload)
     if payload.fee ~= nil then
         settings.fee = math.max(0, math.min(shop.max_fee,
             math.floor(tonumber(payload.fee) or 0)))
+    end
+    if payload.cancel ~= nil then settings.cancel = payload.cancel == true end
+    if payload.return_days ~= nil then
+        local days = math.floor(tonumber(payload.return_days) or 0)
+        need(days >= shop.min_return_days, "RETURNS_TOO_SHORT",
+            "Every order can be returned for at least "
+                .. shop.min_return_days .. " days")
+        settings.return_days = math.min(shop.max_return_days, days)
     end
     if payload.open ~= nil then
         if payload.open == true then
@@ -4462,11 +4492,18 @@ function actions.SHOP_CHECKOUT(payload)
     end
 
     -- 1. The order exists first, unpaid, so a Vault that is down stops the
-    --    checkout before any money moves rather than after.
+    --    checkout before any money moves rather than after. The store's
+    --    terms go with it as they stand now.
+    local confirmAt = util.ingameMoment() + shop.confirm_hours
+    local cancellable = settings.cancel == true
     local opened = pair.forward("VAULT_SHOP_OPEN", {
         company_id = company.company_id, company_name = company.name,
         color = settings.color, lines = lines, subtotal = subtotal,
         fee = fee, total = total, delivery = delivery,
+        owner_account_id = owner.account_id,
+        payer_bank_account_id = not foxy and elsewhere or nil,
+        confirm_at = confirmAt, cancellable = cancellable,
+        return_days = settings.return_days,
     }, vaultCaller(buyer))
 
     -- 2. The money.
@@ -4491,12 +4528,25 @@ function actions.SHOP_CHECKOUT(payload)
         end
         paidWith = "Account " .. ledger.format(elsewhere):sub(1, 4)
     end
-    owner.balance = util.roundMoney((owner.balance or 0) + total)
-    transaction(owner, "shop_sale", total, buyer.name,
-        "Order " .. opened.order_id)
+    -- An order the buyer may still cancel is paid for, but the money is
+    -- not the store's until the order is confirmed: a cancellation is then
+    -- always refunded in full, whatever the store has spent since.
+    if cancellable then
+        state.shop_held = state.shop_held or {}
+        state.shop_held[opened.order_id] = {
+            owner_account_id = owner.account_id,
+            company_id = company.company_id,
+            buyer_name = buyer.name,
+            amount = total, release_at = confirmAt,
+        }
+    else
+        owner.balance = util.roundMoney((owner.balance or 0) + total)
+        transaction(owner, "shop_sale", total, buyer.name,
+            "Order " .. opened.order_id)
+    end
     notification(owner, "New order", company.name .. ": "
-        .. util.money(total, config.currency) .. " from " .. buyer.name,
-        "money")
+        .. util.money(total, config.currency) .. " from " .. buyer.name
+        .. (cancellable and ". Yours once it is confirmed" or ""), "money")
     save()
 
     -- 3. Tell the Vault it was paid. The money has moved either way; if the
@@ -4518,6 +4568,148 @@ function actions.SHOP_CHECKOUT(payload)
         delivery = opened.delivery,
         order = confirmed and result or nil,
     }
+end
+
+-- Giving money back. Where it comes from: money still held for the order,
+-- or the store owner's account once it has been paid out. Where it goes:
+-- the Foxy account that paid, or the account at another bank that paid, by
+-- a credit that is retried until that bank answers.
+function shop.payBack(buyerAccountId, bankAccountId, amount, orderId, company)
+    local buyer = state.accounts[buyerAccountId]
+    if bankAccountId then
+        local transferId = "SHOPREF" .. orderId
+        local outcome = ledger.outcome(ledger.ask(ledger.bankOf(bankAccountId),
+            "LEDGER_CREDIT", {
+                bank_account_id = bankAccountId, amount = amount,
+                transfer_id = transferId, from_name = company .. " refund",
+                from_bank_name = config.bank_name or "Foxy",
+            }, 6))
+        if outcome == "sent" then return "their bank" end
+        if outcome == "unknown" then
+            -- It may yet land. shop.release asks again until it is sure.
+            state.shop_refunds = state.shop_refunds or {}
+            state.shop_refunds[transferId] = { bank_account_id = bankAccountId,
+                buyer_account_id = buyerAccountId, amount = amount,
+                order_id = orderId, company = company }
+            return "their bank, soon"
+        end
+    end
+    -- Foxy, or another bank that refused the money outright -- an account it
+    -- has closed, say. The buyer holds a Foxy account either way.
+    if not buyer then return "nowhere" end
+    buyer.balance = util.roundMoney((buyer.balance or 0) + amount)
+    transaction(buyer, "shop_refund", amount, company, "Refund, order " .. orderId)
+    return "Foxy"
+end
+
+-- The one refund path. `caller` is who the Vault checks it for: the buyer
+-- for a cancel, the company's terminal for a store refund or a return.
+function shop.refund(orderId, why, caller, note)
+    local info = pair.forward("VAULT_SHOP_REFUND_CHECK",
+        { order_id = orderId, why = why }, caller)
+    state.shop_held = state.shop_held or {}
+    local held = state.shop_held[orderId]
+    local owner = state.accounts[info.owner_account_id or ""]
+    if why == "cancel" then
+        need(held and util.ingameMoment() < held.release_at, "CONFIRMED",
+            "That order is confirmed. Return it once it arrives")
+    end
+    -- Take the money back into the Bank's hands before the order is marked,
+    -- so nothing can spend it while the cable answers; put it back if the
+    -- Vault says no.
+    if held then
+        state.shop_held[orderId] = nil
+    else
+        need(owner and (owner.balance or 0) >= info.total, "STORE_SHORT",
+            "There is not enough in the store's account to refund this")
+        owner.balance = util.roundMoney(owner.balance - info.total)
+    end
+    local marked, result = pcall(pair.forward, "VAULT_SHOP_REFUNDED",
+        { order_id = orderId, why = why, note = note }, caller)
+    if not marked then
+        if held then
+            state.shop_held[orderId] = held
+        else
+            owner.balance = util.roundMoney(owner.balance + info.total)
+        end
+        error(result, 0)
+    end
+    if not held then
+        transaction(owner, "shop_refund", -info.total, info.buyer_name,
+            "Refund, order " .. orderId)
+    end
+    local landed = shop.payBack(info.buyer_account_id,
+        info.payer_bank_account_id, info.total, orderId, info.company_name)
+    local buyer = state.accounts[info.buyer_account_id]
+    if buyer then
+        notification(buyer, why == "return" and "Return refunded"
+            or "Order cancelled", util.money(info.total, config.currency)
+            .. " back to " .. landed .. " from " .. info.company_name, "money")
+    end
+    if owner and why == "cancel" then
+        notification(owner, "Order cancelled", info.company_name .. ": "
+            .. orderId .. " by " .. tostring(info.buyer_name), "info")
+    end
+    save()
+    logActivity("Refund " .. orderId .. " (" .. why .. ")", colors.orange)
+    return { order_id = orderId, refunded = info.total, to = landed,
+        order = result.order }
+end
+
+-- The buyer, from the order's page, before it is confirmed.
+function actions.SHOP_CANCEL(payload)
+    local buyer = requireSession(payload)
+    return shop.refund(tostring(payload.order_id or ""), "cancel",
+        vaultCaller(buyer))
+end
+
+-- The store, from a Delivery Terminal: an open order it cannot fill, or a
+-- return it has back in its hands.
+function actions.DELIVERY_REFUND(payload)
+    local terminal = requireTerminal(payload)
+    local company = terminal.company_id and state.companies[terminal.company_id]
+    need(company, "NOT_LINKED", "Link this terminal to a company first")
+    local why = payload.why == "return" and "return" or "store"
+    return shop.refund(tostring(payload.order_id or ""), why, {
+        kind = "terminal", terminal_id = terminal.terminal_id,
+        company_id = company.company_id, company_name = company.name,
+    }, payload.note)
+end
+
+-- Money held for orders that can no longer be cancelled becomes the
+-- store's. Run by the scheduler; a Bank that was off simply pays late.
+function shop.release()
+    local now, changed = util.ingameMoment(), false
+    for orderId, held in pairs(state.shop_held or {}) do
+        local owner = state.accounts[held.owner_account_id]
+        if now >= held.release_at and owner then
+            owner.balance = util.roundMoney((owner.balance or 0) + held.amount)
+            transaction(owner, "shop_sale", held.amount, held.buyer_name,
+                "Order " .. orderId)
+            state.shop_held[orderId] = nil
+            changed = true
+        end
+    end
+    for transferId, refund in pairs(state.shop_refunds or {}) do
+        local outcome = ledger.outcome(ledger.ask(
+            ledger.bankOf(refund.bank_account_id),
+                "LEDGER_CREDIT", {
+                    bank_account_id = refund.bank_account_id,
+                    amount = refund.amount, transfer_id = transferId,
+                    from_name = tostring(refund.company) .. " refund",
+                    from_bank_name = config.bank_name or "Foxy",
+                }, 6))
+        if outcome == "sent" then
+            state.shop_refunds[transferId] = nil
+            changed = true
+        elseif outcome == "refused" then
+            shop.payBack(refund.buyer_account_id, nil, refund.amount,
+                refund.order_id, tostring(refund.company))
+            state.shop_refunds[transferId] = nil
+            changed = true
+        end
+    end
+    if changed then save() end
 end
 
 function actions.REMOVE_QUICK_ITEM(payload)
@@ -5086,6 +5278,9 @@ pair.routes = {
     -- moves money, so it is a Core action.
     SHOP_ORDERS = { auth = "session" },
     SHOP_ORDER = { auth = "session" },
+    -- 11.0: asking to send something back. Money only moves later, when the
+    -- store refunds it from a Delivery Terminal.
+    SHOP_RETURN = { auth = "session" },
     DELIVERY_ORDERS = { auth = "terminal" },
     DELIVERY_STAGE = { auth = "terminal" },
     DELIVERY_DONE = { auth = "terminal" },
@@ -5094,6 +5289,7 @@ pair.routes = {
     PICKUP_ORDERS = { auth = "terminal" },
     PICKUP_STOCK = { auth = "terminal" },
     PICKUP_COLLECT = { auth = "terminal" },
+    DELIVERY_RETURN_DECLINE = { auth = "terminal" },
 }
 
 -- Everything the Core checks before a question goes down the cable.
@@ -5368,6 +5564,7 @@ local function schedulerLoop()
         pcall(ledger.reconcile)
         pcall(ledger.sweep)
         pcall(shop.reconcile)
+        pcall(shop.release)
         sleep(10)
     end
 end

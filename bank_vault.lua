@@ -3025,6 +3025,11 @@ local SHOP = {
     max_open_per_company = 300,
     code_tries = 5,
     code_lock_ms = 60 * 1000,
+    -- 11.0. The store's return window starts when the parcel arrives, and
+    -- is never shorter than this. Orders are kept a week past it, so an
+    -- answer to a late return still has an order to belong to.
+    return_days = 5,
+    keep_after_returns = 7,
     stages = { "Order received", "Packing", "Packed", "Out for delivery",
         "At the pickup point" },
 }
@@ -3034,6 +3039,15 @@ local function shopTerminal(caller)
         and type(caller.company_id) == "string", "NOT_A_TERMINAL",
         "Only a company's own terminal can do that")
     return caller
+end
+
+-- The last moment a return can be asked for, in in-game hours. Orders from
+-- before 11.0 never recorded when they arrived, only the day, so they are
+-- given the whole of that day.
+local function returnDeadline(order)
+    local arrived = order.finished_at
+        or ((order.done_day or util.ingameDay()) + 1) * 24
+    return arrived + (order.return_days or SHOP.return_days) * 24
 end
 
 local function orderStamp(order, label)
@@ -3050,6 +3064,8 @@ end
 -- because staff do not need to know it to deliver a parcel, and a code
 -- nobody else has seen is a code nobody else can use.
 local function publicOrder(order, forBuyer)
+    local now = util.ingameMoment()
+    local arrived = order.status == "done" or order.status == "collected"
     return {
         order_id = order.order_id,
         company_id = order.company_id,
@@ -3068,6 +3084,19 @@ local function publicOrder(order, forBuyer)
         -- What the driver said when they pressed DONE: "left by the door".
         note = order.note,
         stocked = order.locker ~= nil,
+        -- 11.0: cancelling and returning. Worked out here, from the one
+        -- clock, so a phone and a terminal never disagree about a deadline.
+        confirmed = not order.confirm_at or now >= order.confirm_at,
+        confirms_in = order.confirm_at
+            and math.max(0, order.confirm_at - now) or 0,
+        cancellable = order.status == "open" and order.cancellable == true
+            and order.confirm_at ~= nil and now < order.confirm_at,
+        return_days = order.return_days or SHOP.return_days,
+        returns_left = arrived and math.max(0, returnDeadline(order) - now)
+            or nil,
+        returnable = arrived and not order.return_request
+            and now <= returnDeadline(order) or false,
+        return_request = util.copy(order.return_request),
         paid_with = order.paid_with,
         created_day = order.created_day,
         created_time = order.created_time,
@@ -3098,11 +3127,19 @@ local function sweepOrders()
             and now - (order.created_at or 0) > SHOP.unpaid_ms then
             state.orders[orderId] = nil
             changed = true
-        elseif (order.status == "done" or order.status == "collected"
-            or order.status == "cancelled")
-            and today - (order.done_day or today) > SHOP.keep_days then
-            state.orders[orderId] = nil
-            changed = true
+        elseif order.status == "done" or order.status == "collected"
+            or order.status == "cancelled" then
+            local keep = SHOP.keep_days
+            if order.status ~= "cancelled" then
+                keep = math.max(keep, (order.return_days or SHOP.return_days)
+                    + SHOP.keep_after_returns)
+            end
+            local waiting = order.return_request
+                and order.return_request.status == "requested"
+            if not waiting and today - (order.done_day or today) > keep then
+                state.orders[orderId] = nil
+                changed = true
+            end
         end
     end
     if changed then save() end
@@ -3167,6 +3204,17 @@ function actions.VAULT_SHOP_OPEN(payload, caller)
         delivery = delivery,
         code = freshCode(delivery.point_id),
         status = "unpaid",
+        -- 11.0. Who was paid, who paid from where, and the store's terms as
+        -- they stood at checkout: changing them later changes new orders,
+        -- never ones already bought.
+        owner_account_id = payload.owner_account_id
+            and tostring(payload.owner_account_id) or nil,
+        payer_bank_account_id = payload.payer_bank_account_id
+            and tostring(payload.payer_bank_account_id) or nil,
+        confirm_at = tonumber(payload.confirm_at),
+        cancellable = payload.cancellable == true,
+        return_days = math.max(SHOP.return_days,
+            math.floor(tonumber(payload.return_days) or SHOP.return_days)),
         history = {},
         created_day = util.ingameDay(),
         created_time = util.formatClock(),
@@ -3250,10 +3298,14 @@ function actions.DELIVERY_ORDERS(payload, caller)
             list[#list + 1] = publicOrder(order, false)
         end
     end
+    local function rank(order)
+        if order.status == "open" then return 1 end
+        if order.return_request and order.return_request.status == "requested"
+            then return 2 end
+        return 3
+    end
     table.sort(list, function(a, b)
-        if (a.status == "open") ~= (b.status == "open") then
-            return a.status == "open"
-        end
+        if rank(a) ~= rank(b) then return rank(a) < rank(b) end
         return a.order_id < b.order_id
     end)
     return { orders = list, stages = util.copy(SHOP.stages) }
@@ -3290,6 +3342,7 @@ function actions.DELIVERY_DONE(payload, caller)
     need(order.status == "open", "ORDER_CLOSED", "That order is finished")
     order.status = "done"
     order.done_day = util.ingameDay()
+    order.finished_at = util.ingameMoment()
     local where = order.delivery.kind == "pickup"
         and ("Handed over at " .. tostring(order.delivery.point_name))
         or ("Delivered to " .. tostring(order.delivery.label) .. " at "
@@ -3301,6 +3354,127 @@ function actions.DELIVERY_DONE(payload, caller)
     save()
     core.notify(order.buyer_account_id, "Delivered",
         where .. (note ~= "" and (". " .. note) or ""), "success",
+        { order_id = order.order_id })
+    return { order = publicOrder(order, false) }
+end
+
+-- Refunds and returns ------------------------------------------------------------
+-- The Vault decides who may, the Core moves the money. Three ways an order
+-- is refunded:
+--
+--   cancel  the buyer, before the order is confirmed, and only if the store
+--           allowed cancelling when they paid
+--   store   the store itself, any order still open: out of stock, say
+--   return  the store, once goods the buyer asked to return are back
+--
+-- Checked twice -- once before the Core touches any money, and again when it
+-- marks the order -- because the Core waits on the cable in between.
+local function refundable(order, why, caller)
+    need(order and order.status ~= "unpaid", "NO_SUCH_ORDER",
+        "That order is gone")
+    if why == "cancel" then
+        local buyer = whoIsAsking(caller)
+        need(order.buyer_account_id == buyer.account_id, "NO_SUCH_ORDER",
+            "That order is gone")
+        need(order.status == "open", "ORDER_CLOSED",
+            "That order is finished. Return it instead")
+        need(order.cancellable == true, "NOT_CANCELLABLE",
+            tostring(order.company_name) .. " does not take cancellations")
+        need(order.confirm_at and util.ingameMoment() < order.confirm_at,
+            "CONFIRMED", "That order is confirmed. Return it once it arrives")
+    else
+        local terminal = shopTerminal(caller)
+        need(order.company_id == terminal.company_id, "NO_SUCH_ORDER",
+            "That order is not this company's")
+        if why == "store" then
+            need(order.status == "open", "ORDER_CLOSED",
+                "That order is finished")
+        elseif why == "return" then
+            need(order.return_request
+                and order.return_request.status == "requested", "NO_RETURN",
+                "Nobody has asked to return that order")
+        else
+            reject("BAD_REFUND", "Refund why?")
+        end
+    end
+    return {
+        order_id = order.order_id,
+        total = order.total,
+        buyer_account_id = order.buyer_account_id,
+        buyer_name = order.buyer_name,
+        payer_bank_account_id = order.payer_bank_account_id,
+        owner_account_id = order.owner_account_id,
+        company_id = order.company_id,
+        company_name = order.company_name,
+    }
+end
+
+function actions.VAULT_SHOP_REFUND_CHECK(payload, caller)
+    return refundable(state.orders[tostring(payload.order_id or "")],
+        payload.why, caller)
+end
+
+function actions.VAULT_SHOP_REFUNDED(payload, caller)
+    local order = state.orders[tostring(payload.order_id or "")]
+    local info = refundable(order, payload.why, caller)
+    if payload.why == "return" then
+        order.return_request.status = "refunded"
+        orderStamp(order, "Return refunded")
+    else
+        order.status = "cancelled"
+        order.done_day = util.ingameDay()
+        -- A parcel already in a locker stays there for staff to take out;
+        -- nobody's code opens it any more.
+        order.locker = nil
+        orderStamp(order, payload.why == "store" and "Cancelled by the store"
+            or "Cancelled")
+        local note = util.safeText(util.trim(tostring(payload.note or "")), 60)
+        if note ~= "" then order.note = note end
+    end
+    save()
+    info.order = publicOrder(order, false)
+    return info
+end
+
+-- The buyer asking to send something back. Money only moves when the store
+-- has it back and says so.
+function actions.SHOP_RETURN(payload, caller)
+    local buyer = whoIsAsking(caller)
+    local order = state.orders[tostring(payload.order_id or "")]
+    need(order and order.buyer_account_id == buyer.account_id
+        and order.status ~= "unpaid", "NO_SUCH_ORDER", "That order is gone")
+    need(order.status == "done" or order.status == "collected", "NOT_ARRIVED",
+        "Returns open once the order has arrived")
+    need(not order.return_request, "ALREADY_ASKED",
+        "You have already asked to return this order")
+    need(util.ingameMoment() <= returnDeadline(order), "RETURNS_CLOSED",
+        "The " .. (order.return_days or SHOP.return_days)
+            .. " day return window has closed")
+    local reason = util.safeText(util.trim(tostring(payload.reason or "")), 60)
+    need(#reason >= 2, "NO_REASON", "Say why you are sending it back")
+    order.return_request = { status = "requested", reason = reason,
+        day = util.ingameDay(), time = util.formatClock() }
+    orderStamp(order, "Return requested")
+    save()
+    if order.owner_account_id then
+        core.notify(order.owner_account_id, "Return requested",
+            tostring(order.company_name) .. ", order " .. order.order_id
+                .. ": " .. reason, "info", { order_id = order.order_id })
+    end
+    return { order = publicOrder(order, true) }
+end
+
+function actions.DELIVERY_RETURN_DECLINE(payload, caller)
+    local order = state.orders[tostring(payload.order_id or "")]
+    refundable(order, "return", caller)
+    local reason = util.safeText(util.trim(tostring(payload.reason or "")), 60)
+    need(#reason >= 2, "NO_REASON", "Tell the buyer why")
+    order.return_request.status = "declined"
+    order.return_request.answer = reason
+    orderStamp(order, "Return declined")
+    save()
+    core.notify(order.buyer_account_id, "Return declined",
+        tostring(order.company_name) .. ": " .. reason, "warning",
         { order_id = order.order_id })
     return { order = publicOrder(order, false) }
 end
@@ -3406,6 +3580,7 @@ function actions.PICKUP_COLLECT(payload, caller)
     local locker = found.locker
     found.status = "collected"
     found.done_day = util.ingameDay()
+    found.finished_at = util.ingameMoment()
     found.locker = nil
     orderStamp(found, "Collected")
     save()

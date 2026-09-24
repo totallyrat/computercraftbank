@@ -11,6 +11,10 @@ local harness = require("bank_pair_harness")
 local bank = harness.pair()
 local core = bank.core
 local util = require("lib.util")
+-- Lua has an os.time of its own, so the harness leaves it be, and every real
+-- second of this run would count as an in-game hour -- enough to confirm an
+-- order before the test gets round to cancelling it.
+os.time = function() return harness.time end
 
 local WIDTH, HEIGHT = 26, 20
 
@@ -383,5 +387,54 @@ push(script.actions, "__terminate")
 seen = runApp(script, "delivery")
 assert(has(seen.frames[1], "Delivery") and has(seen.frames[1], "2 on the way"),
     "the app opens on the Delivery page, with both orders on their way")
+
+-- Cancelling, from the order's own page (11.0) -------------------------------------
+
+bank.request("SHOP_SETUP", till({ cancel = true, return_days = 5 }))
+local cancelledOrder
+local balanceBefore = bank.balanceOf(kit)
+script = newScript()
+-- Fox Goods, a lamp, to Farm, with Foxy.
+push(script.actions, "pick:2", function(seen)
+    assert(has(seen.frames[#seen.frames], "Returns 5d, cancel 2h"),
+        "the store says its terms before anybody buys")
+    return "add:1"
+end, "basket", "checkout", "pick:1", "pick:1")
+push(script.confirms, true)
+push(script.pins, "5678")
+push(script.actions, function(seen)
+    for id, order in pairs(orders) do
+        if order.status == "open" and id ~= secondOrder then cancelledOrder = id end
+    end
+    assert(has(seen.frames[#seen.frames], "Cancel order (2h 0m)"),
+        "a new order says how long it can be cancelled for")
+    return "cancel"
+end)
+push(script.confirms, true)
+push(script.actions, "back", "__terminate")
+seen = runApp(script)
+assert(said(seen, "Cancelled"), "the buyer is told")
+assert(orders[cancelledOrder].status == "cancelled")
+assert(bank.balanceOf(kit) == balanceBefore, "with every coin back")
+
+-- Returning, once it has arrived ---------------------------------------------------------
+
+bank.request("DELIVERY_DONE", warehouse({ order_id = firstOrder }))
+script = newScript()
+-- Open first, then newest: the pickup order, the cancelled one, then this.
+push(script.actions, "pick:3", function(seen)
+    assert(has(seen.frames[#seen.frames], "Return it (5d 0h)"),
+        "a delivered order says how long it can be returned for")
+    return "return"
+end)
+push(script.inputs, "It flickers")
+push(script.actions, function(seen)
+    assert(has(seen.frames[#seen.frames], "Return asked for"),
+        "and then where the return stands")
+    return "back"
+end, "__terminate")
+seen = runApp(script, "delivery")
+assert(said(seen, "Return asked for"))
+assert(orders[firstOrder].return_request.reason == "It flickers")
 
 print("host_shop_app_test: OK")

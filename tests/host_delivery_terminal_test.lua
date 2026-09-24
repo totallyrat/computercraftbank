@@ -485,12 +485,13 @@ local function fullRun(WIDTH, HEIGHT)
         "and retired the point")
     assert(device().pickup == nil and device().mode == "board")
     assert(not files[LOCK])
-    return bank, files, device()
+    return bank, files, device(), { kit = kit, company = company,
+        bread = bread }
 end
 
 fullRun(51, 19)
 -- The last run's Bank and in-memory disk carry on into the reboot below.
-local bank, files, device = fullRun(26, 20)
+local bank, files, device, shop = fullRun(26, 20)
 
 -- A pickup point that reboots while the Bank is away ----------------------------------
 -- It goes straight back to the counter, still locked. Setting up a new
@@ -549,5 +550,61 @@ do
     assert(terminal.freeLocker(2, { [LOCKER_A] = "ORD00000001" }) == nil,
         "and so is one too small for the parcel")
 end
+
+-- Refunds and returns from the board (11.0) -------------------------------------------
+-- The store cancels an order it cannot fill, refunds a return it has back,
+-- and turns down one it never got.
+
+local orders = bank.vault_state.orders
+local function buy()
+    return bank.request("SHOP_CHECKOUT", bank.as(shop.kit, {
+        company_id = shop.company.company_id, pin = "5678",
+        items = { { item_id = shop.bread.item_id, quantity = 1 } },
+        delivery = { kind = "home", x = 5, y = 64, z = 5 } })).order_id
+end
+local function arrivedAndReturned(orderId, reason)
+    bank.request("DELIVERY_DONE", { order_id = orderId,
+        terminal_id = device.terminal_id, terminal_token = device.terminal_token })
+    bank.request("SHOP_RETURN", bank.as(shop.kit, { order_id = orderId,
+        reason = reason }))
+end
+
+local kitBefore = bank.balanceOf(shop.kit)
+local soldOut = buy()
+local unwanted, neverSent
+script = { actions = {}, inputs = {}, pins = {}, confirms = {} }
+-- The only open order, first on the board.
+local function push(queue, ...)
+    for _, entry in ipairs({ ... }) do queue[#queue + 1] = entry end
+end
+push(script.actions, "order:1", "refund")
+push(script.confirms, true)
+push(script.inputs, "Sold out")
+-- Two returns, placed while the board is up; each is first on it in turn.
+push(script.actions, function()
+    assert(orders[soldOut].status == "cancelled"
+        and bank.balanceOf(shop.kit) == kitBefore,
+        "cancelled from the board, and the buyer has it all back")
+    unwanted = buy()
+    arrivedAndReturned(unwanted, "Too stale")
+    -- The board asks again every few seconds; let it.
+    return "__tick"
+end, "order:1", "take_back")
+push(script.confirms, true)
+push(script.actions, function()
+    assert(orders[unwanted].return_request.status == "refunded")
+    neverSent = buy()
+    arrivedAndReturned(neverSent, "Mouldy")
+    return "__tick"
+end, "order:1", "decline")
+push(script.inputs, "Never came back to us")
+push(script.actions, "__terminate")
+local seen = runTerminal(bank, files, 26, 20, script)
+assert(contains(titles(seen), "REFUNDED") and contains(titles(seen), "DECLINED"))
+assert(contains(seen.labels, "CANCEL + REFUND") and contains(seen.labels,
+    "REFUND RETURN") and contains(seen.labels, "DECLINE"))
+assert(orders[soldOut].note == "Sold out", "the store's reason reaches the buyer")
+assert(orders[neverSent].return_request.status == "declined"
+    and orders[neverSent].return_request.answer == "Never came back to us")
 
 print("host_delivery_terminal_test: OK")

@@ -1103,6 +1103,12 @@ local function onlineStore()
                     or "No homes")
                 .. "  " .. (settings.pickup and "Pickup" or "No pickup"),
                 width - 6), ui.theme.muted, ui.theme.panel)
+            -- Sales that can still be cancelled are not the owner's yet.
+            if (state.held or 0) > 0 then
+                ui.text(target, 4, 7, ui.truncate(money(state.held)
+                    .. " waiting for orders to confirm", width - 6),
+                    ui.theme.warning, ui.theme.panel)
+            end
             local scene = ui.scene(target)
             local columns = width >= 40 and 2 or 1
             local buttonWidth = math.floor((width - 3) / columns)
@@ -1120,6 +1126,12 @@ local function onlineStore()
                 { "pickup", settings.pickup and "PICKUP POINTS ON"
                     or "PICKUP POINTS OFF",
                   settings.pickup and ui.theme.accentDark or ui.theme.panel },
+                -- 11.0: what a buyer can undo.
+                { "cancel", settings.cancel and "CANCELLING ON"
+                    or "CANCELLING OFF",
+                  settings.cancel and ui.theme.accentDark or ui.theme.panel },
+                { "returns", "RETURNS: " .. tostring(settings.return_days or 5)
+                    .. " DAYS", ui.theme.panel },
             }
             for index, entry in ipairs(entries) do
                 local column = (index - 1) % columns
@@ -1160,6 +1172,19 @@ local function onlineStore()
                     ui.message(target, "info", "PICKUP POINTS",
                         "Set one up on a Delivery Terminal", 1.6)
                 end
+            elseif action == "cancel" then
+                if settings.cancel or ui.confirm(target, "LET BUYERS CANCEL?",
+                    "For " .. tostring(state.store.confirm_hours or 2)
+                        .. " in-game hours after they order. The money waits"
+                        .. " until then, so a cancel is always refunded.",
+                    "TURN ON", "BACK") then
+                    change = { cancel = not settings.cancel }
+                end
+            elseif action == "returns" then
+                local typed = ui.input(target, "RETURN WINDOW", {
+                    hint = "Days after arriving. 5 at least", mode = "integer",
+                    maxLength = 2, initial = tostring(settings.return_days or 5) })
+                if typed then change = { return_days = tonumber(typed) or 0 } end
             elseif action == "fee" then
                 local typed = ui.input(target, "HOME DELIVERY FEE", {
                     hint = "Added to every home delivery", mode = "number",

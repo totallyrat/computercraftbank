@@ -31,6 +31,11 @@ return function(api)
     local MAX_PLACES = 6
     local WORDS = {
         open = "On its way", done = "Delivered", collected = "Collected",
+        cancelled = "Cancelled",
+    }
+    local RETURN_WORDS = {
+        requested = "Return asked for", refunded = "Return refunded",
+        declined = "Return declined",
     }
 
     local saved = type(api.load) == "function" and api.load() or {}
@@ -48,6 +53,32 @@ return function(api)
     local function paint(colorName)
         local background = colors[tostring(colorName or "")] or SHOP
         return background, DARK[colorName] and colors.white or colors.black
+    end
+
+    -- In-game hours, said the way a person would: "1h 40m", "4d 3h".
+    local function span(hours)
+        local minutes = math.max(0, math.floor((tonumber(hours) or 0) * 60))
+        if minutes >= 1440 then
+            return math.floor(minutes / 1440) .. "d "
+                .. math.floor((minutes % 1440) / 60) .. "h"
+        elseif minutes >= 60 then
+            return math.floor(minutes / 60) .. "h " .. (minutes % 60) .. "m"
+        end
+        return minutes .. "m"
+    end
+
+    -- What a store promises. Short enough for a pocket screen's line, or in
+    -- full where it can wrap.
+    local function terms(store, full)
+        local days, hours = tostring(store.return_days or 5),
+            tostring(store.confirm_hours or 2)
+        if full then
+            return "Returns within " .. days .. " days of arriving"
+                .. (store.cancel and ("; cancel within " .. hours .. "h")
+                    or "; no cancelling")
+        end
+        return "Returns " .. days .. "d" .. (store.cancel
+            and (", cancel " .. hours .. "h") or "")
     end
 
     local function where(delivery)
@@ -245,9 +276,10 @@ return function(api)
                     .. "  " .. tostring(order.paid_with or ""), width - 2),
                     ui.theme.muted)
                 row = row + 2
-                -- What happened, newest last, as much as fits.
+                -- What happened, newest last, as much as fits above the
+                -- row kept for cancelling or returning.
                 local history = order.history or {}
-                local room = math.max(0, height - 2 - row)
+                local room = math.max(0, height - 3 - row)
                 for index = math.max(1, #history - room + 1), #history do
                     local step = history[index]
                     ui.text(target, 2, row, ui.truncate(tostring(step.time)
@@ -255,17 +287,60 @@ return function(api)
                         index == #history and ui.theme.ink or ui.theme.muted)
                     row = row + 1
                 end
-                if order.note and row <= height - 1 then
-                    ui.text(target, 2, math.min(row, height - 1),
+                if order.note and row <= height - 3 then
+                    ui.text(target, 2, row,
                         ui.truncate("Note: " .. order.note, width - 2),
                         ui.theme.accent)
                 end
             end
             local scene = ui.scene(target)
+            local request = order and order.return_request
+            if order and order.cancellable then
+                scene:button("cancel", 2, height - 2, width - 2, 1,
+                    ui.truncate("Cancel order (" .. span(order.confirms_in)
+                        .. ")", width - 4), { background = ui.theme.danger })
+            elseif order and order.returnable then
+                scene:button("return", 2, height - 2, width - 2, 1,
+                    ui.truncate("Return it (" .. span(order.returns_left)
+                        .. ")", width - 4), { background = ui.theme.panel })
+            elseif request then
+                ui.text(target, 2, height - 2, ui.truncate((RETURN_WORDS[
+                    request.status] or "Return") .. (request.answer
+                    and (": " .. request.answer) or ""), width - 2),
+                    request.status == "declined" and ui.theme.warning
+                        or ui.theme.accent)
+            end
             scene:button("back", 1, height, 8, 1, "< Back",
                 { background = ui.theme.panel })
             local action = scene:wait({ tickRate = 4 })
             if action == "back" or action == "__terminate" then return end
+            if action == "cancel" and order and ui.confirm(target,
+                "Cancel this order?", money(order.total)
+                    .. " comes back to you, and the store is told.",
+                "Cancel", "Keep") then
+                local done, err = ask("SHOP_CANCEL", { order_id = orderId },
+                    true)
+                if done then
+                    ui.message(target, "success", "Cancelled", money(
+                        done.refunded) .. " back to " .. tostring(done.to), 2)
+                else
+                    ui.message(target, "error", "Not cancelled", err, 2)
+                end
+            elseif action == "return" and order then
+                local reason = ui.input(target, "Why send it back?", {
+                    hint = "The store sees this", maxLength = 40,
+                    allowSpace = true, minLength = 2 })
+                if reason then
+                    local asked, err = ask("SHOP_RETURN",
+                        { order_id = orderId, reason = reason }, true)
+                    if asked then
+                        ui.message(target, "success", "Return asked for",
+                            "You are refunded once the store has it back", 2.4)
+                    else
+                        ui.message(target, "error", "Not asked", err, 2)
+                    end
+                end
+            end
         end
     end
 
@@ -279,11 +354,13 @@ return function(api)
                 if order.status ~= "open" then
                     background, foreground = ui.theme.panel, colors.white
                 end
+                local request = order.return_request
                 options[#options + 1] = { id = order.order_id,
                     label = tostring(order.company_name),
-                    detail = (order.status == "open" and "" or "Done: ")
-                        .. tostring(order.stage), color = background,
-                    ink = foreground }
+                    detail = request and (RETURN_WORDS[request.status]
+                        or "Return") or ((order.status == "open" and ""
+                        or "Done: ") .. tostring(order.stage)),
+                    color = background, ink = foreground }
             end
             tabs.empty = listed
                 and "Nothing ordered yet. Find something in Stores."
@@ -375,8 +452,8 @@ return function(api)
         if not payer then return nil end
         if not ui.confirm(target, "Pay " .. money(total) .. "?",
             store.name .. ", to " .. label .. (fee > 0 and (". Includes "
-                .. money(fee) .. " delivery") or "") .. ".", "Pay",
-            "Not yet") then
+                .. money(fee) .. " delivery") or "") .. ". "
+                .. terms(store, true) .. ".", "Pay", "Not yet") then
             return nil
         end
         local pin = ui.pin(target, payer.foxy and "Foxy PIN"
@@ -481,6 +558,8 @@ return function(api)
                 store.tagline ~= "" and store.tagline or "Online store",
                 util.formatClock())
             ui.fill(target, 1, 4, width, 1, background)
+            ui.text(target, 2, 5, ui.truncate(terms(store), width - 2),
+                ui.theme.muted)
             local scene = ui.scene(target)
             for slot = 1, per do
                 local index = (page - 1) * per + slot

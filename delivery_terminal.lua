@@ -327,6 +327,33 @@ local function nextStage(order, stages)
     return { stage = chosen.stage }
 end
 
+-- In-game hours as "1h 40m".
+local function span(hours)
+    local minutes = math.max(0, math.floor((tonumber(hours) or 0) * 60))
+    if minutes >= 60 then
+        return math.floor(minutes / 60) .. "h " .. (minutes % 60) .. "m"
+    end
+    return minutes .. "m"
+end
+
+-- Where an order stands on money, in one line: a buyer who can still
+-- cancel (so do not ship it yet), a return waiting on this store, or how
+-- it ended.
+local function standing(order)
+    local asked = order.return_request
+    if asked and asked.status == "requested" then
+        return "RETURN: " .. tostring(asked.reason), ui.theme.warning
+    elseif asked then
+        return "Return " .. asked.status, ui.theme.muted
+    elseif order.status == "cancelled" then
+        return "CANCELLED, refunded", ui.theme.danger
+    elseif order.cancellable then
+        return "Buyer can cancel for " .. span(order.confirms_in),
+            ui.theme.warning
+    end
+    return nil
+end
+
 local function orderScreen(order, stages)
     while running do
         local width, height = target.getSize()
@@ -337,6 +364,8 @@ local function orderScreen(order, stages)
             .. money(order.total), width - 2), ui.theme.ink)
         ui.text(target, 2, 5, ui.truncate(addressOf(order), width - 2),
             ui.theme.accent)
+        local said, color = standing(order)
+        if said then ui.text(target, 2, 6, ui.truncate(said, width - 2), color) end
         local row = 7
         for _, line in ipairs(order.lines or {}) do
             if row > height - 8 then break end
@@ -352,16 +381,67 @@ local function orderScreen(order, stages)
         end
         local scene = ui.scene(target)
         local open = order.status == "open"
+        local returning = order.return_request
+            and order.return_request.status == "requested"
         local half = math.floor((width - 3) / 2)
-        scene:button("stage", 2, height - 4, half, 2, "NEXT STAGE",
-            { background = ui.theme.accentDark, disabled = not open })
-        scene:button("done", 3 + half, height - 4, width - 3 - half, 2,
-            "DONE", { background = ui.theme.success,
-                foreground = colors.black, disabled = not open })
+        if returning then
+            scene:button("take_back", 2, height - 4, half, 2, "REFUND RETURN",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("decline", 3 + half, height - 4, width - 3 - half, 2,
+                "DECLINE", { background = ui.theme.danger })
+        else
+            scene:button("stage", 2, height - 4, half, 2, "NEXT STAGE",
+                { background = ui.theme.accentDark, disabled = not open })
+            scene:button("done", 3 + half, height - 4, width - 3 - half, 2,
+                "DONE", { background = ui.theme.success,
+                    foreground = colors.black, disabled = not open })
+        end
+        if open then
+            scene:button("refund", 2, height - 2, width - 2, 1,
+                "CANCEL + REFUND", { background = ui.theme.danger })
+        end
         scene:button("back", 1, height, 8, 1, "< BACK",
             { background = ui.theme.panel })
         local action = scene:wait()
         if action == "back" or action == "__terminate" then return end
+        -- An order this store cannot fill: every coin goes back to whoever
+        -- paid, from wherever it is -- still held, or the owner's account.
+        if action == "refund" and open then
+            if ui.confirm(target, "CANCEL AND REFUND?", tostring(
+                order.buyer_name) .. " gets " .. money(order.total)
+                    .. " back and is told.", "REFUND", "KEEP") then
+                local note = ui.input(target, "WHY?", { hint = "Optional."
+                    .. " Sold out", maxLength = 40, allowSpace = true,
+                    minLength = 0 })
+                if request("DELIVERY_REFUND",
+                    { order_id = order.order_id, note = note }) then
+                    ui.message(target, "success", "REFUNDED",
+                        tostring(order.buyer_name) .. " has been told", 1.4)
+                    return
+                end
+            end
+        elseif action == "take_back" and returning then
+            if ui.confirm(target, "REFUND THE RETURN?", "Only once it is back"
+                .. " with you. " .. money(order.total) .. " goes back to "
+                .. tostring(order.buyer_name) .. ".", "REFUND", "NOT YET") then
+                if request("DELIVERY_REFUND",
+                    { order_id = order.order_id, why = "return" }) then
+                    ui.message(target, "success", "REFUNDED",
+                        tostring(order.buyer_name) .. " has been told", 1.4)
+                    return
+                end
+            end
+        elseif action == "decline" and returning then
+            local reason = ui.input(target, "WHY NOT?", {
+                hint = "The buyer is told this", maxLength = 40,
+                allowSpace = true, minLength = 2 })
+            if reason and request("DELIVERY_RETURN_DECLINE",
+                { order_id = order.order_id, reason = reason }) then
+                ui.message(target, "info", "DECLINED",
+                    tostring(order.buyer_name) .. " has been told", 1.4)
+                return
+            end
+        end
         if action == "stage" and open then
             local chosen = nextStage(order, stages)
             if chosen then
@@ -786,11 +866,15 @@ local function board()
                 local y = 2 + slot * 2
                 local done = order.status ~= "open"
                 local pickup = (order.delivery or {}).kind == "pickup"
+                local returning = order.return_request
+                    and order.return_request.status == "requested"
                 scene:button("order:" .. (offset + slot), 2, y, width - 2, 1,
                     ui.truncate(order.order_id .. "  "
                         .. tostring(order.buyer_name), width - 4),
-                    { background = done and ui.theme.panel
-                        or (pickup and colors.purple or ui.theme.accentDark) })
+                    { background = returning and ui.theme.warning
+                        or done and ui.theme.panel
+                        or (pickup and colors.purple or ui.theme.accentDark),
+                      foreground = returning and colors.black or nil })
                 ui.text(target, 3, y + 1, ui.truncate((done and "Done. " or "")
                     .. tostring(order.stage) .. "  " .. addressOf(order),
                     width - 4), ui.theme.muted)
