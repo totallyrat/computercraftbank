@@ -356,6 +356,8 @@ update.PUBLISHED_OPTIONAL = {
     "internet_server.lua",
     "wc.lua",
     "internet.lua",
+    "delivery_terminal.lua",
+    "shop.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -380,6 +382,7 @@ local ROLE_PROGRAMS = {
     tpbank = "bank_app_server.lua",
     ccgserver = "ccg_server.lua",
     internet = "internet_server.lua",
+    delivery = "delivery_terminal.lua",
     -- The other half of a Bank. 9.3 added this role to the installer and to
     -- the Bank's depot but not here, so a Vault could not find its own
     -- program in the public release and fell back to the depot for every
@@ -395,7 +398,7 @@ end
 -- Server ships with Foxy so its catalogue is never empty on a fresh world.
 local ROLE_EXTRA_FILES = {
     apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
-        "internet.lua" },
+        "internet.lua", "shop.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

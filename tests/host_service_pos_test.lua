@@ -6,6 +6,8 @@ local actions = {
     "favorite:P1",
     "tab:subscriptions",
     "settings",
+    -- 10.2: the online store, from a company-linked kiosk.
+    "store", "color", "products", "item:1", "back", "open", "back",
     "close",
 }
 local buttonLabels, requests = {}, {}
@@ -101,6 +103,18 @@ package.loaded["lib.util"] = {
     end,
 }
 
+-- The store half of the company, as the Bank would hold it.
+storeSettings = { open = false, color = "orange", tagline = "",
+    home = true, pickup = false, fee = 0 }
+shopSetups = {}
+function storeOnline()
+    local count = 0
+    for _, item in ipairs(products) do
+        if item.online then count = count + 1 end
+    end
+    return count
+end
+
 local client = {
     discover = function() return true end,
     request = function(_, action, payload)
@@ -126,6 +140,26 @@ local client = {
                 },
                 products = copy(products),
             }
+        elseif action == "SHOP_STATE" then
+            return {
+                store = { name = "Fox Cafe", products = storeOnline() },
+                settings = copy(storeSettings),
+                products = copy(products),
+            }
+        elseif action == "SHOP_SETUP" then
+            shopSetups[#shopSetups + 1] = copy(payload)
+            for key, value in pairs(payload) do
+                if storeSettings[key] ~= nil then storeSettings[key] = value end
+            end
+            return { settings = copy(storeSettings) }
+        elseif action == "SHOP_PRODUCT" then
+            for _, item in ipairs(products) do
+                if item.item_id == payload.item_id then
+                    item.online = payload.online
+                    return { item = copy(item) }
+                end
+            end
+            error("no such product " .. tostring(payload.item_id))
         elseif action == "SET_PRODUCT_FAVORITE" then
             assert(payload.item_id == "P1")
             products[1].favorite = payload.favorite
@@ -235,6 +269,23 @@ end
 assert(contains(buttonLabels, "Favorited"))
 assert(contains(buttonLabels, "All Products"))
 assert(contains(buttonLabels, "Subscriptions"))
+
+-- The online store ---------------------------------------------------------------
+-- Opened from a kiosk that is linked to a company, laid out at 51x19 like
+-- everything else here, and every change goes to the Bank rather than being
+-- kept on the kiosk: a store is the company's, and a company has more than
+-- one till.
+assert(contains(buttonLabels, "ONLINE STORE"), "Settings offers the store")
+assert(contains(buttonLabels, "OPEN STORE"), "which starts closed")
+local changedColour, opened = false, false
+for _, setup in ipairs(shopSetups) do
+    if setup.color and setup.color ~= "orange" then changedColour = true end
+    if setup.open == true then opened = true end
+end
+assert(changedColour, "the colour button moves to the next store colour")
+assert(opened, "and OPEN STORE asks the Bank to open it")
+assert(products[1].online == true,
+    "a product put online is put online at the Bank")
 assert(contains(buttonLabels, "+"))
 assert(contains(buttonLabels, "S"))
 assert(contains(buttonLabels, "PAY"))

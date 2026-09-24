@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.1.0"
+local PROGRAM_VERSION = "10.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -136,6 +136,9 @@ local function seedShippedApps()
           description = "Write a website and put it on the network." },
         { file = "internet.lua", id = "NET", name = "Internet",
           description = "Read the web. Type a domain and go." },
+        -- New in 10.2: stores to order from, and the deliveries on the way.
+        { file = "shop.lua", id = "SHOP", name = "Shop",
+          description = "Order from stores. Home delivery or pickup." },
     }) do
         local body = util.readFile(fs.combine(ROOT, shipped.file))
         local existing = state.apps[shipped.id]

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.1.0"
+local PROGRAM_VERSION = "10.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1022,6 +1022,160 @@ local function devMode()
     end
 end
 
+-- Online store ----------------------------------------------------------------
+-- 10.2. The products this company already sells at its kiosks, put online
+-- in the Shop app with its own colours, and delivered -- to a home, or to a
+-- pickup point run by one of the company's Delivery Terminals. A store is a
+-- company's, so an unlinked kiosk is sent to link one first.
+
+local STORE_COLORS = { "orange", "red", "lime", "green", "cyan", "lightBlue",
+    "blue", "purple", "magenta", "pink", "yellow", "brown", "gray" }
+
+local function storeProducts(state)
+    while true do
+        local width, height = target.getSize()
+        local products = {}
+        for _, item in ipairs(state.products or {}) do
+            if item.kind == "one_time" then products[#products + 1] = item end
+        end
+        ui.clear(target)
+        ui.header(target, "SOLD ONLINE", #products .. " products",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local rows = math.max(1, height - 7)
+        for index = 1, math.min(#products, rows) do
+            local item = products[index]
+            scene:button("item:" .. index, 2, 3 + index, width - 2, 1,
+                ui.truncate((item.online and "[ONLINE]  " or "[ KIOSK ]  ")
+                    .. item.name .. "  " .. money(item.price), width - 4),
+                { background = item.online and ui.theme.success
+                    or ui.theme.panel,
+                  foreground = item.online and colors.black or colors.white })
+        end
+        if #products == 0 then
+            ui.wrappedText(target, 2, 5, "Add one-time products in MANAGE"
+                .. " PRODUCTS first. Subscriptions stay at the kiosk.",
+                width - 2, 4, ui.theme.muted)
+        end
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "back" or action == "__terminate" then return end
+        local index = tonumber(action and action:match("^item:(%d+)$"))
+        local item = index and products[index]
+        if item then
+            local changed = request("SHOP_PRODUCT",
+                { item_id = item.item_id, online = not item.online }, true)
+            if changed then item.online = changed.item.online end
+        end
+    end
+end
+
+local function onlineStore()
+    while true do
+        local state, err, code = request("SHOP_STATE", {}, true)
+        if not state then
+            if code == "NOT_LINKED" then
+                if not ui.confirm(target, "ONLINE STORE",
+                    "A store belongs to a company. Link one now?", "LINK",
+                    "BACK") then return end
+                companyOnboarding(true)
+            else
+                ui.message(target, "error", "STORE UNAVAILABLE", err, 1.4)
+                return
+            end
+        else
+            local settings = state.settings
+            local width, height = target.getSize()
+            local accent = colors[settings.color] or colors.orange
+            ui.clear(target)
+            ui.header(target, "ONLINE STORE", state.store.name,
+                util.formatClock())
+            ui.card(target, 2, 4, width - 2, 4, accent)
+            ui.text(target, 4, 4, settings.open and "OPEN IN THE SHOP APP"
+                or "CLOSED", ui.theme.ink, ui.theme.panel)
+            ui.text(target, 4, 5, ui.truncate(settings.tagline ~= ""
+                and settings.tagline or "No tagline yet", width - 6),
+                ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, 6, ui.truncate(state.store.products
+                .. " online  "
+                .. (settings.home and ("Home " .. money(settings.fee or 0))
+                    or "No homes")
+                .. "  " .. (settings.pickup and "Pickup" or "No pickup"),
+                width - 6), ui.theme.muted, ui.theme.panel)
+            local scene = ui.scene(target)
+            local columns = width >= 40 and 2 or 1
+            local buttonWidth = math.floor((width - 3) / columns)
+            local entries = {
+                { "open", settings.open and "CLOSE STORE" or "OPEN STORE",
+                  settings.open and ui.theme.danger or ui.theme.success },
+                { "products", "PRODUCTS ONLINE", colors.purple },
+                { "color", "COLOUR: " .. string.upper(settings.color), accent },
+                { "tagline", "TAGLINE", ui.theme.panel },
+                { "home", settings.home and "HOME DELIVERY ON"
+                    or "HOME DELIVERY OFF",
+                  settings.home and ui.theme.accentDark or ui.theme.panel },
+                { "fee", "DELIVERY FEE " .. money(settings.fee or 0),
+                  ui.theme.panel },
+                { "pickup", settings.pickup and "PICKUP POINTS ON"
+                    or "PICKUP POINTS OFF",
+                  settings.pickup and ui.theme.accentDark or ui.theme.panel },
+            }
+            for index, entry in ipairs(entries) do
+                local column = (index - 1) % columns
+                local row = math.floor((index - 1) / columns)
+                local y = 9 + row * 2
+                if y <= height - 2 then
+                    scene:button(entry[1], 2 + column * (buttonWidth + 1), y,
+                        buttonWidth, 1, entry[2], { background = entry[3] })
+                end
+            end
+            scene:button("back", 1, height, 8, 1, "< BACK",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return end
+            local change
+            if action == "open" then
+                change = { open = not settings.open }
+            elseif action == "products" then
+                storeProducts(state)
+            elseif action == "color" then
+                local following = 1
+                for index, name in ipairs(STORE_COLORS) do
+                    if name == settings.color then
+                        following = index % #STORE_COLORS + 1
+                    end
+                end
+                change = { color = STORE_COLORS[following] }
+            elseif action == "tagline" then
+                local typed = ui.input(target, "STORE TAGLINE", {
+                    hint = "One line under the name", initial = settings.tagline,
+                    maxLength = 40, allowSpace = true })
+                if typed then change = { tagline = typed } end
+            elseif action == "home" then
+                change = { home = not settings.home }
+            elseif action == "pickup" then
+                change = { pickup = not settings.pickup }
+                if not settings.pickup then
+                    ui.message(target, "info", "PICKUP POINTS",
+                        "Set one up on a Delivery Terminal", 1.6)
+                end
+            elseif action == "fee" then
+                local typed = ui.input(target, "HOME DELIVERY FEE", {
+                    hint = "Added to every home delivery", mode = "number",
+                    maxLength = 4, initial = tostring(settings.fee or 0) })
+                if typed then change = { fee = tonumber(typed) or 0 } end
+            end
+            if change then
+                local saved, saveError = request("SHOP_SETUP", change, true)
+                if not saved then
+                    ui.message(target, "warning", "NOT CHANGED", saveError, 1.6)
+                end
+            end
+        end
+    end
+end
+
 local function settingsScreen()
     while true do
         local width, height = target.getSize()
@@ -1041,6 +1195,7 @@ local function settingsScreen()
                 kiosk.portable and colors.cyan or ui.theme.panel },
             { "dev", kiosk.developer_id and "DEV MODE" or "ENTER DEV MODE",
                 colors.purple },
+            { "store", "ONLINE STORE", colors.cyan },
             { "close", "CLOSE KIOSK", ui.theme.danger },
         }
         for index, entry in ipairs(entries) do
@@ -1067,6 +1222,7 @@ local function settingsScreen()
         elseif action == "balance" then balanceScreen()
         elseif action == "withdraw" then directWithdrawal()
         elseif action == "products" then productManager()
+        elseif action == "store" then onlineStore()
         elseif action == "company" then companyOnboarding(true)
         elseif action == "display" then
             findCustomerMonitor()

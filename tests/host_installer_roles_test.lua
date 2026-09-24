@@ -56,7 +56,8 @@ for id in pairs(declared) do
 end
 
 -- The roles added since 9.0, named so a rename cannot quietly drop one.
-for _, id in ipairs({ "tpbank", "ccgserver", "apps", "anchor", "admin" }) do
+for _, id in ipairs({ "tpbank", "ccgserver", "apps", "anchor", "admin",
+    "internet", "delivery" }) do
     assert(declared[id] and programs[id],
         id .. " must be both offered and installable")
 end
@@ -74,6 +75,55 @@ assert(bootBlock,
 assert(bootBlock:match("bootRoleId = nil"),
     "an unknown role must fall through to the role picker rather than"
         .. " returning, so the computer always has somewhere to go")
+
+-- A Delivery Terminal in Pickup mode faces the public, and a customer can
+-- reboot it with Ctrl+R and then hold Ctrl+T while it starts. Everything
+-- Easy Deployment does on the way up -- updating itself, checking the role's
+-- files -- waits on the network, and a terminate during any of it would drop
+-- them into the shell beside every locker. So the lock is taken before the
+-- first thing the installer does at all, which here is asking for the
+-- screen.
+local function bootAndStop(arguments, lockFileThere)
+    local savedFs, savedTerm = fs, term
+    local savedPull, savedRaw = os.pullEvent, os.pullEventRaw
+    local lockedAtFirstCall
+    local plain = function() end
+    os.pullEvent, os.pullEventRaw = plain, function() end
+    fs = {
+        combine = function(left, right)
+            return (tostring(left):gsub("^/+", ""):gsub("/+$", "")) .. "/"
+                .. tostring(right)
+        end,
+        exists = function(path)
+            return lockFileThere and path == "pumpe/keyboard.lock"
+        end,
+    }
+    term = { current = function()
+        lockedAtFirstCall = os.pullEvent == os.pullEventRaw
+        error("stopped here", 0)
+    end }
+    local ok, err = pcall(assert(loadfile("../installer.lua")),
+        table.unpack(arguments))
+    fs, term, os.pullEvent, os.pullEventRaw = savedFs, savedTerm, savedPull,
+        savedRaw
+    assert(not ok and err == "stopped here", "the installer did something"
+        .. " before asking for the screen: " .. tostring(err))
+    return lockedAtFirstCall
+end
+assert(bootAndStop({ "--boot", "delivery" }, true),
+    "a pickup point is locked before Easy Deployment does anything else")
+assert(not bootAndStop({ "--boot", "delivery" }, false),
+    "and only a pickup point: staff keep Ctrl+T everywhere else")
+assert(not bootAndStop({}, true),
+    "the role menu is for whoever is setting the computer up")
+assert(not bootAndStop({ "--boot", "service" }, true),
+    "a lock left on the disk never locks a role that is not a pickup point")
+-- A locked program that ends anyway is started again, never left at a
+-- shell prompt.
+local afterRun = source:match('\n    shell%.run%(program%)\n(.-)\n    return\nend')
+assert(afterRun and afterRun:find("fs.exists(KEYBOARD_LOCK)", 1, true)
+    and afterRun:find("os.reboot()", 1, true),
+    "a locked role that returns must reboot, not fall through to the shell")
 
 -- startup.lua is the same file, so it cannot drift from installer.lua.
 assert(readFile("../startup.lua") == source,

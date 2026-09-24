@@ -110,15 +110,19 @@ local function everyRoleReachable(screenWidth, screenHeight, script)
         -- 10.0: the machines that run the network moved behind a tab of
         -- their own, and two of them are new there. A Vault used to be
         -- something only a Bank could make.
-        "SERVERS", "BANK VAULT", "INTERNET SERVER", "CCG SERVER" }) do
+        "SERVERS", "BANK VAULT", "INTERNET SERVER", "CCG SERVER",
+        -- 10.2: the warehouse and pickup-point side of the Shop.
+        "DELIVERY TERMINAL" }) do
         assert(screen:find(label, 1, true), label .. " is not reachable")
     end
 end
 
--- Pocket screen: one column. Both lists fit a page each now that the
--- servers are behind their own card.
+-- Pocket screen: one column. The Delivery Terminal in 10.2 made the other
+-- roles one card too many for a pocket page, so the last one is on page 2.
 everyRoleReachable(26, 20, {
     { "mouse_click", 1, 3, 19 },  -- v OTHER ROLES
+    { "mouse_click", 1, 10, 20 }, -- PAGE 2, where GPS ANCHOR is now
+    { "mouse_click", 1, 10, 20 }, -- PAGE 1 again
     { "char", "1" },              -- SERVERS
     { "mouse_click", 1, 3, 20 },  -- ^ BACK, to the other roles
     { "mouse_click", 1, 3, 20 },  -- ^ BACK, to the PUMPE panel

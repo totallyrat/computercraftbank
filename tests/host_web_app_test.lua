@@ -315,6 +315,22 @@ PAGE_SOURCE = table.concat({
     "    ui.text(target, 2, 13, \"bank \" .. type(api.bank))",
     "    ui.text(target, 2, 14, \"req \" .. type(api.request))",
     "    ui.text(target, 2, 15, \"login \" .. type(api.login))",
+    -- 10.2: a page that asks for more than your name gets your name. It
+    -- asks here for the balance, which is exactly what 10.1 let through.
+    "    local me = api.login({ scopes = { \"balance\", \"friends\" } })",
+    "    ui.text(target, 2, 16, \"who \" .. tostring(me and me.name))",
+    "    ui.text(target, 2, 17, \"bal \" .. type(me and me.balance))",
+    -- And storage, at the Bank, under the domain's own name.
+    "    api.data(\"PUT\", { collection = \"guest\",",
+    "        data = { note = \"hello\" } })",
+    -- Naming somebody else's app is ignored: a page writes as its domain
+    -- or not at all. Otherwise a page could read the records of any app
+    -- the visitor happens to be signed into.
+    "    api.data(\"PUT\", { app_id = \"YAPCHAT\", collection = \"guest\",",
+    "        data = { note = \"spoof\" } })",
+    "    local listed = api.data(\"LIST\", { collection = \"guest\" })",
+    "    ui.text(target, 2, 18, \"kept \" .. tostring(listed",
+    "        and listed.total))",
     "end",
 }, "\n")
 
@@ -343,6 +359,7 @@ actions = {
     "back",                            -- out of Website Crafter
     "open:ext:NET",                    -- the Internet app
     "go",                              -- open the one already up
+    "yes",                             -- the page asks who you are
     "back",
     "__terminate",
 }
@@ -431,6 +448,25 @@ assert(drew("bank nil") and drew("req nil"),
         .. " have")
 assert(drew("login function"),
     "but Foxy Signin is there, which is the one account a page gets")
+assert(drew("who Ana Fox"), "and it tells the page who you are")
+assert(drew("bal nil"),
+    "and not what you have. 10.1 passed a page's own list of scopes through,"
+        .. " so a page asking for your balance got it the moment somebody"
+        .. " tapped Allow -- while the release notes said it never could")
+
+-- Storage, since 10.2 ---------------------------------------------------------------
+-- At the Bank, under the domain's own name, so the phone stays clean.
+
+assert(drew("kept 2"),
+    "a signed-in page keeps what it saves, and reads it back")
+local stored = bank.request("APP_DATA_LIST", bank.as(ana,
+    { app_id = "WEB-probe", collection = "guest" }))
+assert(stored.total == 2, "and it is at the Bank, filed under WEB-probe")
+local elsewhere = pcall(bank.request, "APP_DATA_LIST", bank.as(ana,
+    { app_id = "YAPCHAT", collection = "guest" }))
+assert(not elsewhere or bank.request("APP_DATA_LIST", bank.as(ana,
+    { app_id = "YAPCHAT", collection = "guest" })).total == 0,
+    "and a page that names another app's id still writes as its own domain")
 
 -- ...and that it is gone again ----------------------------------------------------------
 

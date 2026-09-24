@@ -5,7 +5,7 @@
 local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
 local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
 local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "10.1.0"
+local INSTALLER_VERSION = "10.2.0"
 local PUBLIC_MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -17,6 +17,17 @@ local automaticRoleId = arguments[1] == "--auto"
     and string.lower(tostring(arguments[2] or "")) or nil
 local bootRoleId = arguments[1] == "--boot"
     and string.lower(tostring(arguments[2] or "")) or nil
+
+-- A Delivery Terminal in Pickup mode faces the public and leaves this file
+-- behind. Booting with it, Ctrl+T is ignored from the first moment, before
+-- anything below waits on the network: a customer who reboots the counter
+-- comes back to the counter, not to a shell beside every locker.
+local KEYBOARD_LOCK = fs.combine(INSTALL_ROOT, "keyboard.lock")
+-- Only a Delivery Terminal: a lock some other role finds on the disk is a
+-- leftover, and never a reason to take Ctrl+T away from it.
+if bootRoleId == "delivery" and fs.exists(KEYBOARD_LOCK) then
+    os.pullEvent = os.pullEventRaw
+end
 
 local target = term.current()
 local bankId
@@ -41,6 +52,9 @@ local theme = {
 local roles = {
     { id = "pumpe", label = "PERSONAL PUMPE", detail = "Pocket banking" },
     { id = "service", label = "SERVICE KIOSK", detail = "Shop checkout" },
+    -- New in 10.2: the warehouse, delivery and pickup side of the Shop.
+    { id = "delivery", label = "DELIVERY TERMINAL",
+      detail = "Orders + pickup points" },
     { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
     { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
     { id = "bank", label = "BANK SERVER", detail = "Foxy or a 3rd party",
@@ -85,6 +99,7 @@ local rolePrograms = {
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
     internet = "internet_server.lua",
+    delivery = "delivery_terminal.lua",
 }
 
 local function roleById(id)
@@ -1565,6 +1580,12 @@ if bootRoleId then
         return
     end
     shell.run(program)
+    -- A locked program never ends on purpose. If it ended anyway, start
+    -- again rather than leave the shell open at a public counter.
+    if role.id == "delivery" and fs.exists(KEYBOARD_LOCK) then
+        sleep(3)
+        os.reboot()
+    end
     return
 end
 

@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "10.1.0"
+local PROGRAM_VERSION = "10.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -63,7 +63,7 @@ local function blankState()
         sequence = {
             territory = 0, visa = 0, visa_application = 0, visit = 0,
             border = 0, conversation = 0, scan = 0, event = 0,
-            ticket_type = 0, ticket = 0, web = 0,
+            ticket_type = 0, ticket = 0, web = 0, order = 0,
         },
         -- What this Vault knows about a person. Never their money.
         holders = {},
@@ -90,6 +90,12 @@ local function blankState()
         -- so a name is unique across the network and survives an Internet
         -- Server being rebuilt.
         domains = {},
+        -- Shop, new in 10.2. Orders and the pickup points that hold them.
+        -- The money for an order never passes through here: the Core takes
+        -- it, and this only ever hears that it was taken.
+        orders = {},
+        pickup_points = {},
+        pickup_misses = {},
         -- Pushed up to the Core so a PUMPE's poll never crosses the cable.
         waiting = {},
         migrated = {},
@@ -127,6 +133,7 @@ local prefixes = {
     -- rather than orphaning it, and a name somebody else picks up later
     -- gets a new one rather than the last owner's pages.
     web = { "SITE", 8 },
+    order = { "ORD", 8 },
 }
 
 local function nextId(kind)
@@ -2998,6 +3005,417 @@ function actions.WEB_CLAIM(payload)
         max_pages = tonumber(config.max_web_pages) or 3 }
 end
 
+-- Shop ----------------------------------------------------------------------
+-- 10.2. An order is opened here before any money moves and confirmed after,
+-- so there is a moment when it exists unpaid. That moment is short -- the
+-- Core does both halves of one request -- and an order the Core never came
+-- back for is dropped after ten minutes rather than kept as a promise
+-- nobody paid for.
+--
+-- Callers come in three shapes. A buyer is a signed-in account the Core has
+-- already authenticated. A terminal is a Delivery Terminal or a Service
+-- Kiosk the Core has checked the token of, and it arrives carrying the one
+-- company it belongs to -- it can only ever see that company's orders. And
+-- the Core itself, opening and confirming, which no client can reach
+-- because those actions are not in the Core's list of routes.
+
+local SHOP = {
+    unpaid_ms = 10 * 60 * 1000,
+    keep_days = 14,
+    max_open_per_company = 300,
+    code_tries = 5,
+    code_lock_ms = 60 * 1000,
+    stages = { "Order received", "Packing", "Packed", "Out for delivery",
+        "At the pickup point" },
+}
+
+local function shopTerminal(caller)
+    need(type(caller) == "table" and caller.kind == "terminal"
+        and type(caller.company_id) == "string", "NOT_A_TERMINAL",
+        "Only a company's own terminal can do that")
+    return caller
+end
+
+local function orderStamp(order, label)
+    order.stage = label
+    order.history = order.history or {}
+    table.insert(order.history, {
+        label = label, day = util.ingameDay(), time = util.formatClock(),
+    })
+    while #order.history > 12 do table.remove(order.history, 1) end
+end
+
+-- What a buyer sees of their own order, and what a company sees of one of
+-- theirs. The same shape; the code is left out of the company's copy
+-- because staff do not need to know it to deliver a parcel, and a code
+-- nobody else has seen is a code nobody else can use.
+local function publicOrder(order, forBuyer)
+    return {
+        order_id = order.order_id,
+        company_id = order.company_id,
+        company_name = order.company_name,
+        color = order.color,
+        buyer_name = order.buyer_name,
+        lines = util.copy(order.lines),
+        subtotal = order.subtotal,
+        fee = order.fee,
+        total = order.total,
+        delivery = util.copy(order.delivery),
+        code = forBuyer and order.code or nil,
+        status = order.status,
+        stage = order.stage,
+        history = util.copy(order.history or {}),
+        -- What the driver said when they pressed DONE: "left by the door".
+        note = order.note,
+        stocked = order.locker ~= nil,
+        paid_with = order.paid_with,
+        created_day = order.created_day,
+        created_time = order.created_time,
+    }
+end
+
+local function freshCode(pointId)
+    for _ = 1, 20 do
+        local code = string.format("%06d", math.random(0, 999999))
+        local clash = false
+        for _, order in pairs(state.orders) do
+            if order.code == code and order.status == "open"
+                and (not pointId or (order.delivery.point_id == pointId)) then
+                clash = true
+                break
+            end
+        end
+        if not clash then return code end
+    end
+    return string.format("%06d", math.random(0, 999999))
+end
+
+local function sweepOrders()
+    local now, today = util.nowMs(), util.ingameDay()
+    local changed = false
+    for orderId, order in pairs(state.orders) do
+        if order.status == "unpaid"
+            and now - (order.created_at or 0) > SHOP.unpaid_ms then
+            state.orders[orderId] = nil
+            changed = true
+        elseif (order.status == "done" or order.status == "collected"
+            or order.status == "cancelled")
+            and today - (order.done_day or today) > SHOP.keep_days then
+            state.orders[orderId] = nil
+            changed = true
+        end
+    end
+    if changed then save() end
+    return changed
+end
+
+-- Opened by the Core for a buyer, before the money moves.
+function actions.VAULT_SHOP_OPEN(payload, caller)
+    local buyer = whoIsAsking(caller)
+    local companyId = util.safeText(tostring(payload.company_id or ""), 24)
+    need(#companyId > 0, "NO_STORE", "Which store is this for?")
+    local open = 0
+    for _, order in pairs(state.orders) do
+        if order.company_id == companyId and order.status == "open" then
+            open = open + 1
+        end
+    end
+    need(open < SHOP.max_open_per_company, "STORE_BUSY",
+        "That store has too many orders waiting. Try again later")
+
+    local raw = type(payload.delivery) == "table" and payload.delivery or {}
+    local delivery
+    if raw.kind == "pickup" then
+        local point = state.pickup_points[tostring(raw.point_id or "")]
+        need(point and point.company_id == companyId, "NO_SUCH_POINT",
+            "That pickup point is not one of this store's")
+        delivery = { kind = "pickup", point_id = point.point_id,
+            point_name = point.name, x = point.x, y = point.y, z = point.z }
+    else
+        local x, y, z = tonumber(raw.x), tonumber(raw.y), tonumber(raw.z)
+        need(x and y and z, "NO_ADDRESS", "Where should it be delivered?")
+        delivery = { kind = "home", x = math.floor(x), y = math.floor(y),
+            z = math.floor(z),
+            label = util.safeText(util.trim(tostring(raw.label or "Home")),
+                18) }
+    end
+
+    local lines = {}
+    for _, line in ipairs(type(payload.lines) == "table" and payload.lines
+        or {}) do
+        lines[#lines + 1] = {
+            item_id = util.safeText(tostring(line.item_id or ""), 16),
+            name = util.safeText(tostring(line.name or ""), 20),
+            price = tonumber(line.price) or 0,
+            quantity = math.max(1, math.floor(tonumber(line.quantity) or 1)),
+        }
+    end
+    need(#lines > 0, "EMPTY_CART", "There is nothing in the basket")
+
+    local orderId = nextId("order")
+    state.orders[orderId] = {
+        order_id = orderId,
+        company_id = companyId,
+        company_name = util.safeText(tostring(payload.company_name or ""), 28),
+        color = util.safeText(tostring(payload.color or "orange"), 12),
+        buyer_account_id = buyer.account_id,
+        buyer_name = buyer.name,
+        lines = lines,
+        subtotal = tonumber(payload.subtotal) or 0,
+        fee = tonumber(payload.fee) or 0,
+        total = tonumber(payload.total) or 0,
+        delivery = delivery,
+        code = freshCode(delivery.point_id),
+        status = "unpaid",
+        history = {},
+        created_day = util.ingameDay(),
+        created_time = util.formatClock(),
+        created_at = util.nowMs(),
+    }
+    save()
+    return { order_id = orderId, code = state.orders[orderId].code,
+        delivery = util.copy(delivery) }
+end
+
+-- The Core took the money. Said twice is the same as said once.
+function actions.VAULT_SHOP_PAID(payload)
+    local order = state.orders[tostring(payload.order_id or "")]
+    need(order, "NO_SUCH_ORDER", "That order is gone")
+    if order.status ~= "unpaid" then return publicOrder(order, true) end
+    order.status = "open"
+    order.paid_with = util.safeText(tostring(payload.paid_with or "Foxy"), 20)
+    orderStamp(order, SHOP.stages[1])
+    save()
+    core.notify(order.buyer_account_id, "Order placed",
+        order.company_name .. " has your order. Follow it in Shop.", "money",
+        { order_id = order.order_id })
+    return publicOrder(order, true)
+end
+
+-- The money never moved. Nothing to keep.
+function actions.VAULT_SHOP_CANCEL(payload)
+    local order = state.orders[tostring(payload.order_id or "")]
+    if order and order.status == "unpaid" then
+        state.orders[order.order_id] = nil
+        save()
+    end
+    return { cancelled = true }
+end
+
+function actions.SHOP_ORDERS(payload, caller)
+    local buyer = whoIsAsking(caller)
+    local mine = {}
+    for _, order in pairs(state.orders) do
+        if order.buyer_account_id == buyer.account_id
+            and order.status ~= "unpaid" then
+            mine[#mine + 1] = publicOrder(order, true)
+        end
+    end
+    table.sort(mine, function(a, b) return a.order_id > b.order_id end)
+    return { orders = mine }
+end
+
+function actions.SHOP_ORDER(payload, caller)
+    local buyer = whoIsAsking(caller)
+    local order = state.orders[tostring(payload.order_id or "")]
+    need(order and order.buyer_account_id == buyer.account_id
+        and order.status ~= "unpaid", "NO_SUCH_ORDER", "That order is gone")
+    return { order = publicOrder(order, true) }
+end
+
+-- A store's pickup points, for the checkout to offer.
+function actions.VAULT_SHOP_POINTS(payload)
+    local companyId = tostring(payload.company_id or "")
+    local points = {}
+    for _, point in pairs(state.pickup_points) do
+        if point.company_id == companyId then
+            points[#points + 1] = { point_id = point.point_id,
+                name = point.name, x = point.x, y = point.y, z = point.z }
+        end
+    end
+    table.sort(points, function(a, b) return a.name < b.name end)
+    return { points = points, stages = util.copy(SHOP.stages) }
+end
+
+-- The Delivery Terminal's board: this company's orders, open first.
+function actions.DELIVERY_ORDERS(payload, caller)
+    local terminal = shopTerminal(caller)
+    sweepOrders()
+    local list = {}
+    local wanted = payload.status
+    for _, order in pairs(state.orders) do
+        if order.company_id == terminal.company_id
+            and order.status ~= "unpaid"
+            and (not wanted or order.status == wanted) then
+            list[#list + 1] = publicOrder(order, false)
+        end
+    end
+    table.sort(list, function(a, b)
+        if (a.status == "open") ~= (b.status == "open") then
+            return a.status == "open"
+        end
+        return a.order_id < b.order_id
+    end)
+    return { orders = list, stages = util.copy(SHOP.stages) }
+end
+
+local function companyOrder(terminal, orderId)
+    local order = state.orders[tostring(orderId or "")]
+    need(order and order.company_id == terminal.company_id
+        and order.status ~= "unpaid", "NO_SUCH_ORDER",
+        "That order is not this company's")
+    return order
+end
+
+-- Moving an order on. A premade stage by number, or a step in the
+-- company's own words -- "Handed to the courier", "Stuck in the rain".
+function actions.DELIVERY_STAGE(payload, caller)
+    local terminal = shopTerminal(caller)
+    local order = companyOrder(terminal, payload.order_id)
+    need(order.status == "open", "ORDER_CLOSED", "That order is finished")
+    local label = SHOP.stages[tonumber(payload.stage) or 0]
+        or util.safeText(util.trim(tostring(payload.label or "")), 28)
+    need(label and #label > 0, "NO_STAGE", "Say what is happening")
+    orderStamp(order, label)
+    save()
+    core.notify(order.buyer_account_id, order.company_name,
+        label .. " -- order " .. order.order_id, "info",
+        { order_id = order.order_id })
+    return { order = publicOrder(order, false) }
+end
+
+function actions.DELIVERY_DONE(payload, caller)
+    local terminal = shopTerminal(caller)
+    local order = companyOrder(terminal, payload.order_id)
+    need(order.status == "open", "ORDER_CLOSED", "That order is finished")
+    order.status = "done"
+    order.done_day = util.ingameDay()
+    local where = order.delivery.kind == "pickup"
+        and ("Handed over at " .. tostring(order.delivery.point_name))
+        or ("Delivered to " .. tostring(order.delivery.label) .. " at "
+            .. order.delivery.x .. " " .. order.delivery.y .. " "
+            .. order.delivery.z)
+    orderStamp(order, "Delivered")
+    local note = util.safeText(util.trim(tostring(payload.note or "")), 60)
+    if note ~= "" then order.note = note end
+    save()
+    core.notify(order.buyer_account_id, "Delivered",
+        where .. (note ~= "" and (". " .. note) or ""), "success",
+        { order_id = order.order_id })
+    return { order = publicOrder(order, false) }
+end
+
+-- A Delivery Terminal becoming a pickup point. One point per terminal, so
+-- registering again is renaming rather than adding a second.
+function actions.PICKUP_REGISTER(payload, caller)
+    local terminal = shopTerminal(caller)
+    local name = util.safeText(util.trim(tostring(payload.name or "")), 20)
+    need(#name >= 2, "BAD_NAME", "Give the pickup point a name")
+    local x, y, z = tonumber(payload.x), tonumber(payload.y),
+        tonumber(payload.z)
+    state.pickup_points[terminal.terminal_id] = {
+        point_id = terminal.terminal_id,
+        company_id = terminal.company_id,
+        name = name,
+        x = x and math.floor(x) or nil,
+        y = y and math.floor(y) or nil,
+        z = z and math.floor(z) or nil,
+        registered_day = util.ingameDay(),
+    }
+    save()
+    return { point = util.copy(state.pickup_points[terminal.terminal_id]) }
+end
+
+function actions.PICKUP_REMOVE(payload, caller)
+    local terminal = shopTerminal(caller)
+    state.pickup_points[terminal.terminal_id] = nil
+    save()
+    return { removed = true }
+end
+
+-- What is headed for, or waiting at, this pickup point.
+function actions.PICKUP_ORDERS(payload, caller)
+    local terminal = shopTerminal(caller)
+    local list = {}
+    for _, order in pairs(state.orders) do
+        if order.status == "open" and order.delivery.kind == "pickup"
+            and order.delivery.point_id == terminal.terminal_id then
+            local shown = publicOrder(order, false)
+            shown.locker = order.locker
+            list[#list + 1] = shown
+        end
+    end
+    table.sort(list, function(a, b) return a.order_id < b.order_id end)
+    return { orders = list }
+end
+
+-- A parcel has gone into a locker here. The buyer is told, with the code.
+function actions.PICKUP_STOCK(payload, caller)
+    local terminal = shopTerminal(caller)
+    local order = companyOrder(terminal, payload.order_id)
+    need(order.status == "open" and order.delivery.kind == "pickup"
+        and order.delivery.point_id == terminal.terminal_id, "WRONG_POINT",
+        "That order is not coming to this pickup point")
+    local locker = util.safeText(tostring(payload.locker or ""), 40)
+    need(#locker > 0, "NO_LOCKER", "Which locker is it in?")
+    for _, other in pairs(state.orders) do
+        need(not (other.status == "open" and other.locker == locker
+            and other.delivery.point_id == terminal.terminal_id
+            and other.order_id ~= order.order_id), "LOCKER_IN_USE",
+            "Somebody else's parcel is already in that locker")
+    end
+    order.locker = locker
+    orderStamp(order, "Ready for pickup")
+    save()
+    core.notify(order.buyer_account_id, "Ready to collect",
+        "At " .. tostring(order.delivery.point_name) .. ". Your code is "
+            .. order.code .. ".", "success", { order_id = order.order_id })
+    return { order = publicOrder(order, false) }
+end
+
+-- The buyer at the pickup point, typing their code. Wrong codes are
+-- counted per point: six digits is a million guesses by hand, and a
+-- terminal being hammered by a program is not a person at a counter.
+function actions.PICKUP_COLLECT(payload, caller)
+    local terminal = shopTerminal(caller)
+    local misses = state.pickup_misses[terminal.terminal_id] or
+        { count = 0, until_at = 0 }
+    state.pickup_misses[terminal.terminal_id] = misses
+    need(util.nowMs() >= (misses.until_at or 0), "TRY_LATER",
+        "Too many wrong codes. Wait a minute and try again")
+    local code = tostring(payload.code or ""):gsub("%D", "")
+    local found
+    for _, order in pairs(state.orders) do
+        if order.status == "open" and order.code == code
+            and order.delivery.kind == "pickup"
+            and order.delivery.point_id == terminal.terminal_id then
+            found = order
+        end
+    end
+    if not found then
+        misses.count = (misses.count or 0) + 1
+        if misses.count >= SHOP.code_tries then
+            misses.count, misses.until_at = 0, util.nowMs() + SHOP.code_lock_ms
+        end
+        save()
+        reject("NO_SUCH_CODE", "That code is not for a parcel here")
+    end
+    need(found.locker, "NOT_HERE_YET",
+        "That order is on its way but has not arrived yet")
+    misses.count = 0
+    local locker = found.locker
+    found.status = "collected"
+    found.done_day = util.ingameDay()
+    found.locker = nil
+    orderStamp(found, "Collected")
+    save()
+    core.notify(found.buyer_account_id, "Collected",
+        "You picked up your order from " .. found.company_name .. ".",
+        "success", { order_id = found.order_id })
+    return { order_id = found.order_id, locker = locker,
+        lines = util.copy(found.lines), buyer_name = found.buyer_name }
+end
+
 -- What this Vault answers ------------------------------------------------------
 local vault = {}
 
@@ -3098,6 +3516,7 @@ if TEST_MODE then
         social_badges = socialBadges,
         sweep_travel = sweepTravel,
         cleanup_calls = cleanupUrgentCalls,
+        sweep_orders = sweepOrders,
     }
 end
 
@@ -3140,6 +3559,7 @@ local function sweepLoop()
         if util.nowMs() >= everyMinute then
             everyMinute = util.nowMs() + 60000
             pcall(sweepTravel)
+            pcall(sweepOrders)
             save()
         end
         sleep(1)

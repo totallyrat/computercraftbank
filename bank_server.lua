@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.1.0"
+local PROGRAM_VERSION = "10.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -99,6 +99,8 @@ RELEASE.depot_files = {
     "internet_server.lua",
     "wc.lua",
     "internet.lua",
+    "delivery_terminal.lua",
+    "shop.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -140,6 +142,8 @@ RELEASE.optional = {
     "internet_server.lua",
     "wc.lua",
     "internet.lua",
+    "delivery_terminal.lua",
+    "shop.lua",
 }
 
 RELEASE.programs = {
@@ -157,6 +161,8 @@ RELEASE.programs = {
     ccgserver = "ccg_server.lua",
     -- The web, new in 10.0.
     internet = "internet_server.lua",
+    -- The Shop's warehouse and pickup side, new in 10.2.
+    delivery = "delivery_terminal.lua",
     -- The other half of this Bank. Easy Deployment has to know this role
     -- like any other: 9.3.0 added it to the installer's list but not to
     -- this one, so a computer that had just been made a Vault rebooted,
@@ -4168,6 +4174,352 @@ function actions.ADD_QUICK_ITEM(payload)
     return result
 end
 
+-- Shop -----------------------------------------------------------------------
+-- 10.2. A store is a company with its doors open online: its own colours, a
+-- tagline, the products it already sells at its kiosks marked for sale on
+-- the Shop app, and how it delivers. Everything here that is not money lives
+-- in the Vault -- orders, pickup points, delivery stages -- and everything
+-- that is money happens here, which is the whole reason a checkout is a
+-- Core action rather than a route: the PIN stops at this computer, and so
+-- does another bank's.
+
+local shop = {
+    PALETTE = { orange = true, red = true, lime = true, green = true,
+        cyan = true, lightBlue = true, blue = true, purple = true,
+        magenta = true, pink = true, yellow = true, brown = true,
+        gray = true },
+    max_lines = 10,
+    max_quantity = 20,
+    max_fee = 1000,
+}
+
+function shop.settings(company)
+    company.shop = company.shop or {
+        open = false, color = "orange", tagline = "",
+        home = true, pickup = false, fee = 0,
+    }
+    return company.shop
+end
+
+function shop.online(company)
+    local list = {}
+    for _, item in ipairs(company.quick_items or {}) do
+        if item.online and item.kind == "one_time" then
+            list[#list + 1] = { item_id = item.item_id, name = item.name,
+                price = item.price, blurb = item.blurb }
+        end
+    end
+    return list
+end
+
+function shop.public(company)
+    local settings = shop.settings(company)
+    local owner = state.accounts[company.owner_account_id]
+    return {
+        company_id = company.company_id,
+        name = company.name,
+        owner_name = owner and owner.name or nil,
+        color = settings.color,
+        tagline = settings.tagline,
+        home = settings.home,
+        pickup = settings.pickup,
+        fee = settings.fee,
+        products = #shop.online(company),
+    }
+end
+
+local function requireStoreTerminal(payload)
+    local terminal = requireTerminal(payload)
+    local company = terminal.company_id and state.companies[terminal.company_id]
+    need(company, "NOT_LINKED",
+        "Link this terminal to a company first: stores belong to companies")
+    return terminal, company
+end
+
+function actions.SHOP_STATE(payload)
+    local _, company = requireStoreTerminal(payload)
+    return {
+        store = shop.public(company),
+        settings = util.copy(shop.settings(company)),
+        products = util.copy(company.quick_items or {}),
+    }
+end
+
+function actions.SHOP_SETUP(payload)
+    local _, company = requireStoreTerminal(payload)
+    local settings = shop.settings(company)
+    if payload.color ~= nil then
+        need(shop.PALETTE[payload.color], "BAD_COLOR",
+            "Pick one of the store colours")
+        settings.color = payload.color
+    end
+    if payload.tagline ~= nil then
+        settings.tagline = util.safeText(util.trim(tostring(payload.tagline)),
+            40)
+    end
+    if payload.home ~= nil then settings.home = payload.home == true end
+    if payload.pickup ~= nil then settings.pickup = payload.pickup == true end
+    if payload.fee ~= nil then
+        settings.fee = math.max(0, math.min(shop.max_fee,
+            math.floor(tonumber(payload.fee) or 0)))
+    end
+    if payload.open ~= nil then
+        if payload.open == true then
+            need(settings.home or settings.pickup, "NO_DELIVERY",
+                "Choose how the store delivers before opening it")
+            need(#shop.online(company) > 0, "NOTHING_TO_SELL",
+                "Put at least one product online before opening")
+        end
+        settings.open = payload.open == true
+    end
+    save()
+    return { store = shop.public(company), settings = util.copy(settings) }
+end
+
+function actions.SHOP_PRODUCT(payload)
+    local _, company = requireStoreTerminal(payload)
+    for _, item in ipairs(company.quick_items or {}) do
+        if item.item_id == payload.item_id then
+            need(item.kind == "one_time", "NOT_FOR_SALE_ONLINE",
+                "Subscriptions are sold at a kiosk, not delivered")
+            if payload.online ~= nil then item.online = payload.online == true end
+            if payload.blurb ~= nil then
+                item.blurb = util.safeText(util.trim(tostring(payload.blurb)),
+                    40)
+            end
+            save()
+            return { item = util.copy(item) }
+        end
+    end
+    reject("NOT_FOUND", "Product not found")
+end
+
+-- The storefronts. Open stores with something to sell, and nothing else.
+function actions.SHOP_LIST(payload)
+    requireSession(payload)
+    local wanted = string.lower(util.trim(tostring(payload.query or "")))
+    local stores = {}
+    for _, company in pairs(state.companies) do
+        local settings = company.shop
+        if company.status == "active" and settings and settings.open
+            and #shop.online(company) > 0
+            and (wanted == ""
+                or string.lower(company.name):find(wanted, 1, true)
+                or string.lower(settings.tagline or ""):find(wanted, 1, true))
+        then
+            stores[#stores + 1] = shop.public(company)
+        end
+    end
+    table.sort(stores, function(a, b) return a.name < b.name end)
+    return { stores = stores }
+end
+
+function actions.SHOP_STORE(payload)
+    local buyer = requireSession(payload)
+    local company = state.companies[tostring(payload.company_id or "")]
+    need(company and company.shop and company.shop.open, "STORE_CLOSED",
+        "That store is not open")
+    local points = {}
+    if company.shop.pickup and pair.paired() then
+        local listed = pair.forward("VAULT_SHOP_POINTS",
+            { company_id = company.company_id }, vaultCaller(buyer))
+        points = listed and listed.points or {}
+    end
+    return { store = shop.public(company), products = shop.online(company),
+        points = points }
+end
+
+-- Pricing a basket from the store's own list. The client's prices are
+-- never read: a basket is item ids and quantities, and nothing else.
+function shop.price(company, raw)
+    need(type(raw) == "table" and #raw > 0, "EMPTY_CART",
+        "There is nothing in the basket")
+    need(#raw <= shop.max_lines, "CART_TOO_BIG",
+        "A basket holds " .. shop.max_lines .. " different things at most")
+    local byId = {}
+    for _, item in ipairs(shop.online(company)) do byId[item.item_id] = item end
+    local lines, subtotal = {}, 0
+    for _, line in ipairs(raw) do
+        local item = byId[tostring(line.item_id or "")]
+        need(item, "NOT_FOR_SALE", "Something in the basket is not for sale")
+        local quantity = math.floor(tonumber(line.quantity) or 1)
+        need(quantity >= 1 and quantity <= shop.max_quantity, "BAD_QUANTITY",
+            "Between 1 and " .. shop.max_quantity .. " of anything")
+        lines[#lines + 1] = { item_id = item.item_id, name = item.name,
+            price = item.price, quantity = quantity }
+        subtotal = util.roundMoney(subtotal + item.price * quantity)
+    end
+    return lines, subtotal
+end
+
+-- Taking money from an account at another bank, by its Account ID and its
+-- own PIN. The PIN goes from here to that bank and nowhere else. The charge
+-- carries the order id, so asking twice takes the money once; and a charge
+-- nobody answered is parked, because it might have landed -- if it did, and
+-- there is no order to show for it, it goes back.
+function shop.charge(bankAccountId, pin, amount, orderId, storeName)
+    local transferId = "SHOP" .. orderId
+    local outcome, err, code = ledger.outcome(ledger.ask(
+        ledger.bankOf(bankAccountId), "LEDGER_CHARGE", {
+            bank_account_id = bankAccountId, pin = pin, amount = amount,
+            transfer_id = transferId, to_name = storeName,
+            from_bank_code = ledger.bankCode(),
+            from_bank_name = config.bank_name or "Foxy",
+        }, 8))
+    if outcome == "unknown" then
+        state.shop_charges = state.shop_charges or {}
+        state.shop_charges[transferId] = {
+            bank_account_id = bankAccountId, amount = amount,
+            order_id = orderId, at = util.nowMs(),
+        }
+        save()
+    end
+    return outcome, err, code
+end
+
+-- Charges nobody answered, and orders the Vault never heard were paid.
+-- Both are resolved by asking, never by guessing.
+function shop.reconcile()
+    for transferId, parked in pairs(state.shop_charges or {}) do
+        local bankCode = ledger.bankOf(parked.bank_account_id)
+        if not parked.refunding then
+            local answer = ledger.ask(bankCode, "LEDGER_STATUS",
+                { transfer_id = transferId }, 6)
+            if answer and not answer.applied then
+                state.shop_charges[transferId] = nil
+            elseif answer and answer.applied then
+                -- It did take the money, and the order was called off when
+                -- nobody answered. The money goes back.
+                parked.refunding = true
+            end
+        end
+        if parked.refunding then
+            local outcome = ledger.outcome(ledger.ask(bankCode,
+                "LEDGER_CREDIT", {
+                    bank_account_id = parked.bank_account_id,
+                    amount = parked.amount, transfer_id = transferId .. "R",
+                    from_name = "Shop refund",
+                    from_bank_name = config.bank_name or "Foxy",
+                }, 6))
+            if outcome == "sent" then state.shop_charges[transferId] = nil end
+        end
+        save()
+    end
+    for orderId, confirm in pairs(state.shop_unconfirmed or {}) do
+        local ok = pcall(pair.forward, "VAULT_SHOP_PAID",
+            { order_id = orderId, paid_with = confirm.paid_with },
+            { kind = "core" })
+        if ok then
+            state.shop_unconfirmed[orderId] = nil
+            save()
+        end
+    end
+end
+
+function actions.SHOP_CHECKOUT(payload)
+    local buyer = requireSession(payload)
+    local company = state.companies[tostring(payload.company_id or "")]
+    need(company and company.status == "active" and company.shop
+        and company.shop.open, "STORE_CLOSED", "That store is not open")
+    local settings = company.shop
+    local owner = state.accounts[company.owner_account_id]
+    need(owner, "STORE_CLOSED", "That store has nobody to pay")
+    need(owner.account_id ~= buyer.account_id, "OWN_STORE",
+        "That is your own store")
+
+    local delivery = type(payload.delivery) == "table" and payload.delivery
+        or {}
+    if delivery.kind == "pickup" then
+        need(settings.pickup, "NO_PICKUP", "This store does not use pickup")
+    else
+        need(settings.home, "NO_HOME", "This store does not deliver to homes")
+        delivery.kind = "home"
+    end
+    local lines, subtotal = shop.price(company, payload.items)
+    local fee = delivery.kind == "home" and (settings.fee or 0) or 0
+    local total = util.roundMoney(subtotal + fee)
+    need(total > 0, "BAD_AMOUNT", "There is nothing to pay for")
+
+    -- Who pays. No Account ID is Foxy; one from another bank is theirs.
+    local elsewhere = ledger.clean(payload.bank_account_id or "")
+    local foxy = #elsewhere == 0
+    if foxy then
+        checkAccountActive(buyer)
+        checkBankOpen(buyer)
+        checkNoTaxDemand(buyer)
+        need(verifyAccount(buyer, payload.pin), "BAD_PIN", "Incorrect PIN")
+        need((buyer.balance or 0) >= total, "INSUFFICIENT_FUNDS",
+            "Not enough in your Foxy account")
+    else
+        need(#elsewhere == 16, "BAD_ACCOUNT_ID",
+            "An Account ID is sixteen digits")
+        need(ledger.bankOf(elsewhere) ~= ledger.bankCode(), "USE_FOXY",
+            "That is a Foxy Account ID. Pay with Foxy instead")
+        need(total == math.floor(total), "WHOLE_AMOUNT",
+            "Another bank can only pay whole amounts")
+        need(type(payload.pin) == "string" and #payload.pin > 0, "BAD_PIN",
+            "Your bank's PIN is needed")
+    end
+
+    -- 1. The order exists first, unpaid, so a Vault that is down stops the
+    --    checkout before any money moves rather than after.
+    local opened = pair.forward("VAULT_SHOP_OPEN", {
+        company_id = company.company_id, company_name = company.name,
+        color = settings.color, lines = lines, subtotal = subtotal,
+        fee = fee, total = total, delivery = delivery,
+    }, vaultCaller(buyer))
+
+    -- 2. The money.
+    local paidWith = config.bank_name or "Foxy"
+    if foxy then
+        resetDailySpend(buyer)
+        buyer.balance = util.roundMoney(buyer.balance - total)
+        buyer.daily_spent = util.roundMoney((buyer.daily_spent or 0) + total)
+        transaction(buyer, "shop_purchase", -total, company.name,
+            "Order " .. opened.order_id)
+    else
+        local outcome, err, code = shop.charge(elsewhere, payload.pin, total,
+            opened.order_id, company.name)
+        if outcome ~= "sent" then
+            pcall(pair.forward, "VAULT_SHOP_CANCEL",
+                { order_id = opened.order_id }, vaultCaller(buyer))
+            if outcome == "unknown" then
+                reject("PAYMENT_PENDING", "Your bank did not answer. If it"
+                    .. " took the money, it comes back on its own.")
+            end
+            reject(code or "PAYMENT_REFUSED", err or "Your bank said no")
+        end
+        paidWith = "Account " .. ledger.format(elsewhere):sub(1, 4)
+    end
+    owner.balance = util.roundMoney((owner.balance or 0) + total)
+    transaction(owner, "shop_sale", total, buyer.name,
+        "Order " .. opened.order_id)
+    notification(owner, "New order", company.name .. ": "
+        .. util.money(total, config.currency) .. " from " .. buyer.name,
+        "money")
+    save()
+
+    -- 3. Tell the Vault it was paid. The money has moved either way; if the
+    --    cable dropped in the second between, the scheduler says it again.
+    local confirmed, result = pcall(pair.forward, "VAULT_SHOP_PAID",
+        { order_id = opened.order_id, paid_with = paidWith },
+        { kind = "core" })
+    if not confirmed then
+        state.shop_unconfirmed = state.shop_unconfirmed or {}
+        state.shop_unconfirmed[opened.order_id] = { paid_with = paidWith }
+        save()
+    end
+    logActivity("Order " .. opened.order_id .. " at " .. company.name,
+        colors.lime)
+    return {
+        order_id = opened.order_id,
+        code = opened.code,
+        total = total,
+        delivery = opened.delivery,
+        order = confirmed and result or nil,
+    }
+end
+
 function actions.REMOVE_QUICK_ITEM(payload)
     local result = actions.REMOVE_PRODUCT(payload)
     result.quick_items = result.products
@@ -4729,10 +5081,44 @@ pair.routes = {
     -- allowed to store with a token the owner handed it, not with a session.
     WEB_LOOKUP = { auth = "public" },
     WEB_CLAIM = { auth = "public" },
+    -- Shop, new in 10.2. A buyer's own orders, and a company's terminal
+    -- working through that company's. The checkout itself is not here: it
+    -- moves money, so it is a Core action.
+    SHOP_ORDERS = { auth = "session" },
+    SHOP_ORDER = { auth = "session" },
+    DELIVERY_ORDERS = { auth = "terminal" },
+    DELIVERY_STAGE = { auth = "terminal" },
+    DELIVERY_DONE = { auth = "terminal" },
+    PICKUP_REGISTER = { auth = "terminal" },
+    PICKUP_REMOVE = { auth = "terminal" },
+    PICKUP_ORDERS = { auth = "terminal" },
+    PICKUP_STOCK = { auth = "terminal" },
+    PICKUP_COLLECT = { auth = "terminal" },
 }
 
 -- Everything the Core checks before a question goes down the cable.
 local function routeToVault(action, spec, payload)
+    if spec.auth == "terminal" then
+        -- A kiosk or Delivery Terminal. Checked against the Core's own list
+        -- of terminals, then sent down carrying the one company it belongs
+        -- to -- which is all the Vault will let it see. The token itself
+        -- never goes down the cable.
+        local terminal = requireTerminal(payload)
+        local company = terminal.company_id
+            and state.companies[terminal.company_id]
+        need(company, "NOT_LINKED",
+            "Link this terminal to a company first")
+        local forwarded = {}
+        for key, value in pairs(payload) do
+            if key ~= "terminal_token" and key ~= "pin" then
+                forwarded[key] = value
+            end
+        end
+        return pair.forward(action, forwarded, {
+            kind = "terminal", terminal_id = terminal.terminal_id,
+            company_id = company.company_id, company_name = company.name,
+        })
+    end
     if spec.auth == "public" then
         -- Nobody to authenticate. These answer questions a web has to answer
         -- for anyone, and the one that changes something is gated by a
@@ -4981,6 +5367,7 @@ local function schedulerLoop()
         processBetHolds()
         pcall(ledger.reconcile)
         pcall(ledger.sweep)
+        pcall(shop.reconcile)
         sleep(10)
     end
 end
@@ -5688,6 +6075,7 @@ if TEST_MODE then
         routes = pair.routes,
         route_to_vault = routeToVault,
         vault_caller = vaultCaller,
+        shop = shop,
     }
 end
 

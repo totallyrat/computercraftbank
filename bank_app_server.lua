@@ -16,7 +16,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- is public, its accounts are opened by whoever wants one, and there is
 -- nothing here that could compromise the Foxy ledger.
 
-local PROGRAM_VERSION = "10.1.0"
+local PROGRAM_VERSION = "10.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -576,6 +576,87 @@ function actions.LEDGER_CREDIT(payload)
     logActivity(account.name .. " received "
         .. util.money(amount, config.currency), colors.lime)
     return { credited = amount, balance = account.balance, clears = held }
+end
+
+-- Paying a shop at another bank, by this bank's Account ID and PIN. 10.2.
+--
+-- This is the one ledger action that takes money out of an account, so it is
+-- the one that has to be careful about who is asking. Two checks:
+--
+--   * It answers only the computer holding Foxy's ledger name. Rednet
+--     hostnames are unique on a network, so that is the real Foxy Bank --
+--     and the only bank with shops.
+--   * Wrong PINs are counted per account, and after five the account will
+--     not be charged for ten minutes. Four digits is ten thousand guesses;
+--     at five every ten minutes that is most of a fortnight of trying.
+--
+-- The charge is keyed by transfer id, so the Foxy Bank asking twice about
+-- one order takes the money once, and LEDGER_STATUS answers for it the same
+-- way it answers for a credit.
+local CHARGE = { tries = 5, lock_ms = 10 * 60 * 1000, lookup_ms = 60 * 1000 }
+local foxyLedger = {}
+
+-- Who holds Foxy's ledger name. Asked again when a charge comes from any
+-- other computer -- a Foxy Bank rebuilt somewhere else keeps its name and
+-- changes its id -- but at most once a minute, so a stranger sending
+-- charges cannot keep this server waiting on the network.
+local function fromFoxy(sender)
+    if not sender then return false end
+    local now = util.nowMs()
+    if sender ~= foxyLedger.id
+        and (not foxyLedger.at or now - foxyLedger.at >= CHARGE.lookup_ms) then
+        foxyLedger.id = rednet.lookup(config.ledger_protocol or "PUMPE_LEDGER_V1",
+            ledger.hostFor(config.foxy_bank_code or "0001"))
+        foxyLedger.at = now
+    end
+    return sender == foxyLedger.id
+end
+
+function actions.LEDGER_CHARGE(payload, sender)
+    need(fromFoxy(sender), "NOT_A_BANK",
+        "Only the Foxy Bank can charge an account here")
+    local accountId = state.ids[ledger.clean(payload.bank_account_id)]
+    local account = accountId and state.accounts[accountId]
+    need(account, "NO_SUCH_ACCOUNT", "No account has that Account ID")
+    local amount = math.floor(tonumber(payload.amount) or 0)
+    need(amount > 0, "BAD_AMOUNT", "A charge has to be worth something")
+    local transferId = util.safeText(tostring(payload.transfer_id or ""), 32)
+    need(#transferId >= 8, "BAD_TRANSFER", "That charge has no id")
+
+    state.applied_transfers = state.applied_transfers or {}
+    local already = util.ledger.applied(state.applied_transfers, transferId)
+    if already then
+        -- It went through; only the answer was lost. Say yes again.
+        return { charged = already.amount, repeated = true }
+    end
+
+    account.charge_misses = account.charge_misses or { count = 0, until_at = 0 }
+    local misses = account.charge_misses
+    need(util.nowMs() >= (misses.until_at or 0), "CHARGES_LOCKED",
+        "Too many wrong PINs. This account cannot be charged for a while")
+    if account.pin_hash ~= util.hashPin(payload.pin) then
+        misses.count = (misses.count or 0) + 1
+        if misses.count >= CHARGE.tries then
+            misses.count, misses.until_at = 0, util.nowMs() + CHARGE.lock_ms
+        end
+        save()
+        reject("BAD_PIN", "Incorrect PIN")
+    end
+    misses.count = 0
+    clearPending(account)
+    need((account.balance or 0) >= amount, "INSUFFICIENT_FUNDS",
+        "Not enough cleared money at " .. tostring(state.bank_name))
+
+    util.ledger.applyOnce(state.applied_transfers, transferId, amount,
+        function()
+            account.balance = util.roundMoney(account.balance - amount)
+        end)
+    util.ledger.forget(state.applied_transfers)
+    local shopName = util.safeText(tostring(payload.to_name or "a shop"), 24)
+    transaction(account, "shop_charge", -amount, shopName, "Paid " .. shopName)
+    save()
+    logActivity(account.name .. " paid " .. shopName, colors.orange)
+    return { charged = amount, name = account.name }
 end
 
 function actions.LEDGER_STATUS(payload)

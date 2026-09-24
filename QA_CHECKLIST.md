@@ -7,6 +7,44 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## Shop (10.2)
+
+- [ ] On a Service Kiosk linked to a company, open **S → ONLINE STORE**. Confirm **OPEN STORE** is refused with nothing online, and again with neither home delivery nor pickup on.
+- [ ] Put two products online, pick a colour and a tagline, turn home delivery on with a fee, and open. Confirm a subscription product cannot be put online.
+- [ ] Install **Shop** from the App Browser on a second account's PUMPE. Confirm the store is listed in its colour, and that searching a word from its tagline finds it.
+- [ ] Add two of one product and one of another, take one back out in the basket, and check out to **Where I am now** with GPS anchors up. Keep it as **Home**. Confirm the total includes the fee and the Foxy balance drops by exactly that.
+- [ ] Check out again and confirm **Home** is offered as one tap.
+- [ ] Try to buy from your own store with the owner's PUMPE and confirm it is refused.
+- [ ] Install a **Delivery Terminal** (Easy Deployment → other roles) and link it with the owner's name and PIN. Confirm the order is on the board.
+- [ ] Move the order to **Packing**, then to a stage in your own words. Keep the buyer's **Delivery** page open meanwhile and confirm it changes by itself within a few seconds, and that each step also arrives as a notification.
+- [ ] Press **DONE** with a note. Confirm the buyer is notified and the order page shows the note.
+- [ ] Run the same terminal on an Advanced Pocket Computer and confirm the board and the order screen fit.
+
+### Pickup points
+
+- [ ] Build one: a Delivery Terminal with a wireless modem for the Bank and a wired modem joined by networking cable to three chests, each with its own wired modem. One chest is reachable from the front; the other two are behind a wall.
+- [ ] Press **PICKUP**, name it, set a staff PIN, choose the reachable chest as the pickup chest and **BACK** for redstone with a lamp behind the computer. Confirm the terminal switches to **COLLECT YOUR ORDER**.
+- [ ] Turn pickup on for the store, and check out to the pickup point from another PUMPE. Confirm the checkout shows the six-digit code and adds no delivery fee.
+- [ ] Type the code before the parcel is stocked and confirm it says the order has not arrived yet.
+- [ ] Tap **STAFF**, enter the PIN, **STOCK A PARCEL**, pick the order, put the items in the pickup chest and press **STOCKED**. Confirm the pickup chest empties into a walled-off chest, and the buyer gets a notification with the code.
+- [ ] Drop a block of dirt in the pickup chest, then type the code. Confirm the dirt went into a spare locker, the parcel came out into the pickup chest, and the lamp flashed.
+- [ ] Type the same code again and confirm it is refused. Type five wrong codes and confirm the sixth attempt is told to wait.
+- [ ] Hold **Ctrl+T** and confirm nothing happens. Hold **Ctrl+R**, then immediately hold **Ctrl+T** while it restarts, and confirm it comes back to **COLLECT YOUR ORDER**, never the shell.
+- [ ] Enter five wrong staff PINs and confirm the staff door stays locked even to the right PIN, across a reboot. Then sign in as the company owner instead and set a new PIN.
+- [ ] **LEAVE PICKUP MODE** and confirm Ctrl+T works normally on the board again.
+
+### Paying from another bank
+
+- [ ] With Revolution running, check out to a pickup point paying with **Another bank**, the Revolution Account ID and the Revolution PIN. Confirm the Revolution balance drops and the Foxy balance does not.
+- [ ] Put a product costing a fraction in the basket and confirm the app says another bank pays whole amounts before asking for any PIN.
+- [ ] Enter a wrong Revolution PIN and confirm nothing moves. Enter five and confirm charges on that account are locked.
+- [ ] Confirm the Shop app remembered the Account ID for the next checkout, and never the PIN.
+
+### Web pages (10.2)
+
+- [ ] Publish a page that uses `api.data("PUT", ...)` and `api.data("LIST", ...)`, and confirm a second reader sees the first reader's record.
+- [ ] Publish a page that asks `api.login{ scopes = { "balance" } }` and confirm the sheet only asks for your name, and the page never learns your balance.
+
 ## Foxy is the bank (9.4)
 
 - [ ] Sign in on a fresh PUMPE and confirm **Foxy** installs itself and appears on the Home Screen without visiting the App Browser.

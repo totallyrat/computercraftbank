@@ -61,7 +61,10 @@ local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
     "ccg_server.lua", "revolution.lua", "bank_vault.lua",
     -- The web, new in 10.0: the server that holds everybody's pages, and
     -- the two apps that write and read them.
-    "internet_server.lua", "wc.lua", "internet.lua" }
+    "internet_server.lua", "wc.lua", "internet.lua",
+    -- The Shop, new in 10.2: the terminal that delivers orders, and the
+    -- app that places them.
+    "delivery_terminal.lua", "shop.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

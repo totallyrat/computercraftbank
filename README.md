@@ -16,6 +16,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
 | `internet_server.lua` | Advanced Computer + wireless/Ender modem | Holds and serves every website on the network. The Bank Vault keeps the names |
+| `delivery_terminal.lua` | Advanced Computer or Advanced Pocket Computer + wireless/Ender modem; chests on networking cable for a pickup point | A company's delivery board: every Shop order, its stages, and DONE. Becomes a self-service pickup point |
+| `shop.lua` | Downloaded to a PUMPE from the App Browser | Online stores: a basket, home delivery or pickup, Foxy or another bank, live delivery tracking |
 | `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
@@ -377,6 +379,60 @@ There is no directory. The Internet app is an address bar and a short history �
 - `api.web(action, payload)` reaches the Internet Server. There is one per network, so there is nothing to address.
 - `api.browse(domain)` opens a website. The phone runs it, sandboxed; the app never sees the code.
 - `api.save(table)` / `api.load()` keep something on this phone — one file per app, up to 8 KB, deleted with the app. The Bank's app records are for things other people have to see.
+- A **website** gets `api.data(action, payload)` since 10.2: `PUT`, `LIST`, `READ`, `DELETE` and `REACT` on the Bank's app records, filed under `WEB-` and its own domain. A page cannot name another site's records, and `private = true` on a `PUT` keeps a record to the signed-in reader.
+- `api.login{}` from a website only ever grants the reader's **name**. Since 10.2 a page asking for `balance` or `friends` gets the name and nothing else.
+
+## Shop
+
+New in 10.2. Buying something no longer means walking to the store.
+
+### Opening a store
+
+A store belongs to a company, so it is opened from a **Service Kiosk linked to that company**: `S` for settings, then **ONLINE STORE**.
+
+- **Colour** — one of thirteen. The store's cards, buttons and order screens are painted in it on every buyer's phone.
+- **Tagline** — what the store sells, in a line. Search reads it as well as the name.
+- **Products** — choose which products are online. Subscriptions stay at the till: they are not something anybody delivers.
+- **Home delivery**, with a **fee** (0 for free), and/or **pickup** at the company's pickup points.
+- **Open.** A store with nothing online, or no way to deliver, cannot open.
+
+The money for every order goes to the company owner's Foxy account, fee included, with a **New order** notification.
+
+### Buying
+
+The **Shop** app lists every open store; tap one, tap products to add them, then **Checkout**:
+
+1. **Where.** A place you kept, *Where I am now* (needs GPS anchors), typed coordinates, or one of the store's pickup points. A new address can be kept, by name, **on the phone only** — the Bank sees an address once, on the order it belongs to.
+2. **How.** Foxy, or **another bank** by its 16-digit Account ID. Another bank pays whole amounts only, because the inter-bank ledger does.
+3. **Your PIN.** Foxy's, or your own bank's. The price always comes from the store's list at the Bank; the basket the phone sends is item ids and quantities.
+
+Paying from another bank is a charge Foxy asks that bank to make. The PIN goes to that bank and nowhere else; only the Foxy Core may ask; five wrong PINs lock charges on that account for ten minutes. A charge that got no answer is never guessed at — if it turns out it landed, it is refunded by itself.
+
+The **Delivery** tab lists your orders, open first, and follows each one live: it asks again every few seconds while it is open. Every step the store takes is also a notification.
+
+### The Delivery Terminal
+
+A new role in Easy Deployment. Link it to the company once with the owner's Foxy name and PIN, the same way a kiosk is linked.
+
+The board shows every order, open ones first. Tap one to move it on: a **premade stage** (Order received, Packing, Packed, Out for delivery, At the pickup point) or **your own words**. **DONE** tells the buyer it arrived, with an optional note — *left by the door*.
+
+It lays itself out for an Advanced Computer in a warehouse and an Advanced Pocket Computer in a driver's hand.
+
+### Building a pickup point
+
+A pickup point is one Delivery Terminal, one chest customers can open — the **pickup chest** — and any number of **lockers**: chests behind a wall that only the computer can reach.
+
+- Put a **wired modem on every chest**, the pickup chest included, and run **networking cable** from all of them to a wired modem on the computer. ComputerCraft's `pushItems` only moves items between inventories on one wired network. (Chests touching the computer directly also work — but not a mix of both.)
+- Give the computer a wireless or Ender modem as well, for the Bank.
+- Press **PICKUP** on the board: a name buyers see at checkout, a staff PIN, which chest is the pickup chest, and optionally a side to pulse redstone when a parcel comes out (a door, a lamp, a bell).
+
+Then it runs itself:
+
+- **Stocking.** Staff tap **STAFF**, enter the PIN, **STOCK A PARCEL**, pick the order and put the items in the pickup chest. The terminal moves them into an empty locker and tells the Bank which; the buyer gets a notification with their code.
+- **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. The terminal moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
+- **Five wrong codes** a minute per pickup point, then it waits. **Five wrong staff PINs** lock the staff door for five minutes; the count survives a reboot. The company owner can always sign in instead of using the PIN.
+
+**Pickup mode keeps customers out of the shell.** Whoever is at a pickup point's keyboard is a customer, and the shell could empty every locker. In Pickup mode Ctrl+T does nothing; a reboot comes straight back to the counter before Easy Deployment does anything else; an error pauses the counter rather than ending the program; and leaving takes the staff PIN. Ctrl+R and Ctrl+S cannot be stopped by any program — they only bring the counter back. Keep the lockers out of reach, and protect the blocks themselves the way you would protect any shop.
 
 ## Easy Deployment
 

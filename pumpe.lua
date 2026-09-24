@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "10.1.0"
+local PROGRAM_VERSION = "10.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4181,10 +4181,45 @@ function webpage.api(domain)
         -- with the same sheet and the same remembered answer. The grant is
         -- filed under the domain, so signing into one site says nothing
         -- about any other.
+        --
+        -- Who you are, and nothing past it. 10.1 passed the page's own list
+        -- of scopes straight through, so a page could ask for "balance" and
+        -- be told it the moment somebody tapped Allow -- while this file,
+        -- the README and the changelog all said a page never could. The
+        -- list is rebuilt here instead of trusted.
         login = function(spec)
             spec = type(spec) == "table" and spec or {}
-            spec.name = spec.name or domain
-            return foxyLogin("WEB-" .. tostring(domain), spec)
+            return foxyLogin("WEB-" .. tostring(domain), {
+                name = tostring(spec.name or domain),
+                scopes = { "name" },
+            })
+        end,
+        -- Storage, since 10.2. Kept at the Bank rather than on this phone,
+        -- so a page is still a visit: nothing it saves is written here. It
+        -- is the Bank's app records under the domain's own name, which means
+        -- a page has to be signed into before it can write -- that is what
+        -- "a page can have accounts" is -- and a record belongs to whoever
+        -- wrote it. `private` keeps a record to its author; without it, the
+        -- page's other visitors can read it, which is a guestbook.
+        data = function(action, payload)
+            local verb = string.upper(tostring(action or ""))
+            if verb ~= "PUT" and verb ~= "LIST" and verb ~= "READ"
+                and verb ~= "DELETE" and verb ~= "REACT" then
+                return nil, "A page can PUT, LIST, READ, DELETE or REACT",
+                    "BAD_ACTION"
+            end
+            local scoped = {}
+            for key, value in pairs(type(payload) == "table" and payload
+                or {}) do
+                scoped[key] = value
+            end
+            scoped.app_id = "WEB-" .. tostring(domain)
+            scoped.audience = nil
+            if verb == "PUT" and scoped.private and account then
+                scoped.audience = { account.account_id }
+            end
+            scoped.private = nil
+            return request("APP_DATA_" .. verb, scoped, true)
         end,
     }
 end

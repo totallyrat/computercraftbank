@@ -59,6 +59,10 @@ const forwardOptionalFiles = [
   "internet_server.lua",
   "wc.lua",
   "internet.lua",
+  // The Shop, new in 10.2: the terminal that delivers the orders, and the
+  // app that places them.
+  "delivery_terminal.lua",
+  "shop.lua",
 ];
 
 function checksum(buffer) {

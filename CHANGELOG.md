@@ -1,5 +1,80 @@
 # Changelog
 
+## 10.2.0
+
+Called **10.2 Shop**. Buying something used to mean walking to the store and
+standing at its kiosk. Now the store is on your phone, and what you buy comes
+to you -- to your door, or to a pickup point that hands it over by itself.
+
+**Shop, a new app.** Every store that has opened online, each in its own
+colours. Fill a basket and it goes to your door or to one of the store's
+pickup points. Get it from the App Browser.
+
+**Any company can open a store from its Service Kiosk.** Settings, then
+Online Store: a colour, a tagline, which products are online, home delivery
+(with a fee or free) and pickup, then Open. Subscriptions stay at the till --
+they are not something anybody delivers.
+
+**Checkout is where, then how, then your PIN.** Where is a place you kept,
+where you are standing (GPS), coordinates you type, or a pickup point. How is
+Foxy, or any other bank by its Account ID and that bank's own PIN. The price
+comes from the store's list at the Bank, never from the phone.
+
+**Places stay on your phone.** Home, the farm, the shop: kept in the Shop app
+and nowhere else, so the next checkout is one tap. The Bank sees an address
+once, on the order it belongs to.
+
+**The Delivery page is live.** It asks again every few seconds while it is
+open, and every step the store takes arrives as a notification too -- packing,
+out for delivery, delivered, with whatever the driver had to say.
+
+**The Delivery Terminal, a new role.** A company's warehouse board: every
+order, moved through premade stages or the company's own words ("Stuck in the
+rain"), and DONE when it arrives. On an Advanced Computer in the warehouse,
+or a Pocket Computer in a driver's hand.
+
+**Pickup points hand out parcels by themselves.** A Delivery Terminal wired
+to a row of chests becomes one with its PICKUP button: one chest customers can
+open, the rest walled off as lockers. Staff put a parcel in the pickup chest
+and the terminal files it in an empty locker. The buyer types the code from
+their phone and the terminal moves it back out, and can pulse redstone for a
+door, a lamp or a bell.
+
+**Pickup mode keeps customers out of the shell.** Whoever is at a pickup
+point's keyboard is a customer, and the shell could empty every locker. So
+Ctrl+T does nothing in Pickup mode, a reboot comes straight back to the
+counter before anything else runs, and leaving takes the staff PIN. The
+company's owner can always sign in instead.
+
+**Paying from another bank.** Foxy asks the buyer's own bank to charge the
+account, with that bank's PIN, which goes to that bank and nowhere else. A
+charge nobody answered is never guessed at: if it turns out it landed, it is
+refunded by itself. Another bank can only pay whole amounts.
+
+**Web pages can keep things.** `api.data` stores records for a page -- a
+guestbook, a high-score table -- filed under its own domain, so one site can
+never read or write another's.
+
+**A web page can no longer ask for your balance.** 10.1 let a page ask
+FoxyLogin for any scope an app could, balance and friends included. A page
+gets your name now, and nothing else, whatever it asks for.
+
+- A pickup point moves items with ComputerCraft's `pushItems`, which only
+  works between inventories on the same wired network: a wired modem on every
+  chest, the pickup chest included, and networking cable back to the
+  computer. Chests touching the computer work too, but not a mix of both.
+- Anything left in the pickup chest when a customer arrives is moved into a
+  spare locker first, so nobody walks off with a stranger's things.
+- Six-digit codes, five wrong ones a minute per pickup point. Five wrong
+  staff PINs lock the staff door for five minutes, and the count survives a
+  reboot.
+- The Delivery Terminal never updates while it is in Pickup mode; it waits
+  until staff take it back to the board.
+- The code for a pickup order is only ever shown to the buyer. Staff deliver
+  parcels without needing to know it.
+- A store's owner cannot order from their own store, and a store with nothing
+  online, or no way to deliver, cannot open.
+
 ## 10.1.0
 
 **A website is a program now.** Titles and lines of text got you one kind of
