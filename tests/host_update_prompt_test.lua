@@ -188,6 +188,30 @@ local unattended = net.autoUpdate(config, "bank", "/pumpe", nil,
     { force = true })
 assert(unattended, "an unattended role still installs on its own")
 assert(files["/pumpe/bank_server.lua"] == nil or true)
+
+-- Current, and missing a file its role installs (11.1): an unattended device
+-- fetches just that file and restarts; a phone is not asked anything.
+config.version = "9.9.9"
+files = {}
+for _, path in ipairs(update.rolePaths("bank")) do
+    files[fs.combine("/pumpe", update.installPath(path))] = "have"
+end
+local lost = update.rolePaths("bank")[1]
+files[fs.combine("/pumpe", lost)] = nil
+fetched, rebooted = 0, 0
+assert(net.autoUpdate(config, "bank", "/pumpe", nil, { force = true }),
+    "an unattended device repairs itself")
+assert(files[fs.combine("/pumpe", lost)] == bodies[lost] and fetched == 2,
+    "the manifest and the one missing file, nothing else")
+assert(rebooted == 1)
+assert(not net.autoUpdate(config, "bank", "/pumpe", nil, { force = true }),
+    "whole again, it is current")
+files[fs.combine("/pumpe", lost)] = nil
+local bothered = false
+assert(not net.autoUpdate(config, "bank", "/pumpe", nil, { force = true,
+    confirm = function() bothered = true return true end }))
+assert(not bothered and files[fs.combine("/pumpe", lost)] == nil,
+    "an asked-first device is not asked about a repair")
 loadfile = realLoadfile
 
 print("host_update_prompt_test: OK")

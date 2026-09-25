@@ -4,6 +4,7 @@
 -- PUMPE APP ACTION: wallet | Bet Wallet | Game money
 -- PUMPE APP ACTION: activity | Activity | What you have spent
 -- PUMPE APP ACTION: id | Account ID | Your sixteen digits
+-- PUMPE APP ACTION: security | Foxy Security | Confirm it is you at a pickup
 -- The Foxy Account and the bank behind it, in one place. Downloaded from the
 -- App Server rather than shipped with the PUMPE, so it can move faster than
 -- the phone underneath it.
@@ -19,6 +20,7 @@ return function(api)
     local FOX = colors.orange
     local INK = colors.white
     local TABS = { { id = "bank", label = "Bank" },
+        { id = "security", label = "Security" },
         { id = "account", label = "Account" } }
 
     local function running()
@@ -981,6 +983,106 @@ return function(api)
         end
     end
 
+    -- Foxy Security, 11.1 ---------------------------------------------------------
+    -- A parcel waiting at a pickup point opens to its code -- and since 11.1
+    -- only once the buyer says, here and with their PIN, that it is them at
+    -- the counter. The question also pops up on the PUMPE the moment it is
+    -- asked; this tab is where it waits if that was missed, and where a
+    -- parcel can be confirmed ahead of time.
+
+    local function confirmWithPin(parcel, ahead)
+        local pin = ui.pin(target, "Your PIN", true)
+        if not pin then return end
+        local done, err = request("SECURITY_CONFIRM",
+            { order_id = parcel.order_id, pin = pin }, true)
+        if not done then
+            ui.message(target, "error", "Not confirmed", err, 1.8)
+        elseif done.answered then
+            ui.message(target, "success", "Confirmed",
+                "It is coming out now", 1.6)
+        else
+            ui.message(target, "success", "Pre-confirmed",
+                ahead and "For " .. ahead .. " minutes" or "Go and get it", 1.8)
+        end
+    end
+
+    local function securityAnswer(parcel, minutes)
+        local status = parcel.security and parcel.security.status
+        local where = tostring(parcel.company_name) .. " at "
+            .. tostring(parcel.point_name)
+        if status == "asked" then
+            if ui.confirm(target, "Is this you?", "Somebody is collecting your "
+                .. where .. " right now.", "It's me", "Not me") then
+                confirmWithPin(parcel)
+            else
+                local denied = request("SECURITY_DENY",
+                    { order_id = parcel.order_id }, true)
+                if denied and denied.code then
+                    ui.message(target, "warning", "Kept it in",
+                        "Your new code is " .. denied.code, 2.4)
+                end
+            end
+        elseif status == "confirmed" then
+            if ui.confirm(target, "Take it back?", "Right now your code opens "
+                .. where .. " without asking you.", "Take back", "Keep") then
+                request("SECURITY_DENY", { order_id = parcel.order_id }, true)
+            end
+        elseif ui.confirm(target, "Pre-confirm?", "For " .. minutes
+            .. " minutes, whoever types your code at " .. where
+            .. " gets it without asking you.", "Confirm", "Back") then
+            confirmWithPin(parcel, minutes)
+        end
+    end
+
+    local function securityScreen()
+        while running() do
+            local listed = request("SECURITY_LIST", {}, true)
+            local parcels = listed and listed.parcels or {}
+            local minutes = math.floor((listed and listed.preconfirm_ms
+                or 1800000) / 60000)
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Foxy Security", listed and (#parcels
+                .. " at pickup points") or "Offline", util.formatClock())
+            local scene = ui.scene(target)
+            if #parcels == 0 then
+                ui.wrappedText(target, 2, 5, listed and ("Nothing waiting."
+                    .. " When a parcel reaches a pickup point, whoever types"
+                    .. " its code is checked with you here first.")
+                    or "Cannot reach the Bank.", width - 2, 6, ui.theme.muted)
+            end
+            local per = math.max(1, math.floor((height - 6) / 3))
+            for slot = 1, math.min(per, #parcels) do
+                local parcel = parcels[slot]
+                local status = parcel.security and parcel.security.status
+                local left = parcel.security and math.ceil(
+                    (parcel.security.expires_in_ms or 0) / 60000) or 0
+                scene:button("parcel:" .. slot, 2, 2 + slot * 3, width - 2, 2,
+                    ui.truncate(tostring(parcel.company_name) .. ", "
+                        .. tostring(parcel.point_name), width - 4) .. "\n"
+                        .. ui.truncate(status == "asked"
+                            and "Somebody is there now"
+                            or status == "confirmed" and ("Pre-confirmed, "
+                                .. left .. " min") or "Tap to pre-confirm",
+                            width - 4),
+                    { background = status == "asked" and ui.theme.warning
+                        or status == "confirmed" and ui.theme.success
+                        or ui.theme.panel,
+                      foreground = status and colors.black or colors.white })
+            end
+            ui.tabBar(scene, target, TABS, "security", FOX)
+            local action = scene:wait({ tickRate = 3 })
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
+            end
+            local slot = tonumber(action and action:match("^parcel:(%d+)$"))
+            if slot and parcels[slot] then
+                securityAnswer(parcels[slot], minutes)
+            end
+        end
+    end
+
     -- Your account ------------------------------------------------------------
 
     local function accountScreen()
@@ -1068,6 +1170,7 @@ return function(api)
             wallet = betWalletScreen,
             activity = historyScreen,
             id = accountIdScreen,
+            security = securityScreen,
         }
         if jump[wanted] then
             jump[wanted]()
@@ -1087,6 +1190,8 @@ return function(api)
         local switched
         if tab == "account" then
             switched = accountScreen()
+        elseif tab == "security" then
+            switched = securityScreen()
         else
             switched = bankScreen()
         end

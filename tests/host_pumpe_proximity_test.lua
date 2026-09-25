@@ -61,6 +61,7 @@ package.loaded["lib.util"] = {
 -- background handler exactly as the shared wait loop does.
 local pending = {}
 local scanAccepted, scanDeclined, claimed, paid
+local confirmedOrder, confirmedWith, deniedOrder
 local client = {
     discover = function() return true end,
     request = function(_, action, payload)
@@ -86,6 +87,15 @@ local client = {
         elseif action == "FOXY_PAY_CONFIRM" then
             paid = payload.offer_id
             return { balance = 488 }
+        elseif action == "SECURITY_CONFIRM" then
+            -- The phone itself asks, so there is no app id to check.
+            assert(payload.app_id == nil)
+            confirmedOrder, confirmedWith = payload.order_id, payload.pin
+            return { order_id = payload.order_id, answered = true }
+        elseif action == "SECURITY_DENY" then
+            deniedOrder = payload.order_id
+            return { order_id = payload.order_id, denied = true,
+                code = "654321" }
         elseif action == "PAY_CODE_PREVIEW"
             or action == "PAY_CODE_CONFIRM" then
             -- Since 9.4 the Bank refuses these for a Foxy account. A phone
@@ -182,6 +192,11 @@ actions = {
     "__wake:visa", "no",
     -- Portable Mode: take the sale, then the basket lands on the same screen.
     "__wake:claim", "yes", "__poll:basket", "pay",
+    -- 11.1, Foxy Security: somebody typed this person's pickup code. They
+    -- say it is them, with their PIN -- and then, for another parcel, that
+    -- it is not.
+    "__wake:security", "mine",
+    "__wake:stranger", "notme",
     "__terminate",
 }
 local index = 0
@@ -235,6 +250,15 @@ local BASKET = { offer = { offer_id = "NEAR01", portable = true,
     merchant = "Market Cart",
     items = { { name = "Apple", price = 4, quantity = 3 } } } }
 
+local function securityPoll(id, order)
+    return { latest = { notification_id = id, title = "Is this you?",
+        body = "Somebody is collecting your Fox Goods order at North Point."
+            .. " Confirm with your PIN.", kind = "warning",
+        style = "fullscreen", app_name = "Foxy Security",
+        security_order = order } }
+end
+polls.security = securityPoll("N1", "ORD00000007")
+polls.stranger = securityPoll("N2", "ORD00000008")
 polls.ticket, polls.visa = TICKET_SCAN, VISA_SCAN
 polls.claim, polls.basket = CLAIM, BASKET
 
@@ -281,5 +305,13 @@ assert(paid == "NEAR01",
     "and confirming again is what actually pays -- by offer id, because the"
         .. " Bank checks the offer was addressed here rather than trusting"
         .. " the phone to have come by the code honestly")
+
+-- Foxy Security answered over whatever was open.
+assert(drew("FOXY SECURITY"), "the question arrives as Foxy Security")
+assert(pressed("It's me") and pressed("Not me") and pressed("Later, in Foxy"))
+assert(confirmedOrder == "ORD00000007" and confirmedWith == "1234",
+    "it's me takes the PIN and confirms that order")
+assert(deniedOrder == "ORD00000008", "not me keeps the other parcel in")
+assert(drew("Kept it in"))
 
 print("host_pumpe_proximity_test: OK")

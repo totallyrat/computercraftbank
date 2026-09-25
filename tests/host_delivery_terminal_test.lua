@@ -151,7 +151,8 @@ end
 -- function, which runs at that moment -- a buyer checking out, staff putting
 -- a parcel in a chest -- and returns the answer.
 local function runTerminal(bank, files, WIDTH, HEIGHT, script, offline)
-    local seen = { messages = {}, headers = {}, labels = {}, requests = {} }
+    local seen = { messages = {}, headers = {}, labels = {}, requests = {},
+        idleUpdates = 0 }
     local surface = { getSize = function() return WIDTH, HEIGHT end }
     term = { current = function() return surface end }
 
@@ -255,7 +256,12 @@ local function runTerminal(bank, files, WIDTH, HEIGHT, script, offline)
     local savedNet, savedUi = package.loaded["lib.net"], package.loaded["lib.ui"]
     package.loaded["lib.net"] = {
         client = function() return client end,
-        autoUpdate = function() end,
+        -- Only the pickup counter passes onProgress: it draws "updating".
+        autoUpdate = function(_, _, _, _, options)
+            if options and options.onProgress then
+                seen.idleUpdates = seen.idleUpdates + 1
+            end
+        end,
         locate = function() return { x = 10, y = 64, z = -20 } end,
     }
     package.loaded["lib.ui"] = ui
@@ -293,7 +299,7 @@ local function fullRun(WIDTH, HEIGHT)
     resetChests()
     outputs = {}
 
-    bank.register("Ana Fox", "1234")
+    local ana = bank.register("Ana Fox", "1234")
     local kit = bank.register("Kit Wolf", "5678")
     bank.fund(kit, 1000)
     local till = bank.request("KIOSK_REGISTER", { name = "Fox Goods Till" })
@@ -350,6 +356,22 @@ local function fullRun(WIDTH, HEIGHT)
         end
     end
     local function theCode() return pickupOrder.code end
+    local offersBefore
+    local function offerCount()
+        local total = 0
+        for _ in pairs(bank.state.proximity_offers) do total = total + 1 end
+        return total
+    end
+    local function setApples(amount)
+        for _, stack in pairs(chests[JUNK].slots) do
+            if stack.name == "minecraft:apple" then stack.count = amount end
+        end
+    end
+    local function openOffer()
+        for id, offer in pairs(bank.state.proximity_offers) do
+            if offer.status == "offered" then return id end
+        end
+    end
 
     -- First boot: name the terminal, and the owner links it.
     typed("Warehouse", "Ana Fox")
@@ -381,13 +403,18 @@ local function fullRun(WIDTH, HEIGHT)
             items = { { item_id = bread.item_id, quantity = 3 } },
             delivery = { kind = "pickup", point_id = device().terminal_id } }))
         return "__terminate"
+    end, function()
+        -- Nobody has touched the counter for a minute: it updates itself.
+        bank.advanceMs(61 * 1000)
+        return "__tick"
     end, "code")
     typed(theCode)
 
-    -- Staff: one wrong PIN, then the right one, and the parcel is stocked.
-    -- It goes in the pickup chest as two stacks; the terminal files it.
-    tap("staff", "pin", "staff", "pin", "stock", "pick:1", "back")
-    pin("1111", "2468")
+    -- 11.1: the courier types the parcel's delivery code at the counter --
+    -- no staff PIN -- and puts it in the pickup chest as two stacks; the
+    -- terminal files it.
+    tap("code")
+    typed(function() return orders[pickupOrder.order_id].delivery_code end)
     confirm(function()
         put(HATCH, "minecraft:bread", 2)
         put(HATCH, "minecraft:bread", 1)
@@ -395,6 +422,7 @@ local function fullRun(WIDTH, HEIGHT)
     end)
 
     -- A stranger's dirt is in the pickup chest when the buyer comes back.
+    -- Their code asks their PUMPE first; they confirm with their PIN.
     tap(function()
         assert(stacks(HATCH) == 0, "stocking emptied the pickup chest")
         assert(count(LOCKER_A, "minecraft:bread") == 3,
@@ -406,6 +434,17 @@ local function fullRun(WIDTH, HEIGHT)
         return "code"
     end)
     typed(theCode)
+    tap(function()
+        local asked = bank.state.accounts[kit.id].notifications[1]
+        assert(asked.security_order == pickupOrder.order_id,
+            "the buyer's PUMPE is asked whether it is them")
+        assert(count(HATCH, "minecraft:bread") == 0, "and nothing is out yet")
+        return "__tick"
+    end, function()
+        bank.request("SECURITY_CONFIRM", bank.as(kit, {
+            order_id = pickupOrder.order_id, pin = "5678" }))
+        return "__tick"
+    end)
 
     -- They take their parcel, and the same code does not work twice.
     tap(function()
@@ -420,6 +459,78 @@ local function fullRun(WIDTH, HEIGHT)
         return "code"
     end)
     typed(theCode)
+
+    -- Staff: one wrong PIN, then the right one. They put the point's own
+    -- stock in the pickup chest and RESTOCK files it -- fullest locker
+    -- first, so the empty one stays free for parcels.
+    tap("staff", "pin", "staff", "pin", function()
+        put(HATCH, "minecraft:apple", 20)
+        return "stock"
+    end, "back")
+    pin("1111", "2468")
+
+    -- The owner sets up the Store from the Company app, and a customer buys
+    -- apples with Foxy Pay.
+    local ownApples
+    tap(function()
+        assert(stacks(HATCH) == 0, "restocking emptied the pickup chest")
+        assert(count(JUNK, "minecraft:apple") == 20
+            and stacks(LOCKER_A) == 0, "into a locker already in use")
+        local point = device().terminal_id
+        bank.request("STORE_OFFER_SET", bank.as(ana, {
+            company_id = company.company_id, point_id = point,
+            name = "Apples", item = "apple", count = 8, price = 6 }))
+        bank.request("STORE_OPEN", bank.as(ana, {
+            company_id = company.company_id, point_id = point, open = true }))
+        bank.request("REPORT_POSITION", bank.as(kit,
+            { position = { x = 11, y = 64, z = -20 } }))
+        ownApples = bank.balanceOf(ana)
+        return "__tick"
+    end, "store", "offer:1", "pick:1", function()
+        local id = openOffer()
+        assert(bank.state.proximity_offers[id].target_account_id == kit.id,
+            "Foxy Pay found the customer standing there")
+        bank.request("FOXY_PAY_CONFIRM", bank.as(kit, { offer_id = id,
+            pin = "5678" }))
+        return "__tick"
+    end)
+
+    -- A second sale comes up short: somebody takes apples out by hand
+    -- while the customer is paying.
+    tap(function()
+        assert(count(HATCH, "minecraft:apple") == 8, "eight apples came out")
+        assert(count(JUNK, "minecraft:apple") == 12)
+        assert(bank.balanceOf(ana) == ownApples + 6, "and the owner was paid")
+        chests[HATCH].slots = {}
+        -- Somebody takes most of them out by hand while the next customer
+        -- is still reading the list.
+        setApples(5)
+        offersBefore = offerCount()
+        return "offer:1"
+    end, function()
+        assert(bank.balanceOf(ana) == ownApples + 6
+            and offerCount() == offersBefore,
+            "sold out before anybody was asked to pay")
+        setApples(12)
+        return "__tick"
+    end, "offer:1", "pick:1", function()
+        local id = openOffer()
+        for slot, stack in pairs(chests[JUNK].slots) do
+            if stack.name == "minecraft:apple" then stack.count = 3 end
+        end
+        bank.request("FOXY_PAY_CONFIRM", bank.as(kit, { offer_id = id,
+            pin = "5678" }))
+        return "__tick"
+    end, function()
+        assert(count(HATCH, "minecraft:apple") == 3, "what there was came out")
+        local told = bank.state.accounts[ana.id].notifications[1]
+        assert(told.title == "Pickup sale came up short"
+            and told.body:find("Kit Wolf got 3 of 8", 1, true)
+            and told.body:find("3.75", 1, true), "the owner knows who is owed "
+                .. "what: " .. tostring(told.body))
+        chests[HATCH].slots = {}
+        return "back"
+    end)
 
     -- Five wrong staff PINs lock the staff door, even to the right PIN.
     for _ = 1, 5 do tap("staff", "pin") end
@@ -469,15 +580,23 @@ local function fullRun(WIDTH, HEIGHT)
     assert(contains(seen.requests, "PICKUP_REGISTER"))
     assert(contains(shown, "NOT HERE"), "a code before the parcel arrives")
     assert(contains(shown, "WRONG PIN"))
-    assert(contains(shown, "STOCKED"))
+    assert(contains(shown, "DELIVERED"), "the courier stocked it with a code")
     assert(contains(shown, "TAKE YOUR PARCEL"))
+    assert(contains(shown, "RESTOCKED"))
+    assert(seen.idleUpdates == 1, "an idle counter checks for an update, and"
+        .. " one somebody is using does not: " .. seen.idleUpdates)
+    assert(contains(shown, "TAKE YOUR ITEMS"), "a Store sale")
+    assert(contains(shown, "ASK A MEMBER OF STAFF"), "and a short one")
+    assert(contains(shown, "SOLD OUT"), "and one sold out under the customer")
     assert(contains(shown, "STAFF LOCKED"), "five wrong PINs lock staff out")
     assert(contains(shown, "NOT THE OWNER"),
         "a customer's own Foxy account is not the way in")
     assert(contains(shown, "PIN CHANGED"))
     assert(contains(shown, "PICKUP PAUSED"), "an error pauses Pickup mode")
-    assert(table.concat(outputs, ",") == "back=true,back=false",
-        "one pulse, out of the back, when the parcel came out")
+    assert(table.concat(outputs, ",") == "back=true,back=false,"
+        .. "back=true,back=false,back=true,back=false",
+        "a pulse out of the back each time something came out: the parcel"
+            .. " and two sales")
     assert(count(HATCH, "minecraft:dirt") == 1,
         "staff emptied the dirt's locker into the pickup chest")
     assert(count(JUNK, "minecraft:stick") == 5, "and never touched the sticks")
@@ -549,6 +668,31 @@ do
     chests[LOCKER_B].size = 1
     assert(terminal.freeLocker(2, { [LOCKER_A] = "ORD00000001" }) == nil,
         "and so is one too small for the parcel")
+
+    -- The Store sells from lockers, never out of somebody's parcel.
+    resetChests()
+    put(LOCKER_A, "minecraft:apple", 10)
+    put(JUNK, "minecraft:apple", 5)
+    local booked = { [LOCKER_A] = "ORD00000001" }
+    assert(terminal.inStock("minecraft:apple", booked) == 5,
+        "a parcel's apples are not stock")
+    assert(terminal.dispense("minecraft:apple", 8, booked) == 5)
+    assert(count(HATCH, "minecraft:apple") == 5
+        and count(LOCKER_A, "minecraft:apple") == 10,
+        "and never come out of its locker")
+
+    -- Restocking fills lockers that hold stock already, fullest first, and
+    -- leaves empty ones for parcels.
+    resetChests()
+    chests[JUNK].slots = {}
+    put(LOCKER_B, "minecraft:apple", 64)
+    put(LOCKER_B, "minecraft:apple", 64)
+    put(JUNK, "minecraft:stick", 1)
+    local order = terminal.stockLockers({})
+    assert(order[1] == LOCKER_B and order[2] == JUNK and order[3] == LOCKER_A,
+        "fullest first: " .. table.concat(order, ","))
+    assert(#terminal.stockLockers({ [LOCKER_B] = "ORD00000001" }) == 2,
+        "and never a parcel's locker")
 end
 
 -- Refunds and returns from the board (11.0) -------------------------------------------

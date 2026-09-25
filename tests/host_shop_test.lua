@@ -315,33 +315,75 @@ bank.advanceMs(61 * 1000)
 robAccount.balance = robAccount.balance + 1
 
 -- The pickup point ------------------------------------------------------------------
+-- 11.1: the courier stocks it with the order's delivery code, and the buyer
+-- confirms it is them in Foxy before it comes out.
 
 local waiting = bank.request("PICKUP_ORDERS", as(depot))
 assert(#waiting.orders == 1 and not waiting.orders[1].locker,
     "the pickup point knows a parcel is on its way")
-rejected(bank.request, "NOT_HERE_YET", "PICKUP_COLLECT",
+local deliveryCode = waiting.orders[1].delivery_code
+assert(type(deliveryCode) == "string" and #deliveryCode == 6
+    and deliveryCode ~= picked.code, "the company sees a courier's code")
+local robsView = bank.request("SHOP_ORDER", bank.as(rob,
+    { order_id = picked.order_id })).order
+assert(robsView.code == picked.code and robsView.delivery_code == nil,
+    "the buyer sees their own code and never the courier's")
+assert(waiting.orders[1].code == nil, "and the company never the buyer's")
+rejected(bank.request, "NOT_HERE_YET", "PICKUP_CODE",
     as(depot, { code = picked.code }))
+rejected(bank.request, "UPDATE_TERMINAL", "PICKUP_COLLECT",
+    as(depot, { code = picked.code }))
+rejected(bank.request, "UPDATE_TERMINAL", "PICKUP_STOCK", as(depot, {
+    order_id = picked.order_id, locker = "minecraft:chest_1" }))
+rejected(bank.request, "BAD_CODE", "PICKUP_STOCK", as(depot, {
+    order_id = picked.order_id, locker = "minecraft:chest_1",
+    code = picked.code }))
+local arriving = bank.request("PICKUP_CODE", as(depot, { code = deliveryCode }))
+assert(arriving.kind == "deliver" and arriving.order_id == picked.order_id,
+    "the delivery code says which parcel is being brought in")
 bank.request("PICKUP_STOCK", as(depot, { order_id = picked.order_id,
-    locker = "minecraft:chest_1" }))
+    locker = "minecraft:chest_1", code = deliveryCode }))
 assert(bank.request("SHOP_ORDER", bank.as(rob,
     { order_id = picked.order_id })).order.stage == "Ready for pickup",
     "stocking it tells the buyer it is ready")
+rejected(bank.request, "ALREADY_HERE", "PICKUP_CODE",
+    as(depot, { code = deliveryCode }))
+assert(bank.request("PICKUP_ORDERS", as(depot)).orders[1].delivery_code == nil,
+    "and the courier's code is spent")
 
 for _ = 1, 4 do
-    pcall(bank.request, "PICKUP_COLLECT", as(depot, { code = "000000" }))
+    pcall(bank.request, "PICKUP_CODE", as(depot, { code = "000000" }))
 end
-local handed = bank.request("PICKUP_COLLECT", as(depot, { code = picked.code }))
+local asking = bank.request("PICKUP_CODE", as(depot, { code = picked.code }))
+assert(asking.kind == "collect" and asking.waiting and not asking.locker,
+    "the right code asks the buyer first, and opens nothing yet")
+local robAccountHere = core.state.accounts[rob.id]
+assert(robAccountHere.notifications[1].security_order == picked.order_id
+    and robAccountHere.notifications[1].style == "fullscreen",
+    "the question lands on the buyer's PUMPE, full screen")
+rejected(bank.request, "NOT_CONFIRMED", "PICKUP_RELEASE",
+    as(depot, { order_id = picked.order_id }))
+assert(bank.request("PICKUP_WAIT", as(depot,
+    { order_id = picked.order_id })).status == "asked")
+rejected(bank.request, "BAD_PIN", "SECURITY_CONFIRM", bank.as(rob, {
+    order_id = picked.order_id, pin = "1111" }))
+bank.request("SECURITY_CONFIRM", bank.as(rob, {
+    order_id = picked.order_id, pin = "9999" }))
+assert(bank.request("PICKUP_WAIT", as(depot,
+    { order_id = picked.order_id })).status == "confirmed")
+local handed = bank.request("PICKUP_RELEASE", as(depot,
+    { order_id = picked.order_id }))
 assert(handed.locker == "minecraft:chest_1",
-    "the right code opens the right locker")
+    "confirmed, the right code opens the right locker")
 assert(bank.request("SHOP_ORDER", bank.as(rob,
     { order_id = picked.order_id })).order.status == "collected")
-rejected(bank.request, "NO_SUCH_CODE", "PICKUP_COLLECT",
+rejected(bank.request, "NO_SUCH_CODE", "PICKUP_CODE",
     as(depot, { code = picked.code }))
 
 for _ = 1, 5 do
-    pcall(bank.request, "PICKUP_COLLECT", as(depot, { code = "111111" }))
+    pcall(bank.request, "PICKUP_CODE", as(depot, { code = "111111" }))
 end
-rejected(bank.request, "TRY_LATER", "PICKUP_COLLECT",
+rejected(bank.request, "TRY_LATER", "PICKUP_CODE",
     as(depot, { code = "222222" }))
 
 -- When the other bank goes quiet ------------------------------------------------------

@@ -16,16 +16,21 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 --
 -- And it can become a pickup point. A pickup point is one computer, one
 -- chest the customer can open -- the pickup chest -- and any number of
--- lockers: chests behind a wall, on the same networking cable. Staff put a
--- parcel in the pickup chest and the terminal files it away in an empty
--- locker. The customer types the code from their phone and the terminal
--- moves their parcel back out into the pickup chest. ComputerCraft can move
--- items between any two inventories on one wired network, so nobody ever
--- has to know which locker is which.
+-- lockers: chests behind a wall, on the same networking cable. A courier
+-- types the parcel's delivery code, puts it in the pickup chest, and the
+-- terminal files it away in an empty locker. The customer types the code
+-- from their phone, confirms on their PUMPE that it is them (Foxy
+-- Security, 11.1), and the terminal moves their parcel back out into the
+-- pickup chest. ComputerCraft can move items between any two inventories on
+-- one wired network, so nobody ever has to know which locker is which.
+--
+-- Since 11.1 a pickup point can sell on the spot as well: whatever is in
+-- the lockers that is not somebody's parcel, from a list set up in the
+-- Company app, paid like a Service Kiosk sale.
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "11.0.0"
+local PROGRAM_VERSION = "11.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -365,8 +370,18 @@ local function orderScreen(order, stages)
         ui.text(target, 2, 5, ui.truncate(addressOf(order), width - 2),
             ui.theme.accent)
         local said, color = standing(order)
-        if said then ui.text(target, 2, 6, ui.truncate(said, width - 2), color) end
-        local row = 7
+        local row = 6
+        if said then
+            ui.text(target, 2, row, ui.truncate(said, width - 2), color)
+            row = row + 1
+        end
+        -- 11.1: what the courier types at the pickup point to put it in.
+        if order.delivery_code then
+            ui.text(target, 2, row, "Delivery code " .. order.delivery_code,
+                colors.purple)
+            row = row + 1
+        end
+        row = math.max(row, 7)
         for _, line in ipairs(order.lines or {}) do
             if row > height - 8 then break end
             ui.text(target, 2, row, ui.truncate(line.quantity .. " x "
@@ -526,31 +541,38 @@ local function staffAccess()
     return false
 end
 
--- Staff put a parcel in the pickup chest; the terminal files it in an
--- empty locker and tells the Bank which, and the buyer gets their code.
-local function stockParcel()
+-- Whatever an earlier visit left in the pickup chest goes into a spare
+-- locker, so nobody walks off with a stranger's things. False when the
+-- chest cannot be emptied, and a message has been shown.
+local function clearHatch()
     local hatch = hatchName()
-    local taken, waiting = takenLockers()
-    if not taken then
-        ui.message(target, "error", "NOT DONE", "The Bank is not answering", 1.6)
-        return
+    local left = used(hatch)
+    if not left then
+        ui.message(target, "error", "PICKUP IS CLOSED",
+            "Ask a member of staff", 2.4)
+        return false
     end
-    local unstocked = {}
-    for _, order in ipairs(waiting) do
-        if not order.locker then unstocked[#unstocked + 1] = order end
+    if left > 0 then
+        local taken = takenLockers()
+        local spare = taken and freeLocker(left, taken)
+        if spare then moveAll(hatch, spare) end
+        if (used(hatch) or 0) > 0 then
+            ui.message(target, "warning", "ASK A MEMBER OF STAFF",
+                "The pickup chest is not empty", 2.4)
+            return false
+        end
     end
-    if #unstocked == 0 then
-        ui.message(target, "info", "NOTHING TO STOCK",
-            "No parcels are on their way here", 1.6)
-        return
-    end
-    local order = pick("STOCK A PARCEL", #unstocked .. " on the way here",
-        unstocked, function(item)
-            return item.order_id .. "  " .. tostring(item.buyer_name)
-        end)
-    if not order then return end
-    if not ui.confirm(target, "INTO THE PICKUP CHEST", linesText(order)
-        .. ". Put it in the pickup chest, then press STOCKED.", "STOCKED",
+    return true
+end
+
+-- A courier with a parcel, 11.1. They typed its delivery code rather than
+-- a staff PIN: whoever has the parcel has the code, and it opens nothing
+-- else. It goes in the pickup chest and the terminal files it in an empty
+-- locker; the buyer gets their code.
+local function deliverParcel(found, code)
+    local hatch = hatchName()
+    if not ui.confirm(target, "INTO THE PICKUP CHEST", found.order_id .. ": "
+        .. linesText(found) .. ". Put it in, then press STOCKED.", "STOCKED",
         "CANCEL") then
         if (used(hatch) or 0) > 0 then
             ui.message(target, "warning", "TAKE IT BACK OUT",
@@ -568,10 +590,15 @@ local function stockParcel()
             "Put the parcel in first", 1.6)
         return
     end
+    local taken = takenLockers()
+    if not taken then
+        ui.message(target, "error", "NOT DONE", "The Bank is not answering", 1.6)
+        return
+    end
     local locker = freeLocker(stacks, taken)
     if not locker then
         ui.message(target, "error", "NO FREE LOCKER",
-            "Add a chest, or empty one", 2)
+            "Take it back. Staff need to make room", 2.4)
         return
     end
     moveAll(hatch, locker)
@@ -582,15 +609,15 @@ local function stockParcel()
         return
     end
     local stocked, err = request("PICKUP_STOCK",
-        { order_id = order.order_id, locker = locker }, true)
+        { order_id = found.order_id, locker = locker, code = code }, true)
     if not stocked then
         moveAll(locker, hatch)
         ui.message(target, "error", "NOT STOCKED", tostring(err)
             .. ". It is back in the pickup chest", 2.4)
         return
     end
-    ui.message(target, "success", "STOCKED",
-        tostring(order.buyer_name) .. " has their code", 1.4)
+    ui.message(target, "success", "DELIVERED",
+        tostring(found.buyer_name) .. " has their code", 1.6)
 end
 
 -- For a parcel that could not come out on its own, or a locker that has
@@ -623,6 +650,46 @@ local function openLocker()
         moved > 0 and (moved .. " items") or "Is the pickup chest full?", 1.6)
 end
 
+-- Lockers that are not holding a parcel, fullest first: stock goes in
+-- where there is stock already, so the empty ones stay free for parcels.
+local function stockLockers(taken)
+    local order = {}
+    for _, name in ipairs(lockers()) do
+        if not taken[name] then order[#order + 1] = name end
+    end
+    table.sort(order, function(a, b)
+        local left, right = used(a) or 0, used(b) or 0
+        if left ~= right then return left > right end
+        return a < b
+    end)
+    return order
+end
+
+-- Staff put stock in through the pickup chest too: RESTOCK files it into
+-- lockers that are not holding a parcel.
+local function restock()
+    local hatch = hatchName()
+    if (used(hatch) or 0) == 0 then
+        return ui.message(target, "info", "NOTHING TO FILE",
+            "Put the stock in the pickup chest first", 1.8)
+    end
+    local taken = takenLockers()
+    if not taken then
+        return ui.message(target, "error", "NOT DONE",
+            "The Bank is not answering", 1.6)
+    end
+    local moved = 0
+    for _, name in ipairs(stockLockers(taken)) do
+        if (used(hatch) or 0) == 0 then break end
+        moved = moved + moveAll(hatch, name)
+    end
+    if (used(hatch) or 0) > 0 then
+        return ui.message(target, "warning", "NO ROOM FOR ALL OF IT",
+            moved .. " filed. The rest is still in the chest", 2.2)
+    end
+    ui.message(target, "success", "RESTOCKED", moved .. " items filed", 1.4)
+end
+
 local function newStaffPin()
     local pin = ui.pin(target, "NEW STAFF PIN", true)
     if not pin then return end
@@ -644,8 +711,10 @@ local function staffMenu()
         ui.clear(target)
         ui.header(target, "STAFF", ui.truncate(device.pickup.name, width - 3))
         local scene = ui.scene(target)
-        scene:button("stock", 2, 4, width - 2, 2, "STOCK A PARCEL",
-            { background = ui.theme.accentDark })
+        -- Parcels go in with their delivery code at the counter since
+        -- 11.1; this is for the pickup point's own stock.
+        scene:button("stock", 2, 4, width - 2, 2, "RESTOCK STORE",
+            { background = colors.purple })
         scene:button("open", 2, 7, width - 2, 1, "EMPTY A LOCKER",
             { background = ui.theme.panel })
         scene:button("pin", 2, 9, width - 2, 1, "NEW STAFF PIN",
@@ -659,7 +728,7 @@ local function staffMenu()
         local action = scene:wait()
         if action == "back" or action == "__terminate" then return "stay" end
         if action == "stock" then
-            stockParcel()
+            restock()
         elseif action == "open" then
             openLocker()
         elseif action == "pin" then
@@ -691,27 +760,54 @@ local function staffMenu()
     return "stay"
 end
 
--- A customer at the counter with a code. Whatever an earlier visit left in
--- the pickup chest goes into a spare locker first, so nobody walks off with
--- a stranger's things; then the Bank checks the code and the parcel comes
--- out.
-local function collect(code)
-    local hatch = hatchName()
-    local left = used(hatch)
-    if not left then
-        return ui.message(target, "error", "PICKUP IS CLOSED",
-            "Ask a member of staff", 2.4)
-    end
-    if left > 0 then
-        local taken = takenLockers()
-        local spare = taken and freeLocker(left, taken)
-        if spare then moveAll(hatch, spare) end
-        if (used(hatch) or 0) > 0 then
-            return ui.message(target, "warning", "ASK A MEMBER OF STAFF",
-                "The pickup chest is not empty", 2.4)
+-- Foxy Security, 11.1. The buyer's PUMPE asks them whether this is them
+-- at the counter; they answer with their PIN. Nothing comes out until they
+-- do, and a "not me" changes their code.
+local function waitForBuyer(found)
+    local deadline = util.nowMs() + (tonumber(found.expires_in_ms) or 120000)
+    while running do
+        local width, height = target.getSize()
+        local middle = math.max(4, math.floor(height / 2) - 3)
+        local seconds = math.max(0, math.floor((deadline - util.nowMs()) / 1000))
+        ui.clear(target)
+        ui.center(target, 2, ui.truncate(device.pickup.name, width - 2),
+            ui.theme.accent)
+        ui.center(target, middle, "CHECK YOUR PUMPE", ui.theme.ink)
+        ui.center(target, middle + 1, "Confirm with your PIN",
+            ui.theme.muted)
+        ui.center(target, middle + 3, string.format("%d:%02d",
+            math.floor(seconds / 60), seconds % 60), ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("cancel", 3, height - 3, width - 4, 2, "CANCEL",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 2 })
+        if action == "cancel" then return "cancelled" end
+        local polled = request("PICKUP_WAIT", { order_id = found.order_id },
+            true)
+        local status = polled and polled.status
+        if status == "confirmed" then return "confirmed" end
+        if status == "denied" then
+            ui.message(target, "error", "NOT CONFIRMED",
+                "The buyer says it is not them", 2.4)
+            return "denied"
+        end
+        if status == "expired" or util.nowMs() > deadline + 10000 then
+            ui.message(target, "warning", "NOT CONFIRMED",
+                "Nobody answered in time", 2.4)
+            return "expired"
         end
     end
-    local handed, err = request("PICKUP_COLLECT", { code = code }, true)
+    return "cancelled"
+end
+
+local function collectParcel(found)
+    if not found.confirmed and waitForBuyer(found) ~= "confirmed" then
+        return
+    end
+    if not clearHatch() then return end
+    local hatch = hatchName()
+    local handed, err = request("PICKUP_RELEASE",
+        { order_id = found.order_id }, true)
     if not handed then
         return ui.message(target, "error", "NOT HERE", err, 2)
     end
@@ -728,31 +824,292 @@ local function collect(code)
         "Your parcel is in " .. ui.truncate(tostring(handed.locker), 24), 4)
 end
 
+-- One box for everybody with a code: a buyer's collects, a courier's
+-- delivers.
+local function enterCode()
+    local code = ui.input(target, "YOUR CODE", {
+        hint = "Six digits, Shop app or courier", mode = "integer",
+        maxLength = 6, minLength = 6 })
+    if not code then return end
+    if not used(hatchName()) then
+        return ui.message(target, "error", "PICKUP IS CLOSED",
+            "Ask a member of staff", 2.4)
+    end
+    local found, err = request("PICKUP_CODE", { code = code }, true)
+    if not found then
+        return ui.message(target, "error", "NOT HERE", err, 2)
+    end
+    if found.kind == "deliver" then return deliverParcel(found, code) end
+    return collectParcel(found)
+end
+
+-- The Store, 11.1 ------------------------------------------------------------------
+-- A pickup point that sells things on the spot. The list comes from the
+-- Company app; what is in stock is whatever is in the lockers that is not
+-- somebody's parcel. Paid the way a Service Kiosk is paid -- Foxy Pay to
+-- the nearest PUMPE, or a code for another bank -- and then it comes out
+-- into the pickup chest.
+
+-- How many of an item the store lockers hold.
+local function inStock(item, taken)
+    local total = 0
+    for _, name in ipairs(lockers()) do
+        if not taken[name] then
+            local ok, items = pcall(peripheral.call, name, "list")
+            for _, stack in pairs(ok and type(items) == "table" and items or {}) do
+                if stack.name == item then total = total + (stack.count or 0) end
+            end
+        end
+    end
+    return total
+end
+
+-- Moves up to `count` of an item out of the store lockers.
+local function dispense(item, count, taken)
+    local moved = 0
+    for _, name in ipairs(lockers()) do
+        if moved >= count then break end
+        if not taken[name] then
+            local ok, items = pcall(peripheral.call, name, "list")
+            for slot, stack in pairs(ok and type(items) == "table" and items or {}) do
+                if moved < count and stack.name == item then
+                    local pushedOk, pushed = pcall(peripheral.call, name,
+                        "pushItems", hatchName(), slot, count - moved)
+                    if pushedOk then moved = moved + (tonumber(pushed) or 0) end
+                end
+            end
+        end
+    end
+    return moved
+end
+
+local function payWithFoxy(offer)
+    local position = net.locate(2)
+    if not position then
+        ui.message(target, "error", "NO GPS FIX",
+            "Foxy Pay needs GPS anchors here", 2.2)
+        return false
+    end
+    local created, err = request("PROXIMITY_OFFER", { amount = offer.price,
+        items = { { name = offer.name, price = offer.price, quantity = 1 } },
+        description = offer.name, position = position }, true)
+    if not created then
+        ui.message(target, "error", "NOT DONE", err, 1.8)
+        return false
+    end
+    local sale = created.offer
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "FOXY PAY", money(offer.price), util.formatClock())
+        ui.center(target, 7, sale.status == "nobody_nearby" and "NOBODY NEARBY"
+            or ui.truncate(tostring(sale.target_name or "Finding you"),
+                width - 2), ui.theme.ink)
+        ui.center(target, 9, "Confirm on your PUMPE", ui.theme.muted)
+        local scene = ui.scene(target)
+        scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "cancel" then
+            request("PROXIMITY_CANCEL", { offer_id = sale.offer_id }, true)
+            return false
+        end
+        local polled = request("PROXIMITY_STATUS",
+            { offer_id = sale.offer_id }, true)
+        if polled then sale = polled.offer end
+        if sale.status == "paid" then return true, sale.target_name end
+        if sale.status == "expired" or sale.status == "cancelled" then
+            ui.message(target, "warning", "NOT PAID", "Nothing was taken", 1.6)
+            return false
+        end
+    end
+    return false
+end
+
+local function payWithCode(offer)
+    local created, err = request("CREATE_PAY_CODE", { amount = offer.price,
+        items = { { name = offer.name, price = offer.price, quantity = 1 } },
+        purchase_type = "one_time", description = offer.name }, true)
+    if not created then
+        ui.message(target, "error", "NOT DONE", err, 1.8)
+        return false
+    end
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PAY WITH A CODE", money(offer.price),
+            util.formatClock())
+        ui.center(target, 7, "Type it in your bank app", ui.theme.muted)
+        ui.center(target, 9, created.code:sub(1, 3) .. " "
+            .. created.code:sub(4, 6), ui.theme.ink)
+        local scene = ui.scene(target)
+        scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL",
+            { background = ui.theme.danger })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "cancel" then
+            request("CANCEL_CODE", { code = created.code }, true)
+            return false
+        end
+        local status = request("CODE_STATUS", { code = created.code }, true)
+        if status and status.status == "paid" then
+            return true, status.payer
+        end
+        if status and (status.status == "expired"
+            or status.status == "cancelled") then
+            ui.message(target, "warning", "NOT PAID", "Nothing was taken", 1.6)
+            return false
+        end
+    end
+    return false
+end
+
+local function buyOffer(offer)
+    if not clearHatch() then return end
+    local taken = takenLockers()
+    if not taken then
+        return ui.message(target, "error", "NOT DONE",
+            "The Bank is not answering", 1.6)
+    end
+    if inStock(offer.item, taken) < offer.count then
+        return ui.message(target, "warning", "SOLD OUT", offer.name, 1.6)
+    end
+    local how = pick(ui.truncate(string.upper(offer.name), 20),
+        offer.count .. " for " .. money(offer.price), {
+            { id = "foxy", label = "PAY WITH FOXY PAY" },
+            { id = "code", label = "ANOTHER BANK: CODE" } },
+        function(item) return item.label end)
+    if not how then return end
+    local paid, payer
+    if how.id == "foxy" then
+        paid, payer = payWithFoxy(offer)
+    else
+        paid, payer = payWithCode(offer)
+    end
+    if not paid then return end
+    ui.clear(target)
+    local _, height = target.getSize()
+    ui.center(target, math.floor(height / 2), "ONE MOMENT", ui.theme.ink)
+    local moved = dispense(offer.item, offer.count, takenLockers() or taken)
+    if moved > 0 then pulse() end
+    if moved >= offer.count then
+        return ui.message(target, "success", "TAKE YOUR ITEMS",
+            "In the pickup chest. Thank you", 3)
+    end
+    -- Paid, and the lockers came up short: somebody emptied one by hand
+    -- between the check and now. The owner is told who is owed what.
+    local owed = util.roundMoney(offer.price * (offer.count - moved)
+        / offer.count)
+    request("STORE_SHORT", { name = offer.name, count = offer.count,
+        got = moved, owed = owed, payer = payer }, true)
+    return ui.message(target, "warning", "ASK A MEMBER OF STAFF",
+        "Only " .. moved .. " came out. The owner knows you are owed "
+            .. money(owed), 4)
+end
+
+local function storeScreen()
+    local page = 1
+    while running do
+        local store = request("PICKUP_STORE", {}, true)
+        local taken = takenLockers()
+        if not store or not taken then
+            return ui.message(target, "error", "STORE UNAVAILABLE",
+                "The Bank is not answering", 1.6)
+        end
+        if not store.open or #store.offers == 0 then
+            return ui.message(target, "info", "STORE CLOSED",
+                "Nothing for sale right now", 1.6)
+        end
+        local width, height = target.getSize()
+        local per = math.max(1, math.floor((height - 5) / 3))
+        local pages = math.max(1, math.ceil(#store.offers / per))
+        page = math.max(1, math.min(page, pages))
+        ui.clear(target)
+        ui.header(target, "STORE", ui.truncate(device.pickup.name, width - 3))
+        local scene = ui.scene(target)
+        for slot = 1, per do
+            local index = (page - 1) * per + slot
+            local offer = store.offers[index]
+            if not offer then break end
+            local left = math.floor(inStock(offer.item, taken) / offer.count)
+            scene:button("offer:" .. index, 2, 1 + slot * 3, width - 2, 2,
+                ui.truncate(offer.name .. "  " .. money(offer.price),
+                    width - 4) .. "\n" .. ui.truncate(left > 0
+                    and (offer.count .. " each, " .. left .. " left")
+                    or "Sold out", width - 4),
+                { background = left > 0 and ui.theme.accentDark
+                    or ui.theme.panel, disabled = left <= 0 })
+        end
+        if pages > 1 then
+            scene:button("prev", width - 8, height, 3, 1, "^",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            scene:button("next", width - 4, height, 3, 1, "v",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 10 })
+        if action == "back" then return end
+        if action == "prev" then
+            page = page - 1
+        elseif action == "next" then
+            page = page + 1
+        else
+            local index = tonumber(action and action:match("^offer:(%d+)$"))
+            if index and store.offers[index] then buyOffer(store.offers[index]) end
+        end
+    end
+end
+
+-- Pickup points update themselves since 11.1, when nobody has touched them
+-- for a minute -- from the counter screen, so nobody can be halfway through
+-- anything when it restarts.
+local lastTouch = util.nowMs()
+
 local function pickupScreen()
+    local store = request("PICKUP_STORE", {}, true)
     while running and device.mode == "pickup" do
         local width, height = target.getSize()
         ui.clear(target)
-        local middle = math.max(4, math.floor(height / 2) - 3)
+        local middle = math.max(4, math.floor(height / 2) - 4)
         ui.center(target, 2, ui.truncate(device.pickup.name, width - 2),
             ui.theme.accent)
-        ui.center(target, middle, "COLLECT YOUR ORDER", ui.theme.ink)
-        ui.center(target, middle + 1, "Type your Shop app code",
+        ui.center(target, middle, "COLLECT OR DELIVER", ui.theme.ink)
+        ui.center(target, middle + 1, "Shop or delivery code",
             ui.theme.muted)
         local scene = ui.scene(target)
         scene:button("code", 3, middle + 3, width - 4, 3, "ENTER CODE",
             { background = ui.theme.accentDark, shadow = true })
+        if store and store.open and #(store.offers or {}) > 0 then
+            scene:button("store", 3, middle + 7, width - 4, 2,
+                "STORE: BUY NOW", { background = colors.purple })
+        end
         scene:button("staff", width - 7, height, 7, 1, "STAFF",
             { background = ui.theme.panel })
         -- "__terminate" lands here now, and like every other stray event
         -- it just redraws the screen.
-        local action = scene:wait()
+        local action = scene:wait({ tickRate = 20 })
+        if action == "__tick" then
+            store = request("PICKUP_STORE", {}, true) or store
+            if util.nowMs() - lastTouch >= 60000 then
+                net.autoUpdate(config, "delivery", ROOT, client, {
+                    programVersion = PROGRAM_VERSION,
+                    onProgress = function()
+                        ui.clear(target)
+                        ui.center(target, math.floor(height / 2),
+                            "UPDATING, ONE MOMENT", ui.theme.ink)
+                    end })
+            end
+        end
         if action == "staff" then
             if staffMenu() == "leave" then return end
         elseif action == "code" then
-            local code = ui.input(target, "YOUR CODE", {
-                hint = "Six digits, from the Shop app", mode = "integer",
-                maxLength = 6, minLength = 6 })
-            if code then collect(code) end
+            enterCode()
+        elseif action == "store" then
+            storeScreen()
+        end
+        if action ~= "__tick" and action ~= "__terminate" then
+            lastTouch = util.nowMs()
+            store = request("PICKUP_STORE", {}, true) or store
         end
     end
 end
@@ -923,6 +1280,7 @@ if rawget(_G, "PUMPE_TEST_MODE") == true then
     return {
         inventories = inventories, moveAll = moveAll, used = used,
         freeLocker = freeLocker, lockKeyboard = lockKeyboard,
+        inStock = inStock, dispense = dispense, stockLockers = stockLockers,
         device = device,
     }
 end

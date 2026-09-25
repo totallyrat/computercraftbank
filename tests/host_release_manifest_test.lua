@@ -65,8 +65,8 @@ local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
     -- The Shop, new in 10.2: the terminal that delivers orders, and the
     -- app that places them.
     "delivery_terminal.lua", "shop.lua",
-    -- FoxMail, 11.0.
-    "foxmail.lua" }
+    -- FoxMail, 11.0, and the Company app, 11.1.
+    "foxmail.lua", "company.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

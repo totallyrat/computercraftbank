@@ -16,9 +16,10 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
 | `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
 | `internet_server.lua` | Advanced Computer + wireless/Ender modem | Holds and serves every website on the network. The Bank Vault keeps the names |
-| `delivery_terminal.lua` | Advanced Computer or Advanced Pocket Computer + wireless/Ender modem; chests on networking cable for a pickup point | A company's delivery board: every Shop order, its stages, and DONE. Becomes a self-service pickup point |
+| `delivery_terminal.lua` | Advanced Computer or Advanced Pocket Computer + wireless/Ender modem; chests on networking cable for a pickup point | A company's delivery board: every Shop order, its stages, and DONE. Becomes a self-service pickup point that can sell on the spot |
 | `shop.lua` | Downloaded to a PUMPE from the App Browser | Online stores: a basket, home delivery or pickup, Foxy or another bank, live delivery tracking, cancelling and returns |
 | `foxmail.lua` | Installed on every PUMPE at sign-in | Email: an address at foxy.com for everybody, company domains, mail from kiosks and apps |
+| `company.lua` | Downloaded to a PUMPE from the App Browser | Start and run companies from the phone: products, the online store, what pickup points sell, and Delivery Mode |
 | `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
@@ -286,7 +287,7 @@ Savings are not a hiding place. While a tax demand is outstanding you cannot mov
 
 ### The App Browser
 
-**Apps** on the Home Screen lists everything the App Server is offering. Installing one downloads it in verified chunks and puts it on your Home Screen beside the built-in apps; a download whose size or checksum does not match what was advertised is thrown away rather than run, and an app that crashes is caught and hands you back the phone.
+**Apps** on the Home Screen lists everything the App Server is offering. That is whatever is on the App Server's own disk: it ships Foxy, BuckApp, Revolution, Website Crafter, Internet, Shop, FoxMail and Company, and since 11.1 an App Server that is up to date still checks it has every one of them and fetches any it is missing. (Before 11.1 an App Server only ever downloaded the files its old updater knew about, so apps added after it was set up — FoxMail among them — never reached its disk or the App Browser.) Installing one downloads it in verified chunks and puts it on your Home Screen beside the built-in apps; a download whose size or checksum does not match what was advertised is thrown away rather than run, and an app that crashes is caught and hands you back the phone.
 
 Every byte comes from the App Server, never from the Bank — that is what the machine is for. The Bank is asked one question, once, when something is published: is this developer real.
 
@@ -424,7 +425,7 @@ New in 10.2. Buying something no longer means walking to the store.
 
 ### Opening a store
 
-A store belongs to a company, so it is opened from a **Service Kiosk linked to that company**: `S` for settings, then **ONLINE STORE**.
+A store belongs to a company, so it is opened from a **Service Kiosk linked to that company** (`S` for settings, then **ONLINE STORE**), or since 11.1 from the **Company app** on the owner's phone (the company, then **Store**).
 
 - **Colour** — one of thirteen. The store's cards, buttons and order screens are painted in it on every buyer's phone.
 - **Tagline** — what the store sells, in a line. Search reads it as well as the name.
@@ -455,11 +456,23 @@ Paying from another bank is a charge Foxy asks that bank to make. The PIN goes t
 
 The **Delivery** tab lists your orders, open first, and follows each one live: it asks again every few seconds while it is open. Every step the store takes is also a notification.
 
+### The Company app (11.1)
+
+**Company** is in the App Browser, from PUMPE. It is where an owner starts companies, sees them and runs them without walking to a kiosk:
+
+- **Companies** lists yours: products, whether the store is open. **+ Start a company** makes a new one.
+- Inside one, **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every kiosk of the company sells.
+- **Store** is the online store: open or closed, colour, tagline, home delivery and its fee, pickup points, cancelling, and the return window.
+- **Points** lists the company's pickup points and what each one sells on the spot (see below).
+- **Delivery** — Delivery Mode — lists everything **Out for delivery** across your companies. A parcel for a pickup point shows its **delivery code** and the point; a home delivery shows its coordinates, how far and which way (it needs GPS anchors), and a **Delivered** button with an optional note.
+
+What stays on the kiosk is what belongs to that machine: linking it, withdrawals from it, Dev Mode. Only the Company app can run a company — every other app on a phone uses the same session — and the Bank checks on every request that the person asking owns the company named.
+
 ### The Delivery Terminal
 
 A new role in Easy Deployment. Link it to the company once with the owner's Foxy name and PIN, the same way a kiosk is linked.
 
-The board shows every order, open ones first. Tap one to move it on: a **premade stage** (Order received, Packing, Packed, Out for delivery, At the pickup point) or **your own words**. **DONE** tells the buyer it arrived, with an optional note — *left by the door*.
+The board shows every order, open ones first. Tap one to move it on: a **premade stage** (Order received, Packing, Packed, Out for delivery, At the pickup point) or **your own words**. **DONE** tells the buyer it arrived, with an optional note — *left by the door*. An order for a pickup point shows its **delivery code** — what the courier types at the point.
 
 It lays itself out for an Advanced Computer in a warehouse and an Advanced Pocket Computer in a driver's hand.
 
@@ -473,9 +486,12 @@ A pickup point is one Delivery Terminal, one chest customers can open — the **
 
 Then it runs itself:
 
-- **Stocking.** Staff tap **STAFF**, enter the PIN, **STOCK A PARCEL**, pick the order and put the items in the pickup chest. The terminal moves them into an empty locker and tells the Bank which; the buyer gets a notification with their code.
-- **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. The terminal moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
+- **Delivering (11.1).** The courier taps **ENTER CODE** and types the parcel's **delivery code** — from the Delivery Terminal or Delivery Mode in the Company app — then puts it in the pickup chest and presses **STOCKED**. The terminal moves it into an empty locker and tells the Bank which; the buyer gets a notification with their code. No staff PIN: whoever has the parcel has its code, and the code opens nothing else.
+- **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. Then **Foxy Security**: their PUMPE asks *Is this you?* over whatever is open, and they answer **It's me** with their PIN — or **Not me**, and the parcel stays in and their code changes. The terminal waits up to two minutes, then moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
+- **Pre-confirming.** Foxy's **Security** tab lists every parcel waiting at a pickup point and any question waiting to be answered. Confirm one ahead of time and, for thirty minutes, its code opens it without asking. Tapping it again takes that back.
+- **Buying on the spot (11.1).** A pickup point can sell what it has: **STORE: BUY NOW** at the counter lists what is on sale and how many are left, the customer picks one and pays with **Foxy Pay** (needs GPS anchors) or **a code for another bank**, and it comes out into the pickup chest. What it sells — a name, the game item (`oak_log`, or `create:cogwheel` for a mod), how many a sale, the price — is set up per point in the Company app's **Points**. Stock is whatever is in the lockers that is not somebody's parcel; staff put it in through the pickup chest with **STAFF → RESTOCK STORE**, which fills lockers already in use first so empty ones stay free for parcels. The money goes to the owner like any kiosk sale. If a sale comes up short — a locker emptied by hand while the customer paid — the customer is told and the owner is notified who is owed what; that refund is the owner's to make.
 - **Five wrong codes** a minute per pickup point, then it waits. **Five wrong staff PINs** lock the staff door for five minutes; the count survives a reboot. The company owner can always sign in instead of using the PIN.
+- **Updates.** A pickup point updates itself after a minute with nobody at the counter, from the counter screen, so nobody is ever halfway through anything. (Pickup points on 11.0 never updated in Pickup mode; after 11.1 lands, they tell customers to fetch staff until staff leave Pickup mode once.)
 
 **Pickup mode keeps customers out of the shell.** Whoever is at a pickup point's keyboard is a customer, and the shell could empty every locker. In Pickup mode Ctrl+T does nothing; a reboot comes straight back to the counter before Easy Deployment does anything else; an error pauses the counter rather than ending the program; and leaving takes the staff PIN. Ctrl+R and Ctrl+S cannot be stopped by any program — they only bring the counter back. Keep the lockers out of reach, and protect the blocks themselves the way you would protect any shop.
 
@@ -530,6 +546,8 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 
 Every role updates itself. A PUMPE, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
 
+**Since 11.1, up to date also means complete.** Which files a role installs is decided by the updater that is running, and a release that adds a file to a role is installed by the updater from before it, which has never heard of that file. So an unattended device that is already current checks it has every file its role needs and downloads only the missing ones. A PUMPE is not asked about this: nothing is new.
+
 **Since 9.5, the PUMPE asks first.** When a release lands the phone fills the screen with what changed and waits for an answer: Update now, or Later. Later holds until the phone restarts, and Settings → Updates has a Check now button in the meantime. The same screen switches the phone to Automatic for anyone who prefers the old behaviour. Every other role is unattended — there is nobody in front of a Bank Server to tap Update — so everything except the PUMPE still updates itself silently.
 
 What the phone shows comes from the manifest: a `label` naming the release and a `changes` array of headlines. Both are derived by the release builder from files in this repository — the label from `release_name` in `config.lua`, the headlines from the top section of `CHANGELOG.md` — so they cannot drift from the release they describe. `release_name` is the one config value an update replaces rather than preserves; every other local setting still survives.
@@ -538,7 +556,7 @@ Local configuration survives: each device merges the published config over its o
 
 The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
 
-Because each device stages only its own role, the worst-case update peaks at about 756 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 244 KiB for account data. The largest role is the PUMPE itself as of 10.1. That headroom is the Bank Core's alone: since 9.3 everything that grows without limit -- conversations, events, tickets, app records, and now the domain register -- lives on the Vault.
+Because each device stages only its own role, the worst-case update peaks at about 846 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 154 KiB for account data (the release builder prints the current figure). The largest role is the Bank Core as of 11.1. That headroom is the Bank Core's alone: since 9.3 everything that grows without limit -- conversations, events, tickets, app records, and now the domain register -- lives on the Vault.
 
 ### Manifest layout
 

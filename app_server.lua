@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "11.0.0"
+local PROGRAM_VERSION = "11.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -122,27 +122,35 @@ end
 -- Foxy ships with this server, so a fresh world has something to download
 -- before anybody has written an app. It is first party: no developer owns it,
 -- so nobody can overwrite or delete it from a PUMPE.
+-- Every one of these has to be in this role's list of files in lib/update
+-- as well, or the App Server never downloads it and has nothing to seed.
+-- That is how FoxMail went missing from App Browsers in 11.0.
+local SHIPPED = {
+    { file = "foxy.lua", id = "FOXY", name = "Foxy",
+      description = "Your Foxy Account and the bank behind it." },
+    { file = "buckapp.lua", id = "BUCK", name = "BuckApp",
+      description = "A bank of its own. Needs a 3rd Party Bank Server." },
+    { file = "revolution.lua", id = "REVO", name = "Revolution",
+      description = "0% fee proximity pay. One hour to clear." },
+    -- The web, new in 10.0. Both ship here so a fresh world has
+    -- something to publish with and something to read with.
+    { file = "wc.lua", id = "WC", name = "Website Crafter",
+      description = "Write a website and put it on the network." },
+    { file = "internet.lua", id = "NET", name = "Internet",
+      description = "Read the web. Type a domain and go." },
+    -- New in 10.2: stores to order from, and the deliveries on the way.
+    { file = "shop.lua", id = "SHOP", name = "Shop",
+      description = "Order from stores. Home delivery or pickup." },
+    -- 11.0. Every PUMPE fetches it on sign-in, like Foxy.
+    { file = "foxmail.lua", id = "MAIL", name = "FoxMail",
+      description = "Email for people, companies and apps." },
+    -- 11.1. Starting and running companies, and Delivery Mode.
+    { file = "company.lua", id = "COMPANY", name = "Company",
+      description = "Start and run companies. Delivery Mode." },
+}
+
 local function seedShippedApps()
-    for _, shipped in ipairs({
-        { file = "foxy.lua", id = "FOXY", name = "Foxy",
-          description = "Your Foxy Account and the bank behind it." },
-        { file = "buckapp.lua", id = "BUCK", name = "BuckApp",
-          description = "A bank of its own. Needs a 3rd Party Bank Server." },
-        { file = "revolution.lua", id = "REVO", name = "Revolution",
-          description = "0% fee proximity pay. One hour to clear." },
-        -- The web, new in 10.0. Both ship here so a fresh world has
-        -- something to publish with and something to read with.
-        { file = "wc.lua", id = "WC", name = "Website Crafter",
-          description = "Write a website and put it on the network." },
-        { file = "internet.lua", id = "NET", name = "Internet",
-          description = "Read the web. Type a domain and go." },
-        -- New in 10.2: stores to order from, and the deliveries on the way.
-        { file = "shop.lua", id = "SHOP", name = "Shop",
-          description = "Order from stores. Home delivery or pickup." },
-        -- 11.0. Every PUMPE fetches it on sign-in, like Foxy.
-        { file = "foxmail.lua", id = "MAIL", name = "FoxMail",
-          description = "Email for people, companies and apps." },
-    }) do
+    for _, shipped in ipairs(SHIPPED) do
         local body = util.readFile(fs.combine(ROOT, shipped.file))
         local existing = state.apps[shipped.id]
         local sum = body and util.checksum(body) or nil
@@ -398,7 +406,8 @@ local function dashboardLoop()
 end
 
 if rawget(_G, "PUMPE_TEST_MODE") == true then
-    return { actions = actions, state = state }
+    return { actions = actions, state = state, shipped = SHIPPED,
+        seed = seedShippedApps }
 end
 
 ui.boot(target, "PUMPE APPS", "APP SERVER v" .. config.version)

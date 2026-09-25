@@ -585,6 +585,46 @@ local again, reason = update.selfUpdate({
 })
 assert(again == false and reason == "current")
 
+-- Current, but missing a file its role installs: the 11.0 App Server that
+-- never got foxmail.lua. Unattended (repair), only that file is fetched and
+-- nothing else is touched -- not even config.lua. Asked-first devices are
+-- not bothered: nothing is new.
+bodies["foxmail.lua"] = "mail app"
+fullManifest.files[#fullManifest.files + 1] = { path = "foxmail.lua",
+    source = "foxmail.lua", size = #bodies["foxmail.lua"],
+    checksum = update.checksum(bodies["foxmail.lua"]) }
+bodies["app_server.lua"] = "apps"
+fullManifest.files[#fullManifest.files + 1] = { path = "app_server.lua",
+    source = "app_server.lua", size = #bodies["app_server.lua"],
+    checksum = update.checksum(bodies["app_server.lua"]) }
+for _, file in ipairs(update.filesForRole(fullManifest, "apps")) do
+    if file.path ~= "foxmail.lua" then
+        files[fs.combine("/apps", update.installPath(file.path))] = "old " .. file.path
+    end
+end
+files["/apps/config.lua"] = "local settings"
+local seenFetch = {}
+update.fetchFile = function(_, file)
+    seenFetch[#seenFetch + 1] = file.path
+    return bodies[file.path]
+end
+local asked, askedWhy = update.check({ config = localConfig, role = "apps",
+    root = "/apps" })
+assert(asked == false and askedWhy == "current", "without repair, still current")
+local fixed, fixedWhy = update.selfUpdate({ config = localConfig, role = "apps",
+    root = "/apps", repair = true })
+assert(fixed, "a missing role file is fetched: " .. tostring(fixedWhy))
+assert(table.concat(seenFetch, ",") == "foxmail.lua",
+    "and only that file: " .. table.concat(seenFetch, ","))
+assert(files["/apps/foxmail.lua"] == "mail app")
+assert(files["/apps/config.lua"] == "local settings"
+    and files["/apps/app_server.lua"] == "old app_server.lua",
+    "nothing else is replaced")
+local whole, wholeWhy = update.selfUpdate({ config = localConfig, role = "apps",
+    root = "/apps", repair = true })
+assert(whole == false and wholeWhy == "current", "and once whole, it is current")
+update.fetchFile = function(_, file) return bodies[file.path] end
+
 -- Out of space: the caller is given a chance to free some, then it proceeds.
 localConfig.version = "1.0.0"
 local tight, freed = true, false

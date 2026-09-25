@@ -252,9 +252,13 @@ return function(api)
                     ui.text(target, 2, row, "Code", ui.theme.muted)
                     ui.text(target, 7, row, tostring(order.code or "------"),
                         ui.theme.accent)
-                    ui.text(target, 14, row, ui.truncate(order.stocked
-                        and "ready" or "not yet", width - 14),
-                        order.stocked and ui.theme.success or ui.theme.muted)
+                    -- 11.1: at the counter, the code asks Foxy first.
+                    local check = order.security and order.security.status
+                    ui.text(target, 14, row, ui.truncate(check == "asked"
+                        and "check Foxy" or check == "confirmed" and "confirmed"
+                        or order.stocked and "ready" or "not yet", width - 14),
+                        check == "asked" and ui.theme.warning
+                        or order.stocked and ui.theme.success or ui.theme.muted)
                     row = row + 1
                 end
                 ui.text(target, 2, row, ui.truncate(place .. "  " .. spot,

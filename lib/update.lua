@@ -359,6 +359,7 @@ update.PUBLISHED_OPTIONAL = {
     "delivery_terminal.lua",
     "shop.lua",
     "foxmail.lua",
+    "company.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -399,7 +400,7 @@ end
 -- Server ships with Foxy so its catalogue is never empty on a fresh world.
 local ROLE_EXTRA_FILES = {
     apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
-        "internet.lua", "shop.lua", "foxmail.lua" },
+        "internet.lua", "shop.lua", "foxmail.lua", "company.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.
@@ -426,6 +427,26 @@ function update.filesForRole(manifest, role)
     local files, total = {}, 0
     for _, file in ipairs(manifest.files) do
         if wanted[file.path] then
+            files[#files + 1] = file
+            total = total + file.size
+        end
+    end
+    return files, total
+end
+
+-- Files this role should have and does not. The list of what a role
+-- installs belongs to the updater that is running, and a release that adds
+-- a file to a role is installed by the updater from before it -- which has
+-- never heard of the file. That is how an App Server came to be on 11.0
+-- without foxmail.lua, and so without FoxMail to offer anybody: current by
+-- its version, missing an app. So a device that is up to date still checks
+-- it has everything, and fetches only what it lacks.
+function update.missingFiles(manifest, role, root)
+    local files, total = {}, 0
+    for _, file in ipairs((update.filesForRole(manifest, role))) do
+        local installed = fs.combine(root or "/pumpe",
+            update.installPath(file.path))
+        if not fs.exists(installed) then
             files[#files + 1] = file
             total = total + file.size
         end
@@ -495,6 +516,17 @@ function update.check(options)
         options.optionalPaths or update.PUBLISHED_OPTIONAL)
     if not manifest then return nil, err end
     if not update.isNewer(manifest.version, config.version) then
+        -- 11.1. Current, but maybe not whole: see update.missingFiles.
+        if options.repair and manifest.version == config.version then
+            local missing, bytes = update.missingFiles(manifest, role,
+                options.root)
+            if #missing > 0 then
+                return { manifest = manifest, manifest_url = manifestUrl,
+                    version = manifest.version, label = manifest.label,
+                    changes = {}, files = missing, bytes = bytes,
+                    repair = true }
+            end
+        end
         return false, "current"
     end
 
@@ -554,11 +586,15 @@ function update.apply(found, options)
         end
     end
 
-    local mergedOk, mergeError = update.mergeConfig(
-        fs.combine(staging, "config.lua"), config, manifest.version)
-    if not mergedOk then
-        if fs.exists(staging) then fs.delete(staging) end
-        return nil, mergeError
+    -- A repair fetches only what is missing, and config.lua never is.
+    local stagedConfig = fs.combine(staging, "config.lua")
+    if fs.exists(stagedConfig) then
+        local mergedOk, mergeError = update.mergeConfig(stagedConfig, config,
+            manifest.version)
+        if not mergedOk then
+            if fs.exists(staging) then fs.delete(staging) end
+            return nil, mergeError
+        end
     end
 
     local plan = { files = {} }

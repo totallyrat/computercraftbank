@@ -1,5 +1,63 @@
 # Changelog
 
+## 11.1.0
+
+Pickup points get an upgrade, and companies get an app.
+
+**Couriers stock parcels with a delivery code.** Every parcel for a pickup
+point has a courier's code of its own. The courier types it at the counter,
+the same box a buyer types theirs into, and puts the parcel in. No staff
+PIN, and the code opens nothing else.
+
+**Foxy Security.** Typing a buyer's code at a pickup point no longer opens
+anything by itself. The buyer's PUMPE asks "is this you?" over whatever is
+open, and they answer with their PIN. Say not me and the parcel stays in,
+and the code changes.
+
+**Pre-confirm from Foxy.** Foxy has a Security tab: questions waiting, and
+every parcel at a pickup point. Confirm one ahead of time and its code opens
+it without asking, for half an hour.
+
+**The Company app.** Start companies, see them, and run them from the phone:
+products, prices, favourites, the online store and its terms. Everything a
+Service Kiosk does to manage a company, in the App Browser, from PUMPE.
+
+**Delivery Mode.** A Delivery Terminal cut down to the road, in the Company
+app. What is out for delivery, with the courier's code for a pickup point or
+the coordinates of a home, how far and which way. Mark home deliveries done
+from there.
+
+**Buy now at pickup points.** A pickup point can sell on the spot: STORE at
+the counter lists what is in its lockers, the customer pays with Foxy Pay or
+a code from another bank, and it comes out into the pickup chest. What it
+sells, and for how much, is set up per point in the Company app.
+
+**Apps missing from the App Browser, fixed.** An App Server only offers what
+is on its own disk, and it only ever downloaded the files its old updater
+knew about -- so every app added since it was set up, FoxMail included, was
+never there. Up-to-date servers and terminals now check they have every file
+their role needs, and fetch just the missing ones.
+
+- A pickup point on 11.0 cannot wait for Foxy Security, so it is told to
+  update rather than hand parcels over unchecked: staff leave Pickup mode
+  once and it updates. From 11.1 on, a pickup point updates itself after a
+  minute with nobody at the counter.
+- Staff no longer stock parcels; STAFF has RESTOCK STORE instead, which files
+  whatever is in the pickup chest into lockers as stock. Parcels already on
+  their way when 11.1 lands get a courier's code.
+- The question waits two minutes; a pre-confirmation lasts thirty. These are
+  real minutes, not in-game ones -- somebody is standing at a counter.
+- Store stock is whatever is in the lockers that is not somebody's parcel. If
+  a sale comes up short -- a locker emptied by hand while the customer paid
+  -- the customer is told and the owner is notified who is owed what. The
+  refund is the owner's to make: a sale paid from another bank cannot be
+  reached from here.
+- Only the Company app (or the phone itself) can run a company, and only
+  Foxy can answer Foxy Security: every other app on a phone uses the same
+  session, and none of them has any business doing either.
+- Linking a kiosk, taking cash out of one and Dev Mode stay on the kiosk:
+  they are about that machine, not the company.
+
 ## 11.0.0
 
 A big one. Shop learns to give money back, the PUMPE gets email, every app

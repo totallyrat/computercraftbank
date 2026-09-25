@@ -65,6 +65,8 @@ const forwardOptionalFiles = [
   "shop.lua",
   // FoxMail, 11.0: installed on every PUMPE, shipped by the App Server.
   "foxmail.lua",
+  // The Company app, 11.1: in the App Browser, shipped by the App Server.
+  "company.lua",
 ];
 
 function checksum(buffer) {

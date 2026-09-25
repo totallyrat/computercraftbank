@@ -182,6 +182,34 @@ assert(actions.APP_DELETE({
 assert(#actions.APP_LIST().apps == 0, "and it leaves the catalogue")
 rejected(actions.APP_INFO, "NOT_FOUND", { app_id = updated.app_id })
 
+-- Apps shipped with the server, 11.1 -------------------------------------------------
+-- An App Server offers what is on its own disk, and its disk holds what its
+-- role downloads. So an app it ships but never downloads is an app nobody
+-- can find in the App Browser -- FoxMail, in 11.0. Every shipped app must
+-- be in the role's files.
+local update = require("lib.update")
+local downloads = {}
+for _, path in ipairs(update.rolePaths("apps")) do downloads[path] = true end
+for _, shipped in ipairs(server.shipped) do
+    assert(downloads[shipped.file], shipped.file .. " is shipped by the App"
+        .. " Server but not in the files the apps role downloads")
+end
+local function listedId(id)
+    for _, app in ipairs(actions.APP_LIST().apps) do
+        if app.app_id == id then return app end
+    end
+end
+-- Not on disk yet: not listed. Once an update has fetched it, the next
+-- start lists it, from PUMPE.
+files["/pumpe/company.lua"] = nil
+server.seed()
+assert(not listedId("COMPANY"), "nothing to offer without the file")
+files["/pumpe/company.lua"] = "return function(api) end\n"
+server.seed()
+local company = listedId("COMPANY")
+assert(company and company.name == "Company" and company.author == "PUMPE",
+    "the Company app is in the App Browser, from PUMPE")
+
 print("host_app_server_test: OK")
 
 -- 9.2: publishing is when the Bank is told who owns an app, because it is

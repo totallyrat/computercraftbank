@@ -7,6 +7,40 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## 11.1
+
+### App Browser
+
+- [ ] On an App Server that has been running since before 11.0, let it take 11.1. Within a minute or so of restarting it should restart once more by itself (it is fetching what it was missing). Confirm the App Browser then lists **FoxMail** and **Company**, both by PUMPE, alongside Shop, Internet and the rest.
+- [ ] Install **Company** from the App Browser on a PUMPE.
+
+### Pickup points
+
+- [ ] A pickup point still on 11.0: type any code and confirm it says it needs its update. Leave Pickup mode with the staff PIN, let the board update, and start Pickup mode again.
+- [ ] Order to the pickup point. On the Delivery Terminal, open the order and confirm it shows a **Delivery code**; in the Company app's **Delivery** tab, confirm it only appears once the order is at **Out for delivery**, with the same code.
+- [ ] At the counter, **ENTER CODE** with the delivery code, put the parcel in the pickup chest, **STOCKED**. Confirm the buyer gets their code and STAFF has no STOCK A PARCEL any more.
+- [ ] Type the buyer's code. Confirm the buyer's PUMPE shows **Is this you?** over whatever app is open, and nothing comes out yet. Answer **It's me** with the PIN and confirm the parcel comes out within a few seconds.
+- [ ] Again with another order: answer **Not me**. Confirm the counter says not confirmed, the buyer is told a new code, and the old code no longer works.
+- [ ] Again, and ignore the question. After two minutes the counter gives up and nothing comes out.
+- [ ] In Foxy's **Security** tab, pre-confirm a parcel with the PIN. Confirm its code now opens it straight away with no question, and that after taking it back (tap it again) the question returns.
+- [ ] Leave a pickup point alone for a minute with a newer release published, and confirm it shows **UPDATING, ONE MOMENT**, restarts, and comes back to the counter still locked.
+
+### Selling at a pickup point
+
+- [ ] In the Company app → the company → **Points**, open the point, confirm **Open the store here** refuses with nothing on sale, add something (pick a product, type e.g. `apple`, how many a sale, a price), and open it.
+- [ ] At the counter, STAFF → **RESTOCK STORE** with apples in the pickup chest; confirm they go into a locker that already holds something rather than an empty one.
+- [ ] Confirm **STORE: BUY NOW** appears on the counter within twenty seconds, lists the offer and how many are left, and a locker holding a parcel is not counted.
+- [ ] Buy with **Foxy Pay** (GPS anchors needed): confirm the PUMPE is asked to pay, the items come out into the pickup chest with the redstone pulse, and the owner is notified of the sale.
+- [ ] Buy with **ANOTHER BANK: CODE** from Revolution and confirm the same.
+- [ ] Take items out of the stock locker by hand while a customer is paying, and confirm the counter says how many came out and the owner gets **Pickup sale came up short** with who is owed what.
+
+### The Company app
+
+- [ ] **+ Start a company**, add a product, rename it, change its price, favourite it, put it in the Shop app. Confirm the company's Service Kiosk shows the same products.
+- [ ] On **Store**, open the store, change the colour, tagline, fee, cancelling and returns; confirm the Shop app reflects each.
+- [ ] In **Delivery**, open a home delivery on the way: confirm the coordinates, the distance and direction (with GPS), and that **Delivered** with a note marks it done for the buyer.
+- [ ] Sign in as somebody who owns no company and confirm the Company app lists nothing and Delivery says to start a company first.
+
 ## 11.0
 
 ### Cancelling and returns

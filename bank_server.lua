@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "11.0.0"
+local PROGRAM_VERSION = "11.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -102,6 +102,7 @@ RELEASE.depot_files = {
     "delivery_terminal.lua",
     "shop.lua",
     "foxmail.lua",
+    "company.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -146,6 +147,7 @@ RELEASE.optional = {
     "delivery_terminal.lua",
     "shop.lua",
     "foxmail.lua",
+    "company.lua",
 }
 
 RELEASE.programs = {
@@ -3643,6 +3645,8 @@ function actions.PUMPE_POLL(payload)
             kind = latest.kind,
             app_name = latest.app_name,
             style = latest.style,
+            -- 11.1: "is this you?" from a pickup point, answered right there.
+            security_order = latest.security_order,
         } or nil,
     }
 end
@@ -4058,9 +4062,9 @@ function actions.OWNER_COMPANIES(payload)
     return { companies = util.copy(output) }
 end
 
-function actions.CREATE_COMPANY(payload)
-    local owner = requireSession({ session_token = payload.owner_session })
-    local name = util.safeText(util.trim(payload.company_name), 28)
+-- Starting a company: from a Service Kiosk, or since 11.1 the Company app.
+local function startCompany(owner, rawName)
+    local name = util.safeText(util.trim(rawName), 28)
     need(#name >= 2, "INVALID_NAME", "Company name is too short")
     for _, company in pairs(state.companies) do
         need(util.normalName(company.name) ~= util.normalName(name),
@@ -4080,6 +4084,11 @@ function actions.CREATE_COMPANY(payload)
     state.companies[companyId] = company
     save()
     return { company = util.copy(company) }
+end
+
+function actions.CREATE_COMPANY(payload)
+    local owner = requireSession({ session_token = payload.owner_session })
+    return startCompany(owner, payload.company_name)
 end
 
 function actions.LINK_TERMINAL(payload)
@@ -4134,9 +4143,8 @@ function actions.KIOSK_STATE(payload)
     }
 end
 
-function actions.ADD_PRODUCT(payload)
-    local terminal = requireTerminal(payload)
-    local items = quickItems(terminal)
+-- A product for a company's till, from its kiosk or the Company app.
+local function addProduct(items, payload)
     need(#items < 80, "ITEM_LIMIT", "Maximum 80 products")
     local name = util.safeText(util.trim(payload.name), 20)
     need(#name >= 1, "INVALID_NAME", "Product needs a name")
@@ -4154,6 +4162,10 @@ function actions.ADD_PRODUCT(payload)
     items[#items + 1] = item
     save()
     return { item = util.copy(item), products = util.copy(items) }
+end
+
+function actions.ADD_PRODUCT(payload)
+    return addProduct(quickItems(requireTerminal(payload)), payload)
 end
 
 function actions.SET_PRODUCT_FAVORITE(payload)
@@ -4265,26 +4277,29 @@ local function requireStoreTerminal(payload)
     return terminal, company
 end
 
-function actions.SHOP_STATE(payload)
-    local _, company = requireStoreTerminal(payload)
-    -- Money from orders that can still be cancelled: bought, not yet the
-    -- store's.
+-- Money from orders that can still be cancelled: bought, not yet the
+-- store's.
+function shop.held(company)
     local held = 0
     for _, entry in pairs(state.shop_held or {}) do
         if entry.company_id == company.company_id then
             held = util.roundMoney(held + entry.amount)
         end
     end
+    return held
+end
+
+function actions.SHOP_STATE(payload)
+    local _, company = requireStoreTerminal(payload)
     return {
-        held = held,
+        held = shop.held(company),
         store = shop.public(company),
         settings = util.copy(shop.settings(company)),
         products = util.copy(company.quick_items or {}),
     }
 end
 
-function actions.SHOP_SETUP(payload)
-    local _, company = requireStoreTerminal(payload)
+function shop.setup(company, payload)
     local settings = shop.settings(company)
     if payload.color ~= nil then
         need(shop.PALETTE[payload.color], "BAD_COLOR",
@@ -4322,12 +4337,31 @@ function actions.SHOP_SETUP(payload)
     return { store = shop.public(company), settings = util.copy(settings) }
 end
 
-function actions.SHOP_PRODUCT(payload)
+function actions.SHOP_SETUP(payload)
     local _, company = requireStoreTerminal(payload)
+    return shop.setup(company, payload)
+end
+
+-- Changing one product. A kiosk only puts things online; the Company app
+-- also renames, reprices and favourites them.
+function shop.product(company, payload)
     for _, item in ipairs(company.quick_items or {}) do
         if item.item_id == payload.item_id then
-            need(item.kind == "one_time", "NOT_FOR_SALE_ONLINE",
-                "Subscriptions are sold at a kiosk, not delivered")
+            if payload.online ~= nil or payload.blurb ~= nil then
+                need(item.kind == "one_time", "NOT_FOR_SALE_ONLINE",
+                    "Subscriptions are sold at a kiosk, not delivered")
+            end
+            if payload.name ~= nil then
+                local name = util.safeText(util.trim(tostring(payload.name)), 20)
+                need(#name >= 1, "INVALID_NAME", "Product needs a name")
+                item.name = name
+            end
+            if payload.price ~= nil then
+                item.price = validateAmount(payload.price, 1000000)
+            end
+            if payload.favorite ~= nil then
+                item.favorite = payload.favorite == true
+            end
             if payload.online ~= nil then item.online = payload.online == true end
             if payload.blurb ~= nil then
                 item.blurb = util.safeText(util.trim(tostring(payload.blurb)),
@@ -4338,6 +4372,12 @@ function actions.SHOP_PRODUCT(payload)
         end
     end
     reject("NOT_FOUND", "Product not found")
+end
+
+function actions.SHOP_PRODUCT(payload)
+    local _, company = requireStoreTerminal(payload)
+    return shop.product(company, { item_id = payload.item_id,
+        online = payload.online, blurb = payload.blurb })
 end
 
 -- The storefronts. Open stores with something to sell, and nothing else.
@@ -4726,6 +4766,131 @@ function shop.release()
         end
     end
     if changed then save() end
+end
+
+-- The Company app, 11.1 --------------------------------------------------------
+-- Everything a Service Kiosk does to run a company, from the owner's PUMPE:
+-- starting one, its products, its online store, and (in the Vault) its
+-- orders and what its pickup points sell. What stays on the kiosk is what
+-- belongs to that machine -- linking it, taking cash out of it, Dev Mode.
+--
+-- The company is named in every request and checked every time. And only
+-- the Company app, or the phone itself, may ask: every other app on the
+-- phone rides the same session, and none of them has any business removing
+-- somebody's products.
+
+function shop.fromCompanyApp(payload)
+    need(payload.app_id == nil or payload.app_id == "COMPANY", "WRONG_APP",
+        "Only the Company app can do that")
+    return requireSession(payload)
+end
+
+function shop.owned(payload)
+    local account = shop.fromCompanyApp(payload)
+    local company = state.companies[tostring(payload.company_id or "")]
+    need(company and company.status == "active"
+        and company.owner_account_id == account.account_id, "NOT_OWNER",
+        "You do not own that company")
+    return account, company
+end
+
+function actions.COMPANY_LIST(payload)
+    local account = shop.fromCompanyApp(payload)
+    local list = {}
+    for _, company in pairs(state.companies) do
+        if company.owner_account_id == account.account_id
+            and company.status == "active" then
+            local sales = 0
+            for _, id in ipairs(company.linked_terminal_ids or {}) do
+                local terminal = state.terminals[id]
+                if terminal then
+                    sales = util.roundMoney(sales + (terminal.sales_total or 0))
+                end
+            end
+            list[#list + 1] = { company_id = company.company_id,
+                name = company.name, tax_id = company.tax_id,
+                products = #(company.quick_items or {}),
+                open = company.shop ~= nil and company.shop.open == true,
+                terminals = #(company.linked_terminal_ids or {}),
+                sales = sales, created_day = company.created_day }
+        end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return { companies = list }
+end
+
+function actions.COMPANY_CREATE(payload)
+    return startCompany(shop.fromCompanyApp(payload), payload.company_name)
+end
+
+function actions.COMPANY_STATE(payload)
+    local _, company = shop.owned(payload)
+    local terminals = {}
+    for _, id in ipairs(company.linked_terminal_ids or {}) do
+        local terminal = state.terminals[id]
+        if terminal then
+            terminals[#terminals + 1] = { terminal_id = id,
+                name = terminal.name, sales_total = terminal.sales_total or 0 }
+        end
+    end
+    return {
+        company = { company_id = company.company_id, name = company.name,
+            tax_id = company.tax_id, created_day = company.created_day },
+        products = util.copy(company.quick_items or {}),
+        store = shop.public(company),
+        settings = util.copy(shop.settings(company)),
+        held = shop.held(company),
+        terminals = terminals,
+    }
+end
+
+function actions.COMPANY_PRODUCT_ADD(payload)
+    local _, company = shop.owned(payload)
+    company.quick_items = company.quick_items or {}
+    return addProduct(company.quick_items, payload)
+end
+
+function actions.COMPANY_PRODUCT_SET(payload)
+    local _, company = shop.owned(payload)
+    return shop.product(company, payload)
+end
+
+function actions.COMPANY_PRODUCT_REMOVE(payload)
+    local _, company = shop.owned(payload)
+    for index, item in ipairs(company.quick_items or {}) do
+        if item.item_id == payload.item_id then
+            table.remove(company.quick_items, index)
+            save()
+            return { products = util.copy(company.quick_items) }
+        end
+    end
+    reject("NOT_FOUND", "Product not found")
+end
+
+function actions.COMPANY_SHOP_SETUP(payload)
+    local _, company = shop.owned(payload)
+    return shop.setup(company, payload)
+end
+
+-- A pickup point sold something and could not hand all of it over -- a
+-- locker emptied by hand between the stock check and the payment. The money
+-- has already moved like any kiosk sale, so the owner is told who is owed
+-- what. Refunding is theirs to do: a sale paid from another bank cannot be
+-- reached from here.
+function actions.STORE_SHORT(payload)
+    local terminal = requireTerminal(payload)
+    local _, owner = companyOwner(terminal)
+    need(owner, "NOT_LINKED", "Link this terminal to a company first")
+    local owed = util.roundMoney(tonumber(payload.owed) or 0)
+    notification(owner, "Pickup sale came up short", util.safeText(
+        tostring(payload.payer or "A customer"), 20) .. " got "
+        .. math.floor(tonumber(payload.got) or 0) .. " of "
+        .. math.floor(tonumber(payload.count) or 0) .. " "
+        .. util.safeText(tostring(payload.name or "items"), 20) .. " at "
+        .. terminal.name .. ". Owed " .. util.money(owed, config.currency),
+        "warning")
+    save()
+    return { told = true }
 end
 
 -- FoxMail's Email API. An app on somebody's phone sends from its own
@@ -5245,6 +5410,9 @@ end
 --   spender  ... whose money can move     app    ... signed in to that app
 --   device   a Border Controller          account  fold the balance into the
 --                                                  reply, which is the Core's
+--   company  a company's terminal, or    from   only this PUMPE app (or the
+--            its owner in the Company           phone itself) may ask
+--            app naming the company_id
 pair.routes = {
     FRIEND_OVERVIEW = { auth = "session" },
     FRIEND_SEARCH = { auth = "session" },
@@ -5327,15 +5495,31 @@ pair.routes = {
     -- 11.0: asking to send something back. Money only moves later, when the
     -- store refunds it from a Delivery Terminal.
     SHOP_RETURN = { auth = "session" },
-    DELIVERY_ORDERS = { auth = "terminal" },
-    DELIVERY_STAGE = { auth = "terminal" },
-    DELIVERY_DONE = { auth = "terminal" },
+    -- A company's orders, from its Delivery Terminal or, since 11.1, from
+    -- its owner's Company app.
+    DELIVERY_ORDERS = { auth = "company" },
+    DELIVERY_STAGE = { auth = "company" },
+    DELIVERY_DONE = { auth = "company" },
+    DELIVERY_OUT = { auth = "company" },
+    DELIVERY_RETURN_DECLINE = { auth = "company" },
     PICKUP_REGISTER = { auth = "terminal" },
     PICKUP_REMOVE = { auth = "terminal" },
     PICKUP_ORDERS = { auth = "terminal" },
     PICKUP_STOCK = { auth = "terminal" },
     PICKUP_COLLECT = { auth = "terminal" },
-    DELIVERY_RETURN_DECLINE = { auth = "terminal" },
+    -- 11.1: one code box at the counter, and Foxy Security behind it.
+    PICKUP_CODE = { auth = "terminal" },
+    PICKUP_WAIT = { auth = "terminal" },
+    PICKUP_RELEASE = { auth = "terminal" },
+    PICKUP_STORE = { auth = "terminal" },
+    SECURITY_LIST = { auth = "session", from = "FOXY" },
+    SECURITY_CONFIRM = { auth = "session", pin = true, from = "FOXY" },
+    SECURITY_DENY = { auth = "session", from = "FOXY" },
+    -- What a pickup point sells on the spot, set up in the Company app.
+    STORE_POINTS = { auth = "company" },
+    STORE_OFFER_SET = { auth = "company" },
+    STORE_OFFER_REMOVE = { auth = "company" },
+    STORE_OPEN = { auth = "company" },
     -- FoxMail, 11.0. Kept in the Vault; a person's company addresses are
     -- theirs because the Core says which companies they own.
     MAIL_ME = { auth = "session", companies = true },
@@ -5355,7 +5539,28 @@ pair.routes = {
 
 -- Everything the Core checks before a question goes down the cable.
 local function routeToVault(action, spec, payload)
-    if spec.auth == "terminal" then
+    -- The phone stamps every request an installed app makes with the id it
+    -- was installed under, and an app cannot take the stamp off. So no id
+    -- is the phone itself, and "from" names the one app that may ask too.
+    if spec.from then
+        need(payload.app_id == nil or payload.app_id == spec.from, "WRONG_APP",
+            "Only " .. spec.from .. " can do that")
+    end
+    if spec.auth == "company" and not payload.terminal_id then
+        local account, company = shop.owned(payload)
+        local forwarded = {}
+        for key, value in pairs(payload) do
+            if key ~= "session_token" and key ~= "pin" then
+                forwarded[key] = value
+            end
+        end
+        return pair.forward(action, forwarded, {
+            kind = "owner", account_id = account.account_id,
+            name = account.name, company_id = company.company_id,
+            company_name = company.name,
+        })
+    end
+    if spec.auth == "terminal" or spec.auth == "company" then
         -- A kiosk or Delivery Terminal. Checked against the Core's own list
         -- of terminals, then sent down carrying the one company it belongs
         -- to -- which is all the Vault will let it see. The token itself

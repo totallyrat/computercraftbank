@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "11.0.0"
+local PROGRAM_VERSION = "11.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -3032,13 +3032,48 @@ local SHOP = {
     keep_after_returns = 7,
     stages = { "Order received", "Packing", "Packed", "Out for delivery",
         "At the pickup point" },
+    -- 11.1, Foxy Security. How long a buyer has to answer "is this you?"
+    -- when somebody types their code at a pickup point, and how long a yes
+    -- given ahead of time keeps the parcel open to its code. Real minutes,
+    -- not in-game ones: this is somebody standing at a counter.
+    ask_ms = 2 * 60 * 1000,
+    preconfirm_ms = 30 * 60 * 1000,
+    -- What a pickup point can sell on the spot.
+    max_offers = 12,
 }
 
+-- A company acting on its own orders: one of its terminals, or since 11.1
+-- its owner in the Company app. The Core has checked either way, and the
+-- caller arrives carrying the one company it may see.
 local function shopTerminal(caller)
-    need(type(caller) == "table" and caller.kind == "terminal"
+    need(type(caller) == "table"
+        and (caller.kind == "terminal" or caller.kind == "owner")
         and type(caller.company_id) == "string", "NOT_A_TERMINAL",
         "Only a company's own terminal can do that")
     return caller
+end
+
+-- A pickup point is one terminal. An owner's phone is not standing at it.
+local function pickupPoint(caller)
+    need(type(caller) == "table" and caller.kind == "terminal"
+        and type(caller.company_id) == "string"
+        and type(caller.terminal_id) == "string", "NOT_A_TERMINAL",
+        "Only the pickup point itself can do that")
+    return caller
+end
+
+-- Foxy Security as the buyer sees it: a question waiting to be answered, a
+-- yes that still holds, or nothing.
+local function securityState(order)
+    local check = order.security
+    local now = util.nowMs()
+    if not check then return nil end
+    if check.status == "asked" and now < (check.expires_at or 0) then
+        return { status = "asked", expires_in_ms = check.expires_at - now }
+    elseif check.status == "confirmed" and now < (check.until_at or 0) then
+        return { status = "confirmed", expires_in_ms = check.until_at - now }
+    end
+    return nil
 end
 
 -- The last moment a return can be asked for, in in-game hours. Orders from
@@ -3078,6 +3113,13 @@ local function publicOrder(order, forBuyer)
         total = order.total,
         delivery = util.copy(order.delivery),
         code = forBuyer and order.code or nil,
+        -- 11.1. The courier's code: typed at the pickup point, it opens the
+        -- pickup chest for this parcel to go in. The company's copy only,
+        -- and only until the parcel is in.
+        delivery_code = not forBuyer and order.delivery.kind == "pickup"
+            and order.status == "open" and not order.locker
+            and order.delivery_code or nil,
+        security = forBuyer and order.locker and securityState(order) or nil,
         status = order.status,
         stage = order.stage,
         history = util.copy(order.history or {}),
@@ -3103,12 +3145,15 @@ local function publicOrder(order, forBuyer)
     }
 end
 
-local function freshCode(pointId)
+-- A code nobody at this pickup point is already using, as a buyer's code
+-- or a courier's: one box at the counter takes both.
+local function freshCode(pointId, avoid)
     for _ = 1, 20 do
         local code = string.format("%06d", math.random(0, 999999))
-        local clash = false
+        local clash = code == avoid
         for _, order in pairs(state.orders) do
-            if order.code == code and order.status == "open"
+            if (order.code == code or order.delivery_code == code)
+                and (order.status == "open" or order.status == "unpaid")
                 and (not pointId or (order.delivery.point_id == pointId)) then
                 clash = true
                 break
@@ -3117,6 +3162,16 @@ local function freshCode(pointId)
         if not clash then return code end
     end
     return string.format("%06d", math.random(0, 999999))
+end
+
+-- Pickup orders from before 11.1 were put into lockers by staff with a PIN
+-- and have no courier's code. They get one, once.
+for _, order in pairs(state.orders) do
+    if (order.status == "open" or order.status == "unpaid")
+        and type(order.delivery) == "table" and order.delivery.kind == "pickup"
+        and not order.locker and not order.delivery_code then
+        order.delivery_code = freshCode(order.delivery.point_id, order.code)
+    end
 end
 
 local function sweepOrders()
@@ -3190,6 +3245,7 @@ function actions.VAULT_SHOP_OPEN(payload, caller)
     need(#lines > 0, "EMPTY_CART", "There is nothing in the basket")
 
     local orderId = nextId("order")
+    local code = freshCode(delivery.point_id)
     state.orders[orderId] = {
         order_id = orderId,
         company_id = companyId,
@@ -3202,7 +3258,9 @@ function actions.VAULT_SHOP_OPEN(payload, caller)
         fee = tonumber(payload.fee) or 0,
         total = tonumber(payload.total) or 0,
         delivery = delivery,
-        code = freshCode(delivery.point_id),
+        code = code,
+        delivery_code = delivery.kind == "pickup"
+            and freshCode(delivery.point_id, code) or nil,
         status = "unpaid",
         -- 11.0. Who was paid, who paid from where, and the store's terms as
         -- they stood at checkout: changing them later changes new orders,
@@ -3358,6 +3416,21 @@ function actions.DELIVERY_DONE(payload, caller)
     return { order = publicOrder(order, false) }
 end
 
+-- Delivery Mode, 11.1: what is on the road right now. A parcel for a
+-- pickup point carries the courier's code; one for a home, where it goes.
+function actions.DELIVERY_OUT(payload, caller)
+    local company = shopTerminal(caller)
+    local list = {}
+    for _, order in pairs(state.orders) do
+        if order.company_id == company.company_id and order.status == "open"
+            and order.stage == SHOP.stages[4] and not order.locker then
+            list[#list + 1] = publicOrder(order, false)
+        end
+    end
+    table.sort(list, function(a, b) return a.order_id < b.order_id end)
+    return { orders = list }
+end
+
 -- Refunds and returns ------------------------------------------------------------
 -- The Vault decides who may, the Core moves the money. Three ways an order
 -- is refunded:
@@ -3482,11 +3555,12 @@ end
 -- A Delivery Terminal becoming a pickup point. One point per terminal, so
 -- registering again is renaming rather than adding a second.
 function actions.PICKUP_REGISTER(payload, caller)
-    local terminal = shopTerminal(caller)
+    local terminal = pickupPoint(caller)
     local name = util.safeText(util.trim(tostring(payload.name or "")), 20)
     need(#name >= 2, "BAD_NAME", "Give the pickup point a name")
     local x, y, z = tonumber(payload.x), tonumber(payload.y),
         tonumber(payload.z)
+    local before = state.pickup_points[terminal.terminal_id]
     state.pickup_points[terminal.terminal_id] = {
         point_id = terminal.terminal_id,
         company_id = terminal.company_id,
@@ -3495,13 +3569,16 @@ function actions.PICKUP_REGISTER(payload, caller)
         y = y and math.floor(y) or nil,
         z = z and math.floor(z) or nil,
         registered_day = util.ingameDay(),
+        -- Setting a point up again keeps what it sells.
+        store = before and before.company_id == terminal.company_id
+            and before.store or nil,
     }
     save()
     return { point = util.copy(state.pickup_points[terminal.terminal_id]) }
 end
 
 function actions.PICKUP_REMOVE(payload, caller)
-    local terminal = shopTerminal(caller)
+    local terminal = pickupPoint(caller)
     state.pickup_points[terminal.terminal_id] = nil
     save()
     return { removed = true }
@@ -3509,7 +3586,7 @@ end
 
 -- What is headed for, or waiting at, this pickup point.
 function actions.PICKUP_ORDERS(payload, caller)
-    local terminal = shopTerminal(caller)
+    local terminal = pickupPoint(caller)
     local list = {}
     for _, order in pairs(state.orders) do
         if order.status == "open" and order.delivery.kind == "pickup"
@@ -3523,13 +3600,21 @@ function actions.PICKUP_ORDERS(payload, caller)
     return { orders = list }
 end
 
--- A parcel has gone into a locker here. The buyer is told, with the code.
+-- A parcel has gone into a locker here. Since 11.1 it takes the courier's
+-- delivery code, typed at the counter, rather than a staff PIN: whoever has
+-- the parcel has the code, and nobody else needs to be let in.
 function actions.PICKUP_STOCK(payload, caller)
-    local terminal = shopTerminal(caller)
+    local terminal = pickupPoint(caller)
     local order = companyOrder(terminal, payload.order_id)
     need(order.status == "open" and order.delivery.kind == "pickup"
         and order.delivery.point_id == terminal.terminal_id, "WRONG_POINT",
         "That order is not coming to this pickup point")
+    local code = tostring(payload.code or ""):gsub("%D", "")
+    need(code ~= "", "UPDATE_TERMINAL", "Parcels go in with their delivery"
+        .. " code now. Leave Pickup mode so this point can update")
+    need(order.delivery_code and code == order.delivery_code, "BAD_CODE",
+        "That is not this parcel's delivery code")
+    need(not order.locker, "ALREADY_HERE", "That parcel is already here")
     local locker = util.safeText(tostring(payload.locker or ""), 40)
     need(#locker > 0, "NO_LOCKER", "Which locker is it in?")
     for _, other in pairs(state.orders) do
@@ -3547,22 +3632,44 @@ function actions.PICKUP_STOCK(payload, caller)
     return { order = publicOrder(order, false) }
 end
 
--- The buyer at the pickup point, typing their code. Wrong codes are
--- counted per point: six digits is a million guesses by hand, and a
--- terminal being hammered by a program is not a person at a counter.
-function actions.PICKUP_COLLECT(payload, caller)
-    local terminal = shopTerminal(caller)
-    local misses = state.pickup_misses[terminal.terminal_id] or
-        { count = 0, until_at = 0 }
-    state.pickup_misses[terminal.terminal_id] = misses
+-- Wrong codes are counted per point: six digits is a million guesses by
+-- hand, and a terminal being hammered by a program is not a person at a
+-- counter.
+local function pointMisses(pointId)
+    local misses = state.pickup_misses[pointId] or { count = 0, until_at = 0 }
+    state.pickup_misses[pointId] = misses
     need(util.nowMs() >= (misses.until_at or 0), "TRY_LATER",
         "Too many wrong codes. Wait a minute and try again")
+    return misses
+end
+
+-- 11.0 terminals called this, and it handed a parcel straight over. Since
+-- 11.1 every parcel passes Foxy Security first, which an 11.0 terminal
+-- cannot wait for -- so it is told to update rather than let through.
+function actions.PICKUP_COLLECT(payload, caller)
+    pickupPoint(caller)
+    reject("UPDATE_TERMINAL", "This pickup point needs its update. Ask staff"
+        .. " to leave Pickup mode for a moment")
+end
+
+-- One box at the counter, 11.1. A buyer's code starts a collection; a
+-- courier's delivery code starts a delivery.
+--
+-- A collection asks the buyer first. Their PUMPE shows "is this you?" and
+-- they answer with their PIN, in Foxy -- or already have, ahead of time.
+-- Nothing leaves a locker here: the terminal waits (PICKUP_WAIT) and then
+-- asks for the parcel (PICKUP_RELEASE), because it has the pickup chest to
+-- empty in between.
+function actions.PICKUP_CODE(payload, caller)
+    local terminal = pickupPoint(caller)
+    local misses = pointMisses(terminal.terminal_id)
     local code = tostring(payload.code or ""):gsub("%D", "")
     local found
     for _, order in pairs(state.orders) do
-        if order.status == "open" and order.code == code
-            and order.delivery.kind == "pickup"
-            and order.delivery.point_id == terminal.terminal_id then
+        if order.status == "open" and order.delivery.kind == "pickup"
+            and order.delivery.point_id == terminal.terminal_id
+            and #code == 6 and (order.code == code
+                or order.delivery_code == code) then
             found = order
         end
     end
@@ -3572,23 +3679,273 @@ function actions.PICKUP_COLLECT(payload, caller)
             misses.count, misses.until_at = 0, util.nowMs() + SHOP.code_lock_ms
         end
         save()
-        reject("NO_SUCH_CODE", "That code is not for a parcel here")
+        reject("NO_SUCH_CODE", "That code is not for anything here")
+    end
+    misses.count = 0
+    local shown = { order_id = found.order_id, lines = util.copy(found.lines),
+        company_name = found.company_name }
+    if found.delivery_code == code then
+        need(not found.locker, "ALREADY_HERE", "That parcel is already here")
+        save()
+        shown.kind = "deliver"
+        shown.buyer_name = found.buyer_name
+        return shown
     end
     need(found.locker, "NOT_HERE_YET",
         "That order is on its way but has not arrived yet")
-    misses.count = 0
-    local locker = found.locker
-    found.status = "collected"
-    found.done_day = util.ingameDay()
-    found.finished_at = util.ingameMoment()
-    found.locker = nil
-    orderStamp(found, "Collected")
+    shown.kind = "collect"
+    local held = securityState(found)
+    if held and held.status == "confirmed" then
+        save()
+        shown.confirmed = true
+        return shown
+    end
+    found.security = { status = "asked", point_id = terminal.terminal_id,
+        expires_at = util.nowMs() + SHOP.ask_ms }
     save()
-    core.notify(found.buyer_account_id, "Collected",
-        "You picked up your order from " .. found.company_name .. ".",
-        "success", { order_id = found.order_id })
-    return { order_id = found.order_id, locker = locker,
-        lines = util.copy(found.lines), buyer_name = found.buyer_name }
+    -- Straight onto their screen, whatever they have open: it is Foxy asking.
+    core.notify(found.buyer_account_id, "Is this you?",
+        "Somebody is collecting your " .. tostring(found.company_name)
+            .. " order at " .. tostring(found.delivery.point_name)
+            .. ". Confirm with your PIN.", "warning",
+        { order_id = found.order_id, security_order = found.order_id,
+          style = "fullscreen", app_name = "Foxy Security" })
+    shown.waiting = true
+    shown.expires_in_ms = SHOP.ask_ms
+    return shown
+end
+
+local function askedHere(terminal, orderId)
+    local order = state.orders[tostring(orderId or "")]
+    need(order and order.status == "open" and order.locker
+        and order.delivery.kind == "pickup"
+        and order.delivery.point_id == terminal.terminal_id, "NO_SUCH_ORDER",
+        "That parcel is not waiting here")
+    return order
+end
+
+-- The terminal, waiting on the buyer's answer.
+function actions.PICKUP_WAIT(payload, caller)
+    local order = askedHere(pickupPoint(caller), payload.order_id)
+    local check = order.security or {}
+    local held = securityState(order)
+    if held then
+        return { status = held.status, expires_in_ms = held.expires_in_ms }
+    end
+    if check.status == "denied" then
+        order.security = nil
+        save()
+        return { status = "denied" }
+    end
+    return { status = "expired" }
+end
+
+-- A yes, and the pickup chest is empty: the parcel is theirs.
+function actions.PICKUP_RELEASE(payload, caller)
+    local terminal = pickupPoint(caller)
+    local order = askedHere(terminal, payload.order_id)
+    local held = securityState(order)
+    need(held and held.status == "confirmed", "NOT_CONFIRMED",
+        "The buyer has not confirmed it is them")
+    local locker = order.locker
+    order.status = "collected"
+    order.done_day = util.ingameDay()
+    order.finished_at = util.ingameMoment()
+    order.locker, order.security = nil, nil
+    orderStamp(order, "Collected")
+    save()
+    core.notify(order.buyer_account_id, "Collected",
+        "You picked up your order from " .. order.company_name .. ".",
+        "success", { order_id = order.order_id })
+    return { order_id = order.order_id, locker = locker,
+        lines = util.copy(order.lines) }
+end
+
+-- Foxy Security, the buyer's side --------------------------------------------------
+
+local function buyersParcel(caller, orderId)
+    local buyer = whoIsAsking(caller)
+    local order = state.orders[tostring(orderId or "")]
+    need(order and order.buyer_account_id == buyer.account_id
+        and order.status == "open" and order.delivery.kind == "pickup",
+        "NO_SUCH_ORDER", "That order is not waiting at a pickup point")
+    need(order.locker, "NOT_HERE_YET", "It has not reached the pickup point")
+    return order
+end
+
+-- Parcels waiting at pickup points, questions first.
+function actions.SECURITY_LIST(payload, caller)
+    local buyer = whoIsAsking(caller)
+    local list = {}
+    for _, order in pairs(state.orders) do
+        if order.buyer_account_id == buyer.account_id
+            and order.status == "open" and order.delivery.kind == "pickup"
+            and order.locker then
+            list[#list + 1] = { order_id = order.order_id,
+                company_name = order.company_name,
+                point_name = order.delivery.point_name,
+                lines = util.copy(order.lines),
+                security = securityState(order) }
+        end
+    end
+    local function rank(entry)
+        local status = entry.security and entry.security.status
+        return status == "asked" and 1 or status == "confirmed" and 2 or 3
+    end
+    table.sort(list, function(a, b)
+        if rank(a) ~= rank(b) then return rank(a) < rank(b) end
+        return a.order_id < b.order_id
+    end)
+    return { parcels = list, preconfirm_ms = SHOP.preconfirm_ms }
+end
+
+-- Yes, it is me -- to a question being asked right now, or ahead of time.
+-- The Core has already checked the PIN; it never comes down the cable.
+function actions.SECURITY_CONFIRM(payload, caller)
+    local order = buyersParcel(caller, payload.order_id)
+    local held = securityState(order)
+    local answering = held and held.status == "asked"
+    order.security = { status = "confirmed",
+        point_id = order.delivery.point_id,
+        until_at = util.nowMs() + (answering and SHOP.ask_ms
+            or SHOP.preconfirm_ms) }
+    save()
+    return { order_id = order.order_id, answered = answering,
+        security = securityState(order) }
+end
+
+-- Not me. Somebody else has the code, so it is changed: the buyer is told
+-- the new one, and the old one opens nothing. Said with no question
+-- waiting, it takes back a yes given ahead of time.
+function actions.SECURITY_DENY(payload, caller)
+    local order = buyersParcel(caller, payload.order_id)
+    local held = securityState(order)
+    if held and held.status == "asked" then
+        order.security = { status = "denied" }
+        order.code = freshCode(order.delivery.point_id, order.code)
+        save()
+        core.notify(order.buyer_account_id, "New pickup code",
+            "Nobody got your parcel. Your new code for "
+                .. tostring(order.delivery.point_name) .. " is "
+                .. order.code .. ".", "warning", { order_id = order.order_id })
+        return { order_id = order.order_id, denied = true, code = order.code }
+    end
+    order.security = nil
+    save()
+    return { order_id = order.order_id, denied = false }
+end
+
+-- Selling at a pickup point, 11.1 ------------------------------------------------------
+-- A pickup point can be a shop counter too: the customer picks something
+-- from a short list, pays, and it comes out of the lockers into the pickup
+-- chest. The list lives here and is made in the Company app. What is in
+-- stock is whatever is in the lockers and not somebody's parcel -- only the
+-- terminal can see that -- and the money moves in the Core, the way a
+-- Service Kiosk sale does.
+
+local function storeOf(point)
+    point.store = point.store or { open = false, offers = {} }
+    point.store.offers = point.store.offers or {}
+    return point.store
+end
+
+local function companyPoint(caller, pointId)
+    local company = shopTerminal(caller)
+    local point = state.pickup_points[tostring(pointId or "")]
+    need(point and point.company_id == company.company_id, "NO_SUCH_POINT",
+        "That pickup point is not this company's")
+    return point
+end
+
+local function shownPoint(point)
+    local store = storeOf(point)
+    return { point_id = point.point_id, name = point.name, x = point.x,
+        y = point.y, z = point.z, open = store.open == true,
+        offers = util.copy(store.offers) }
+end
+
+-- The company's pickup points and what each one sells.
+function actions.STORE_POINTS(payload, caller)
+    local company = shopTerminal(caller)
+    local list = {}
+    for _, point in pairs(state.pickup_points) do
+        if point.company_id == company.company_id then
+            list[#list + 1] = shownPoint(point)
+        end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return { points = list, max_offers = SHOP.max_offers }
+end
+
+-- A Minecraft item, as the game names it: oak_log means minecraft:oak_log.
+local function itemName(raw)
+    local name = string.lower(util.trim(tostring(raw or "")))
+    need(#name >= 2 and #name <= 48, "BAD_ITEM",
+        "Type the item's game name, like oak_log")
+    if not name:find(":", 1, true) then name = "minecraft:" .. name end
+    need(name:match("^[a-z0-9_%.%-]+:[a-z0-9_%./%-]+$"), "BAD_ITEM",
+        "Type the item's game name, like oak_log")
+    return name
+end
+
+function actions.STORE_OFFER_SET(payload, caller)
+    local point = companyPoint(caller, payload.point_id)
+    local store = storeOf(point)
+    local name = util.safeText(util.trim(tostring(payload.name or "")), 20)
+    need(#name >= 2, "BAD_NAME", "Give it a name")
+    local count = math.floor(tonumber(payload.count) or 0)
+    need(count >= 1 and count <= 64 * 9, "BAD_COUNT",
+        "Between 1 and 576 items a sale")
+    local price = validateAmount(payload.price, 1000000)
+    local offer
+    for _, existing in ipairs(store.offers) do
+        if existing.offer_id == payload.offer_id then offer = existing end
+    end
+    if not offer then
+        need(#store.offers < SHOP.max_offers, "TOO_MANY_OFFERS",
+            "A pickup point sells " .. SHOP.max_offers .. " things at most")
+        store.sequence = (store.sequence or 0) + 1
+        offer = { offer_id = "S" .. store.sequence }
+        store.offers[#store.offers + 1] = offer
+    end
+    offer.name, offer.item = name, itemName(payload.item)
+    offer.count, offer.price = count, price
+    save()
+    return { point = shownPoint(point), offer = util.copy(offer) }
+end
+
+function actions.STORE_OFFER_REMOVE(payload, caller)
+    local point = companyPoint(caller, payload.point_id)
+    local store = storeOf(point)
+    for index, offer in ipairs(store.offers) do
+        if offer.offer_id == payload.offer_id then
+            table.remove(store.offers, index)
+            if #store.offers == 0 then store.open = false end
+            save()
+            return { point = shownPoint(point) }
+        end
+    end
+    reject("NOT_FOUND", "That is not sold there")
+end
+
+function actions.STORE_OPEN(payload, caller)
+    local point = companyPoint(caller, payload.point_id)
+    local store = storeOf(point)
+    if payload.open == true then
+        need(#store.offers > 0, "NOTHING_TO_SELL",
+            "Add something to sell first")
+    end
+    store.open = payload.open == true
+    save()
+    return { point = shownPoint(point) }
+end
+
+-- The pickup point asking what it sells.
+function actions.PICKUP_STORE(payload, caller)
+    local terminal = pickupPoint(caller)
+    local point = state.pickup_points[terminal.terminal_id]
+    need(point, "NOT_A_POINT", "This terminal is not a pickup point")
+    return shownPoint(point)
 end
 
 -- FoxMail -----------------------------------------------------------------------

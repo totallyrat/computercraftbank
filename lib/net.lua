@@ -298,6 +298,9 @@ function net.autoUpdate(config, role, root, client, options)
             config = config,
             role = role,
             root = root,
+            -- Unattended, a device also fetches files its role lacks (see
+            -- update.missingFiles). A phone is not asked: nothing is new.
+            repair = true,
             requiredPaths = options.requiredPaths,
             optionalPaths = options.optionalPaths,
             onProgress = options.onProgress,

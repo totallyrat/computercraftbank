@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "11.0.0"
+local PROGRAM_VERSION = "11.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1910,7 +1910,11 @@ end
 -- switched fullscreen on for that app in App Settings.
 local function showFullscreenAlert(item)
     local shown = 0
-    while running and shown < 8 do
+    -- 11.1, Foxy Security: somebody typed this person's pickup code, and it
+    -- is answered right here, over whatever was open. A question stays up
+    -- for as long as the pickup point waits for it.
+    local asking = item.security_order
+    while running and shown < (asking and 120 or 8) do
         local width, height = target.getSize()
         ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
         ui.center(target, 3, ui.truncate(
@@ -1921,14 +1925,41 @@ local function showFullscreenAlert(item)
         -- The Bank stores up to 120 characters of body. Wrapping wastes a
         -- few columns per line, so give it every row down to the button
         -- rather than the five that fit only if nothing wraps badly.
-        ui.wrappedText(target, 2, 8, item.body, width - 2, height - 11,
-            colors.white, ui.theme.accentDark)
+        ui.wrappedText(target, 2, 8, item.body, width - 2,
+            height - (asking and 14 or 11), colors.white, ui.theme.accentDark)
         local scene = ui.scene(target)
-        scene:button("ok", 2, height - 2, width - 2, 2, "Got it",
+        if asking then
+            local half = math.floor((width - 3) / 2)
+            scene:button("mine", 2, height - 5, half, 2, "It's me",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("notme", 3 + half, height - 5, width - 3 - half, 2,
+                "Not me", { background = ui.theme.danger })
+        end
+        scene:button("ok", 2, height - 2, width - 2, 2,
+            asking and "Later, in Foxy" or "Got it",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 1 })
         shown = shown + 1
         if action == "ok" or action == "__terminate" then return end
+        if action == "mine" then
+            local pin = ui.pin(target, "Your PIN", true)
+            if pin then
+                local done, err = request("SECURITY_CONFIRM",
+                    { order_id = asking, pin = pin }, true)
+                ui.message(target, done and "success" or "error",
+                    done and "Confirmed" or "Not confirmed",
+                    done and "It is coming out now" or err, 1.6)
+                if done then return end
+            end
+        elseif action == "notme" then
+            local denied, err = request("SECURITY_DENY",
+                { order_id = asking }, true)
+            ui.message(target, denied and "warning" or "error",
+                denied and "Kept it in" or "Not done", denied
+                    and ("Your new code is " .. tostring(denied.code)) or err,
+                2.4)
+            if denied then return end
+        end
     end
 end
 
