@@ -6,7 +6,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 
 | Program | Hardware | Purpose |
 | --- | --- | --- |
-| `bank_server.lua` | Advanced Computer + wireless/Ender modem | Persistent database, request API, banking, CCG settlement/physics, customs, subscriptions, events, tax, live dashboard |
+| `bank_server.lua` | Advanced Computer + wireless/Ender modem + wired modem to its Vault | The Bank Core: balances, sessions, PINs, the inter-bank ledger, tax, CCG escrow, pay codes, companies, Easy Deployment. Everything else goes to its Vault |
+| `bank_vault.lua` | Advanced Computer + wired modem to its Core | The Bank Vault: friends and chat, travel, events and tickets, app records, the Shop's orders, FoxMail, and since 11.2 every account's history and notifications |
 | `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, Bet and Bet Wallet apps, Customs and Visas, events, tickets, tax, subscriptions |
 | `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track, and Survivor arena |
 | `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Square-style touch POS, favorites, products, receipts, payment codes, withdrawals, subscriptions |
@@ -227,13 +228,15 @@ The split is by what a thing **is**, not by how busy it is:
 | | Holds |
 | --- | --- |
 | **Core** (`bank_server.lua`) | Anything where being wrong means money is wrong: balances, sessions, PINs, the ledger, tax, CCG escrow, pay codes, companies and kiosks. Plus Easy Deployment. |
-| **Vault** (`bank_vault.lua`) | Everything that is merely *about* an account: friends and conversations, Urgent Contact, territories and visas, border registers and scans, events and tickets, and the records apps keep. |
+| **Vault** (`bank_vault.lua`) | Everything that is merely *about* an account: friends and conversations, Urgent Contact, territories and visas, border registers and scans, events and tickets, the records apps keep, Shop orders, FoxMail — and since 11.2, each account's transaction history and notifications. |
 
 Three rules make that safe. The Vault never touches a balance — when something it owns has to move money it asks the Core, under a move id that makes a lost reply harmless. The Vault never decides who is asking — the Core authenticates every request and passes down an identity, so session tokens and PINs never travel. And a Bank with no Vault still banks: the money keeps working, and the Vault's own features say so plainly until you pair one.
 
 Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever pressed the button. The one that becomes the Vault fetches `bank_vault.lua` over the cable and restarts into it by itself. Clients never learn any of this — a PUMPE asks the Bank, as it always has.
 
 If a Vault is destroyed or a cable is cut, the Bank Server's dashboard shows it, and its **PAIR** button pairs a replacement.
+
+**History and notifications are the Vault's (11.2).** They are what a bank accumulates for ever, and until 11.2 the Core kept them in the same file as the money — three thousand transactions and fifty notifications per account — until they filled its disk and it would not start. Now every transaction and notification goes down the cable to the Vault, which keeps each account's newest thirty transactions and twenty notifications in a small file of its own (`records/<account>.dat`), so saving one person's never rewrites anybody else's. The Core keeps what money needs: balances, each account's unread count and newest notification (so a phone's poll never crosses the cable), and a day-by-day income tally that tax periods add up. Records wait in an outbox the Core saves with the money, so a Vault that is away — or still on an older release — loses nothing; Foxy's Activity and the phone's notifications show waiting records too, and the dashboard counts them. The Vault ignores a record it already has, so sending one twice is harmless.
 
 **Updates travel down the cable (11.0).** When the Core runs a newer release than its Vault, it sends the Vault that release over the pair cable — the Vault's program and the shared files, each checked against the published manifest — and the Vault installs it the way an internet update is installed (its own `config.lua` settings kept, every file swapped in or none) and restarts. A paired Vault no longer fetches its own, so the two halves always run the same release; an unpaired one still updates itself. The Vault takes a release only from its own Core, and only a newer one.
 
@@ -505,7 +508,7 @@ Only the first Bank Server needs the complete release copied locally. Every othe
 2. Edit the local `config.lua` and change `government_key`.
 3. Run `startup`, choose **Bank Server**, then **Foxy Bank Server**, and enter `4040`. (A **3rd Party Bank Server** is the other choice and needs no code.)
 4. Easy Deployment verifies the complete local bundle, moves same-drive files directly into the compact Bank layout, writes an installer-based `/startup.lua`, and launches `bank_server.lua` immediately. It never tries to discover a Bank Server that does not exist yet.
-5. `/pumpe` keeps only the Bank runtime, installer, config, and shared libraries. `/updates` keeps one copy of each role-specific program plus the sanitized public client config; shared runtime files are served directly without duplication.
+5. `/pumpe` keeps only the Bank runtime, installer, config, shared libraries and the Bank's data. Role programs for other computers are fetched when somebody installs that role and kept in memory, never on the Bank's disk (since 11.2).
 
 If a required source file is missing, the first-boot screen lists it and lets you rescan after adding it.
 
@@ -530,7 +533,7 @@ Easy Deployment checks the public HTTPS manifest on screen before the menu opens
 
 The role picker shows the role and version this computer already has, and offers **START ROLE** so an installed computer can be relaunched without reinstalling anything.
 
-The first Bank Server has no deployment host to download from, so Easy Deployment fetches its runtime straight from the public release manifest over HTTPS — a clean computer needs nothing but `startup.lua`. It downloads only the Bank's own seven files; role programs are pulled into `/updates` on demand the first time somebody installs that role. If HTTP is switched off or the manifest cannot be reached, it says so and falls back to a complete release package sitting beside `startup.lua`.
+The first Bank Server has no deployment host to download from, so Easy Deployment fetches its runtime straight from the public release manifest over HTTPS — a clean computer needs nothing but `startup.lua`. It downloads only the Bank's own seven files; role programs are fetched into memory on demand the first time somebody installs that role. If HTTP is switched off or the manifest cannot be reached, it says so and falls back to a complete release package sitting beside `startup.lua`.
 
 ## Automatic Internet Updates
 
@@ -542,7 +545,7 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 4. Preserves the existing government key, release URL, and all other local configuration.
 5. Atomically replaces the program files, rolling back if any move fails.
 6. Refreshes `/pumpe/installer.lua`, writes a direct Bank boot entry, saves the database, and restarts immediately.
-7. Detects the restart marker, bypasses every menu, compacts `/updates/`, and launches the Bank Server normally.
+7. Detects the restart marker, bypasses every menu, clears any `/updates/` an older release left behind, and launches the Bank Server normally.
 
 Every role updates itself. A PUMPE, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
 
@@ -554,9 +557,11 @@ What the phone shows comes from the manifest: a `label` naming the release and a
 
 Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published defaults. A release can name a setting it is taking back — `config_resets` in `config.lua` — and a device still carrying exactly that stale value adopts the new default instead. That is how the retired `CHANGE-ME-GOVERNMENT-KEY` placeholder is cleared.
 
-The Bank Server's `/updates` is a cache, not a stockpile. It fetches a role program the first time a client installs that role, and drops the cache whenever a release needs the room. A device whose ComputerCraft HTTP access is switched off falls back to that depot over Rednet, so restricting HTTP costs update speed but never strands a device.
+The Bank Server hands out every role's files over Rednet (Easy Deployment, and the fallback for a device whose ComputerCraft HTTP access is switched off). Its own runtime it serves from `/pumpe`; any other role program it fetches from the release the first time somebody installs that role and keeps **in memory** — until 11.2 it kept them in `/updates` on its own disk, which is half of how a Core filled up. Restricting HTTP costs update speed but never strands a device.
 
-Because each device stages only its own role, the worst-case update peaks at about 846 KiB of ComputerCraft's 1000 KiB computer, leaving roughly 154 KiB for account data (the release builder prints the current figure). The largest role is the Bank Core as of 11.1. That headroom is the Bank Core's alone: since 9.3 everything that grows without limit -- conversations, events, tickets, app records, and now the domain register -- lives on the Vault.
+**Published without comments (11.2).** The Core, the Vault and the shared libraries are downloaded from `dist/`: the same files built by `tools/build_release_manifest.js` with their comments and indentation taken out — a third of every one of them was prose for whoever reads this repository. Every line stays on the line it came from, so an error a computer reports still names the right line here, and `tests/host_dist_build_test.lua` proves each one compiles to exactly the same bytecode as its source. Programs whose comments are read by code (the installer's `-- PUMPE EASY DEPLOYMENT`, the apps' `-- PUMPE APP:` lines) are published as they are. Edit the source, never `dist/`; the builder rewrites it.
+
+Because each device stages only its own role, the worst-case update peaks at about 739 KiB of ComputerCraft's 1000 KiB computer — a PUMPE — and the Bank Core's at about 623 KiB, leaving it roughly 377 KiB for its data (the release builder prints the current figures). And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
 
 ### Manifest layout
 
@@ -568,8 +573,6 @@ The manifest's `files` array stays byte-compatible with v5.2.1 Bank Servers, who
 `extra_files` is frozen at `border_controller.lua` and `ccg.lua`. Bank Servers older than 7.0.1 reject any entry there they do not already recognise, so a new role added to it would make the release uninstallable for them. Anything added from now on goes in `optional_files`, which those Bank Servers never read, and which newer ones check leniently: an entry an updater does not know is skipped rather than rejected.
 
 `launcher.lua` is retained only as a migration bridge for older startup entries; v6 installations and normal boots do not use it.
-
-A Bank Server that arrives from a release which published fewer files still has old copies in `/updates/`. On its next check it compares every depot program against the manifest describing the version it is running, re-downloads whatever does not match, and writes `/updates/.depot` so the check does not repeat. Nothing is pinned in Lua source, and a temporary download failure simply leaves the depot unstamped for the next attempt.
 
 ### Release source
 
@@ -791,16 +794,26 @@ pumpe/
 - Confirm every device uses the same `protocol` and `hostname`.
 - Check that a wireless or Ender modem is attached and enabled.
 
-**The dashboard says NEEDS n KiB FREE**
+**The Bank will not start: out of space**
 
-- A release cannot fit beside the installed one plus the database. The Bank already reclaims `/updates` automatically; if it still does not fit, back up `bank_data_v5.dat` and remove anything unrelated from the Bank computer.
-- Upgrading from v6.1.0 or earlier is the tight case, because those versions stage the release without reclaiming anything. Running `delete /updates` in the Bank's terminal — **without rebooting it** — gives the running server room to finish the update, and it rebuilds `/updates` itself once the new version starts.
+This is what 11.2 fixes, but a Bank that is already full has to be given room once before it can install it. At the Bank's shell (hold Ctrl+T if it is stuck restarting):
 
-**Bank says there is no space**
+```
+delete /updates
+reboot
+```
 
-- Restart through the latest Easy Deployment file. It removes safe v6.0/v6.0.1 duplicates before replacing the Bank, so the old Bank does not need to launch first.
-- A compact installation is about 515 KiB before account data, against ComputerCraft's default 1000 KiB per-computer limit. Chats add to the database over time, which is why a conversation keeps only its most recent 60 messages.
-- An online update briefly needs room for a second copy of the release. The Bank reclaims `/updates` first when it has to, so the peak is about 794 KiB and roughly 206 KiB stays free for account data. `tools/build_release_manifest.js` refuses to publish a release that would not leave that much. Do not manually copy the Bank runtime back into `/updates`; it is served directly from `/pumpe`.
+`/updates` is only a cache of other computers' programs, and nothing needs it any more. On the way back up Easy Deployment replaces the Bank's program with 11.2 before it starts, and 11.2 moves the history to the Vault and keeps the disk clear from then on. If the Bank still cannot start, run the rescue on it:
+
+```
+wget run https://raw.githubusercontent.com/totallyrat/computercraftbank/main/tools/bank_rescue.lua
+```
+
+It deletes what can be fetched again, and only if that is not enough trims transaction history and notifications to the newest thirty and twenty per account — what 11.2 keeps anyway. Balances and everything else that is money are never touched. Then `reboot`.
+
+- A Core's installation is about 312 KiB before its data, against ComputerCraft's default 1000 KiB per computer. An update briefly needs room for a second copy, so it peaks at about 623 KiB. `tools/build_release_manifest.js` refuses to publish a release that would not leave 150 KiB for data on any computer.
+- If a save ever does not fit, the Bank gives up history still waiting for the Vault rather than money, and says so on the dashboard.
+- ComputerCraft's disk limit is a server setting: `computer_space_limit` in the CC:Tweaked server config. A busy server can raise it; nothing here depends on the default.
 
 **Customer monitor is blank**
 

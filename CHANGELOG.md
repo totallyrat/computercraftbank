@@ -1,5 +1,55 @@
 # Changelog
 
+## 11.2.0
+
+A new Bank Server. The Core ran out of disk and would not start; this is
+the Core rebuilt for a Bank that has a Vault, a fraction of the size on
+disk, and with nothing left in it that grows for ever.
+
+**History and notifications live on the Vault.** The Core used to keep
+every transaction -- three thousand of them -- and fifty notifications per
+account in the file that holds the money, and between them they filled its
+disk. They stream to the Vault now, which keeps each account's newest thirty
+transactions and twenty notifications in a small file of its own. The Core
+keeps balances, an unread count for the phone, and a day-by-day income tally
+for tax.
+
+**Nothing is lost while the Vault is away.** Records wait in an outbox the
+Core saves with the money and go down the cable when the Vault answers. Foxy
+and the phone still show them in the meantime, and the dashboard says how
+many are waiting.
+
+**Easy Deployment no longer fills the disk.** The Bank used to keep a copy of
+every role program it had ever handed out in `/updates` -- the PUMPE's alone
+is a quarter of a computer. They are kept in memory now, and the first start
+of 11.2 deletes `/updates`.
+
+**A third smaller to download.** The Core, the Vault and the shared libraries
+are published without their comments and indentation: the Core is 183 KiB
+instead of 271 KiB. The readable source is unchanged in the repository, every
+line stays where it was so errors still point at the right line, and a test
+proves each one compiles to exactly the same program.
+
+**A Bank never refuses to start over history.** If a save does not fit, the
+history still waiting for the Vault is given up -- never money -- and the
+Bank carries on.
+
+**A rescue for a full disk.** `tools/bank_rescue.lua`, run on the Bank with
+`wget run`, frees what can be fetched again and, only if that is not enough,
+trims old history. See the README.
+
+- On the first start of 11.2 the Core moves each account's newest thirty
+  transactions and twenty notifications to the Vault and lets go of the
+  rest. Balances, pots, subscriptions and everything else that is money stay
+  exactly as they were.
+- Tax still counts income in a period. The tally reaches back 120 in-game
+  days.
+- Removed: the 9.2 to 9.3 handover of Vault records, the refund of CCG
+  lobbies from before 9.1, and the kiosk aliases kept for 5.3. A Bank still
+  on 9.2 or older should update to 11.1 first.
+- The Bank also fetches any file its role is missing while it is up to date,
+  like every other unattended device since 11.1.
+
 ## 11.1.0
 
 Pickup points get an upgrade, and companies get an app.

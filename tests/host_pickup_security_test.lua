@@ -93,7 +93,7 @@ assert(denied.denied and denied.code ~= oldCode and #denied.code == 6,
     "not me changes the code")
 assert(bank.request("PICKUP_WAIT", atDepot({ order_id = firstId }))
     .status == "denied", "the counter is told")
-assert(bank.state.accounts[kit.id].notifications[1].body:find(denied.code, 1,
+assert(bank.notifications(kit)[1].body:find(denied.code, 1,
     true), "the buyer is told the new code")
 rejected(bank.request, "NO_SUCH_CODE", "PICKUP_CODE",
     atDepot({ code = oldCode }))
@@ -136,11 +136,11 @@ local ahead = bank.request("SECURITY_CONFIRM", fromFoxy(kit, {
 assert(not ahead.answered and ahead.security.status == "confirmed"
     and ahead.security.expires_in_ms == 30 * 60 * 1000,
     "a yes with no question waiting holds for half an hour")
-local before = #bank.state.accounts[kit.id].notifications
+local before = #bank.notifications(kit)
 local straight = bank.request("PICKUP_CODE", atDepot({ code = denied.code }))
 assert(straight.confirmed and not straight.waiting,
     "so the code opens it without asking")
-assert(#bank.state.accounts[kit.id].notifications == before,
+assert(#bank.notifications(kit) == before,
     "and nobody's phone rings")
 local handed = bank.request("PICKUP_RELEASE", atDepot({ order_id = firstId }))
 assert(handed.locker == "minecraft:chest_1")

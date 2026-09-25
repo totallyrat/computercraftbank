@@ -153,18 +153,23 @@ local function seed()
     end
 end
 
--- 1. A depot cache left over from an earlier release. Dropping it logs, and
--- that log is the line v8.1.1 died on.
+-- 1. A Core from 11.1 or earlier, still carrying its /updates cache. Since
+-- 11.2 the whole folder goes at start-up -- it is the room a full disk needs
+-- back -- and deleting it logs, which is the kind of line v8.1.1 died on.
 seed()
 files["/updates/.cache_version"] = "7.0.0"
 files["/updates/pumpe.lua"] = "-- cached pumpe\n"
 files["/updates/ccg.lua"] = "-- cached ccg\n"
+directories["/pumpe/.online_update_stage"] = true
+files["/pumpe/.online_update_stage/bank_server.lua"] = "-- half an update\n"
 loadBank()
-assert(files["/updates/pumpe.lua"] == nil,
-    "a cache from another release must be dropped")
-assert(files["/updates/ccg.lua"] == nil)
--- Reaching the main loop at all is the assertion: a non-empty drop calls
--- logActivity, which is what "attempt to call a nil value" died on.
+for path in pairs(files) do
+    assert(not path:find("^/updates"), "the old cache is gone: " .. path)
+end
+assert(not directories["/updates"])
+assert(files["/pumpe/.online_update_stage/bank_server.lua"] == nil,
+    "and so is staging from an update that never finished")
+-- Reaching the main loop at all is the assertion: the deletion logs.
 assert(#drawn > 0, "the Bank draws its boot screen")
 
 -- Looking for the other half is part of booting a fresh Bank. Without this
@@ -176,29 +181,21 @@ local screen = table.concat(drawn, " ")
 assert(screen:find("PAIR", 1, true) or screen:find("CABLE", 1, true)
     or screen:find("WIRED", 1, true) or screen:find("BANK ONLY", 1, true),
     "a Bank with no pairing file goes looking for a Vault before it starts")
-assert(files["/updates/public/config.lua"],
-    "the sanitized client config is written at bootstrap")
 assert(files["/startup.lua"] and
     files["/startup.lua"]:find("installer.lua", 1, true),
     "the Bank writes its own boot entry")
 
--- 2. The same boot after an automatic update restart takes the early exit,
--- which skips the missing-file check entirely.
+-- 2. The same boot after an automatic update restart consumes the marker.
 seed()
-files["/updates/.cache_version"] = "7.0.0"
-files["/updates/pumpe.lua"] = "-- cached pumpe\n"
 files["/pumpe/.bank_auto_restart"] = "8.1.1"
 loadBank()
 assert(files["/pumpe/.bank_auto_restart"] == nil,
     "the restart marker is consumed")
 
--- 3. A depot already stamped for this release keeps its cache and still boots.
+-- 3. A Core with no /updates at all boots without creating one.
 seed()
-local installed = loadfile("../config.lua")()
-files["/updates/.cache_version"] = installed.version
-files["/updates/pumpe.lua"] = "-- cached pumpe\n"
+directories["/updates"] = nil
 loadBank()
-assert(files["/updates/pumpe.lua"] == "-- cached pumpe\n",
-    "a cache stamped for this release is kept")
+assert(not directories["/updates"], "nothing is cached on the disk any more")
 
 print("host_bank_bootstrap_test: OK")

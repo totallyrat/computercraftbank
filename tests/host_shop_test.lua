@@ -358,8 +358,8 @@ local asking = bank.request("PICKUP_CODE", as(depot, { code = picked.code }))
 assert(asking.kind == "collect" and asking.waiting and not asking.locker,
     "the right code asks the buyer first, and opens nothing yet")
 local robAccountHere = core.state.accounts[rob.id]
-assert(robAccountHere.notifications[1].security_order == picked.order_id
-    and robAccountHere.notifications[1].style == "fullscreen",
+assert(bank.notifications(rob)[1].security_order == picked.order_id
+    and bank.notifications(rob)[1].style == "fullscreen",
     "the question lands on the buyer's PUMPE, full screen")
 rejected(bank.request, "NOT_CONFIRMED", "PICKUP_RELEASE",
     as(depot, { order_id = picked.order_id }))

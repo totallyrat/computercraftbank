@@ -435,7 +435,7 @@ local function fullRun(WIDTH, HEIGHT)
     end)
     typed(theCode)
     tap(function()
-        local asked = bank.state.accounts[kit.id].notifications[1]
+        local asked = bank.notifications(kit)[1]
         assert(asked.security_order == pickupOrder.order_id,
             "the buyer's PUMPE is asked whether it is them")
         assert(count(HATCH, "minecraft:bread") == 0, "and nothing is out yet")
@@ -523,7 +523,7 @@ local function fullRun(WIDTH, HEIGHT)
         return "__tick"
     end, function()
         assert(count(HATCH, "minecraft:apple") == 3, "what there was came out")
-        local told = bank.state.accounts[ana.id].notifications[1]
+        local told = bank.notifications(ana)[1]
         assert(told.title == "Pickup sale came up short"
             and told.body:find("Kit Wolf got 3 of 8", 1, true)
             and told.body:find("3.75", 1, true), "the owner knows who is owed "

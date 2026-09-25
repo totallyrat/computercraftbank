@@ -23,7 +23,7 @@ local function inbox(who, address)
     return bank.request("MAIL_LIST", as(who, { address = address })).messages
 end
 local function notified(who, title)
-    for _, note in ipairs(bank.state.accounts[who.id].notifications) do
+    for _, note in ipairs(bank.notifications(who)) do
         if note.title == title then return note end
     end
     return nil

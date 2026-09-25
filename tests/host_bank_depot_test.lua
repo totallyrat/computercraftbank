@@ -33,6 +33,9 @@ fs = {
     delete = function(path)
         path = canonical(path)
         files[path], directories[path] = nil, nil
+        for item in pairs(files) do
+            if item:sub(1, #path + 1) == path .. "/" then files[item] = nil end
+        end
     end,
     move = function(source, destination)
         source, destination = canonical(source), canonical(destination)
@@ -46,6 +49,14 @@ os.day = function() return 1 end
 os.time = function() return 12 end
 os.epoch = function() return 123456789 end
 os.getComputerID = function() return 1 end
+
+textutils = { serialize = function(value)
+    local parts = {}
+    for key, item in pairs(value) do
+        parts[#parts + 1] = tostring(key) .. " = " .. string.format("%q", tostring(item))
+    end
+    return "{ " .. table.concat(parts, ", ") .. " }"
+end }
 
 local util = require("lib.util")
 util.readFile = function(path) return files[canonical(path)] end
@@ -81,20 +92,27 @@ PUMPE_TEST_MODE = nil
 published["pumpe.lua"] = "-- pumpe program\n"
 published["ccg.lua"] = "-- ccg program\n"
 
--- A Bank that nobody has installed from holds no role programs at all.
-assert(files["/updates/pumpe.lua"] == nil,
-    "the depot starts empty instead of stockpiling every role")
+-- Since 11.2 nothing about deployment touches the disk: role programs are
+-- held in memory, and a Core that has handed out every role still has the
+-- same free space it started with.
+local function diskFiles()
+    local count = 0
+    for path in pairs(files) do
+        if path:find("^/updates") then count = count + 1 end
+    end
+    return count
+end
 
--- The first client to ask for a role pulls it down and caches it.
+-- The first client to ask for a role pulls it down and keeps it in memory.
 assert(bank.deployment_body("pumpe.lua") == "-- pumpe program\n",
     "a requested role program is fetched on demand")
-assert(files["/updates/pumpe.lua"] == "-- pumpe program\n",
-    "the fetched program is cached for the next client")
 assert(#fetched == 1 and fetched[1] == "pumpe.lua")
+assert(diskFiles() == 0, "and nothing is written to /updates")
 
--- A second request is served from the cache, not the internet.
+-- A second request is served from memory, not the internet: a client
+-- downloads a program in dozens of chunks.
 assert(bank.deployment_body("pumpe.lua") == "-- pumpe program\n")
-assert(#fetched == 1, "a cached program is never downloaded twice")
+assert(#fetched == 1, "a held program is never downloaded twice")
 
 -- Only role programs are fetched this way; the Bank's own runtime is local.
 files["/lib/ui.lua"] = "-- shared library\n"
@@ -105,32 +123,29 @@ assert(#fetched == 1, "the Bank serves its own runtime without the internet")
 assert(bank.deployment_body("service_kiosk.lua") == nil,
     "a role missing from the release is not invented")
 
+-- The client config is made on the spot, without the government key.
+local public = bank.deployment_body("public/config.lua")
+assert(public and public:find("CLIENT-NO-GOVERNMENT-ACCESS", 1, true),
+    "clients get this Bank's settings without its government key")
+assert(diskFiles() == 0)
+
+-- Memory is bounded too: the oldest program goes when the limit is reached.
+bank.depot.limit = 40
+published["event_kiosk.lua"] = string.rep("e", 30) .. "\n"
+assert(bank.deployment_body("ccg.lua") and bank.deployment_body("event_kiosk.lua"))
+assert(bank.depot.cache["pumpe.lua"] == nil and bank.depot.bytes <= 40,
+    "the oldest is let go")
+
+-- What earlier releases left on the disk goes at start-up: it is exactly the
+-- room a full Core needs back.
+files["/updates/pumpe.lua"] = "-- cached by 11.1\n"
+files["/updates/.cache_version"] = "11.1.0"
+directories["/updates"] = true
+assert(bank.free_old_depot() >= 1)
+assert(diskFiles() == 0, "the old /updates cache is gone")
+
 -- A Bank with no role programs still starts: they are not required locally.
 assert(#bank.deployment_files("pumpe") > 0)
-
--- Regression: the cache belongs to the release that fetched it. Before
--- v6.9.1 a Bank that updated kept serving the previous release's programs, so
--- a client installed the new config.lua beside the old pumpe.lua and reported
--- a version it was not running.
-files["/updates/pumpe.lua"] = "-- pumpe from the PREVIOUS release\n"
-files["/updates/ccg.lua"] = "-- ccg from the PREVIOUS release\n"
-files["/updates/.cache_version"] = "6.3.0"
-published["pumpe.lua"] = "-- pumpe for THIS release\n"
-
-assert(bank.drop_stale_cache() == 2,
-    "a version change makes every cached program stale")
-assert(files["/updates/pumpe.lua"] == nil and files["/updates/ccg.lua"] == nil)
-assert(files["/updates/.cache_version"] == config.version,
-    "the cache is stamped with the release it now holds")
-
-fetched = {}
-assert(bank.deployment_body("pumpe.lua") == "-- pumpe for THIS release\n",
-    "the next client gets this release's program, not the previous one")
-assert(#fetched == 1)
-
--- A cache already matching the running release is left alone.
-assert(bank.drop_stale_cache() == 0, "a current cache is not thrown away")
-assert(files["/updates/pumpe.lua"] == "-- pumpe for THIS release\n")
 
 -- Every role receives the updater itself, or it can never self-update and is
 -- stuck on the Bank fallback forever.

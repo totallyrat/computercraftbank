@@ -223,7 +223,7 @@ bank.request("SHOP_RETURN", bank.as(kit, { order_id = poor.order_id,
 rejected(bank.request, "ALREADY_ASKED", "SHOP_RETURN",
     bank.as(kit, { order_id = poor.order_id, reason = "Again" }))
 local told = false
-for _, note in ipairs(core.state.accounts[ana.id].notifications) do
+for _, note in ipairs(bank.notifications(ana)) do
     if note.title == "Return requested" then told = true end
 end
 assert(told, "the store owner hears about it")

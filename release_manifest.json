@@ -1,54 +1,53 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "11.1.0",
-  "label": "11.1",
+  "version": "11.2.0",
+  "label": "11.2",
   "notes": "PUMPE + ComputerCraftGaming automatic internet release",
   "changes": [
-    "Couriers stock parcels with a delivery code.",
-    "Foxy Security.",
-    "Pre-confirm from Foxy.",
-    "The Company app.",
-    "Delivery Mode.",
-    "Buy now at pickup points.",
-    "Apps missing from the App Browser, fixed."
+    "History and notifications live on the Vault.",
+    "Nothing is lost while the Vault is away.",
+    "Easy Deployment no longer fills the disk.",
+    "A third smaller to download.",
+    "A Bank never refuses to start over history.",
+    "A rescue for a full disk."
   ],
   "files": [
     {
       "path": "bank_server.lua",
-      "source": "bank_server.lua",
-      "size": 277956,
-      "checksum": "39b7a0e6"
+      "source": "dist/bank_server.lua",
+      "size": 187799,
+      "checksum": "1475591a"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
       "size": 247108,
-      "checksum": "3f39fe52"
+      "checksum": "35ebf5b3"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
       "size": 72184,
-      "checksum": "d50aa8ee"
+      "checksum": "248fdecf"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
       "size": 22621,
-      "checksum": "91623430"
+      "checksum": "7f8a4ab1"
     },
     {
       "path": "tax_controller.lua",
       "source": "tax_controller.lua",
       "size": 1742,
-      "checksum": "f8477e11"
+      "checksum": "a325e892"
     },
     {
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 63171,
-      "checksum": "4ab63fdd"
+      "checksum": "1bcd187e"
     },
     {
       "path": "launcher.lua",
@@ -60,31 +59,31 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 7624,
-      "checksum": "3927e2ec"
+      "checksum": "5a8f6d4e"
     },
     {
       "path": "lib/net.lua",
-      "source": "lib/net.lua",
-      "size": 11551,
-      "checksum": "ee1f9ea6"
+      "source": "dist/lib/net.lua",
+      "size": 7619,
+      "checksum": "c67cee98"
     },
     {
       "path": "lib/ui.lua",
-      "source": "lib/ui.lua",
-      "size": 36458,
-      "checksum": "d3d70c2a"
+      "source": "dist/lib/ui.lua",
+      "size": 26760,
+      "checksum": "1e8cf748"
     },
     {
       "path": "lib/update.lua",
-      "source": "lib/update.lua",
-      "size": 23500,
-      "checksum": "10f856b8"
+      "source": "dist/lib/update.lua",
+      "size": 16153,
+      "checksum": "95efca18"
     },
     {
       "path": "lib/util.lua",
-      "source": "lib/util.lua",
-      "size": 12835,
-      "checksum": "36104dce"
+      "source": "dist/lib/util.lua",
+      "size": 9441,
+      "checksum": "4c2cb468"
     }
   ],
   "extra_files": [
@@ -92,13 +91,13 @@
       "path": "border_controller.lua",
       "source": "border_controller.lua",
       "size": 18919,
-      "checksum": "55dd8b1c"
+      "checksum": "719fa6dd"
     },
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
       "size": 27129,
-      "checksum": "14926581"
+      "checksum": "cee2e702"
     }
   ],
   "optional_files": [
@@ -106,19 +105,19 @@
       "path": "gps_anchor.lua",
       "source": "gps_anchor.lua",
       "size": 5416,
-      "checksum": "5f8cd6e3"
+      "checksum": "64ea9ee4"
     },
     {
       "path": "admin_terminal.lua",
       "source": "admin_terminal.lua",
       "size": 35128,
-      "checksum": "44421398"
+      "checksum": "12d9b179"
     },
     {
       "path": "app_server.lua",
       "source": "app_server.lua",
       "size": 16470,
-      "checksum": "e33db34b"
+      "checksum": "f16d88ec"
     },
     {
       "path": "foxy.lua",
@@ -130,7 +129,7 @@
       "path": "bank_app_server.lua",
       "source": "bank_app_server.lua",
       "size": 41416,
-      "checksum": "228a0f1c"
+      "checksum": "c8eaa1bd"
     },
     {
       "path": "buckapp.lua",
@@ -142,7 +141,7 @@
       "path": "ccg_server.lua",
       "source": "ccg_server.lua",
       "size": 33205,
-      "checksum": "b36e1510"
+      "checksum": "f7910371"
     },
     {
       "path": "revolution.lua",
@@ -152,15 +151,15 @@
     },
     {
       "path": "bank_vault.lua",
-      "source": "bank_vault.lua",
-      "size": 188148,
-      "checksum": "4fa28af5"
+      "source": "dist/bank_vault.lua",
+      "size": 141314,
+      "checksum": "16542a03"
     },
     {
       "path": "internet_server.lua",
       "source": "internet_server.lua",
       "size": 13404,
-      "checksum": "9b561a94"
+      "checksum": "218b9355"
     },
     {
       "path": "wc.lua",
@@ -178,7 +177,7 @@
       "path": "delivery_terminal.lua",
       "source": "delivery_terminal.lua",
       "size": 54108,
-      "checksum": "4f40de53"
+      "checksum": "4e3fc614"
     },
     {
       "path": "shop.lua",

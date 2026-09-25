@@ -2,6 +2,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { stripLua } = require("./strip_lua");
 
 const projectRoot = path.resolve(__dirname, "..");
 
@@ -160,11 +161,45 @@ for (const program of publishedPrograms) {
 // automatically at the computer root; installer.lua is the manual filename.
 fs.copyFileSync(startupPath, path.join(projectRoot, "installer.lua"));
 
+// 11.2. The servers and the shared libraries are published without their
+// comments and indentation: the Bank Core ran out of disk, and a third of
+// every one of these files is prose for whoever reads this repository. The
+// readable source stays here; what a computer downloads is dist/, built from
+// it. Every line stays on the line it came from, so an error a computer
+// reports still points at the right line of the source. Only files no code
+// ever reads comments from: the installer's and the apps' marker comments
+// ("-- PUMPE EASY DEPLOYMENT", "-- PUMPE APP:") are read by programs.
+// tests/host_dist_build_test.lua proves each one compiles to the same code.
+const strippedFiles = [
+  "bank_server.lua",
+  "bank_vault.lua",
+  "lib/net.lua",
+  "lib/ui.lua",
+  "lib/update.lua",
+  "lib/util.lua",
+];
+
+for (const relativePath of strippedFiles) {
+  const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
+  const stripped = stripLua(source, relativePath);
+  if (stripped.split("\n").length !== source.split("\n").length) {
+    throw new Error(`${relativePath}: stripping moved lines`);
+  }
+  const target = path.join(projectRoot, "dist", relativePath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.writeFileSync(target, stripped);
+}
+
+// What a computer downloads for a published path.
+const shippedSource = (relativePath) => (strippedFiles.includes(relativePath)
+  ? `dist/${relativePath}` : relativePath);
+
 const describe = (relativePath) => {
-  const body = fs.readFileSync(path.join(projectRoot, relativePath));
+  const source = shippedSource(relativePath);
+  const body = fs.readFileSync(path.join(projectRoot, source));
   return {
     path: relativePath,
-    source: relativePath,
+    source,
     size: body.length,
     checksum: checksum(body),
   };
@@ -187,17 +222,9 @@ fs.writeFileSync(
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 
+// Sizes as installed: the stripped build where there is one.
 const fileSize = (relativePath) =>
-  fs.statSync(path.join(projectRoot, relativePath)).size;
-const bankRuntimeFiles = [
-  "bank_server.lua",
-  "startup.lua",
-  "config.lua",
-  "lib/net.lua",
-  "lib/ui.lua",
-  "lib/update.lua",
-  "lib/util.lua",
-];
+  fs.statSync(path.join(projectRoot, shippedSource(relativePath))).size;
 const depotOnlyFiles = [
   "pumpe.lua",
   "service_kiosk.lua",
@@ -206,12 +233,8 @@ const depotOnlyFiles = [
   ...extraReleaseFiles,
   ...forwardOptionalFiles,
 ];
-const uniqueReleaseBytes = [...bankRuntimeFiles, ...depotOnlyFiles]
-  .reduce((total, relativePath) => total + fileSize(relativePath), 0);
-const compactBankBytes = uniqueReleaseBytes + fileSize("config.lua") * 2;
-const legacyBankBytes = uniqueReleaseBytes * 2 + fileSize("startup.lua") * 2;
-// Since v6.3.0 every role updates itself and downloads only its own files,
-// and the Bank's /updates is a cache it drops when it needs the room. The
+// Every role updates itself and downloads only its own files, and since 11.2
+// the Bank keeps other roles' programs in memory rather than on its disk. The
 // peak that matters is therefore the largest single role: its installed files
 // plus a staged copy of the same set, inside a 1000 KiB computer.
 const COMPUTER_LIMIT = 1000 * 1024;
@@ -242,9 +265,13 @@ console.log(
     + `${manifest.optional_files.length} forward-optional files`,
 );
 console.log(`Stamped ${stampedCount} programs with v${versionMatch[1]}`);
+// The Core is the computer whose data is the money, so its own figure is
+// worth printing even when another role is the worst case.
+const corePeak = (sharedBytes + fileSize("bank_server.lua")) * 2;
 console.log(
-  `Bank footprint: ${Math.ceil(legacyBankBytes / 1024)} KiB legacy -> `
-    + `${Math.ceil(compactBankBytes / 1024)} KiB compact`,
+  `Bank Core: ${Math.ceil((sharedBytes + fileSize("bank_server.lua")) / 1024)}`
+    + ` KiB installed, ${Math.ceil(corePeak / 1024)} KiB while updating, `
+    + `${Math.floor((COMPUTER_LIMIT - corePeak) / 1024)} KiB for its data`,
 );
 console.log(
   `Worst self-update (${worstRole}): ${Math.ceil(worstPeak / 1024)} KiB of `

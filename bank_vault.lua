@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "11.1.0"
+local PROGRAM_VERSION = "11.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4310,6 +4310,65 @@ function actions.VAULT_MAIL_APP_SEND(payload)
 end
 
 -- What this Vault answers ------------------------------------------------------
+-- History and notifications, 11.2 ------------------------------------------------
+-- The Core used to keep every transaction and every notification in the file
+-- that holds the money, and it filled the Core's disk. They live here now,
+-- one small file per account, so saving one person's latest never rewrites
+-- anybody else's -- and a save never needs room for the whole bank twice.
+--
+-- The Core sends them down in batches from an outbox it keeps until this
+-- answers, and may send one twice if an answer was lost: anything already
+-- here is skipped. Kept compact -- lists rather than named fields -- and
+-- capped, newest first: what an account's Activity and Notifications show.
+local RECORDS = { dir = fs.combine(ROOT, "records"), t = 30, n = 20 }
+local recordCache = {}
+
+local function recordsOf(accountId)
+    local cached = recordCache[accountId]
+    if not cached then
+        cached = util.loadTable(fs.combine(RECORDS.dir, accountId .. ".dat"),
+            { t = {}, n = {} })
+        cached.t, cached.n = cached.t or {}, cached.n or {}
+        recordCache[accountId] = cached
+    end
+    return cached
+end
+
+-- A transaction as { id, type, amount, counterparty, description, day,
+-- time }; a notification as { id, title, body, kind, day, time, read,
+-- anything else it carried }.
+local function packRecord(kind, item)
+    if kind == "t" then
+        return { item.tx_id, item.type, item.amount, item.counterparty,
+            item.description, item.day, item.time }
+    end
+    local extra
+    for key, value in pairs(item) do
+        if key ~= "notification_id" and key ~= "title" and key ~= "body"
+            and key ~= "kind" and key ~= "created_day"
+            and key ~= "created_time" and key ~= "read" then
+            extra = extra or {}
+            extra[key] = value
+        end
+    end
+    return { item.notification_id, item.title, item.body, item.kind,
+        item.created_day, item.created_time, item.read == true, extra }
+end
+
+local function unpackRecord(kind, row)
+    if kind == "t" then
+        return { tx_id = row[1], type = row[2], amount = row[3],
+            counterparty = row[4], description = row[5], day = row[6],
+            time = row[7] }
+    end
+    local item = util.copy(row[8] or {})
+    item.notification_id, item.title, item.body, item.kind = row[1], row[2],
+        row[3], row[4]
+    item.created_day, item.created_time, item.read = row[5], row[6],
+        row[7] == true
+    return item
+end
+
 local vault = {}
 
 -- Every client request its Core forwarded. The Core has already decided who
@@ -4331,6 +4390,54 @@ function vault.VAULT_CALL(payload, sender)
     return result
 end
 
+-- A batch from the Core's outbox.
+function vault.VAULT_RECORDS(payload, sender)
+    need(sender == core.id, "NOT_MY_CORE",
+        "This Vault belongs to another Bank")
+    local touched = {}
+    for _, entry in ipairs(type(payload.items) == "table" and payload.items
+        or {}) do
+        local accountId = tostring(entry.a or "")
+        if accountId:match("^[%w_]+$") then
+            local held = recordsOf(accountId)
+            if entry.k == "r" then
+                for _, row in ipairs(held.n) do row[7] = true end
+                touched[accountId] = true
+            elseif (entry.k == "t" or entry.k == "n")
+                and type(entry.i) == "table" then
+                local row = packRecord(entry.k, entry.i)
+                local list, repeated = held[entry.k], false
+                for _, existing in ipairs(list) do
+                    if existing[1] == row[1] then repeated = true break end
+                end
+                if not repeated then
+                    table.insert(list, 1, row)
+                    while #list > RECORDS[entry.k] do table.remove(list) end
+                    touched[accountId] = true
+                end
+            end
+        end
+    end
+    for accountId in pairs(touched) do
+        pcall(util.saveTable, fs.combine(RECORDS.dir, accountId .. ".dat"),
+            recordsOf(accountId))
+    end
+    return { stored = #(payload.items or {}) }
+end
+
+function vault.VAULT_RECORDS_READ(payload, sender)
+    need(sender == core.id, "NOT_MY_CORE",
+        "This Vault belongs to another Bank")
+    local accountId = tostring(payload.account_id or "")
+    need(accountId:match("^[%w_]+$"), "NO_ACCOUNT", "Whose records?")
+    local kind = payload.kind == "t" and "t" or "n"
+    local items = {}
+    for _, row in ipairs(recordsOf(accountId)[kind]) do
+        items[#items + 1] = unpackRecord(kind, row)
+    end
+    return { items = items }
+end
+
 function vault.PAIR_HELLO(payload, sender)
     return {
         computer = os.getComputerID(),
@@ -4339,48 +4446,6 @@ function vault.PAIR_HELLO(payload, sender)
         core = core.id,
         holders = mapCount(state.holders),
     }
-end
-
--- Taking over the records the Core used to keep. Sent one table at a time
--- and acknowledged before the Core drops its copy, so an interrupted move
--- leaves the data on the Core rather than nowhere.
-function vault.VAULT_MIGRATE(payload, sender)
-    need(sender == core.id, "NOT_MY_CORE",
-        "This Vault belongs to another Bank")
-    local name = tostring(payload.table or "")
-    local rows = type(payload.rows) == "table" and payload.rows or {}
-    local accepted = 0
-    if name == "holders" then
-        for accountId, fields in pairs(rows) do
-            local record = holder(accountId)
-            for key, value in pairs(fields) do
-                if key ~= "account_id" then record[key] = value end
-            end
-            if type(fields.name) == "string" then
-                state.names[accountId] = fields.name
-            end
-            accepted = accepted + 1
-        end
-    elseif name == "sequence" then
-        for key, value in pairs(rows) do
-            if state.sequence[key] ~= nil then
-                state.sequence[key] = math.max(state.sequence[key] or 0,
-                    math.floor(tonumber(value) or 0))
-                accepted = accepted + 1
-            end
-        end
-    elseif state[name] ~= nil and type(state[name]) == "table" then
-        for key, value in pairs(rows) do
-            state[name][key] = value
-            accepted = accepted + 1
-        end
-    else
-        reject("UNKNOWN_TABLE", "The Vault does not hold " .. name)
-    end
-    state.migrated[name] = util.nowMs()
-    save()
-    logActivity("Took over " .. accepted .. " " .. name, colors.lime)
-    return { table = name, accepted = accepted }
 end
 
 -- Updates over the cable, 11.0 ------------------------------------------------------

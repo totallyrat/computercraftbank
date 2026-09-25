@@ -7,6 +7,21 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## 11.2
+
+### A full Bank comes back
+
+- [ ] On a Bank that will not start for lack of space: `delete /updates`, `reboot`. Confirm Easy Deployment installs 11.2 on the way up and the Bank reaches its dashboard.
+- [ ] If it still cannot start, run `wget run https://raw.githubusercontent.com/totallyrat/computercraftbank/main/tools/bank_rescue.lua`, confirm it reports the space it freed, `reboot`, and check a few balances are exactly what they were.
+
+### History on the Vault
+
+- [ ] After the first start of 11.2, open Foxy → Activity on a PUMPE with history: the newest transactions are there. Open Notifications: the newest are there, unread ones still unread.
+- [ ] Watch the Core's dashboard: any RECORDS WAITING count falls to nothing once the Vault has updated to 11.2 over the cable.
+- [ ] Unplug the pair cable, send some money, and confirm Activity and the notification still show on the phone. Plug it back in and confirm the waiting count clears.
+- [ ] Open a tax period, send an account some money, and confirm its declaration counts that income.
+- [ ] On the Core, check `/updates` does not exist and install a PUMPE through Easy Deployment: it installs, and `/updates` still does not exist.
+
 ## 11.1
 
 ### App Browser

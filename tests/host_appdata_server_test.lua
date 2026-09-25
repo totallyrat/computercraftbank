@@ -329,7 +329,7 @@ rejected(actions.APP_NOTIFY, "NOT_FRIENDS", as(ana, {
 }))
 
 -- The alert says which app it came from.
-local inbox = bank.state.accounts[bo.account.account_id].notifications
+local inbox = bank.notifications(bo.account.account_id)
 assert(inbox[1].app_name == "Yap Chat" and inbox[1].kind == "app")
 
 -- The Pin API ------------------------------------------------------------------

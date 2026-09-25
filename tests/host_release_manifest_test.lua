@@ -75,9 +75,13 @@ local function verify(section, expected, label)
     for index, entry in ipairs(entries) do
         assert(entry.path == expected[index],
             label .. " entry " .. index .. " is " .. entry.path)
-        assert(entry.source == entry.path,
-            entry.path .. " must be served from its own path")
-        local body = readFile("../" .. entry.path)
+        -- Served from its own path, or since 11.2 from its stripped build
+        -- in dist/ (see host_dist_build_test.lua). Every updater since 7.0
+        -- downloads by source.
+        assert(entry.source == entry.path
+            or entry.source == "dist/" .. entry.path,
+            entry.path .. " must be served from its own path or dist/")
+        local body = readFile("../" .. entry.source)
         assert(entry.size == #body,
             entry.path .. " size is stale; rerun the release builder")
         assert(entry.checksum == checksum(body),

@@ -195,6 +195,14 @@ function harness.pair(options)
         return session.government_token
     end
 
+    -- An account's notifications, newest first, the way its phone reads
+    -- them: since 11.2 they live on the Vault, with anything not yet sent
+    -- down the cable on top. Takes a harness account or an account id.
+    function bank.notifications(who)
+        local id = type(who) == "table" and (who.id or who.account_id) or who
+        return core.read_records(core.state.accounts[id], "n")
+    end
+
     function bank.balanceOf(who)
         return core.state.accounts[who.id].balance
     end

@@ -57,6 +57,13 @@ os.time = function() return 12 end
 os.epoch = function() return 123456789 end
 os.getComputerID = function() return 1 end
 
+textutils = { serialize = function(value)
+    local parts = {}
+    for key, item in pairs(value) do
+        parts[#parts + 1] = tostring(key) .. " = " .. string.format("%q", tostring(item))
+    end
+    return "{ " .. table.concat(parts, ", ") .. " }"
+end }
 local util = require("lib.util")
 util.readFile = function(path) return files[canonical(path)] end
 util.writeFile = function(path, body) files[canonical(path)] = body end
@@ -78,27 +85,18 @@ assert(files["/startup.lua"]:find("-- PUMPE ROLE STARTUP", 1, true))
 assert(files["/startup.lua"]:find(
     'shell.run("/installer.lua", "--boot", "bank")', 1, true))
 assert(files["/installer.lua"] == standalone)
-assert(files["/.easy_deployment_source.lua"] == nil)
 assert(bank.local_update_body("startup.lua") == standalone)
 
-files["/bank_server.lua"] = "bank runtime"
-files["/updates/bank_server.lua"] = "duplicate bank runtime"
-files["/pumpe.lua"] = "client program"
-files["/updates/pumpe.lua"] = "client program"
-files["/.easy_deployment_source.lua"] = standalone
-directories["/.online_update_stage"] = true
-files["/.online_update_stage/partial.lua"] = "partial"
-bank.compact_bank_storage()
-assert(files["/bank_server.lua"] == "bank runtime")
-assert(files["/updates/bank_server.lua"] == nil)
-assert(files["/pumpe.lua"] == nil)
-assert(files["/updates/pumpe.lua"] == "client program")
-assert(files["/.easy_deployment_source.lua"] == nil)
-assert(not directories["/.online_update_stage"])
+-- Since 11.2 the depot is not on the disk: the Bank serves its own runtime
+-- from where it runs, role programs from memory, and the client config is
+-- made on the spot.
 files["/lib/ui.lua"] = "shared runtime library"
-files["/updates/public/config.lua"] = "sanitized config"
 assert(bank.deployment_body("lib/ui.lua") == "shared runtime library")
+bank.depot.remember("pumpe.lua", "client program")
 assert(bank.deployment_body("pumpe.lua") == "client program")
-assert(bank.deployment_body("public/config.lua") == "sanitized config")
-
+assert(bank.deployment_body("public/config.lua"):find(
+    "CLIENT-NO-GOVERNMENT-ACCESS", 1, true))
+for path in pairs(files) do
+    assert(not path:find("^/updates"), "nothing is written to /updates")
+end
 print("host_bank_restart_test: OK")
