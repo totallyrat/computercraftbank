@@ -6386,6 +6386,7 @@ if TEST_MODE then
         sweep_ccg_escrow = sweepAbandonedEscrow,
         deployment_files = deploymentFilesForRole,
         deployment_body = deploymentBody,
+        deployment_route = deploymentRoute,
         ensure_bank_startup = ensureBankStartup,
         local_update_body = localUpdateBody,
         deployment_fetch = fetchDepotFile,
