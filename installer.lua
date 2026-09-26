@@ -1492,6 +1492,18 @@ local function installRole(role, automatic)
         end
         completed = completed + file.size
     end
+    -- This computer boots through the installer.lua it is handed, so it has
+    -- to be Easy Deployment. Until 11.2.1 a Bank could hand out its own
+    -- program in its place, and every role installed from it -- whatever
+    -- was picked -- restarted as a Bank Server.
+    local handed = readFile(fs.combine(STAGING_ROOT, "installer.lua"))
+    if handed and handed:sub(1, 24) ~= "-- PUMPE EASY DEPLOYMENT" then
+        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
+        if automatic then return false end
+        message("error", "WRONG FILE FROM THE BANK",
+            "Its installer is not Easy Deployment", 2.2)
+        return
+    end
     local committed, commitError = commitInstallation(manifest)
     if not committed then
         if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end

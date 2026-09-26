@@ -16,8 +16,8 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 187835,
-      "checksum": "de4789ac"
+      "size": 188019,
+      "checksum": "57ce5d15"
     },
     {
       "path": "pumpe.lua",
@@ -46,8 +46,8 @@
     {
       "path": "startup.lua",
       "source": "startup.lua",
-      "size": 63171,
-      "checksum": "1bcd187e"
+      "size": 63830,
+      "checksum": "d74b2bc1"
     },
     {
       "path": "launcher.lua",

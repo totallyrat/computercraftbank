@@ -233,17 +233,27 @@ function depot.publicConfig()
         .. textutils.serialize(publicConfig, { compact = false }) .. "\n"
 end
 
+-- Easy Deployment is the file whose first line is its marker. Only the first
+-- line will do: this program names the marker too, in DEPLOY above. Until
+-- 11.2.1 it went by a phrase from the installer's second line, which this
+-- program also carried in the check itself -- so a Bank whose own program
+-- sat where its copy of the installer belongs handed itself out as the
+-- installer, and every role installed from it restarted as a Bank.
+function depot.isInstaller(body)
+    return type(body) == "string"
+        and body:sub(1, #DEPLOY.installer_marker) == DEPLOY.installer_marker
+end
+
 local function localUpdateBody(path)
     if path == "public/config.lua" then return depot.publicConfig() end
     if path == "startup.lua" then
         for _, candidate in ipairs({ fs.combine(ROOT, "installer.lua"),
             fs.combine(ROOT, "startup.lua") }) do
             local body = util.readFile(candidate)
-            if body and body:find("This file is intentionally standalone", 1, true) then
-                return body
-            end
+            if depot.isInstaller(body) then return body end
         end
-        return nil
+        -- No copy of its own: the published one, fetched like a role program.
+        return depot.cache[path]
     end
     if RELEASE.depot_set[path] then return depot.cache[path] end
     return util.readFile(fs.combine(ROOT, path))
@@ -251,11 +261,14 @@ end
 
 local function cacheInstaller(body)
     body = body or localUpdateBody("startup.lua")
-    if body and body:find("This file is intentionally standalone", 1, true) then
-        util.writeFile(fs.combine(ROOT, "installer.lua"), body)
-        return body
-    end
-    return nil
+    if not depot.isInstaller(body) then return nil end
+    local path = fs.combine(ROOT, "installer.lua")
+    local existing = util.readFile(path)
+    -- Whatever is there and is not Easy Deployment is left alone: on a Bank
+    -- set up by hand it can be the program this computer is running.
+    if existing and not depot.isInstaller(existing) then return nil end
+    if existing ~= body then util.writeFile(path, body) end
+    return body
 end
 
 local function absoluteRootFile(path)
@@ -270,10 +283,10 @@ local function ensureBankStartup(installerBody, roleId)
     installerBody = cacheInstaller(installerBody)
     local startupPath = "/startup.lua"
     local existing = util.readFile(startupPath)
-    local owned = not existing
-        or existing:find(DEPLOY.installer_marker, 1, true)
-        or existing:find(DEPLOY.role_marker, 1, true)
-        or existing:find("This file is intentionally standalone", 1, true)
+    -- By its first line, for the same reason as depot.isInstaller: a
+    -- /startup.lua that is this program only mentions the markers.
+    local owned = not existing or depot.isInstaller(existing)
+        or existing:sub(1, #DEPLOY.role_marker) == DEPLOY.role_marker
     if not owned then
         return false, "Existing non-PUMPE /startup.lua was preserved"
     end
@@ -5216,7 +5229,9 @@ end
 local function deploymentBody(source)
     local body = localUpdateBody(source)
     if body then return body end
-    if RELEASE.depot_set[source] then return fetchDepotFile(source) end
+    if RELEASE.depot_set[source] or source == "startup.lua" then
+        return fetchDepotFile(source)
+    end
     return nil
 end
 
