@@ -369,7 +369,7 @@ New in 10.0. Three pieces, deliberately separate.
 
 - **Website Crafter** (a PUMPE app) is where a website is written, as code. The draft is kept on the phone, so it works with no Internet Server anywhere on the network.
 - **The Bank Vault** keeps the register of names. Reserving a domain is what makes it yours, and a name means the same thing to everybody because there is one register. Two websites per account.
-- **The Internet Server** holds the pages and serves them. Install it from Easy Deployment → SERVERS.
+- **The Internet Server** holds the pages and serves them. Install it from Easy Deployment: search for `internet`.
 
 ### A website is a program
 
@@ -500,40 +500,42 @@ Then it runs itself:
 
 ## Easy Deployment
 
-Only the first Bank Server needs the complete release copied locally. Every other computer needs just one standalone file. `startup.lua` and `installer.lua` are identical; use `startup.lua` at the computer root for automatic launch, or run `installer.lua` manually.
+Since 12.0 Easy Deployment is a downloader. One file, `startup.lua`, sets up any computer: everything it installs comes straight from the published release on GitHub, and every file is checked against the release manifest before anything is replaced. It asks no Bank Server for anything. It needs ComputerCraft's HTTP switched on, as the Bank's own updates already do.
 
-### 1. Bootstrap the first Bank Server
+### Setting up a computer
 
-1. Keep `startup.lua` beside the complete release on the one authoritative Bank Server.
-2. Edit the local `config.lua` and change `government_key`.
-3. Run `startup`, choose **Bank Server**, then **Foxy Bank Server**, and enter `4040`. (A **3rd Party Bank Server** is the other choice and needs no code.)
-4. Easy Deployment verifies the complete local bundle, moves same-drive files directly into the compact Bank layout, writes an installer-based `/startup.lua`, and launches `bank_server.lua` immediately. It never tries to discover a Bank Server that does not exist yet.
-5. `/pumpe` keeps only the Bank runtime, installer, config, shared libraries and the Bank's data. Role programs for other computers are fetched when somebody installs that role and kept in memory, never on the Bank's disk (since 11.2).
+1. Put Easy Deployment on it as `/startup.lua`:
 
-If a required source file is missing, the first-boot screen lists it and lets you rescan after adding it.
+   ```
+   wget https://raw.githubusercontent.com/totallyrat/computercraftbank/main/startup.lua startup.lua
+   ```
 
-### The Servers tab
+2. Run `startup` (or restart the computer).
+3. **The PUMPE has the first screen.** Tap **INSTALL PUMPE**, or press Enter.
+4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Service Kiosk, `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the PUMPE.
+5. Every program gets the same full screen as the PUMPE, with one big **INSTALL** button. The **Bank Server** (Foxy's) and the **Admin Terminal** ask for the operator's code, `4040`. The 3rd Party Bank Server is its own entry and needs no code.
+6. It downloads the program, `config.lua`, the shared `lib/` files and its own copy as `/pumpe/installer.lua`, writes `/startup.lua` to boot through that copy, and restarts into the program.
 
-Since 10.0 the machines that run the network live behind one card in the role list: **Bank Server**, **Bank Vault**, **App Server**, **Internet Server** and **CCG Server**.
+A computer that already has a program shows it: **OPEN** starts it and **REINSTALL** downloads it again. A reinstall keeps the computer's own `config.lua` settings. Only the Bank Server ever gets the government key: every other program's config has it removed. Data files are never touched, and a `/startup.lua` that is your own program is kept — the installed program then starts straight away instead.
 
-**Bank Vault** is a choice you can pick now. It used to be something only a Bank could make — pairing handed the computer the program — so a Vault could not exist before a Bank was willing to serve it one. It installs from the release like any other role; put a wired modem on both Bank Servers, run cable between them, and pair from the Bank Server as before.
+The first Bank in a world is installed the same way — **Bank Server**, code `4040` — and needs nothing but `startup.lua`. Change `government_key` in `/pumpe/config.lua` before anyone uses it. A **Bank Vault** installs like anything else; cable it to the Bank and pair from the Bank as before.
 
-### 2. Install any other computer
+### Booting
 
-1. Copy only the supplied `startup.lua` to the new computer as `/startup.lua`.
-2. Attach a wireless or Ender modem, then restart the computer. You can also run `startup` immediately.
-3. Tap the desired role.
-4. **Personal PUMPE** has the first screen to itself; press the down arrow for every other role. Bank Server and Admin Terminal downloads require code `4040`. Border Controller, **CCG Bet Console** and **GPS Anchor** are ordinary roles.
-5. The installer downloads and verifies the main program, `config.lua`, `installer.lua`, and every required file under `lib/`.
-6. After installation, it replaces its own marked `/startup.lua` with a direct `installer.lua --boot <role>` entry. Tap **Reboot Now** and that role starts automatically.
+`/startup.lua` runs `/pumpe/installer.lua --boot <program>`. On the way up, Easy Deployment replaces itself if the release has a newer one, installs a newer release of the program if there is one, then starts **the program beside itself**. That is `/pumpe` on everything Easy Deployment set up, and wherever a Bank built by hand keeps its files: booting never assumes `/pumpe` and never rewrites `/startup.lua`, so a Bank laid out differently still updates and starts. With no internet it starts what it has. A Bank Vault is the exception to updating on the way up: its Core updates it over the cable to the Core's own release, so the two halves never run different releases. A Delivery Terminal in Pickup mode ignores Ctrl+T from the first moment and restarts if its program ever ends.
 
-Files are downloaded in verified chunks and staged before anything is replaced. A failed installation rolls back. Existing PUMPE data files are never touched, and an unrelated `/startup.lua` is preserved. The installed `/pumpe/installer.lua` is both the permanent boot manager and the one-file Easy Deployment menu.
+`installer.lua --auto <program>` installs a newer release and restarts, and does nothing otherwise. `lib/net.lua` uses it when a program cannot update itself.
 
-Easy Deployment checks the public HTTPS manifest on screen before the menu opens and safely replaces itself when a newer installer exists, so a clean computer learns about newly added roles such as Border Controller without first becoming another device type. Booting an already installed client role never contacts the internet — that copy of `installer.lua` arrives from the Bank Server's verified depot instead, and the role starts without waiting on an HTTPS round trip.
+**Why it changed (11.2).** Until 12.0 every device got Easy Deployment from the Bank over Rednet, and the Bank found its own copy by a phrase that the Bank's program contained too. On a Bank whose program sat where that copy belongs, every device it set up was given the Bank's program as its installer — the install screen said PERSONAL PUMPE, and after the restart it was a Bank Server, whatever had been picked. A downloader cannot be handed the wrong program by a Bank. The Bank still answers old installers on devices with HTTP switched off, and since 12.0 Pre it only ever hands out a file that *starts* with `-- PUMPE EASY DEPLOYMENT`.
 
-The role picker shows the role and version this computer already has, and offers **START ROLE** so an installed computer can be relaunched without reinstalling anything.
+A computer that turned into a Bank that way is fixed by wiping and setting it up again:
 
-The first Bank Server has no deployment host to download from, so Easy Deployment fetches its runtime straight from the public release manifest over HTTPS — a clean computer needs nothing but `startup.lua`. It downloads only the Bank's own seven files; role programs are fetched into memory on demand the first time somebody installs that role. If HTTP is switched off or the manifest cannot be reached, it says so and falls back to a complete release package sitting beside `startup.lua`.
+```
+delete /startup.lua
+delete /pumpe
+wget https://raw.githubusercontent.com/totallyrat/computercraftbank/main/startup.lua startup.lua
+reboot
+```
 
 ## Automatic Internet Updates
 
@@ -557,7 +559,7 @@ What the phone shows comes from the manifest: a `label` naming the release and a
 
 Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published defaults. A release can name a setting it is taking back — `config_resets` in `config.lua` — and a device still carrying exactly that stale value adopts the new default instead. That is how the retired `CHANGE-ME-GOVERNMENT-KEY` placeholder is cleared.
 
-The Bank Server hands out every role's files over Rednet (Easy Deployment, and the fallback for a device whose ComputerCraft HTTP access is switched off). Its own runtime it serves from `/pumpe`; any other role program it fetches from the release the first time somebody installs that role and keeps **in memory** — until 11.2 it kept them in `/updates` on its own disk, which is half of how a Core filled up. Restricting HTTP costs update speed but never strands a device.
+The Bank Server still answers installers from before 12.0 over Rednet, which only a device with ComputerCraft's HTTP switched off still asks. Its own runtime it serves from `/pumpe`; any other program it fetches from the release when one is asked for and keeps **in memory** — until 11.2 it kept them in `/updates` on its own disk, which is half of how a Core filled up. Since 12.0 a device with HTTP switched off cannot be set up or updated: Easy Deployment downloads from GitHub.
 
 **Published without comments (11.2).** The Core, the Vault and the shared libraries are downloaded from `dist/`: the same files built by `tools/build_release_manifest.js` with their comments and indentation taken out — a third of every one of them was prose for whoever reads this repository. Every line stays on the line it came from, so an error a computer reports still names the right line here, and `tests/host_dist_build_test.lua` proves each one compiles to exactly the same bytecode as its source. Programs whose comments are read by code (the installer's `-- PUMPE EASY DEPLOYMENT`, the apps' `-- PUMPE APP:` lines) are published as they are. Edit the source, never `dist/`; the builder rewrites it.
 
@@ -605,25 +607,19 @@ Commit or upload the changed source files and regenerated `release_manifest.json
 
 ### Manual launching
 
-You can start any installed role manually through Easy Deployment:
+You can start any installed program through Easy Deployment:
 
 ```text
-/pumpe/installer.lua --boot bank
 /pumpe/installer.lua --boot pumpe
-/pumpe/installer.lua --boot service
-/pumpe/installer.lua --boot event
-/pumpe/installer.lua --boot tax
-/pumpe/installer.lua --boot border
-/pumpe/installer.lua --boot ccg
 ```
 
-To start a role automatically, create `/startup.lua` on that device:
+Program names are `pumpe`, `service`, `delivery`, `event`, `border`, `bank`, `vault`, `tpbank`, `admin`, `ccg`, `ccgserver`, `anchor`, `apps` and `internet`. To start one automatically, `/startup.lua` on that device is:
 
 ```lua
 shell.run("/pumpe/installer.lua", "--boot", "service")
 ```
 
-Replace `service` with `bank`, `pumpe`, `event`, `tax`, `border`, or `ccg`.
+Running `/pumpe/installer.lua` with nothing after it opens the menu.
 
 ## Hardware notes
 
@@ -829,7 +825,7 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 **A PUMPE fails to start with a `nil value` error**
 
 - Its program and the shared `lib/` are from different releases. Run Easy Deployment on that computer and reinstall the role; it downloads the program and every library together.
-- If several devices show it, the Bank Server itself is serving mismatched files. Restart the Bank so Easy Deployment repairs its whole runtime, then let the clients update again.
+- Reinstalling from Easy Deployment downloads the program and every library from the same release.
 
 **A friend cannot be messaged or reached**
 
@@ -850,4 +846,4 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 ## Version
 
-PUMPE Ecosystem `10.1.0`.
+PUMPE Ecosystem `11.9.0` — 12.0 Pre.

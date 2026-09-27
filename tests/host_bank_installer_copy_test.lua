@@ -1,15 +1,14 @@
--- Easy Deployment installing a PUMPE from a real Bank Server.
+-- What a Bank hands a device as its Easy Deployment.
 --
--- Two computers on one simulated Rednet: a Bank Core with the files a Bank
--- really has on its disk, and a blank pocket computer running the real
--- installer. The pocket presses INSTALL PUMPE; what matters is what ends up
--- on the pocket's disk and what it boots into.
---
--- 11.2.1: every device installed from some 11.2 Banks restarted as a Bank
--- Server, whatever role was picked. A Bank hands each device its copy of
--- Easy Deployment, and it recognised that copy by a phrase its own program
--- contains. Where the Bank's program sat in the copy's place, that is what
--- it handed out -- and a device boots through its installer.
+-- Until 12.0 every device got its copy of Easy Deployment from the Bank over
+-- Rednet, and still does if its HTTP is switched off. The Bank recognised
+-- its own copy by a phrase from the installer's second line, which the
+-- Bank's program also carried -- so on a Bank whose program sat in that
+-- copy's place, every device it set up got the Bank's program as its
+-- installer and restarted as a Bank, whatever was picked. 11.2 did exactly
+-- that; this is the Bank side of the fix. Two computers on one simulated
+-- Rednet: a real Core with the files a Bank has on its disk, and a device
+-- asking for a PUMPE the way installers before 12.0 did.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 
@@ -259,173 +258,67 @@ loadfile = function(path, ...)
     return nil, "File not found"
 end
 
--- The pocket: a blank computer running the installer ---------------------------------
+-- A device asking the way installers before 12.0 did ----------------------------------
 
-os.queueEvent = function() end
-local events = {}
-os.pullEvent = function(filter)
-    -- Both programs yield to the watchdog by waiting on an event they
-    -- queued themselves; that always comes straight back.
-    if filter then return filter end
-    local event = table.remove(events, 1)
-    if not event then error("__OUT_OF_EVENTS__", 0) end
-    return table.unpack(event)
+local function ask(action, payload)
+    local id = "REQ" .. tostring(math.random(100000))
+    current = 1
+    bank.deployment_route(7, { kind = "deploy_request", request_id = id,
+        action = action, payload = payload })
+    current = 7
+    local reply = table.remove(inbox[7], 1)
+    assert(reply and reply.message.request_id == id, "the Bank answered")
+    assert(reply.message.ok, tostring(reply.message.error))
+    return reply.message.data
 end
-os.pullEventRaw = os.pullEvent
-os.reboot = function() error("__REBOOT__", 0) end
-os.shutdown = function() error("__SHUTDOWN__", 0) end
+
+-- The installer.lua a PUMPE would be given, whole, and what the manifest the
+-- Bank sent said it would be.
+local function handedInstaller()
+    local manifest = ask("MANIFEST", { role = "pumpe" })
+    local entry
+    for _, file in ipairs(manifest.files) do
+        if file.path == "installer.lua" then entry = file end
+    end
+    assert(entry, "every role is given an installer")
+    local parts, offset = {}, 0
+    repeat
+        local chunk = ask("FILE_CHUNK", { role = "pumpe", path = "installer.lua",
+            offset = offset, limit = 6000 })
+        parts[#parts + 1] = chunk.data
+        offset = chunk.next_offset
+    until chunk.done
+    local body = table.concat(parts)
+    assert(#body == entry.size and util.checksum(body) == entry.checksum)
+    return body
+end
 
 local installer = readRepo("startup.lua")
-local function said(text)
-    for _, line in ipairs(drawn) do
-        if line:find(text, 1, true) then return true end
-    end
-    return false
-end
 
--- A brand-new pocket with Easy Deployment as its /startup.lua presses
--- INSTALL PUMPE on the first screen, then leaves.
-local function freshInstall()
-    disks[7], inbox[7], drawn = { ["startup.lua"] = installer }, {}, {}
-    current = 7
-    events = {
-        { "char", "i" },             -- INSTALL PUMPE, on the first screen
-        { "terminate" },             -- leave the success screen
-        { "terminate" },             -- and the menu
-    }
-    local ok, err = pcall(assert(load(installer, "=startup.lua")))
-    assert(ok or err == "__OUT_OF_EVENTS__" or err == "__REBOOT__",
-        "the installer failed: " .. tostring(err))
-    return disks[7]
-end
+-- 1. A Bank laid out as Easy Deployment leaves it hands out its own copy.
+assert(handedInstaller() == installer, "a Bank in /pumpe hands out its copy")
 
--- Then it reboots: /startup.lua hands over to the installer it was given,
--- which checks with the Bank and starts whatever this computer is. Returns
--- what was started.
-local function reboot()
-    local launched = {}
-    local realRun = shell.run
-    shell.run = function(path, ...)
-        path = tostring(path):gsub("^/", "")
-        if path:find("pumpe%.lua$") or path:find("bank_server%.lua$") then
-            launched[#launched + 1] = path
-            return true
-        end
-        local body = disks[current][path]
-        assert(body, "the pocket tried to run " .. path .. ", which it does not have")
-        -- The Bank's program handed out as the installer: that is the Bank
-        -- starting on the pocket.
-        if body:find("local DEPLOY = {", 1, true) then
-            launched[#launched + 1] = "the Bank, as " .. path
-            return true
-        end
-        local chunk = assert(load(body, "=" .. path))
-        local okRun, runErr = pcall(chunk, ...)
-        assert(okRun or runErr == "__OUT_OF_EVENTS__" or runErr == "__REBOOT__",
-            path .. " failed: " .. tostring(runErr))
-        return true
-    end
-    events = { { "terminate" } }
-    current = 7
-    assert(load(disks[7]["startup.lua"], "=startup.lua"))()
-    shell.run = realRun
-    return launched
-end
-
-local function assertPumpe(pocket, launched, what)
-    local boot = pocket["startup.lua"] or ""
-    assert(boot:find('"--boot", "pumpe"', 1, true),
-        what .. ": the pocket boots into the PUMPE: " .. boot)
-    assert(pocket["pumpe/pumpe.lua"] == readRepo("pumpe.lua"),
-        what .. ": the PUMPE program is on it")
-    assert(not pocket["pumpe/bank_server.lua"], what .. ": and the Bank's is not")
-    local installedConfig = load(pocket["pumpe/config.lua"])()
-    assert(installedConfig.government_key == "CLIENT-NO-GOVERNMENT-ACCESS",
-        what .. ": with a config that has no government key")
-    assert(installedConfig.version == published.version)
-    assert(pocket["pumpe/installer.lua"] == installer,
-        what .. ": and Easy Deployment as its installer")
-    assert(#launched == 1 and launched[1] == "pumpe/pumpe.lua",
-        what .. ": after a reboot the pocket starts the PUMPE, not "
-            .. table.concat(launched, ", "))
-end
-
--- 1. A Bank laid out as Easy Deployment leaves it ------------------------------------------
-
-local pocket = freshInstall()
-assertPumpe(pocket, reboot(), "a Bank in /pumpe")
-
--- 2. A Bank whose copy of Easy Deployment is its own program --------------------------------
--- It has no copy of the installer to hand out, so it hands out the
--- published one -- and its own program, which may be what it runs, is left
--- where it is.
-
--- The program a Bank out there runs is 11.2's, which carried the
--- installer's phrase in the very check that looked for it; the stand-in
--- carries it too. It names the installer's first line as well, as a string.
+-- 2. A Bank whose program sits where its copy belongs. The program a Bank
+-- out there runs is 11.2's, which carried the installer's phrase in the
+-- very check that looked for it; the stand-in carries it too, and names the
+-- installer's first line as a string, as every Bank program does.
 local bankProgram = readRepo("dist/bank_server.lua")
     .. '\nlocal _ = "This file is intentionally standalone"\n'
 assert(bankProgram:find("-- PUMPE EASY DEPLOYMENT", 1, true))
 disks[1]["pumpe/installer.lua"] = bankProgram
-pocket = freshInstall()
-assertPumpe(pocket, reboot(), "a Bank with its program in the installer's place")
+assert(handedInstaller() == installer,
+    "it hands out the published Easy Deployment, never its own program")
 assert(disks[1]["pumpe/installer.lua"] == bankProgram,
-    "the Bank's own file is not overwritten")
+    "and does not overwrite what is there, which may be what it runs")
 current = 1
 bank.ensure_bank_startup()
-assert(disks[1]["pumpe/installer.lua"] == bankProgram,
-    "not when it restarts either")
+assert(disks[1]["pumpe/installer.lua"] == bankProgram, "not when it restarts either")
 -- A Bank started straight from /startup.lua is not rewritten into a boot
 -- entry for an installer it does not have.
 disks[1]["startup.lua"] = bankProgram
 bank.ensure_bank_startup()
 assert(disks[1]["startup.lua"] == bankProgram,
     "a /startup.lua that only mentions the markers is not Easy Deployment's")
-disks[1]["startup.lua"] = installed["startup.lua"]
-disks[1]["pumpe/installer.lua"] = installed["pumpe/installer.lua"]
-
--- 3. A Bank that still hands out its own program --------------------------------------------
--- A Bank on 11.2 in that state, or anything else answering for it. The
--- pocket refuses the lot rather than become a Bank.
-
-local handed = {
-    ["config.lua"] = "return { version = " .. string.format("%q", published.version)
-        .. ", government_key = \"CLIENT-NO-GOVERNMENT-ACCESS\" }\n",
-    ["installer.lua"] = bankProgram,
-    ["pumpe.lua"] = readRepo("pumpe.lua"),
-}
-for _, name in ipairs({ "net", "ui", "update", "util" }) do
-    handed["lib/" .. name .. ".lua"] = readRepo("dist/lib/" .. name .. ".lua")
-end
-answer = function(from, message)
-    local data
-    if message.action == "MANIFEST" then
-        local files = {}
-        for path, body in pairs(handed) do
-            files[#files + 1] = { path = path, size = #body,
-                checksum = util.checksum(body) }
-        end
-        table.sort(files, function(a, b) return a.path < b.path end)
-        data = { role = "pumpe", version = published.version,
-            install_root = "/pumpe", chunk_size = 6000, files = files }
-    else
-        local body = handed[message.payload.path]
-        local offset = message.payload.offset
-        local chunk = body:sub(offset + 1, offset + 6000)
-        data = { path = message.payload.path, offset = offset, data = chunk,
-            next_offset = offset + #chunk, done = offset + #chunk >= #body,
-            total_size = #body }
-    end
-    rednet.send(from, { version = 1, kind = "deploy_response",
-        request_id = message.request_id, ok = true, data = data },
-        "PUMPE_DEPLOY_V5")
-end
-pocket = freshInstall()
-assert(said("WRONG FILE FROM THE BANK"), "the pocket says what is wrong")
-assert(pocket["startup.lua"] == installer,
-    "and still boots into Easy Deployment")
-assert(not pocket["pumpe/installer.lua"] and not pocket["pumpe/pumpe.lua"],
-    "with nothing installed")
 
 print = _G.print
-io.write("host_easy_deployment_test: OK\n")
+io.write("host_bank_installer_copy_test: OK\n")

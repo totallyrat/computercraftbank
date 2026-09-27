@@ -109,18 +109,16 @@ assert(installerVersion == configVersion,
     "startup.lua reports v" .. tostring(installerVersion) .. " but config is v"
         .. tostring(configVersion) .. "; rerun the release builder")
 
--- Easy Deployment's Bank repair must cover every shared runtime file, not a
--- subset. Repairing only some of them and then bumping config.lua made the
--- Bank advertise a release it was not running, and it went on to serve
--- clients a new program beside an old library.
-local repairBlock = startup:match(
-    "local BANK_RUNTIME_REPAIR = {(.-)\n}")
-assert(repairBlock, "startup.lua must list the Bank runtime repair set")
-local repaired = {}
-for path in repairBlock:gmatch('source = "([^"]+)"') do repaired[path] = true end
+-- Every program Easy Deployment installs comes with every file the Bank
+-- hands a client, not a subset: a program beside a library from another
+-- release is a partial install.
+local commonBlock = startup:match("local COMMON_FILES = {(.-)}")
+assert(commonBlock, "startup.lua must list the files every program comes with")
+local common = {}
+for path in commonBlock:gmatch('"([^"]+)"') do common[path] = true end
 
 local bank = readFile("../bank_server.lua")
-local shared = { "bank_server.lua" }
+local shared = { "config.lua" }
 do
     local block = bank:match("RELEASE%.common = {(.-)\n}")
     assert(block, "bank_server.lua must list the files every role receives")
@@ -129,8 +127,8 @@ do
     end
 end
 for _, path in ipairs(shared) do
-    assert(repaired[path],
-        path .. " is served to clients but Easy Deployment never repairs it")
+    assert(common[path],
+        path .. " is part of every role but Easy Deployment does not install it")
 end
 
 -- The release's own name and change list. A phone asks before it installs

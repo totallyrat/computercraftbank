@@ -1,116 +1,159 @@
 -- PUMPE EASY DEPLOYMENT
--- This file is intentionally standalone. It downloads every other required
--- script and library from the active Bank Server's /updates/ directory.
+-- This file is intentionally standalone. Everything it installs comes
+-- straight from the published release on GitHub.
+--
+-- 12.0 rebuilt it as a downloader. The PUMPE has the first screen to itself;
+-- the down arrow (or simply typing) opens a search of every program, and
+-- each one downloads its own files over HTTPS, checked against the release
+-- manifest. Nothing is fetched from a Bank Server any more. That is what
+-- went wrong in 11.2: a Bank handed every device its copy of this file, and
+-- a Bank whose own program sat in that copy's place turned every device it
+-- set up into a Bank, whatever was picked.
+--
+-- A computer boots through its installed copy, which /startup.lua names:
+--   installer.lua --boot <program>   update if the release is newer, then start
+--   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local DEPLOY_PROTOCOL = "PUMPE_DEPLOY_V5"
-local DEPLOY_HOSTNAME = "PUMPE_UPDATES"
-local PROTECTED_CODE = "4040"
-local INSTALLER_VERSION = "11.2.0"
-local PUBLIC_MANIFEST_URL =
+local INSTALLER_VERSION = "11.9.0"
+local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
-local UPDATES_ROOT = "/updates"
-local STAGING_ROOT = fs.combine(INSTALL_ROOT, ".deploy_tmp")
-local BACKUP_ROOT = fs.combine(INSTALL_ROOT, ".deploy_backup")
+local PROTECTED_CODE = "4040"
+local HEADER = "-- PUMPE EASY DEPLOYMENT"
+local ROLE_MARKER = "-- PUMPE ROLE STARTUP"
 local arguments = { ... }
-local automaticRoleId = arguments[1] == "--auto"
-    and string.lower(tostring(arguments[2] or "")) or nil
-local bootRoleId = arguments[1] == "--boot"
-    and string.lower(tostring(arguments[2] or "")) or nil
+local mode = arguments[1]
+local modeProgram = string.lower(tostring(arguments[2] or ""))
+
+-- Where this copy lives. /startup.lua names it, so this is where a computer's
+-- programs are: /pumpe on everything Easy Deployment set up, and wherever a
+-- Bank built by hand keeps its files. Booting never assumes /pumpe, which is
+-- what lets a hand-built Bank update itself and still start.
+local function homeDir()
+    if type(shell) ~= "table" or type(shell.getRunningProgram) ~= "function" then
+        return INSTALL_ROOT
+    end
+    return fs.getDir(shell.getRunningProgram() or "")
+end
 
 -- A Delivery Terminal in Pickup mode faces the public and leaves this file
 -- behind. Booting with it, Ctrl+T is ignored from the first moment, before
 -- anything below waits on the network: a customer who reboots the counter
--- comes back to the counter, not to a shell beside every locker.
-local KEYBOARD_LOCK = fs.combine(INSTALL_ROOT, "keyboard.lock")
--- Only a Delivery Terminal: a lock some other role finds on the disk is a
--- leftover, and never a reason to take Ctrl+T away from it.
-if bootRoleId == "delivery" and fs.exists(KEYBOARD_LOCK) then
-    os.pullEvent = os.pullEventRaw
+-- comes back to the counter, not to a shell beside every locker. Only a
+-- Delivery Terminal: a lock another program finds is a leftover.
+local function keyboardLocked()
+    return mode == "--boot" and modeProgram == "delivery"
+        and (fs.exists(fs.combine(homeDir(), "keyboard.lock"))
+            or fs.exists(fs.combine(INSTALL_ROOT, "keyboard.lock")))
 end
+if keyboardLocked() then os.pullEvent = os.pullEventRaw end
 
-local target = term.current()
-local bankId
-local running = true
-local publicManifest
-local WATCHDOG_YIELD_EVENT = "pumpe_installer_work_slice"
-local CHECKSUM_SLICE_BYTES = 2048
-
-local theme = {
-    background = colors.black,
-    panel = colors.gray,
-    panelAlt = colors.lightGray,
-    ink = colors.white,
-    muted = colors.lightGray,
-    accent = colors.cyan,
-    accentDark = colors.blue,
-    success = colors.lime,
-    warning = colors.orange,
-    danger = colors.red,
-}
-
-local roles = {
-    { id = "pumpe", label = "PERSONAL PUMPE", detail = "Pocket banking" },
-    { id = "service", label = "SERVICE KIOSK", detail = "Shop checkout" },
-    -- New in 10.2: the warehouse, delivery and pickup side of the Shop.
-    { id = "delivery", label = "DELIVERY TERMINAL",
-      detail = "Orders + pickup points" },
-    { id = "event", label = "EVENT KIOSK", detail = "Tickets + door check" },
-    { id = "border", label = "BORDER CONTROLLER", detail = "Visa entry gate" },
-    { id = "bank", label = "BANK SERVER", detail = "Foxy or a 3rd party",
-      server = true },
-    { id = "admin", label = "ADMIN TERMINAL", detail = "Government use", protected = true },
+-- Every program there is. `words` is what search also looks at, so a kiosk
+-- turns up for "shop" and the CCG console for "casino". `code` asks for the
+-- operator's code first. `extra` files come with the program.
+local PROGRAMS = {
+    { id = "pumpe", name = "Personal PUMPE", file = "pumpe.lua",
+      detail = "The phone: money, friends, apps",
+      about = "Money, friends, tickets and travel papers, all in one pocket computer.",
+      words = "phone pocket foxy money wallet apps" },
+    { id = "service", name = "Service Kiosk", file = "service_kiosk.lua",
+      detail = "A shop's checkout",
+      about = "A shop's till: sell, take Foxy Pay, run an online store.",
+      words = "shop store till pos checkout sell pay" },
+    { id = "delivery", name = "Delivery Terminal", file = "delivery_terminal.lua",
+      detail = "Orders and pickup points",
+      about = "Packs a shop's orders, or runs a pickup point with lockers.",
+      words = "warehouse parcel locker pickup courier orders" },
+    { id = "event", name = "Event Kiosk", file = "event_kiosk.lua",
+      detail = "Tickets and the door",
+      about = "Sells tickets and checks them at the door.",
+      words = "tickets door concert show" },
+    { id = "border", name = "Border Controller", file = "border_controller.lua",
+      detail = "The visa gate",
+      about = "Checks visas and opens the gate.",
+      words = "visa passport gate travel territory" },
+    { id = "bank", name = "Bank Server", file = "bank_server.lua", code = true,
+      detail = "Foxy: the economy itself",
+      about = "Foxy's Bank Core: every balance in the world. Needs the operator's code.",
+      words = "foxy core server money economy" },
+    -- Its Core updates it over the cable, to exactly the release the Core
+    -- runs, so booting never updates it from the internet: a Vault ahead of
+    -- its Core would be answering another release's questions.
+    { id = "vault", name = "Bank Vault", file = "bank_vault.lua", byCore = true,
+      detail = "The other half of a Bank",
+      about = "Holds history, chats, shops and mail for a Bank. Cable it to the Bank.",
+      words = "vault records server pair cable" },
+    { id = "tpbank", name = "3rd Party Bank Server", file = "bank_app_server.lua",
+      detail = "Hosts somebody's own bank",
+      about = "Runs a bank of your own, with its own app on every PUMPE.",
+      words = "third party bank app server" },
+    { id = "admin", name = "Admin Terminal", file = "admin_terminal.lua", code = true,
+      detail = "For the government",
+      about = "Taxes, territories and the government's tools. Needs the operator's code.",
+      words = "government tax admin" },
+    { id = "ccg", name = "CCG Bet Console", file = "ccg.lua",
+      detail = "ComputerCraftGaming",
+      about = "Heads or tails and the rest, with a Bet Wallet.",
+      words = "casino bet game gaming gamble" },
+    { id = "ccgserver", name = "CCG Server", file = "ccg_server.lua",
+      detail = "Runs the games",
+      about = "The server the CCG consoles play against.",
+      words = "casino bet game server" },
+    { id = "anchor", name = "GPS Anchor", file = "gps_anchor.lua",
+      detail = "A positioning beacon",
+      about = "One of the four beacons that tell a PUMPE where it is.",
+      words = "gps location position beacon" },
+    { id = "apps", name = "App Server", file = "app_server.lua",
+      detail = "Hosts the App Browser",
+      about = "Serves the apps every PUMPE can download.",
+      words = "apps store browser server",
+      extra = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
+          "internet.lua", "shop.lua", "foxmail.lua", "company.lua" } },
+    { id = "internet", name = "Internet Server", file = "internet_server.lua",
+      detail = "Hosts the web",
+      about = "Serves the websites and domains of the web.",
+      words = "web website internet domain server" },
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
-    -- so instead of failing with an unknown role.
-    { id = "tax", label = "TAX CONTROLLER", detail = "Retired", protected = true, hidden = true },
-    -- Reached through the BANK SERVER menu rather than the role list, but it
-    -- has to be here all the same: a boot marker is written with this id,
-    -- and a role the installer cannot find is one it refuses to start.
-    { id = "tpbank", label = "3RD PARTY BANK SERVER",
-      detail = "Hosts a Bank App", hidden = true },
-    -- A Vault could only ever be made by pairing from a Bank Server, which
-    -- meant the Bank had to hand over the program before the computer could
-    -- run it. Since 10.0 it installs here like any other role and pairs
-    -- afterwards, over the cable, with nothing to download from the Bank.
-    { id = "vault", label = "BANK VAULT", detail = "The other half of a Bank",
-      server = true },
-    { id = "ccg", label = "CCG BET CONSOLE", detail = "ComputerCraftGaming" },
-    { id = "ccgserver", label = "CCG SERVER", detail = "Runs the games",
-      server = true },
-    { id = "anchor", label = "GPS ANCHOR", detail = "Positioning beacon" },
-    { id = "apps", label = "APP SERVER", detail = "Hosts optional apps",
-      server = true },
-    { id = "internet", label = "INTERNET SERVER", detail = "Hosts the web",
-      server = true },
+    -- so instead of failing with an unknown program.
+    { id = "tax", name = "Tax Controller", file = "tax_controller.lua",
+      detail = "Retired", about = "Retired.", hidden = true },
 }
 
-local rolePrograms = {
-    bank = "bank_server.lua",
-    tpbank = "bank_app_server.lua",
-    vault = "bank_vault.lua",
-    pumpe = "pumpe.lua",
-    service = "service_kiosk.lua",
-    event = "event_kiosk.lua",
-    tax = "tax_controller.lua",
-    admin = "admin_terminal.lua",
-    border = "border_controller.lua",
-    ccg = "ccg.lua",
-    ccgserver = "ccg_server.lua",
-    anchor = "gps_anchor.lua",
-    apps = "app_server.lua",
-    internet = "internet_server.lua",
-    delivery = "delivery_terminal.lua",
-}
+-- What every program comes with. startup.lua is this file; it is installed
+-- as installer.lua beside the program.
+local COMMON_FILES = { "startup.lua", "config.lua", "lib/net.lua", "lib/ui.lua",
+    "lib/update.lua", "lib/util.lua" }
 
-local function roleById(id)
-    for _, role in ipairs(roles) do
-        if role.id == id then return role end
+local function programById(id)
+    for _, program in ipairs(PROGRAMS) do
+        if program.id == id then return program end
     end
     return nil
 end
 
-local function clear(background)
-    target.setBackgroundColor(background or theme.background)
+local function filesFor(program)
+    local paths = { program.file }
+    for _, path in ipairs(COMMON_FILES) do paths[#paths + 1] = path end
+    for _, path in ipairs(program.extra or {}) do paths[#paths + 1] = path end
+    return paths
+end
+
+local function installPath(path)
+    return path == "startup.lua" and "installer.lua" or path
+end
+
+-- Drawing --------------------------------------------------------------------
+
+local target = term.current()
+local theme = {
+    background = colors.black, panel = colors.gray, panelAlt = colors.lightGray,
+    ink = colors.white, muted = colors.lightGray, accent = colors.cyan,
+    accentDark = colors.blue, success = colors.lime, warning = colors.orange,
+    danger = colors.red,
+}
+
+local function clear()
+    target.setBackgroundColor(theme.background)
     target.setTextColor(theme.ink)
     target.clear()
     target.setCursorPos(1, 1)
@@ -124,19 +167,17 @@ local function fill(x, y, width, height, background)
     target.setBackgroundColor(background)
     local line = string.rep(" ", width)
     for row = y, y + height - 1 do
-        if row >= 1 and row <= screenHeight then
+        if row >= 1 then
             target.setCursorPos(x, row)
             target.write(line)
         end
     end
 end
 
-local function writeAt(x, y, value, foreground, background, maxWidth)
+local function writeAt(x, y, value, foreground, background)
     local screenWidth, screenHeight = target.getSize()
     if x < 1 or x > screenWidth or y < 1 or y > screenHeight then return end
-    value = tostring(value or "")
-    if maxWidth then value = value:sub(1, math.max(0, maxWidth)) end
-    value = value:sub(1, screenWidth - x + 1)
+    value = tostring(value or ""):sub(1, screenWidth - x + 1)
     if background then target.setBackgroundColor(background) end
     target.setTextColor(foreground or theme.ink)
     target.setCursorPos(x, y)
@@ -146,15 +187,14 @@ end
 local function truncate(value, width)
     value = tostring(value or "")
     if #value <= width then return value end
-    if width <= 2 then return value:sub(1, width) end
+    if width <= 2 then return value:sub(1, math.max(0, width)) end
     return value:sub(1, width - 2) .. ".."
 end
 
 local function center(y, value, foreground, background)
     local width = target.getSize()
     value = truncate(value, width - 2)
-    writeAt(math.floor((width - #value) / 2) + 1, y,
-        value, foreground, background)
+    writeAt(math.floor((width - #value) / 2) + 1, y, value, foreground, background)
 end
 
 local function wrapText(value, width)
@@ -172,9 +212,8 @@ local function wrapText(value, width)
     return lines
 end
 
--- A 3x5 block face so the PUMPE panel gets a title you can read across the
--- room. Returns false when the screen cannot hold it, so the caller can fall
--- back to ordinary centred text.
+-- A 3x5 block face, so the PUMPE's screen has a title you can read across
+-- the room. False when the screen cannot hold it.
 local BIG_GLYPHS = {
     P = { "###", "# #", "###", "#  ", "#  " },
     U = { "# #", "# #", "# #", "# #", "###" },
@@ -185,18 +224,15 @@ local BIG_GLYPHS = {
 local function wordmark(y, word, color)
     local width, height = target.getSize()
     local span = #word * 4 - 1
-    if span > width or y < 1 or y + 4 > height then return false end
-    for index = 1, #word do
-        if not BIG_GLYPHS[word:sub(index, index)] then return false end
-    end
+    if span > width or y + 4 > height or height < 16 then return false end
     local left = math.floor((width - span) / 2) + 1
     for index = 1, #word do
         local glyph = BIG_GLYPHS[word:sub(index, index)]
         for row = 1, 5 do
             for column = 1, 3 do
                 if glyph[row]:sub(column, column) == "#" then
-                    fill(left + (index - 1) * 4 + column - 1,
-                        y + row - 1, 1, 1, color)
+                    fill(left + (index - 1) * 4 + column - 1, y + row - 1, 1, 1,
+                        color)
                 end
             end
         end
@@ -213,45 +249,38 @@ local function header(title, subtitle)
 end
 
 local function button(buttons, id, x, y, width, height, label, background, foreground)
-    background = background or theme.panel
-    foreground = foreground or theme.ink
-    fill(x, y, width, height, background)
+    fill(x, y, width, height, background or theme.panel)
     local lines = {}
     for line in tostring(label):gmatch("[^\n]+") do lines[#lines + 1] = line end
-    if #lines == 0 then lines[1] = "" end
     local firstY = y + math.floor((height - #lines) / 2)
     for index, line in ipairs(lines) do
         line = truncate(line, width - 2)
-        writeAt(x + math.max(0, math.floor((width - #line) / 2)),
-            firstY + index - 1, line, foreground, background)
+        writeAt(x + math.max(0, math.floor((width - #line) / 2)), firstY + index - 1,
+            line, foreground or theme.ink, background or theme.panel)
     end
-    buttons[#buttons + 1] = {
-        id = id, x1 = x, y1 = y,
-        x2 = x + width - 1, y2 = y + height - 1,
-    }
+    buttons[#buttons + 1] = { id = id, x1 = x, y1 = y,
+        x2 = x + width - 1, y2 = y + height - 1 }
 end
 
-local function waitForButton(buttons, keyBindings)
+-- Waits for a tap on a button or a bound key. `typed`, when given, is what
+-- any other printable character means; it comes back with the character.
+local function waitForButton(buttons, bindings, typed)
+    bindings = bindings or {}
     while true do
         local event = { os.pullEvent() }
-        if event[1] == "mouse_click" then
+        if event[1] == "mouse_click" or event[1] == "monitor_touch" then
             local x, y = event[3], event[4]
             for index = #buttons, 1, -1 do
                 local item = buttons[index]
-                if x >= item.x1 and x <= item.x2
-                    and y >= item.y1 and y <= item.y2 then
-                    fill(item.x1, item.y1, item.x2 - item.x1 + 1,
-                        item.y2 - item.y1 + 1, theme.accentDark)
-                    sleep(0.04)
+                if x >= item.x1 and x <= item.x2 and y >= item.y1 and y <= item.y2 then
                     return item.id
                 end
             end
-        elseif event[1] == "key" and keyBindings
-            and keyBindings[event[2]] then
-            return keyBindings[event[2]]
-        elseif event[1] == "char" and keyBindings
-            and keyBindings[event[2]] then
-            return keyBindings[event[2]]
+        elseif event[1] == "key" and bindings[event[2]] then
+            return bindings[event[2]]
+        elseif event[1] == "char" then
+            if bindings[event[2]] then return bindings[event[2]] end
+            if typed then return typed, event[2] end
         elseif event[1] == "terminate" then
             return "__terminate"
         end
@@ -261,195 +290,22 @@ end
 local function message(kind, title, body, duration)
     local width, height = target.getSize()
     local color = kind == "success" and theme.success
-        or kind == "warning" and theme.warning
-        or kind == "error" and theme.danger
-        or theme.accent
+        or kind == "error" and theme.danger or theme.warning
     clear()
-    local y = math.max(3, math.floor(height / 2) - 2)
-    fill(math.floor(width / 2) - 3, y, 7, 3, color)
+    local y = math.max(2, math.floor(height / 2) - 3)
+    fill(math.floor(width / 2) - 2, y, 5, 3, color)
     center(y + 1, kind == "success" and "OK" or "!", colors.black, color)
     center(y + 4, title, color)
-    center(y + 6, body or "", theme.muted)
-    sleep(duration or 1.2)
+    local lines = wrapText(body or "", width - 4)
+    for index = 1, math.min(#lines, 3) do center(y + 5 + index, lines[index], theme.muted) end
+    sleep(duration or 1.4)
 end
 
-local function boot()
-    local width, height = target.getSize()
-    for frame = 1, 5 do
-        clear()
-        center(math.floor(height / 2) - 2, "PUMPE", theme.ink)
-        center(math.floor(height / 2), "EASY DEPLOYMENT", theme.accent)
-        local barWidth = math.max(8, math.min(width - 6, 28))
-        fill(math.floor((width - barWidth) / 2) + 1,
-            math.floor(height / 2) + 3, barWidth, 1, theme.panel)
-        fill(math.floor((width - barWidth) / 2) + 1,
-            math.floor(height / 2) + 3, math.floor(barWidth * frame / 5),
-            1, theme.accent)
-        sleep(0.08)
-    end
+local function enterKey(key)
+    return type(keys) == "table" and (key == keys.enter or key == keys.numPadEnter)
 end
 
-local function openModems()
-    local opened = 0
-    for _, name in ipairs(peripheral.getNames()) do
-        if peripheral.getType(name) == "modem" then
-            if not rednet.isOpen(name) then rednet.open(name) end
-            opened = opened + 1
-        end
-    end
-    return opened > 0
-end
-
-local function nowMs()
-    if os.epoch then return os.epoch("utc") end
-    return math.floor(os.clock() * 1000)
-end
-
-local function requestId()
-    return tostring(os.getComputerID()) .. "_" .. tostring(nowMs())
-        .. "_" .. tostring(math.random(1000, 9999))
-end
-
-local function discoverBank()
-    bankId = rednet.lookup(DEPLOY_PROTOCOL, DEPLOY_HOSTNAME)
-    return bankId
-end
-
-local function deployRequest(action, payload, timeout)
-    timeout = timeout or 8
-    if not bankId and not discoverBank() then
-        return nil, "No PUMPE Bank Server was found"
-    end
-    local id = requestId()
-    local sent = rednet.send(bankId, {
-        version = 1,
-        kind = "deploy_request",
-        request_id = id,
-        action = action,
-        payload = payload,
-    }, DEPLOY_PROTOCOL)
-    if not sent then
-        bankId = nil
-        return nil, "Could not reach the Bank Server"
-    end
-    local deadline = nowMs() + timeout * 1000
-    while nowMs() < deadline do
-        local remaining = math.max(0.05, (deadline - nowMs()) / 1000)
-        local sender, response = rednet.receive(DEPLOY_PROTOCOL, remaining)
-        if sender == bankId and type(response) == "table"
-            and response.kind == "deploy_response"
-            and response.request_id == id then
-            if response.ok then return response.data end
-            return nil, response.error or "Deployment request was rejected",
-                response.code
-        end
-    end
-    bankId = nil
-    return nil, "Bank Server timed out"
-end
-
-local function protectedCode()
-    local width, height = target.getSize()
-    local value = ""
-    local layout = {
-        { "1", "2", "3" },
-        { "4", "5", "6" },
-        { "7", "8", "9" },
-        { "C", "0", "<" },
-    }
-    while true do
-        clear()
-        header("PROTECTED DOWNLOAD", "Enter the four-digit access code")
-        center(5, string.rep("* ", #value) .. string.rep("- ", 4 - #value),
-            theme.accent)
-        local buttons = {}
-        local buttonWidth = math.max(5, math.min(10, math.floor((width - 6) / 3)))
-        local gridWidth = buttonWidth * 3 + 2
-        local startX = math.floor((width - gridWidth) / 2) + 1
-        local startY = math.max(7, math.floor((height - 8) / 2) + 5)
-        for row = 1, 4 do
-            for column = 1, 3 do
-                local label = layout[row][column]
-                button(buttons, "pin:" .. label,
-                    startX + (column - 1) * (buttonWidth + 1),
-                    startY + (row - 1) * 2, buttonWidth, 1, label,
-                    label == "C" and theme.danger
-                        or label == "<" and theme.panel
-                        or theme.panelAlt,
-                    label:match("%d") and colors.black or colors.white)
-            end
-        end
-        button(buttons, "cancel", 1, height, 7, 1, "< BACK", theme.panel)
-        local keyBindings = {}
-        if keys and keys.backspace then keyBindings[keys.backspace] = "pin:<" end
-        if keys and keys.escape then keyBindings[keys.escape] = "cancel" end
-        for digit = 0, 9 do keyBindings[tostring(digit)] = "pin:" .. digit end
-        local action = waitForButton(buttons, keyBindings)
-        if action == "cancel" or action == "__terminate" then return nil end
-        local digit = action and action:match("^pin:(.)$")
-        if digit == "C" then
-            value = ""
-        elseif digit == "<" then
-            value = value:sub(1, -2)
-        elseif digit and digit:match("%d") and #value < 4 then
-            value = value .. digit
-            if #value == 4 then return value end
-        end
-    end
-end
-
-local function cooperativeYield()
-    if type(os) ~= "table"
-        or type(os.queueEvent) ~= "function"
-        or type(os.pullEvent) ~= "function" then
-        return false
-    end
-    os.queueEvent(WATCHDOG_YIELD_EVENT)
-    os.pullEvent(WATCHDOG_YIELD_EVENT)
-    return true
-end
-
-local function checksum(body)
-    local hash = 5381
-    for index = 1, #body do
-        hash = (hash * 33 + string.byte(body, index)) % 4294967296
-        if index % CHECKSUM_SLICE_BYTES == 0 then
-            cooperativeYield()
-        end
-    end
-    local alphabet, output = "0123456789abcdef", {}
-    for index = 8, 1, -1 do
-        local digit = hash % 16
-        output[index] = alphabet:sub(digit + 1, digit + 1)
-        hash = math.floor(hash / 16)
-    end
-    return table.concat(output)
-end
-
-local function versionParts(value)
-    local major, minor, patch = tostring(value or ""):match(
-        "^(%d+)%.(%d+)%.(%d+)")
-    if not major then return nil end
-    return tonumber(major), tonumber(minor), tonumber(patch)
-end
-
-local function newerVersion(candidate, current)
-    local candidateMajor, candidateMinor, candidatePatch =
-        versionParts(candidate)
-    local currentMajor, currentMinor, currentPatch = versionParts(current)
-    if not candidateMajor or not currentMajor then return false end
-    if candidateMajor ~= currentMajor then return candidateMajor > currentMajor end
-    if candidateMinor ~= currentMinor then return candidateMinor > currentMinor end
-    return candidatePatch > currentPatch
-end
-
-local function installedVersion()
-    local loader = loadfile(fs.combine(INSTALL_ROOT, "config.lua"))
-    if not loader then return "0.0.0" end
-    local ok, installedConfig = pcall(loader)
-    if not ok or type(installedConfig) ~= "table" then return "0.0.0" end
-    return tostring(installedConfig.version or "0.0.0")
-end
+-- Files ------------------------------------------------------------------------
 
 local function readFile(path)
     local handle = fs.open(path, "r")
@@ -459,1174 +315,726 @@ local function readFile(path)
     return body
 end
 
-local function safeRelativePath(path)
-    return type(path) == "string"
-        and path ~= ""
-        and path:sub(1, 1) ~= "/"
-        and not path:find("\\", 1, true)
-        and not path:find("..", 1, true)
-        and path:match("^[%w_%-/%.]+$") ~= nil
-end
-
-local function ensureParent(path)
-    local directory = fs.getDir(path)
-    if directory ~= "" and not fs.exists(directory) then fs.makeDir(directory) end
-end
-
+-- True, or nil and why: a full disk throws from write or close, and that
+-- is an answer here, not a crash.
 local function writeFile(path, body)
-    ensureParent(path)
-    local handle = fs.open(path, "w")
-    if not handle then return nil, "Could not write " .. path end
-    handle.write(body)
-    handle.close()
+    local ok, err = pcall(function()
+        local directory = fs.getDir(path)
+        if directory ~= "" and not fs.exists(directory) then fs.makeDir(directory) end
+        local handle = fs.open(path, "w")
+        if not handle then error("Could not write " .. path, 0) end
+        handle.write(body)
+        handle.close()
+    end)
+    if ok then return true end
+    return nil, tostring(err)
+end
+
+local function loadTable(body, name)
+    if type(body) ~= "string" then return nil end
+    local chunk = load(body, "=" .. (name or "config"), "t", {})
+    if not chunk then return nil end
+    local ok, value = pcall(chunk)
+    if ok and type(value) == "table" then return value end
+    return nil
+end
+
+local function versionParts(value)
+    local major, minor, patch = tostring(value or ""):match("^(%d+)%.(%d+)%.(%d+)")
+    if not major then return nil end
+    return tonumber(major), tonumber(minor), tonumber(patch)
+end
+
+local function newerVersion(candidate, current)
+    local a, b, c = versionParts(candidate)
+    local x, y, z = versionParts(current)
+    if not a or not x then return false end
+    if a ~= x then return a > x end
+    if b ~= y then return b > y end
+    return c > z
+end
+
+local function installedVersion(root)
+    local installed = loadTable(readFile(fs.combine(root, "config.lua")))
+    return installed and tostring(installed.version or "0.0.0") or "0.0.0"
+end
+
+-- The program /startup.lua boots into, if Easy Deployment wrote it.
+local function installedProgram()
+    local body = readFile("/startup.lua")
+    local id = body and body:match('--boot",%s*"(%w+)"')
+    return id and programById(id) and id or nil
+end
+
+-- Ours to replace: missing, this file, or a boot entry this file wrote. By
+-- the first line -- a program can mention the markers without being either.
+local function ownStartup(body)
+    return not body or body:sub(1, #HEADER) == HEADER
+        or body:sub(1, #ROLE_MARKER) == ROLE_MARKER
+end
+
+local function writeStartup(program)
+    if not ownStartup(readFile("/startup.lua")) then
+        return false, "Your own /startup.lua was kept"
+    end
+    local written = writeFile("/startup.lua", ROLE_MARKER .. "\nshell.run(\"/"
+        .. fs.combine(INSTALL_ROOT, "installer.lua") .. "\", \"--boot\", \""
+        .. program.id .. "\")\n")
+    if not written then return false, "/startup.lua could not be written" end
     return true
 end
 
--- The role this computer already boots into, taken from the marked
--- /startup.lua Easy Deployment writes after every installation.
-local function installedRole()
-    if not fs.exists("/startup.lua") then return nil end
-    local body = readFile("/startup.lua")
-    local id = body and body:match('--boot",%s*"(%w+)"')
-    return id and roleById(id) and id or nil
+-- The release -------------------------------------------------------------------
+
+local function yieldNow()
+    os.queueEvent("pumpe_installer_yield")
+    os.pullEvent("pumpe_installer_yield")
 end
 
--- The PUMPE gets the whole first screen. Everything else lives one press of
--- the down arrow away, because most computers being set up are phones.
-local function pumpeScreen(installed)
-    local width, height = target.getSize()
-    local buttons = {}
-    clear()
-    if not wordmark(2, "PUMPE", theme.accent) then
-        center(3, "PUMPE", theme.accent)
+local function checksum(body)
+    local hash = 5381
+    for index = 1, #body do
+        hash = (hash * 33 + string.byte(body, index)) % 4294967296
+        if index % 4096 == 0 then yieldNow() end
     end
-    center(8, "PERSONAL PUMPE", theme.ink)
-    local installY = height - 5
-    local body = wrapText("Money, friends, tickets and travel papers, all in"
-        .. " one pocket computer.", width - 4)
-    for index, line in ipairs(body) do
-        local y = 9 + index
-        if y <= installY - 2 then center(y, line, theme.muted) end
+    -- By hand, as lib/util does: the proven way on ComputerCraft's Lua.
+    local digits = {}
+    for index = 8, 1, -1 do
+        local digit = hash % 16
+        digits[index] = ("0123456789abcdef"):sub(digit + 1, digit + 1)
+        hash = math.floor(hash / 16)
     end
-    local mine = installed == "pumpe"
-    button(buttons, mine and "start" or "install", 2, installY, width - 2, 3,
-        mine and "START PUMPE" or "INSTALL PUMPE",
-        theme.success, colors.black)
-    button(buttons, "more", 2, height - 1, width - 2, 1,
-        "v   OTHER ROLES", theme.accentDark)
-    button(buttons, "exit", 2, height, 6, 1, "EXIT", theme.panel)
-    if mine then
-        button(buttons, "install", width - 11, height, 10, 1, "REINSTALL",
-            theme.panel)
-    end
-    local bindings = { m = "more", M = "more", i = "install", I = "install" }
-    if type(keys) == "table" then
-        if keys.down then bindings[keys.down] = "more" end
-        if keys.enter then bindings[keys.enter] = mine and "start" or "install" end
-    end
-    return waitForButton(buttons, bindings)
+    return table.concat(digits)
 end
 
--- Everything that is not a PUMPE, behind the down arrow.
-local rolePage = 1
--- One list screen, two lists. `servers` picks the Servers tab: the machines
--- that run the network rather than the ones a person carries or stands at.
--- Splitting them is what let the Vault stop being a thing you could only get
--- by pairing, and it is where the Internet Server lives.
-local function rolesScreen(installed, servers)
-    local width, height = target.getSize()
-    clear()
-    local all = {}
-    if not servers then
-        all[1] = { id = "__servers", label = "SERVERS",
-            detail = "Bank, Vault, Apps, Internet, CCG" }
-    end
-    for _, role in ipairs(roles) do
-        if not role.hidden and role.id ~= "pumpe"
-            and (role.server == true) == (servers == true) then
-            all[#all + 1] = role
-        end
-    end
-    local columns = width >= 40 and 2 or 1
-    local top, bottom = 5, height - 2
-    -- A narrow screen fits fewer entries than there are roles, so the list
-    -- pages rather than quietly dropping the ones off the bottom.
-    local perPage = math.max(1, math.floor((bottom - top + 1) / 2)) * columns
-    local pages = math.max(1, math.ceil(#all / perPage))
-    rolePage = math.max(1, math.min(rolePage, pages))
-    local visible = {}
-    for index = (rolePage - 1) * perPage + 1,
-        math.min(#all, rolePage * perPage) do
-        visible[#visible + 1] = all[index]
-    end
-    header(servers and "SERVERS" or "OTHER ROLES", pages > 1
-        and ("What is this computer?  " .. rolePage .. "/" .. pages)
-        or "What is this computer?")
-    local buttons = {}
-    local rows = math.max(1, math.ceil(#visible / columns))
-    local cardHeight = math.max(2, math.floor((bottom - top + 1) / rows))
-    local cardWidth = math.floor((width - 2 - (columns - 1)) / columns)
-    for index, role in ipairs(visible) do
-        local column = (index - 1) % columns
-        local row = math.floor((index - 1) / columns)
-        local y = top + row * cardHeight
-        if y + 1 <= bottom then
-            local label = role.label
-            if cardHeight >= 3 then
-                label = label .. "\n" .. role.detail
-                    .. (role.protected and " (4040)" or "")
-            elseif role.protected then
-                label = label .. " 4040"
-            end
-            button(buttons, "role:" .. role.id,
-                2 + column * (cardWidth + 1), y, cardWidth,
-                math.min(cardHeight - 1, bottom - y + 1), label,
-                role.protected and theme.warning
-                    or role.id == "__servers" and theme.accent
-                    or role.id == installed and theme.accentDark
-                    or theme.panel,
-                (role.protected or role.id == "__servers")
-                    and colors.black or colors.white)
-        end
-    end
-    local footer = installed
-        and ("Installed: " .. string.upper(installed)
-            .. "  -  v" .. installedVersion())
-        or "Nothing installed yet"
-    writeAt(2, height - 1, truncate(footer, width - 2), theme.muted,
-        theme.background)
-    button(buttons, "back", 2, height, 8, 1, "^ BACK", theme.accentDark)
-    if pages > 1 then
-        button(buttons, "more", math.floor(width / 2) - 4, height, 9, 1,
-            "PAGE " .. (rolePage % pages + 1), theme.panel)
-    else
-        button(buttons, "exit", math.floor(width / 2) - 2, height, 6, 1,
-            "EXIT", theme.panel)
-    end
-    if installed and installed ~= "pumpe" then
-        button(buttons, "start", width - 8, height, 7, 1, "START",
-            theme.success, colors.black)
-    elseif pages > 1 then
-        button(buttons, "exit", width - 7, height, 6, 1, "EXIT", theme.panel)
-    end
-    local bindings = {}
-    for index, role in ipairs(visible) do
-        bindings[tostring(index)] = "role:" .. role.id
-    end
-    if type(keys) == "table" and keys.up then bindings[keys.up] = "back" end
-    local action = waitForButton(buttons, bindings)
-    if action == "more" then
-        rolePage = rolePage % pages + 1
-        return "__page"
-    end
-    return action
-end
-
-local function roleMenu()
-    local installed = installedRole()
-    local screen = installed and installed ~= "pumpe" and "roles" or "pumpe"
-    while running do
-        local action = screen == "pumpe" and pumpeScreen(installed)
-            or rolesScreen(installed, screen == "servers")
-        if action == "exit" or action == "__terminate" then
-            running = false
-            return nil
-        elseif action == "more" then
-            screen = "roles"
-        elseif action == "__page" then
-            -- Paging stays on whichever list is open.
-            screen = screen == "servers" and "servers" or "roles"
-        elseif action == "back" then
-            screen = screen == "servers" and "roles" or "pumpe"
-        elseif action == "install" then
-            return roleById("pumpe")
-        elseif action == "start" then
-            return roleById(screen == "pumpe" and "pumpe" or installed), true
-        elseif action == "role:__servers" then
-            screen, rolePage = "servers", 1
-        else
-            local id = action and action:match("^role:(.+)$")
-            local role = id and roleById(id)
-            if role then return role end
-        end
-    end
-end
-
-local function closeResponse(response)
-    if response and type(response.close) == "function" then
-        pcall(response.close)
-    end
+local function httpReady()
+    return type(http) == "table" and type(http.get) == "function"
 end
 
 local function fetchHttps(url, maximumBytes)
-    if type(http) ~= "table" or type(http.get) ~= "function" then
-        return nil, "ComputerCraft HTTP is disabled"
-    end
-    if type(url) ~= "string" or not url:match("^https://") then
-        return nil, "Online updates require HTTPS"
-    end
+    if not httpReady() then return nil, "HTTP is switched off on this server" end
     local separator = url:find("?", 1, true) and "&" or "?"
-    local ok, response, err, errorResponse = pcall(http.get, {
-        url = url .. separator .. "pumpe=" .. tostring(nowMs()),
-        headers = {
-            ["Accept"] = "application/json, text/plain",
-            ["Cache-Control"] = "no-cache",
-        },
-        binary = false,
-        redirect = false,
-        timeout = 10,
+    local ok, response, err = pcall(http.get, {
+        url = url .. separator .. "pumpe=" .. tostring(os.epoch and os.epoch("utc")
+            or os.clock()),
+        headers = { ["Cache-Control"] = "no-cache" },
+        binary = false, redirect = false, timeout = 10,
     })
     if not ok then return nil, tostring(response) end
-    if not response then
-        closeResponse(errorResponse)
-        return nil, tostring(err or "HTTP request failed")
-    end
+    if not response then return nil, tostring(err or "GitHub did not answer") end
     local chunks, length = {}, 0
     while true do
         local chunk = response.read(8192)
         if not chunk then break end
         length = length + #chunk
         if length > maximumBytes then
-            closeResponse(response)
-            return nil, "Online update was too large"
+            response.close()
+            return nil, "A download was larger than the release says"
         end
         chunks[#chunks + 1] = chunk
     end
-    closeResponse(response)
+    response.close()
     return table.concat(chunks)
 end
 
-local function manifestEntry(manifest, requestedPath)
-    if type(manifest) ~= "table" or manifest.schema ~= 1
-        or manifest.channel ~= "stable"
-        or type(manifest.version) ~= "string"
-        or type(manifest.files) ~= "table" then
-        return nil
-    end
-    for _, file in ipairs(manifest.files) do
-        if type(file) == "table" and file.path == requestedPath
-            and safeRelativePath(file.source or file.path)
-            and type(file.size) == "number" and file.size >= 1
-            and file.size <= 1024 * 1024
-            and type(file.checksum) == "string"
-            and file.checksum:match("^[0-9a-fA-F]+$")
-            and #file.checksum == 8 then
-            return {
-                path = file.path,
-                source = file.source or file.path,
-                size = file.size,
-                checksum = string.lower(file.checksum),
-                version = manifest.version,
-            }
-        end
-    end
+local function safePath(path)
+    return type(path) == "string" and path ~= "" and path:sub(1, 1) ~= "/"
+        and not path:find("..", 1, true) and path:match("^[%w_%-/%.]+$") ~= nil
 end
 
-local function selfUpdateInstaller()
-    local manifestBody = fetchHttps(PUBLIC_MANIFEST_URL, 256 * 1024)
-    if not manifestBody then return false end
-    local ok, manifest = pcall(textutils.unserializeJSON, manifestBody)
-    if not ok then return false end
-    publicManifest = manifest
-    local entry = manifestEntry(manifest, "startup.lua")
-    if not entry or not newerVersion(entry.version, INSTALLER_VERSION) then
-        return false
-    end
-    local base = PUBLIC_MANIFEST_URL:gsub("[?#].*$", "")
-        :match("^(https://.*/)[^/]+$")
-    if not base then return false end
-    local body = fetchHttps(base .. entry.source, entry.size + 1)
-    if not body or #body ~= entry.size
-        or checksum(body) ~= entry.checksum
-        or not body:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
-        return false
-    end
-    -- Trust the downloaded file's own version, not the manifest's. A release
-    -- published with a stale INSTALLER_VERSION would otherwise install the
-    -- same file and reboot forever.
-    local downloadedVersion = body:match('INSTALLER_VERSION = "([%d%.]+)"')
-    if not downloadedVersion
-        or not newerVersion(downloadedVersion, INSTALLER_VERSION) then
-        return false
-    end
+local release = {}
 
-    local runningPath = shell.getRunningProgram()
-    if not runningPath or runningPath == "" then return false end
-    local temporary = runningPath .. ".update"
-    local backup = runningPath .. ".previous"
-    if fs.exists(temporary) then fs.delete(temporary) end
-    if fs.exists(backup) then fs.delete(backup) end
-    local wrote, written = pcall(writeFile, temporary, body)
-    if not wrote or not written then
-        if fs.exists(temporary) then pcall(fs.delete, temporary) end
+-- The published manifest, read once per run. Every file in it, required or
+-- optional, by the path it installs under.
+local function readManifest()
+    if release.manifest then return release.manifest end
+    local body, err = fetchHttps(MANIFEST_URL, 256 * 1024)
+    if not body then return nil, err end
+    local ok, raw = pcall(textutils.unserializeJSON, body)
+    if not ok or type(raw) ~= "table" or raw.schema ~= 1 or raw.channel ~= "stable"
+        or not versionParts(raw.version) or type(raw.files) ~= "table" then
+        return nil, "The release manifest could not be read"
+    end
+    local byPath = {}
+    for _, key in ipairs({ "files", "extra_files", "optional_files" }) do
+        for _, entry in ipairs(type(raw[key]) == "table" and raw[key] or {}) do
+            local source = type(entry) == "table" and (entry.source or entry.path)
+            if source and safePath(entry.path) and safePath(source)
+                and not byPath[entry.path]
+                and type(entry.size) == "number" and entry.size >= 1
+                and entry.size <= 1024 * 1024 and type(entry.checksum) == "string"
+                and entry.checksum:match("^%x%x%x%x%x%x%x%x$") then
+                byPath[entry.path] = { path = entry.path, source = source,
+                    size = entry.size, checksum = string.lower(entry.checksum) }
+            end
+        end
+    end
+    release.manifest = { version = raw.version, label = raw.label, byPath = byPath }
+    return release.manifest
+end
+
+local function download(entry, version)
+    local base = MANIFEST_URL:match("^(https://.*/)[^/]+$")
+    local body, err = fetchHttps(base .. entry.source .. "?v=" .. tostring(version),
+        entry.size + 1)
+    if not body then return nil, err end
+    if #body ~= entry.size or checksum(body) ~= entry.checksum then
+        return nil, entry.path .. " did not match the release"
+    end
+    return body
+end
+
+local function releaseBytes(program, manifest)
+    local total = 0
+    for _, path in ipairs(filesFor(program)) do
+        local entry = manifest and manifest.byPath[path]
+        if not entry then return nil end
+        total = total + entry.size
+    end
+    return total
+end
+
+-- Local settings survive a reinstall: a phone keeps its settings, a Bank its
+-- government key. Any program but the Bank gets no government key at all.
+local function configFor(program, body, existingPath, version)
+    local stripped = program.id == "bank" and body
+        or (body:gsub('(government_key%s*=%s*)"[^"]*"',
+            '%1"CLIENT-NO-GOVERNMENT-ACCESS"', 1))
+    local existing = loadTable(readFile(existingPath))
+    local defaults = existing and loadTable(body)
+    if not defaults then return stripped end
+    local resets = type(defaults.config_resets) == "table" and defaults.config_resets or {}
+    for key, value in pairs(existing) do
+        if key ~= "version" and key ~= "config_resets" and key ~= "release_name"
+            and value ~= resets[key] then
+            defaults[key] = value
+        end
+    end
+    defaults.version = version
+    if program.id ~= "bank" then defaults.government_key = "CLIENT-NO-GOVERNMENT-ACCESS" end
+    return "-- PUMPE configuration. Local settings are kept when it is reinstalled.\n"
+        .. "return " .. textutils.serialize(defaults) .. "\n"
+end
+
+local progressDrawn
+local function progress(program, entry, done, total, index, count)
+    local width, height = target.getSize()
+    local barWidth = math.max(8, width - 6)
+    local barY = math.max(9, math.min(height - 4, 11))
+    if progressDrawn ~= program.id then
+        progressDrawn = program.id
+        clear()
+        header("INSTALLING " .. string.upper(program.name), "From the published release")
+        fill(4, barY, barWidth, 2, theme.panel)
+    end
+    fill(1, 6, width, 1, theme.background)
+    center(6, entry and installPath(entry.path) or "", theme.ink)
+    fill(1, 8, width, 1, theme.background)
+    center(8, math.floor(done / 1024) .. " / " .. math.floor(total / 1024) .. " KiB",
+        theme.muted)
+    fill(4, barY, math.floor(barWidth * done / math.max(1, total)), 2, theme.accent)
+    fill(1, barY + 3, width, 1, theme.background)
+    center(barY + 3, "file " .. index .. " of " .. count, theme.accent)
+end
+
+-- Downloads a program's files into `root`, checks every one against the
+-- release, then puts them all in place together or none at all.
+local function install(program, root, manifest)
+    local entries, total = {}, 0
+    for _, path in ipairs(filesFor(program)) do
+        local entry = manifest.byPath[path]
+        if not entry then return nil, "The release has no " .. path end
+        entries[#entries + 1] = entry
+        total = total + entry.size
+    end
+    local free = fs.getFreeSpace(fs.exists(root) and root or "/")
+    if type(free) == "number" and free < total + 8192 then
+        return nil, "Needs " .. math.ceil((total + 8192 - free) / 1024)
+            .. " KiB more free space"
+    end
+    local staging = fs.combine(root, ".deploy_tmp")
+    local backup = fs.combine(root, ".deploy_backup")
+    for _, stale in ipairs({ staging, backup }) do
+        if fs.exists(stale) then fs.delete(stale) end
+    end
+    progressDrawn = nil
+    local done = 0
+    for index, entry in ipairs(entries) do
+        progress(program, entry, done, total, index, #entries)
+        local body, err = download(entry, manifest.version)
+        if body and entry.path == "startup.lua" and body:sub(1, #HEADER) ~= HEADER then
+            body, err = nil, "The release's installer is not Easy Deployment"
+        end
+        if body and entry.path == "config.lua" then
+            body = configFor(program, body, fs.combine(root, "config.lua"),
+                manifest.version)
+        end
+        local written, writeError = false, err
+        if body then
+            written, writeError = writeFile(fs.combine(staging, installPath(entry.path)),
+                body)
+        end
+        if not written then
+            if fs.exists(staging) then fs.delete(staging) end
+            return nil, tostring(writeError or "Download failed")
+        end
+        done = done + entry.size
+    end
+    progress(program, nil, done, total, #entries, #entries)
+
+    local moved = {}
+    local ok, err = pcall(function()
+        for _, entry in ipairs(entries) do
+            local name = installPath(entry.path)
+            local destination = fs.combine(root, name)
+            if fs.exists(destination) then
+                local saved = fs.combine(backup, name)
+                if not fs.exists(fs.getDir(saved)) then fs.makeDir(fs.getDir(saved)) end
+                fs.move(destination, saved)
+            end
+            if not fs.exists(fs.getDir(destination)) then
+                fs.makeDir(fs.getDir(destination))
+            end
+            fs.move(fs.combine(staging, name), destination)
+            moved[#moved + 1] = name
+        end
+    end)
+    if not ok then
+        for _, name in ipairs(moved) do
+            local destination = fs.combine(root, name)
+            if fs.exists(destination) then pcall(fs.delete, destination) end
+        end
+        for _, entry in ipairs(entries) do
+            local name = installPath(entry.path)
+            if fs.exists(fs.combine(backup, name)) then
+                pcall(fs.move, fs.combine(backup, name), fs.combine(root, name))
+            end
+        end
+    end
+    for _, stale in ipairs({ staging, backup }) do
+        if fs.exists(stale) then fs.delete(stale) end
+    end
+    if not ok then return nil, tostring(err) end
+    return true
+end
+
+-- A newer Easy Deployment replaces this file and restarts, so the menu and
+-- every boot run the newest one. Trusts the downloaded file's own version,
+-- not the manifest's: a release published with a stale stamp would
+-- otherwise install the same file and restart for ever.
+local function updateSelf(manifest)
+    local entry = manifest and manifest.byPath["startup.lua"]
+    if not entry or not newerVersion(manifest.version, INSTALLER_VERSION) then
         return false
     end
-    local moved, moveError = pcall(function()
-        if fs.exists(runningPath) then fs.move(runningPath, backup) end
-        fs.move(temporary, runningPath)
-    end)
-    if not moved then
-        if fs.exists(runningPath) then fs.delete(runningPath) end
-        if fs.exists(backup) then fs.move(backup, runningPath) end
-        if fs.exists(temporary) then fs.delete(temporary) end
-        return false, tostring(moveError)
+    local body = download(entry, manifest.version)
+    if not body or body:sub(1, #HEADER) ~= HEADER
+        or not newerVersion(body:match('INSTALLER_VERSION = "([%d%.]+)"'),
+            INSTALLER_VERSION) then
+        return false
     end
-    if fs.exists(backup) then fs.delete(backup) end
-    message("success", "EASY DEPLOYMENT UPDATED",
-        "Installed v" .. downloadedVersion, 0.6)
+    local path = shell.getRunningProgram()
+    if not path or path == "" or path:sub(1, 4) == "rom/" then return false end
+    local temporary, previous = path .. ".update", path .. ".previous"
+    for _, stale in ipairs({ temporary, previous }) do
+        if fs.exists(stale) then pcall(fs.delete, stale) end
+    end
+    local written = writeFile(temporary, body)
+    local replaced = written and pcall(function()
+        fs.move(path, previous)
+        fs.move(temporary, path)
+    end)
+    if not replaced and fs.exists(previous) and not fs.exists(path) then
+        pcall(fs.move, previous, path)
+    end
+    for _, stale in ipairs({ temporary, previous }) do
+        if fs.exists(stale) then pcall(fs.delete, stale) end
+    end
+    if not replaced then return false end
+    message("success", "EASY DEPLOYMENT UPDATED", "Now v"
+        .. body:match('INSTALLER_VERSION = "([%d%.]+)"'), 0.6)
     os.reboot()
     return true
 end
 
-local function replaceInstalledFile(entry, destination)
-    if not entry then return false end
-    local existing = readFile(destination)
-    if existing and #existing == entry.size
-        and checksum(existing) == entry.checksum then
-        return true
-    end
+-- Asking -------------------------------------------------------------------------
 
-    local base = PUBLIC_MANIFEST_URL:gsub("[?#].*$", "")
-        :match("^(https://.*/)[^/]+$")
-    if not base then return false end
-    local body = fetchHttps(base .. entry.source, entry.size + 1)
-    if not body or #body ~= entry.size
-        or checksum(body) ~= entry.checksum then
-        return false
-    end
-
-    local temporary = destination .. ".watchdog_update"
-    local backup = destination .. ".watchdog_previous"
-    if fs.exists(temporary) then fs.delete(temporary) end
-    if fs.exists(backup) then fs.delete(backup) end
-    local wrote, written = pcall(writeFile, temporary, body)
-    if not wrote or not written then
-        if fs.exists(temporary) then pcall(fs.delete, temporary) end
-        return false
-    end
-    local moved = pcall(function()
-        if fs.exists(destination) then fs.move(destination, backup) end
-        fs.move(temporary, destination)
-    end)
-    if not moved then
-        if fs.exists(destination) then fs.delete(destination) end
-        if fs.exists(backup) then fs.move(backup, destination) end
-        if fs.exists(temporary) then fs.delete(temporary) end
-        return false
-    end
-    if fs.exists(backup) then fs.delete(backup) end
-    return true
-end
-
-local function cleanupLegacyBankDuplicates()
-    local mappings = {
-        { depot = "bank_server.lua", installed = "bank_server.lua" },
-        { depot = "startup.lua", installed = "installer.lua" },
-        { depot = "config.lua", installed = "config.lua" },
-        { depot = "lib/net.lua", installed = "lib/net.lua" },
-        { depot = "lib/ui.lua", installed = "lib/ui.lua" },
-        { depot = "lib/update.lua", installed = "lib/update.lua" },
-        { depot = "lib/util.lua", installed = "lib/util.lua" },
-    }
-    for _, mapping in ipairs(mappings) do
-        local installed = fs.combine(INSTALL_ROOT, mapping.installed)
-        local duplicate = fs.combine(UPDATES_ROOT, mapping.depot)
-        if fs.exists(installed) and fs.exists(duplicate) then
-            pcall(fs.delete, duplicate)
-        end
-    end
-    for _, stale in ipairs({
-        fs.combine(INSTALL_ROOT, ".easy_deployment_source.lua"),
-        fs.combine(INSTALL_ROOT, ".online_update_stage"),
-        fs.combine(INSTALL_ROOT, ".online_update_backup"),
-    }) do
-        if fs.exists(stale) then pcall(fs.delete, stale) end
-    end
-end
-
-local function updateInstalledConfigVersion(version)
-    local path = fs.combine(INSTALL_ROOT, "config.lua")
-    local body = readFile(path)
-    if not body then return false end
-    local updated, replacements = body:gsub(
-        '(version%s*=%s*)"[^"]+"', '%1"' .. tostring(version) .. '"', 1)
-    if replacements ~= 1 then return false end
-    if updated == body then return true end
-    local temporary = path .. ".compact_update"
-    if fs.exists(temporary) then fs.delete(temporary) end
-    local wrote, written = pcall(writeFile, temporary, updated)
-    if not wrote or not written then
-        if fs.exists(temporary) then pcall(fs.delete, temporary) end
-        return false
-    end
-    if fs.exists(path) then fs.delete(path) end
-    fs.move(temporary, path)
-    return true
-end
-
--- v6.0 Banks filled the disk by keeping the release in both /pumpe and
--- /updates. Easy Deployment frees those safe duplicates first, then installs
--- the compact Bank program before launch so an affected Bank can recover even
--- when it cannot reach its own updater.
--- Every file the Bank runtime is built from. config.lua is deliberately not
--- here: it holds the government key and other local settings.
-local BANK_RUNTIME_REPAIR = {
-    { path = "lib/util.lua", source = "lib/util.lua" },
-    { path = "lib/net.lua", source = "lib/net.lua" },
-    { path = "lib/ui.lua", source = "lib/ui.lua" },
-    { path = "lib/update.lua", source = "lib/update.lua" },
-    { path = "installer.lua", source = "startup.lua" },
-    { path = "bank_server.lua", source = "bank_server.lua" },
-}
-
--- Repairs a Bank that cannot reach its own updater. This must replace the
--- whole runtime before claiming the new version: bumping config.lua while a
--- shared library stayed behind makes the Bank advertise a release it is not
--- running, and it then serves clients a new program beside an old library.
-local function repairInstalledBankRuntime()
-    if bootRoleId ~= "bank" or not publicManifest then return false end
-    if newerVersion(installedVersion(), publicManifest.version) then return false end
-    cleanupLegacyBankDuplicates()
-
-    local needsVersionUpdate = newerVersion(
-        publicManifest.version, installedVersion())
-    local complete = true
-    for _, file in ipairs(BANK_RUNTIME_REPAIR) do
-        local entry = manifestEntry(publicManifest, file.source)
-        if not replaceInstalledFile(entry, fs.combine(INSTALL_ROOT, file.path)) then
-            complete = false
-        end
-    end
-    if complete and needsVersionUpdate then
-        updateInstalledConfigVersion(publicManifest.version)
-    end
-    return complete
-end
-
-local function formatBytes(value)
-    if value >= 1024 then return string.format("%.1f KiB", value / 1024) end
-    return value .. " B"
-end
-
--- Only the changing rows are repainted. Clearing the whole screen for every
--- 6 KiB chunk made the install screen flicker and hid the progress bar.
-local progressChrome
-local progressSource
-local function renderProgress(role, file, completed, total, fileIndex, fileCount)
+local function operatorCode()
     local width, height = target.getSize()
-    local barWidth = math.max(8, width - 6)
-    local barY = math.max(10, math.min(height - 4, 11))
-    if progressChrome ~= role.label then
-        progressChrome = role.label
+    local value = ""
+    local layout = { { "1", "2", "3" }, { "4", "5", "6" }, { "7", "8", "9" },
+        { "C", "0", "<" } }
+    while true do
         clear()
-        header("INSTALLING " .. role.label,
-            progressSource or "Receiving from the Bank Server")
-        fill(4, barY, barWidth, 2, theme.panel)
-    end
-    fill(2, 6, width - 2, 1, theme.background)
-    center(6, truncate(file.path, width - 4), theme.ink)
-    fill(2, 8, width - 2, 1, theme.background)
-    center(8, formatBytes(completed) .. " / " .. formatBytes(total), theme.muted)
-    local filled = total > 0 and math.floor(barWidth * completed / total) or 0
-    fill(4, barY, math.max(0, filled), 2, theme.accent)
-    local percent = total > 0 and math.floor(completed / total * 100) or 0
-    fill(2, barY + 3, width - 2, 1, theme.background)
-    center(barY + 3, percent .. "%  -  file " .. fileIndex .. "/" .. fileCount,
-        theme.accent)
-end
-
-local function retryDeployRequest(action, payload)
-    local lastError, lastCode
-    for _ = 1, 3 do
-        local result, err, code = deployRequest(action, payload, 8)
-        if result then return result end
-        lastError, lastCode = err, code
-        sleep(0.2)
-    end
-    return nil, lastError, lastCode
-end
-
-local function downloadManifestFile(role, accessCode, file,
-    completedBefore, totalBytes, fileIndex, fileCount)
-    if not safeRelativePath(file.path)
-        or type(file.size) ~= "number" or file.size < 0
-        or type(file.checksum) ~= "string" then
-        return nil, "Bank Server returned an unsafe manifest"
-    end
-    local stagingPath = fs.combine(STAGING_ROOT, file.path)
-    ensureParent(stagingPath)
-    local handle = fs.open(stagingPath, "w")
-    if not handle then return nil, "Could not create " .. file.path end
-    local offset = 0
-    while offset < file.size do
-        renderProgress(role, file, completedBefore + offset,
-            totalBytes, fileIndex, fileCount)
-        local chunk, err = retryDeployRequest("FILE_CHUNK", {
-            role = role.id,
-            code = accessCode,
-            path = file.path,
-            offset = offset,
-            limit = 6000,
-        })
-        if not chunk then
-            handle.close()
-            return nil, err
-        end
-        if chunk.path ~= file.path or chunk.offset ~= offset
-            or type(chunk.data) ~= "string"
-            or type(chunk.next_offset) ~= "number"
-            or chunk.next_offset ~= offset + #chunk.data
-            or chunk.next_offset > file.size
-            or (#chunk.data == 0 and offset < file.size) then
-            handle.close()
-            return nil, "Bank Server returned an invalid file chunk"
-        end
-        handle.write(chunk.data)
-        offset = chunk.next_offset
-    end
-    handle.close()
-    local body = readFile(stagingPath)
-    if not body or #body ~= file.size or checksum(body) ~= file.checksum then
-        return nil, "Checksum failed for " .. file.path
-    end
-    return true
-end
-
-local function moveWithParent(source, destination)
-    ensureParent(destination)
-    fs.move(source, destination)
-end
-
-local function commitInstallation(manifest)
-    if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
-    fs.makeDir(BACKUP_ROOT)
-    local committed = {}
-    local ok, err = pcall(function()
-        for _, file in ipairs(manifest.files) do
-            local destination = fs.combine(INSTALL_ROOT, file.path)
-            local staged = fs.combine(STAGING_ROOT, file.path)
-            if fs.exists(destination) then
-                local backup = fs.combine(BACKUP_ROOT, file.path)
-                moveWithParent(destination, backup)
+        header("OPERATOR CODE", "The four-digit code")
+        center(5, string.rep("* ", #value) .. string.rep("- ", 4 - #value), theme.accent)
+        local buttons = {}
+        local keyWidth = math.max(5, math.min(10, math.floor((width - 6) / 3)))
+        local left = math.floor((width - (keyWidth * 3 + 2)) / 2) + 1
+        local top = math.max(7, math.floor((height - 8) / 2) + 5)
+        for row = 1, 4 do
+            for column = 1, 3 do
+                local label = layout[row][column]
+                button(buttons, "pin:" .. label, left + (column - 1) * (keyWidth + 1),
+                    top + (row - 1) * 2, keyWidth, 1, label,
+                    label == "C" and theme.danger or label == "<" and theme.panel
+                        or theme.panelAlt,
+                    label:match("%d") and colors.black or colors.white)
             end
-            moveWithParent(staged, destination)
-            committed[#committed + 1] = file.path
         end
-    end)
-    if not ok then
-        for _, path in ipairs(committed) do
-            local destination = fs.combine(INSTALL_ROOT, path)
-            if fs.exists(destination) then fs.delete(destination) end
+        button(buttons, "back", 1, height, 8, 1, "< BACK", theme.panel)
+        local bindings = {}
+        for digit = 0, 9 do bindings[tostring(digit)] = "pin:" .. digit end
+        if type(keys) == "table" then bindings[keys.backspace] = "pin:<" end
+        local action = waitForButton(buttons, bindings)
+        if action == "back" or action == "__terminate" then return nil end
+        local key = action and action:match("^pin:(.)$")
+        if key == "C" then
+            value = ""
+        elseif key == "<" then
+            value = value:sub(1, -2)
+        elseif key then
+            value = value .. key
+            if #value == 4 then return value end
         end
-        for _, file in ipairs(manifest.files) do
-            local backup = fs.combine(BACKUP_ROOT, file.path)
-            local destination = fs.combine(INSTALL_ROOT, file.path)
-            if fs.exists(backup) then moveWithParent(backup, destination) end
-        end
-        return nil, tostring(err)
     end
-    fs.delete(STAGING_ROOT)
-    fs.delete(BACKUP_ROOT)
-    return true
 end
 
-local writeStartup
+-- Screens --------------------------------------------------------------------------
 
-local BANK_LOCAL_FILES = {
-    { path = "bank_server.lua", source = "bank_server.lua" },
-    { path = "pumpe.lua", source = "pumpe.lua", depot = true },
-    { path = "service_kiosk.lua", source = "service_kiosk.lua", depot = true },
-    { path = "event_kiosk.lua", source = "event_kiosk.lua", depot = true },
-    { path = "tax_controller.lua", source = "tax_controller.lua", depot = true },
-    { path = "border_controller.lua", source = "border_controller.lua", depot = true },
-    { path = "ccg.lua", source = "ccg.lua", depot = true },
-    { path = "installer.lua", source = "startup.lua" },
-    { path = "config.lua", source = "config.lua" },
-    { path = "lib/net.lua", source = "lib/net.lua" },
-    { path = "lib/ui.lua", source = "lib/ui.lua" },
-    { path = "lib/update.lua", source = "lib/update.lua" },
-    { path = "lib/util.lua", source = "lib/util.lua" },
-}
+-- A program's own full screen: the PUMPE's is the first thing anybody sees,
+-- and every other program gets the same one from search. Returns "install",
+-- "open", "search" (with what was typed), "back", "start" or "exit".
+local function programScreen(program, installed, first)
+    local width, height = target.getSize()
+    clear()
+    local titleY = 3
+    if program.id == "pumpe" and wordmark(2, "PUMPE", theme.accent) then titleY = 8 end
+    center(titleY, string.upper(program.name), program.id == "pumpe" and theme.ink
+        or theme.accent)
+    local buttonY = height - 5
+    for index, line in ipairs(wrapText(program.about, width - 4)) do
+        local y = titleY + 1 + index
+        if y <= buttonY - 2 then center(y, line, theme.muted) end
+    end
+    local mine = installed == program.id
+    local buttons = {}
+    button(buttons, mine and "open" or "install", 2, buttonY, width - 2, 3,
+        (mine and "OPEN" or "INSTALL") .. (program.id == "pumpe" and " PUMPE" or ""),
+        theme.success, colors.black)
 
-local function localBankSourceRoot()
-    local runningPath = shell.getRunningProgram() or ""
-    local runningRoot = fs.getDir(runningPath)
-    if runningRoot == "" then runningRoot = "." end
-    local candidates = {
-        runningRoot, ".", "/", "/disk", "/disk/pumpe", INSTALL_ROOT,
-    }
-    local seen = {}
-    for _, candidate in ipairs(candidates) do
-        if not seen[candidate] then
-            seen[candidate] = true
-            local complete = true
-            for _, file in ipairs(BANK_LOCAL_FILES) do
-                local source = fs.combine(candidate, file.source)
-                if not fs.exists(source) or fs.isDir(source) then
-                    complete = false
+    local manifest = release.manifest
+    local status
+    if mine then
+        status = "Installed - v" .. installedVersion(INSTALL_ROOT)
+    elseif not httpReady() then
+        status = "HTTP is off: nothing can download"
+    elseif manifest then
+        local bytes = releaseBytes(program, manifest)
+        status = "v" .. manifest.version .. (bytes and ("  -  "
+            .. math.ceil(bytes / 1024) .. " KiB") or "")
+            .. (program.code and "  -  code" or "")
+    else
+        status = "GitHub cannot be reached right now"
+    end
+    if first and installed and not mine then
+        status = "This computer: " .. string.upper(programById(installed).name)
+    end
+    center(height - 2, status, theme.muted)
+
+    if first then
+        button(buttons, "search", 1, height - 1, width, 1, "v  SEARCH ALL PROGRAMS",
+            theme.accentDark)
+        button(buttons, "exit", 2, height, 6, 1, "EXIT", theme.panel)
+        if installed and not mine then
+            button(buttons, "start", width - 7, height, 7, 1, "START",
+                theme.success, colors.black)
+        end
+    else
+        button(buttons, "back", 2, height, 8, 1, "< BACK", theme.panel)
+    end
+    if mine then
+        button(buttons, "install", width - 12, height, 11, 1, "REINSTALL", theme.panel)
+    end
+
+    local bindings = {}
+    if type(keys) == "table" then
+        bindings[keys.enter] = mine and "open" or "install"
+        if keys.numPadEnter then bindings[keys.numPadEnter] = bindings[keys.enter] end
+        if first then
+            bindings[keys.down] = "search"
+        else
+            bindings[keys.backspace] = "back"
+            bindings[keys.up] = "back"
+        end
+    end
+    local action, typed = waitForButton(buttons, bindings, first and "search" or nil)
+    if action == "__terminate" then return first and "exit" or "back" end
+    return action, typed
+end
+
+-- Every program whose name, description or keywords hold every word typed,
+-- best first: a name that starts with it, then a word in the name that does,
+-- then anywhere at all. Nothing typed is every program, in the usual order.
+local function search(query)
+    local results = {}
+    for order, program in ipairs(PROGRAMS) do
+        if not program.hidden then
+            local name = string.lower(program.name)
+            local everything = string.lower(program.name .. " " .. program.detail
+                .. " " .. (program.words or "") .. " " .. program.id)
+            local score = 0
+            for word in string.lower(query):gmatch("%S+") do
+                if name:sub(1, #word) == word then
+                    score = score + 3
+                elseif (" " .. name):find(" " .. word, 1, true) then
+                    score = score + 2
+                elseif everything:find(word, 1, true) then
+                    score = score + 1
+                else
+                    score = nil
                     break
                 end
             end
-            if complete then return candidate end
-        end
-    end
-    return nil
-end
-
-local function bankDestination(file)
-    return fs.combine(file.depot and UPDATES_ROOT or INSTALL_ROOT, file.path)
-end
-
-local function bankStagePath(file, root)
-    return fs.combine(root, (file.depot and "depot/" or "runtime/") .. file.path)
-end
-
-local function normalizedPath(path)
-    return fs.combine("/", tostring(path or ""))
-end
-
-local function sameDrive(sourceRoot)
-    if type(fs.getDrive) ~= "function" then return false end
-    local sourceProbe = fs.combine(sourceRoot, BANK_LOCAL_FILES[1].source)
-    local okSource, sourceDrive = pcall(fs.getDrive, sourceProbe)
-    local okInstall, installDrive = pcall(fs.getDrive, INSTALL_ROOT)
-    return okSource and okInstall and sourceDrive ~= nil
-        and sourceDrive == installDrive
-end
-
-local function cleanEmptySourceFolders(sourceRoot)
-    if type(fs.list) ~= "function" then return end
-    local library = fs.combine(sourceRoot, "lib")
-    if fs.exists(library) and fs.isDir(library) and #fs.list(library) == 0 then
-        pcall(fs.delete, library)
-    end
-    if normalizedPath(sourceRoot) ~= "/" and fs.exists(sourceRoot)
-        and fs.isDir(sourceRoot) and #fs.list(sourceRoot) == 0 then
-        pcall(fs.delete, sourceRoot)
-    end
-end
-
-local function installLocalBank(role)
-    local sourceRoot = localBankSourceRoot()
-    if not sourceRoot then
-        message("error", "LOCAL BANK FILES MISSING",
-            "Allow HTTP, or keep the release beside installer.lua", 2.2)
-        return false
-    end
-    local manifest = { version = INSTALLER_VERSION, files = {} }
-    local totalBytes = 0
-    for _, file in ipairs(BANK_LOCAL_FILES) do
-        local body = readFile(fs.combine(sourceRoot, file.source))
-        if not body then
-            message("error", "LOCAL INSTALL FAILED",
-                "Could not read " .. file.source, 1.8)
-            return false
-        end
-        local item = {
-            path = file.path,
-            size = #body,
-            checksum = checksum(body),
-            source = file.source,
-            depot = file.depot == true,
-        }
-        manifest.files[#manifest.files + 1] = item
-        totalBytes = totalBytes + #body
-    end
-    local configBody = readFile(fs.combine(sourceRoot, "config.lua")) or ""
-    manifest.version = configBody:match('version%s*=%s*"([^"]+)"')
-        or INSTALLER_VERSION
-    renderProgress(role, { path = "Local release verified" },
-        totalBytes, totalBytes, #manifest.files, #manifest.files)
-
-    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
-    if not fs.exists(UPDATES_ROOT) then fs.makeDir(UPDATES_ROOT) end
-    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-    if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
-    fs.makeDir(STAGING_ROOT)
-    fs.makeDir(BACKUP_ROOT)
-
-    local moveSourceFiles = sameDrive(sourceRoot)
-    local installed = {}
-    local committed, commitError = pcall(function()
-        for _, file in ipairs(manifest.files) do
-            local source = fs.combine(sourceRoot, file.source)
-            local destination = bankDestination(file)
-            if normalizedPath(source) == normalizedPath(destination) then
-                installed[#installed + 1] = {
-                    file = file, source = source, destination = destination,
-                    unchanged = true,
-                }
-            else
-                local backup = bankStagePath(file, BACKUP_ROOT)
-                local item = {
-                    file = file, source = source, destination = destination,
-                    backup = backup, moved = moveSourceFiles,
-                }
-                installed[#installed + 1] = item
-                if fs.exists(destination) then
-                    moveWithParent(destination, backup)
-                    item.backedUp = true
-                end
-                if moveSourceFiles then
-                    moveWithParent(source, destination)
-                else
-                    local body = assert(readFile(source), "Missing " .. file.source)
-                    local staged = bankStagePath(file, STAGING_ROOT)
-                    local written, writeError = writeFile(staged, body)
-                    assert(written, writeError)
-                    moveWithParent(staged, destination)
-                end
-                item.newInstalled = true
-                assert(readFile(destination)
-                    and checksum(readFile(destination)) == file.checksum,
-                    "Verification failed for " .. file.path)
+            if score then
+                results[#results + 1] = { program = program, score = score,
+                    order = order }
             end
         end
+    end
+    table.sort(results, function(a, b)
+        if a.score ~= b.score then return a.score > b.score end
+        return a.order < b.order
     end)
-    if not committed then
-        for index = #installed, 1, -1 do
-            local item = installed[index]
-            if item.newInstalled and fs.exists(item.destination) then
-                if item.moved then
-                    moveWithParent(item.destination, item.source)
-                else
-                    fs.delete(item.destination)
+    return results
+end
+
+-- The search box. Results change with every key; up/down move through them,
+-- Enter or a tap opens one, and up from the top (or backspace on an empty
+-- box) goes back to the PUMPE. Returns a program, "back" or "exit", and
+-- what was in the box, so coming back from a program finds it still there.
+local function searchScreen(installed, query)
+    query = query or ""
+    local selected, top = 1, 1
+    while true do
+        local width, height = target.getSize()
+        local results = search(query)
+        selected = math.max(1, math.min(selected, #results))
+        local rows = height >= 16 and 2 or 1
+        local listTop = 6
+        local visible = math.max(1, math.floor((height - listTop) / rows))
+        if selected < top then top = selected end
+        if selected >= top + visible then top = selected - visible + 1 end
+
+        clear()
+        fill(1, 1, width, 1, theme.panel)
+        writeAt(2, 1, "FIND A PROGRAM", theme.ink, theme.panel)
+        local hits = {}
+        button(hits, "back", width - 8, 1, 9, 1, "^ PUMPE", theme.accentDark)
+        fill(2, 3, width - 2, 1, theme.panelAlt)
+        local room = width - 6
+        local shown = #query > room and query:sub(-room) or query
+        writeAt(3, 3, "> " .. shown .. "_", colors.black, theme.panelAlt)
+        center(4, #results == 0 and "Nothing matches" or (query:match("%S")
+            and (#results .. (#results == 1 and " program" or " programs"))
+            or "Type to search"), theme.muted)
+        for index = top, math.min(#results, top + visible - 1) do
+            local program = results[index].program
+            local y = listTop + (index - top) * rows
+            local background = index == selected and theme.accentDark or theme.background
+            fill(1, y, width, rows, background)
+            local name = program.name .. (installed == program.id and "  *" or "")
+            writeAt(2, y, truncate(name, width - 2), theme.ink, background)
+            if rows == 2 then
+                local detail = installed == program.id and "Installed here"
+                    or (program.detail .. (program.code and " - code" or ""))
+                writeAt(2, y + 1, truncate(detail, width - 2), theme.muted, background)
+            end
+            hits[#hits + 1] = { id = index, x1 = 1, y1 = y, x2 = width,
+                y2 = y + rows - 1 }
+        end
+
+        local event = { os.pullEvent() }
+        local kind = event[1]
+        if kind == "char" or kind == "paste" then
+            query, selected, top = query .. event[2], 1, 1
+        elseif kind == "key" and type(keys) == "table" then
+            local key = event[2]
+            if key == keys.backspace then
+                if query == "" then return "back", query end
+                query, selected, top = query:sub(1, -2), 1, 1
+            elseif enterKey(key) then
+                if results[selected] then return results[selected].program, query end
+            elseif key == keys.down then
+                selected = math.min(#results, selected + 1)
+            elseif key == keys.up then
+                if selected <= 1 then return "back", query end
+                selected = selected - 1
+            end
+        elseif kind == "mouse_scroll" then
+            selected = math.max(1, math.min(#results, selected + event[2]))
+        elseif kind == "mouse_click" or kind == "monitor_touch" then
+            for index = #hits, 1, -1 do
+                local hit = hits[index]
+                if event[3] >= hit.x1 and event[3] <= hit.x2
+                    and event[4] >= hit.y1 and event[4] <= hit.y2 then
+                    if hit.id == "back" then return "back", query end
+                    return results[hit.id].program, query
                 end
             end
-            if item.backedUp and item.backup and fs.exists(item.backup) then
-                moveWithParent(item.backup, item.destination)
-            end
+        elseif kind == "terminate" then
+            return "exit", query
         end
-        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-        if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
-        message("error", "LOCAL INSTALL ROLLED BACK", tostring(commitError), 2)
-        return false
-    end
-    fs.delete(STAGING_ROOT)
-    fs.delete(BACKUP_ROOT)
-
-    local _, startupMessage = writeStartup(role)
-    if moveSourceFiles then
-        local extraInstaller = fs.combine(sourceRoot, "installer.lua")
-        local installedInstaller = fs.combine(INSTALL_ROOT, "installer.lua")
-        if normalizedPath(extraInstaller) ~= normalizedPath(installedInstaller)
-            and fs.exists(extraInstaller) then
-            local body = readFile(extraInstaller)
-            if body and checksum(body) == checksum(readFile(installedInstaller) or "") then
-                pcall(fs.delete, extraInstaller)
-            end
-        end
-        cleanEmptySourceFolders(sourceRoot)
-    end
-    message("success", "BANK SERVER READY",
-        startupMessage .. " - starting now", 0.8)
-    return true
-end
-
--- The first Bank in a world has nothing to download from, which used to mean
--- keeping the whole release on a disk beside the installer. The public
--- manifest is the same verified list of files, so fetch the Bank's runtime
--- straight from it. Depot programs are deliberately left out: the Bank pulls
--- each one on demand the first time somebody installs that role.
-local BANK_MANIFEST_FILES = {
-    { path = "bank_server.lua", source = "bank_server.lua" },
-    { path = "installer.lua", source = "startup.lua" },
-    { path = "config.lua", source = "config.lua" },
-    { path = "lib/net.lua", source = "lib/net.lua" },
-    { path = "lib/ui.lua", source = "lib/ui.lua" },
-    { path = "lib/update.lua", source = "lib/update.lua" },
-    { path = "lib/util.lua", source = "lib/util.lua" },
-}
-
-local function publicReleaseBase()
-    local clean = PUBLIC_MANIFEST_URL:gsub("[?#].*$", "")
-    return clean:match("^(https://.*/)[^/]+$")
-end
-
-local function loadPublicManifest()
-    if publicManifest then return publicManifest end
-    local body, err = fetchHttps(PUBLIC_MANIFEST_URL, 256 * 1024)
-    if not body then return nil, err or "Could not reach the manifest" end
-    local ok, manifest = pcall(textutils.unserializeJSON, body)
-    if not ok or type(manifest) ~= "table" then
-        return nil, "The release manifest is not valid JSON"
-    end
-    publicManifest = manifest
-    return manifest
-end
-
--- Returns the installed release, or nil plus a reason so the caller can fall
--- back to a local package.
-local function installBankFromManifest(role)
-    clear()
-    header("BANK SERVER", "Checking the release")
-    center(8, "Reading the manifest...", theme.accent)
-    local manifest, manifestError = loadPublicManifest()
-    if not manifest then return nil, manifestError end
-    local base = publicReleaseBase()
-    if not base then return nil, "The manifest URL has no release folder" end
-
-    local files, totalBytes = {}, 0
-    for _, file in ipairs(BANK_MANIFEST_FILES) do
-        local entry = manifestEntry(manifest, file.source)
-        if not entry then return nil, "Release is missing " .. file.source end
-        entry.path = file.path
-        files[#files + 1] = entry
-        totalBytes = totalBytes + entry.size
-    end
-
-    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
-    if not fs.exists(UPDATES_ROOT) then fs.makeDir(UPDATES_ROOT) end
-    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-    if fs.exists(BACKUP_ROOT) then fs.delete(BACKUP_ROOT) end
-    fs.makeDir(STAGING_ROOT)
-
-    local function fail(reason)
-        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-        return nil, reason
-    end
-
-    progressChrome, progressSource = nil, "Downloading the release"
-    local completed = 0
-    for index, entry in ipairs(files) do
-        renderProgress(role, entry, completed, totalBytes, index, #files)
-        local body, err = fetchHttps(base .. entry.source, entry.size + 1)
-        if not body then
-            return fail(err or ("Could not download " .. entry.source))
-        end
-        cooperativeYield()
-        if #body ~= entry.size or checksum(body) ~= entry.checksum then
-            return fail("Verification failed for " .. entry.path)
-        end
-        local written, writeError =
-            writeFile(fs.combine(STAGING_ROOT, entry.path), body)
-        if not written then return fail(tostring(writeError)) end
-        completed = completed + entry.size
-        renderProgress(role, entry, completed, totalBytes, index, #files)
-    end
-
-    local release = { version = tostring(manifest.version), files = files }
-    local committed, commitError = commitInstallation(release)
-    if not committed then return fail(tostring(commitError)) end
-    progressSource = nil
-    return release
-end
-
-writeStartup = function(role)
-    local startupPath = "/startup.lua"
-    local installerMarker = "-- PUMPE EASY DEPLOYMENT"
-    local roleMarker = "-- PUMPE ROLE STARTUP"
-    local body = roleMarker .. "\n"
-        .. "shell.run(\"/pumpe/installer.lua\", \"--boot\", \""
-        .. role.id .. "\")\n"
-    if not fs.exists(startupPath) then
-        local handle = fs.open(startupPath, "w")
-        if not handle then return false, "Could not create /startup.lua" end
-        handle.write(body)
-        handle.close()
-        return true, "Startup created"
-    end
-    local existing = readFile(startupPath) or ""
-    if existing:find(installerMarker, 1, true)
-        or existing:find(roleMarker, 1, true) then
-        local handle = fs.open(startupPath, "w")
-        if not handle then return false, "Could not update /startup.lua" end
-        handle.write(body)
-        handle.close()
-        return true, "Startup updated"
-    end
-    return false, "Existing startup preserved"
-end
-
-local function successScreen(role, manifest, startupMessage)
-    local width, height = target.getSize()
-    while true do
-        clear()
-        header("INSTALL COMPLETE", role.label)
-        fill(3, 5, width - 5, 7, theme.success)
-        center(6, "READY", colors.black, theme.success)
-        center(8, #manifest.files .. " required files verified",
-            colors.black, theme.success)
-        center(10, "Version " .. tostring(manifest.version),
-            colors.black, theme.success)
-        center(14, startupMessage, theme.muted)
-        local buttons = {}
-        local buttonWidth = math.max(8, math.floor((width - 5) / 2))
-        button(buttons, "menu", 2, height - 2, buttonWidth, 2,
-            "BACK TO MENU", theme.panel)
-        button(buttons, "reboot", width - buttonWidth, height - 2,
-            buttonWidth, 2, "REBOOT NOW", theme.accentDark)
-        local bindings = {}
-        if keys and keys.enter then bindings[keys.enter] = "reboot" end
-        local action = waitForButton(buttons, bindings)
-        if action == "reboot" then os.reboot() end
-        if action == "menu" or action == "__terminate" then return end
     end
 end
 
--- A Bank Server is two different machines since 9.0. Foxy's is the one that
--- holds the economy, and still wants the operator code; a 3rd Party Bank
--- Server hosts somebody's own bank app, which is public by design and has
--- nothing to lock.
-local function bankKind()
-    local width, height = target.getSize()
-    while true do
-        clear()
-        header("BANK SERVER", "Which kind of bank is this?")
-        local buttons = {}
-        local top = 6
-        button(buttons, "foxy", 2, top, width - 2, 4,
-            "1  FOXY BANK SERVER\nThe economy itself. Needs the code.",
-            theme.accent, colors.black)
-        button(buttons, "third", 2, top + 5, width - 2, 4,
-            "2  3RD PARTY BANK SERVER\nHosts a Bank App. No code needed.",
-            theme.panel)
-        button(buttons, "back", 2, height - 2, 12, 2, "BACK", theme.panel)
-        -- Keys as well as taps: a Bank Server is often set up on a computer
-        -- nobody is clicking on.
-        local action = waitForButton(buttons, {
-            ["1"] = "foxy", ["2"] = "third", ["f"] = "foxy",
-            ["t"] = "third", ["b"] = "back",
-        })
-        if action == "foxy" or action == "third" then return action end
-        if action == "back" or action == "__terminate" then return nil end
-    end
-end
-
-local function installRole(role, automatic)
-    progressChrome = nil
-    local accessCode
-    if role.protected then
-        accessCode = automatic and PROTECTED_CODE or protectedCode()
-        if not accessCode then return end
-        if accessCode ~= PROTECTED_CODE then
-            message("error", "ACCESS DENIED", "The download code is incorrect", 1.2)
+-- Installing from the menu: the code where one is needed, the download,
+-- the boot entry, and a restart into the program.
+local function installChosen(program)
+    if program.code then
+        local code = operatorCode()
+        if not code then return end
+        if code ~= PROTECTED_CODE then
+            message("error", "WRONG CODE", "Nothing was installed", 1.4)
             return
         end
     end
-
-    if role.id == "bank" and not automatic then
-        local kind = bankKind()
-        if not kind then return end
-        if kind == "third" then
-            -- Installed and launched like any other role, with no code:
-            -- there is nothing here that could reach the Foxy ledger.
-            return installRole(roleById("tpbank"), false)
-        end
-        accessCode = protectedCode()
-        if not accessCode then return end
-        if accessCode ~= PROTECTED_CODE then
-            message("error", "ACCESS DENIED",
-                "The download code is incorrect", 1.2)
-            return
-        end
-    end
-
-    if role.id == "bank" then
-        if automatic then return false end
-        local function launch()
-            running = false
-            shell.run(fs.combine(INSTALL_ROOT, rolePrograms.bank))
-            return true
-        end
-        local release, onlineError = installBankFromManifest(role)
-        if release then
-            local _, startupMessage = writeStartup(role)
-            message("success", "BANK SERVER v" .. release.version,
-                startupMessage .. " - starting now", 0.9)
-            return launch()
-        end
-        -- No internet, or a manifest that cannot be used. A release sitting
-        -- beside the installer still works, so say what went wrong and try.
-        message("warning", "NO ONLINE RELEASE",
-            tostring(onlineError or "Manifest unreachable"), 1.6)
-        if installLocalBank(role) then return launch() end
-        return false
-    end
-
-    if not automatic then
-        clear()
-        header("FINDING BANK SERVER", role.label)
-        center(8, "Searching Rednet...", theme.accent)
-    end
-    if not discoverBank() then
-        if automatic then return false end
-        message("error", "BANK SERVER NOT FOUND",
-            "Start the Bank Server and check the modem", 1.8)
+    if not httpReady() then
+        message("error", "HTTP IS OFF", "Easy Deployment downloads from GitHub."
+            .. " Switch http on in ComputerCraft's server config.", 3)
         return
     end
-
-    local manifest, err = retryDeployRequest("MANIFEST", {
-        role = role.id,
-        code = accessCode,
-    })
+    local manifest, manifestError = readManifest()
     if not manifest then
-        if automatic then return false end
-        message("error", "DOWNLOAD REJECTED", err, 1.6)
+        message("error", "RELEASE UNREACHABLE", manifestError, 2.2)
         return
     end
-    if type(manifest.files) ~= "table" or #manifest.files == 0 then
-        if automatic then return false end
-        message("error", "BAD MANIFEST", "Bank Server returned no files", 1.4)
+    local ok, err = install(program, INSTALL_ROOT, manifest)
+    if not ok then
+        message("error", "INSTALL FAILED", err, 2.4)
         return
     end
-    if automatic and not newerVersion(manifest.version, installedVersion()) then
-        return false
-    end
-
-    if not fs.exists(INSTALL_ROOT) then fs.makeDir(INSTALL_ROOT) end
-    if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-    fs.makeDir(STAGING_ROOT)
-    local totalBytes = 0
-    for _, file in ipairs(manifest.files) do
-        totalBytes = totalBytes + (tonumber(file.size) or 0)
-    end
-    local completed = 0
-    for index, file in ipairs(manifest.files) do
-        local ok, downloadError = downloadManifestFile(role, accessCode, file,
-            completed, totalBytes, index, #manifest.files)
-        if not ok then
-            if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-            message("error", "INSTALL FAILED", downloadError, 1.8)
-            return
-        end
-        completed = completed + file.size
-    end
-    -- This computer boots through the installer.lua it is handed, so it has
-    -- to be Easy Deployment. Until 11.2.1 a Bank could hand out its own
-    -- program in its place, and every role installed from it -- whatever
-    -- was picked -- restarted as a Bank Server.
-    local handed = readFile(fs.combine(STAGING_ROOT, "installer.lua"))
-    if handed and handed:sub(1, 24) ~= "-- PUMPE EASY DEPLOYMENT" then
-        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-        if automatic then return false end
-        message("error", "WRONG FILE FROM THE BANK",
-            "Its installer is not Easy Deployment", 2.2)
-        return
-    end
-    local committed, commitError = commitInstallation(manifest)
-    if not committed then
-        if fs.exists(STAGING_ROOT) then fs.delete(STAGING_ROOT) end
-        message("error", "INSTALL ROLLED BACK", commitError, 1.8)
-        return
-    end
-    local _, startupMessage = writeStartup(role)
-    if automatic then
-        message("success", "UPDATED TO v" .. tostring(manifest.version),
-            "Restarting " .. role.label, 0.6)
+    local booting, note = writeStartup(program)
+    message("success", string.upper(program.name) .. " READY", booting
+        and ("v" .. manifest.version .. " - starting it now") or note, 1.2)
+    if booting then
         os.reboot()
-        return true
+    else
+        shell.run(fs.combine(INSTALL_ROOT, program.file))
     end
-    successScreen(role, manifest, startupMessage)
     return true
 end
 
-math.randomseed((nowMs() + os.getComputerID() * 7919) % 2147483647)
-
--- Only an unassigned installer and the Bank Server need the public manifest.
--- Every installed client role receives installer.lua from the Bank's verified
--- depot, so booting one never waits on an HTTPS round trip.
-
--- The menu never opens on a stale Easy Deployment. A newer one installs
--- itself and reboots here, so roles added by a release are on the menu the
--- first time it is drawn rather than the second.
-local function updateCheckScreen()
-    local _, height = target.getSize()
-    local middle = math.max(2, math.floor(height / 2))
-    clear()
-    center(middle - 1, "CHECKING FOR UPDATES", theme.ink)
-    center(middle + 1, "Easy Deployment v" .. INSTALLER_VERSION, theme.muted)
-    selfUpdateInstaller()
-    repairInstalledBankRuntime()
-    clear()
-    local release = publicManifest and tostring(publicManifest.version or "")
-    if not release or release == "" then
-        center(middle - 1, "UPDATE CHECK OFFLINE", theme.warning)
-        center(middle + 1, "Running v" .. INSTALLER_VERSION, theme.muted)
-    elseif newerVersion(release, installedVersion()) then
-        center(middle - 1, "RELEASE v" .. release, theme.accent)
-        center(middle + 1, "Roles update as they start", theme.muted)
-    else
-        center(middle - 1, "UP TO DATE", theme.success)
-        center(middle + 1, "Release v" .. release, theme.muted)
+local function openProgram(program)
+    local path = fs.combine(INSTALL_ROOT, program.file)
+    if not fs.exists(path) then
+        message("error", "NOT INSTALLED", "Install " .. program.name .. " first", 1.6)
+        return false
     end
-    sleep(0.7)
+    clear()
+    shell.run("/" .. path)
+    return true
 end
 
--- Easy Deployment keeps itself current on every boot, not only the Bank's.
--- A computer whose role was added to a release after its own copy was
--- installed has no other way to learn about that role: the lookup below
--- fails, and until 9.2.2 that was a dead end with the very update that
--- would have fixed it never running.
-if bootRoleId then selfUpdateInstaller() end
-if bootRoleId == "bank" then repairInstalledBankRuntime() end
+-- Booting ----------------------------------------------------------------------
 
-if bootRoleId and not roleById(bootRoleId) then
-    -- Still unknown, even on the newest Easy Deployment there is. Open the
-    -- role picker rather than leaving the computer with nowhere to go.
-    message("error", "UNKNOWN ROLE",
-        tostring(bootRoleId) .. " - pick a role instead", 2.2)
-    bootRoleId = nil
-end
-
-if bootRoleId then
-    local role = roleById(bootRoleId)
-    -- A standalone copy dropped at the computer root seeds the permanent
-    -- boot manager. When it is already the installed one, skip the rewrite.
-    local runningPath = shell.getRunningProgram()
-    local installedInstaller = fs.combine(INSTALL_ROOT, "installer.lua")
-    if normalizedPath(runningPath) ~= normalizedPath(installedInstaller) then
-        local runningBody = readFile(runningPath)
-        if runningBody
-            and runningBody:find("-- PUMPE EASY DEPLOYMENT", 1, true) then
-            writeFile(installedInstaller, runningBody)
+-- Starts the program beside this copy, after updating it when the release
+-- is newer. /startup.lua is never rewritten here: it already points at this
+-- copy, and this copy is wherever the program is.
+local function bootProgram(program)
+    local home = homeDir()
+    local root = fs.exists(fs.combine(home, program.file)) and home or INSTALL_ROOT
+    local manifest = httpReady() and readManifest()
+    if manifest then
+        updateSelf(manifest)
+        if (newerVersion(manifest.version, installedVersion(root)) and not program.byCore)
+            or not fs.exists(fs.combine(root, program.file)) then
+            if install(program, root, manifest) then
+                message("success", "UPDATED TO v" .. manifest.version,
+                    "Restarting " .. program.name, 0.6)
+                os.reboot()
+                return
+            end
         end
     end
-    openModems()
-    if role.id ~= "bank" then installRole(role, true) end
-    writeStartup(role)
-    local program = fs.combine(INSTALL_ROOT, rolePrograms[role.id])
-    if not fs.exists(program) then
-        message("error", "ROLE FILE MISSING",
-            "Run Easy Deployment again", 2)
+    local path = fs.combine(root, program.file)
+    if not fs.exists(path) then
+        message("error", "PROGRAM MISSING", "Run Easy Deployment again", 2)
         return
     end
-    shell.run(program)
-    -- A locked program never ends on purpose. If it ended anyway, start
+    shell.run("/" .. path)
+    -- A locked counter never ends on purpose. If it ended anyway, start
     -- again rather than leave the shell open at a public counter.
-    if role.id == "delivery" and fs.exists(KEYBOARD_LOCK) then
+    if keyboardLocked() then
         sleep(3)
         os.reboot()
     end
-    return
 end
 
-if automaticRoleId then
-    if openModems() then
-        local role = roleById(automaticRoleId)
-        if role then installRole(role, true) end
-    end
-    return
-end
-
-boot()
-updateCheckScreen()
-openModems()
-
-while running do
-    local role, launch = roleMenu()
-    if role and launch then
-        local program = fs.combine(INSTALL_ROOT, rolePrograms[role.id])
-        if fs.exists(program) then
-            running = false
-            shell.run(program)
-        else
-            message("error", "ROLE FILE MISSING", "Install it again first", 1.6)
+if mode == "--auto" then
+    -- lib/net asks this when a program cannot update itself. Quietly: only
+    -- a newer release is installed, and then the computer restarts into it.
+    local program = programById(modeProgram)
+    local manifest = program and httpReady() and readManifest()
+    if manifest and newerVersion(manifest.version, installedVersion(homeDir())) then
+        if install(program, homeDir(), manifest) then
+            os.reboot()
+            return true
         end
-    elseif role then
-        installRole(role)
+    end
+    return false
+end
+
+if mode == "--boot" then
+    local program = programById(modeProgram)
+    if program then return bootProgram(program) end
+    message("error", "UNKNOWN PROGRAM", modeProgram .. " - pick one instead", 2)
+end
+
+-- The menu ------------------------------------------------------------------------
+
+do
+    local width, height = target.getSize()
+    clear()
+    center(math.floor(height / 2) - 1, "PUMPE EASY DEPLOYMENT", theme.ink)
+    center(math.floor(height / 2) + 1, "v" .. INSTALLER_VERSION, theme.muted)
+    if httpReady() and readManifest() then updateSelf(release.manifest) end
+end
+
+local pumpe = programById("pumpe")
+local screen, chosen, searched = "pumpe", nil, nil
+while true do
+    local installed = installedProgram()
+    local action
+    if screen == "pumpe" then
+        -- Whatever was typed here starts the search.
+        action, searched = programScreen(pumpe, installed, true)
+        chosen = pumpe
+    elseif screen == "search" then
+        local found
+        found, searched = searchScreen(installed, searched)
+        if type(found) == "table" then
+            chosen, screen = found, "program"
+        else
+            action = found
+        end
+    else
+        action = programScreen(chosen, installed, false)
+    end
+    if action == "exit" then
+        break
+    elseif action == "search" then
+        screen = "search"
+    elseif action == "back" then
+        screen = screen == "program" and "search" or "pumpe"
+    elseif action == "install" then
+        if installChosen(chosen) then break end
+    elseif action == "open" then
+        if openProgram(chosen) then break end
+    elseif action == "start" then
+        if openProgram(programById(installed)) then break end
     end
 end
 
 clear()
-print("PUMPE installer closed.")
+print("PUMPE Easy Deployment closed.")

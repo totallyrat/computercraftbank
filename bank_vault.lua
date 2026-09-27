@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "11.2.0"
+local PROGRAM_VERSION = "11.9.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")

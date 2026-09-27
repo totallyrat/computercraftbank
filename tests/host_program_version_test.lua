@@ -49,9 +49,15 @@ assert(stamped >= 10, "only " .. stamped .. " programs carry a version")
 -- Every role Easy Deployment can install has to keep itself current. A role
 -- that never calls net.autoUpdate is frozen on whatever release installed
 -- it, and nothing on the network can move it.
+-- Easy Deployment's list of programs, as `id = "..." = file` pairs so the
+-- checks below read it the way they read the other two lists.
 local installer = readFile("../installer.lua")
-local programBlock = installer:match("local rolePrograms = {(.-)\n}")
-assert(programBlock, "rolePrograms was not found")
+local programBlock = {}
+for id, file in installer:gmatch('{ id = "([%w_]+)", name = "[^"]+", file = "([%w_%.]+)"') do
+    programBlock[#programBlock + 1] = id .. ' = "' .. file .. '"'
+end
+assert(#programBlock >= 15, "Easy Deployment's PROGRAMS was not found")
+programBlock = table.concat(programBlock, ",\n")
 
 local frozen = {}
 for id, file in programBlock:gmatch('([%w_]+)%s*=%s*"([%w_%.]+)"') do

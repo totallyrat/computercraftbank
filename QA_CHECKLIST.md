@@ -7,6 +7,15 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## 12.0 Pre (11.9.0)
+
+### Every Bank updates and comes back
+
+- [ ] Watch the Bank update itself to 11.9.0: it restarts into its own dashboard, balances intact, with its own government key. Do this on the Bank that was handing out the wrong program — that is the one this was written for.
+- [ ] After it has updated, set up a new PUMPE with Easy Deployment and confirm it restarts as a PUMPE.
+- [ ] On every device that turned into a Bank: `delete /startup.lua`, `delete /pumpe`, `wget` Easy Deployment again, `reboot`, install. Confirm it becomes what was picked.
+- [ ] Leave a PUMPE, a kiosk and a Delivery Terminal in Pickup mode on 11.2 and restart them: each installs 11.9.0 on the way up and starts again as itself. The counter never shows the shell.
+
 ## 11.2
 
 ### A full Bank comes back
@@ -168,33 +177,17 @@ Run this after installing into a ComputerCraft world.
 
 ## Easy Deployment
 
-- [ ] Run `tools/run_tests.sh` and confirm every host-side test passes before touching a world.
-- [ ] Install a fresh Bank from files on the computer drive and confirm the source files are moved—not duplicated—into `/pumpe` and `/updates` before the Bank launches.
-- [ ] Upgrade a v6.0.1 Bank with duplicate runtime files in `/updates`; confirm Easy Deployment frees those copies before replacing `bank_server.lua`, then the Bank starts with no duplicate runtime or stale update folders.
-- [ ] Confirm `/pumpe` contains only the Bank runtime, installer, config, and required libraries, while `/updates` contains one copy of each role-specific program plus `public/config.lua`.
-- [ ] On a clean computer holding **only** `startup.lua`, with HTTP allowed, choose **Bank Server**, enter `4040`, and confirm it downloads and verifies the Bank from the public manifest without any release package or running Bank.
-- [ ] Confirm that install pulls only the Bank's own files — no `pumpe.lua`, `ccg.lua` or other role program — and that the Bank still starts with **Easy Deployment online**.
-- [ ] Install a client role from that Bank and confirm the role program is fetched into `/updates` on demand at that moment.
-- [ ] Switch HTTP off, keep the full release beside `startup.lua`, choose **Bank Server**, enter `4040`, and confirm it reports **NO ONLINE RELEASE** and then installs locally without trying to find a running Bank Server.
-- [ ] With neither HTTP nor a local release, confirm it reports **LOCAL BANK FILES MISSING** rather than installing something half-formed.
-- [ ] Confirm the Bank launches immediately, creates `/updates/`, and reports **Easy Deployment online** without stopping at another menu.
-- [ ] Replace a local distributable script, restart the Bank Server, and confirm its `/updates/` copy is refreshed.
-- [ ] Copy only `startup.lua` to the root of a clean Advanced Computer, restart, and confirm the touch installer opens automatically.
-- [ ] Confirm **CHECKING FOR UPDATES** appears before the menu, and that it then reports either **UP TO DATE**, the newer release, or **UPDATE CHECK OFFLINE**.
-- [ ] Publish a newer Easy Deployment, open it, and confirm it installs itself and reboots so a role added by that release is on the menu the first time it is drawn.
-- [ ] Confirm the first screen is **PERSONAL PUMPE** with the block-letter title and one install button, and that the down arrow is the only way to the other roles.
-- [ ] From the other roles, confirm **^ BACK** returns to the PUMPE screen.
-- [ ] Install PUMPE and confirm the main script, config, installer, and all required `lib/` files arrive under `/pumpe`.
-- [ ] Install **CCG Bet Console** and confirm `ccg.lua`, config, installer, and all required `lib/` files arrive under `/pumpe` and CCG starts after reboot.
-- [ ] Restart after installation and confirm the selected role starts automatically.
-- [ ] Enter a wrong protected code and confirm Bank Server and Admin Terminal downloads are denied.
-- [ ] On a 26x20 pocket screen, page through the other roles and confirm every one is reachable, **APP SERVER** included.
-- [ ] Enter `4040` and confirm a protected role downloads successfully.
-- [ ] Interrupt a download and confirm existing installed scripts remain unchanged.
-- [ ] Confirm an unrelated existing `/startup.lua` is preserved.
-- [ ] Open Easy Deployment on a computer that already has a role and confirm the footer names that role and version, and that **START ROLE** relaunches it without reinstalling.
-- [ ] Watch an installation and confirm the progress bar advances smoothly instead of flickering between chunks.
-- [ ] Reboot an installed client role with the Minecraft server's HTTP access disabled and confirm it starts without pausing for an internet request.
+- [ ] On a clean pocket computer: `wget https://raw.githubusercontent.com/totallyrat/computercraftbank/main/startup.lua startup.lua`, then `startup`. Confirm the first screen is the big PUMPE installer and nothing else.
+- [ ] Tap **INSTALL PUMPE**. Confirm it downloads, restarts, and opens **the PUMPE** — not a Bank. `ls /pumpe` shows `pumpe.lua`, `installer.lua`, `config.lua` and `lib/`, and no `bank_server.lua`.
+- [ ] On another clean computer press the down arrow and type `shop`, a letter at a time. Confirm the results change with every key and the Service Kiosk comes first. Install it, and confirm it restarts as a Service Kiosk.
+- [ ] Start typing on the first screen without pressing the arrow: the search opens with that letter in it.
+- [ ] Search `casino`, `web`, `gps`, `vault` and `pickup`: CCG Bet Console, Internet Server, GPS Anchor, Bank Vault, Delivery Terminal.
+- [ ] Open a result and press **< BACK**: the search still holds what was typed. Up from the first result goes back to the PUMPE.
+- [ ] Search `bank`, open **Bank Server**, install: it asks for the code. A wrong code installs nothing; `4040` installs a Bank that reaches its dashboard.
+- [ ] Open `/pumpe/installer.lua` on a PUMPE: the first screen says **OPEN PUMPE** and **REINSTALL**. Reinstall and confirm the phone keeps its settings and data.
+- [ ] Open `/pumpe/config.lua` on any device but the Bank: `government_key` is `CLIENT-NO-GOVERNMENT-ACCESS`.
+- [ ] Put your own program in `/startup.lua`, run `/installer.lua` from the root, install something: your `/startup.lua` is kept and the program starts straight away.
+- [ ] With HTTP switched off in the server config, Easy Deployment says so and installs nothing.
 
 ## Automatic Internet Updates
 

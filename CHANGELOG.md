@@ -1,5 +1,41 @@
 # Changelog
 
+## 11.9.0
+
+12.0 Pre. Easy Deployment, rebuilt from nothing as a downloader.
+
+**Easy Deployment is a downloader now.** Everything it installs comes
+straight from the published release on GitHub, each file checked against
+the release manifest. It no longer asks a Bank Server for anything -- which
+is what went wrong in 11.2: a Bank handed every device its copy of Easy
+Deployment, and a Bank whose own program sat in that copy's place turned
+every device it set up into a Bank, whatever you picked.
+
+**The PUMPE has the first screen.** One big button installs it. Press the
+down arrow, or just start typing, to search every other program. Results
+change as you type, and search reads keywords too: "shop" finds the Service
+Kiosk, "casino" the CCG console, "web" the Internet Server. Enter or a tap
+opens that program's own screen, with the same big install button.
+
+**A computer boots whatever is beside its installer.** On the way up it
+installs a newer release if there is one, then starts the program that sits
+next to its copy of Easy Deployment -- in /pumpe, or wherever a Bank built by
+hand keeps its files -- and never rewrites /startup.lua. A Bank in any layout
+updates into this release and starts again.
+
+**Settings stay when you reinstall.** A reinstall keeps the computer's own
+config.lua settings. No program but the Bank Server ever gets the government
+key.
+
+**The Bank only hands out Easy Deployment itself.** For devices that still
+ask it -- only those with HTTP switched off -- a Bank now recognises its copy of
+the installer by its first line, fetches the published one when it has none,
+and never overwrites a file in that place that is not Easy Deployment.
+
+Easy Deployment needs ComputerCraft's HTTP switched on, as the Bank already
+does. The Foxy Bank Server and the Admin Terminal still ask for the
+operator's code.
+
 ## 11.2.0
 
 A new Bank Server. The Core ran out of disk and would not start; this is
