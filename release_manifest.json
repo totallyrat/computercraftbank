@@ -11,8 +11,8 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 198568,
-      "checksum": "efe6551a"
+      "size": 197725,
+      "checksum": "cf970f94"
     },
     {
       "path": "pumpe.lua",
@@ -41,8 +41,8 @@
     {
       "path": "startup.lua",
       "source": "startup.lua",
-      "size": 42801,
-      "checksum": "b65db717"
+      "size": 42878,
+      "checksum": "b1f8ce21"
     },
     {
       "path": "launcher.lua",
@@ -65,8 +65,8 @@
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 37013,
-      "checksum": "e99728e1"
+      "size": 40999,
+      "checksum": "e431b2f5"
     },
     {
       "path": "lib/update.lua",
@@ -99,8 +99,8 @@
     {
       "path": "gps_anchor.lua",
       "source": "gps_anchor.lua",
-      "size": 5416,
-      "checksum": "4214eaac"
+      "size": 5145,
+      "checksum": "33612b8b"
     },
     {
       "path": "admin_terminal.lua",
@@ -111,8 +111,8 @@
     {
       "path": "app_server.lua",
       "source": "app_server.lua",
-      "size": 16470,
-      "checksum": "600859b4"
+      "size": 15725,
+      "checksum": "ec79cda5"
     },
     {
       "path": "foxy.lua",
@@ -123,8 +123,8 @@
     {
       "path": "bank_app_server.lua",
       "source": "bank_app_server.lua",
-      "size": 41416,
-      "checksum": "cbb81a85"
+      "size": 40813,
+      "checksum": "4ad46ff4"
     },
     {
       "path": "buckapp.lua",
@@ -135,8 +135,8 @@
     {
       "path": "ccg_server.lua",
       "source": "ccg_server.lua",
-      "size": 33205,
-      "checksum": "88a76a39"
+      "size": 32303,
+      "checksum": "8fe7a75b"
     },
     {
       "path": "revolution.lua",
@@ -147,14 +147,14 @@
     {
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
-      "size": 143004,
-      "checksum": "6625a609"
+      "size": 142114,
+      "checksum": "f8f2bea0"
     },
     {
       "path": "internet_server.lua",
       "source": "internet_server.lua",
-      "size": 13404,
-      "checksum": "c650351d"
+      "size": 12606,
+      "checksum": "a6861112"
     },
     {
       "path": "wc.lua",

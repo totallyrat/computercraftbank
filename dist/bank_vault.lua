@@ -4698,70 +4698,47 @@ sleep(10)
 end
 end
 
+
+
 local function dashboardLoop()
-local target = term.current()
-local blink = true
-while running do
-local width, height = target.getSize()
-ui.clear(target)
-ui.header(target, "PUMPE BANK VAULT", "v" .. PROGRAM_VERSION,
-util.formatClock(blink))
-local cardWidth = math.floor((width - 4) / 3)
-local cards = {
-{ "PEOPLE", mapCount(state.holders), colors.cyan },
+ui.serverTabs({
+target = term.current(), title = "PUMPE BANK VAULT",
+subtitle = "v" .. PROGRAM_VERSION,
+cards = function()
+return { { "PEOPLE", mapCount(state.holders), colors.cyan },
 { "CHATS", mapCount(state.conversations), colors.magenta },
-{ "TERRITORIES", mapCount(state.territories), colors.lime },
-}
-for index, card in ipairs(cards) do
-local x = 2 + (index - 1) * (cardWidth + 1)
-local panelWidth = index == #cards and width - 1 - x or cardWidth
-ui.card(target, x, 5, panelWidth, 4, card[3])
-ui.text(target, x + 2, 6, card[1], colors.lightGray, colors.gray)
-ui.text(target, x + 2, 7, tostring(card[2]), colors.white,
-colors.gray, panelWidth - 3)
-end
-ui.text(target, 2, 10, ui.truncate("CORE  " .. dash.core, width - 2),
-dash.core_color)
-ui.text(target, 2, 11,
-ui.truncate("INTERNET  " .. dash.update_status, width - 2),
-dash.update_color)
-local scene = ui.scene(target)
-local feedY = 13
-ui.text(target, 2, feedY, "ACTIVITY", colors.lightGray)
-local maxFeed = math.max(1, height - feedY - 2)
-for index = 1, math.min(#activity, maxFeed) do
-local item = activity[index]
-ui.text(target, 2, feedY + index,
-item.time .. "  " .. ui.truncate(item.text, width - 10),
-item.color)
-end
-scene:button("save", width - 18, height, 8, 1, "SAVE",
-{ background = colors.blue })
-scene:button("stop", width - 9, height, 8, 1, "STOP",
-{ background = colors.red })
-local action = scene:wait({ tickRate = 0.5, flash = false })
-blink = not blink
+{ "TERRITORIES", mapCount(state.territories), colors.lime } }
+end,
+lines = function()
+return { { "CORE  " .. dash.core, dash.core_color },
+{ "INTERNET  " .. dash.update_status, dash.update_color } }
+end,
+tick = function()
 if core.id then
 dash.core = "#" .. tostring(core.id)
 .. (core.online == false and " NOT ANSWERING" or " LINKED")
 dash.core_color = core.online == false and colors.red or colors.lime
 end
-if action == "save" then
+end,
+activity = activity,
+actions = {
+{ id = "save", label = "SAVE", hint = "Write everything to disk",
+color = colors.blue, run = function()
 save()
 logActivity("Manual save complete", colors.lime)
-elseif action == "stop" then
-if ui.confirm(target, "STOP VAULT", "Save and shut down?",
-"STOP", "BACK") then
+end },
+{ id = "stop", label = "STOP", hint = "Save and shut down", color = colors.red,
+run = function(terminated)
+if terminated or ui.confirm(term.current(), "STOP VAULT",
+"Save and shut down?", "STOP", "BACK") then
 running = false
 save()
-return
+return true
 end
-elseif action == "__terminate" then
-running = false
-save()
-return
-end
-end
+end },
+},
+running = function() return running end,
+})
 end
 
 ui.boot(term.current(), "PUMPE VAULT", "BANK RECORDS")

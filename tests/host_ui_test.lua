@@ -524,4 +524,80 @@ assert(blinked > slept,
         .. " keep three of them if it were written `blinks and ... or 3`")
 sleep = function() end
 
+-- 12.0: a server's dashboard. Status, Activity and Server tabs over the
+-- floating bar, More listing every action, and an action that returns true
+-- stopping the whole thing.
+do
+    local width, height = 51, 19
+    local written = {}
+    local display = mockTerminal(width, height)
+    display.write = function(value) written[#written + 1] = tostring(value) end
+    local function shown(text)
+        for _, value in ipairs(written) do
+            if value:find(text, 1, true) then return true end
+        end
+        return false
+    end
+    -- Where the bar puts each tab, measured off the real bar.
+    local list = { { id = "status", label = "Status" },
+        { id = "activity", label = "Activity", short = "Log" },
+        { id = "server", label = "Server" } }
+    local probe = ui.scene(display)
+    ui.tabBar(probe, display, list, "status", nil, { home = false })
+    local at = {}
+    for x = 1, width do
+        local id = probe:hit(x, height - 1)
+        if id and not at[id] then at[id] = x end
+    end
+    assert(at["tab:activity"] and at["tab:server"] and at["tab:more"],
+        "three tabs and More")
+    assert(probe:hit(1, 1) == nil, "and no home mark on a server")
+
+    local running, saves, offered = true, 0, nil
+    local clicks = {
+        function() assert(shown("APPS") and shown("CATALOGUE") and shown("Fox App"),
+            "Status: the cards and the lines") return at["tab:activity"], height - 1 end,
+        function() assert(shown("ACTIVITY  2") and shown("Published Fox App"),
+            "Activity: what it logged") return at["tab:server"], height - 1 end,
+        function() assert(shown("SAVE") and shown("STOP") and shown("MAIN COLOUR"),
+            "Server: every action, and the colour") return 3, 5 end,
+        function() assert(saves == 1, "an action runs") return at["tab:more"], height - 1 end,
+        function() return 30, 5 end,
+    }
+    local realMore = ui.moreMenu
+    ui.moreMenu = function(_, spec)
+        offered = {}
+        for _, entry in ipairs(spec.more or {}) do offered[entry.id] = entry.label end
+        return "save"
+    end
+    local realPull = os.pullEvent
+    os.pullEvent = function()
+        local click = table.remove(clicks, 1)
+        assert(click, "the dashboard waited for a click that never came")
+        local x, y = click()
+        written = {}
+        return "mouse_click", 1, x, y
+    end
+    local realPick = ui.pickMainColor
+    ui.serverTabs({
+        target = display, title = "PUMPE APP SERVER", subtitle = "v12",
+        cards = function() return { { "APPS", 1 }, { "DOWNLOADS", 4 } } end,
+        lines = function() return { { "CATALOGUE" }, { "Fox App  v1  by Ana" } } end,
+        activity = { { time = "12:00", text = "Published Fox App" },
+            { time = "11:00", text = "Online" } },
+        root = "/pumpe",
+        actions = {
+            { id = "save", label = "SAVE", run = function() saves = saves + 1 end },
+            { id = "stop", label = "STOP", run = function() running = false return true end },
+        },
+        running = function() return running end,
+    })
+    ui.moreMenu, os.pullEvent, ui.pickMainColor = realMore, realPull, realPick
+    assert(#clicks == 0 and not running, "STOP stops it")
+    assert(saves == 2, "More ran SAVE as well")
+    assert(offered and offered.save == "Save" and offered.stop == "Stop"
+        and offered.__color == "Main colour", "More lists every action: "
+        .. tostring(offered and offered.__color))
+end
+
 print("host_ui_test: OK")

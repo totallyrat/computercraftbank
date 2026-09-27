@@ -780,68 +780,43 @@ local function updateLoop()
     end
 end
 
+-- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
-    local blink = true
-    while running do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "PUMPE CCG SERVER", "v" .. PROGRAM_VERSION,
-            util.formatClock(blink))
-        local open, running_count, players = 0, 0, 0
-        for _, lobby in pairs(state.lobbies) do
-            if lobby.status == "lobby" then open = open + 1 end
-            if lobby.status == "running" then
-                running_count = running_count + 1
-            end
-            if lobby.status == "lobby" or lobby.status == "running" then
-                players = players + #(lobby.player_order or {})
-            end
-        end
-        local cardWidth = math.floor((width - 4) / 3)
-        local cards = {
-            { "LOBBIES", open, colors.cyan },
-            { "RUNNING", running_count, colors.lime },
-            { "PLAYERS", players, colors.magenta },
-        }
-        for index, card in ipairs(cards) do
-            local x = 2 + (index - 1) * (cardWidth + 1)
-            local panelWidth = index == #cards and width - 1 - x or cardWidth
-            ui.card(target, x, 5, panelWidth, 4, card[3])
-            ui.text(target, x + 2, 6, card[1], colors.lightGray, colors.gray)
-            ui.text(target, x + 2, 7, tostring(card[2]), colors.white,
-                colors.gray, panelWidth - 3)
-        end
-        ui.text(target, 2, 10, ui.truncate("BANK  " .. (bank:isOnline()
-            and "CONNECTED" or "SEARCHING"), width - 2),
-            bank:isOnline() and colors.lime or colors.orange)
-        ui.text(target, 2, 12, "ACTIVITY", colors.lightGray)
-        local maxFeed = math.max(1, height - 14)
-        for index = 1, math.min(#activity, maxFeed) do
-            local item = activity[index]
-            ui.text(target, 2, 12 + index,
-                item.time .. "  " .. ui.truncate(item.text, width - 10),
-                item.color)
-        end
-        local scene = ui.scene(target)
-        scene:button("stop", width - 10, height, 9, 1, "STOP",
-            { background = colors.red })
-        local action = scene:wait({ tickRate = 0.5, flash = false })
-        blink = not blink
-        if action == "stop" or action == "__terminate" then
-            if action == "__terminate"
-                or ui.confirm(target, "STOP CCG SERVER",
-                    "Open lobbies will be refunded.", "STOP", "BACK") then
-                for _, lobby in pairs(state.lobbies) do
-                    if lobby.status == "lobby" or lobby.status == "running" then
-                        pcall(refundLobby, lobby, "CCG Server stopped")
-                    end
+    ui.serverTabs({
+        target = target, title = "PUMPE CCG SERVER", subtitle = "v" .. PROGRAM_VERSION,
+        cards = function()
+            local open, running_count, players = 0, 0, 0
+            for _, lobby in pairs(state.lobbies) do
+                if lobby.status == "lobby" then open = open + 1 end
+                if lobby.status == "running" then running_count = running_count + 1 end
+                if lobby.status == "lobby" or lobby.status == "running" then
+                    players = players + #(lobby.player_order or {})
                 end
-                running = false
-                save()
-                return
             end
-        end
-    end
+            return { { "LOBBIES", open, colors.cyan }, { "RUNNING", running_count, colors.lime },
+                { "PLAYERS", players, colors.magenta } }
+        end,
+        lines = function()
+            return { { "BANK  " .. (bank:isOnline() and "CONNECTED" or "SEARCHING"),
+                bank:isOnline() and colors.lime or colors.orange } }
+        end,
+        activity = activity, root = ROOT, colorTitle = "Server colour",
+        actions = { { id = "stop", label = "STOP", hint = "Open lobbies are refunded",
+            color = colors.red, run = function(terminated)
+                if terminated or ui.confirm(target, "STOP CCG SERVER",
+                    "Open lobbies will be refunded.", "STOP", "BACK") then
+                    for _, lobby in pairs(state.lobbies) do
+                        if lobby.status == "lobby" or lobby.status == "running" then
+                            pcall(refundLobby, lobby, "CCG Server stopped")
+                        end
+                    end
+                    running = false
+                    save()
+                    return true
+                end
+            end } },
+        running = function() return running end,
+    })
 end
 
 if TEST_MODE then

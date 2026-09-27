@@ -763,6 +763,142 @@ function ui.runTabs(spec)
     end
 end
 
+-- A server's dashboard, 12.0. Every server shows the same three tabs --
+-- Status (its numbers and state), Activity (everything it logged) and
+-- Server (what can be done to it) -- with More listing every action. A
+-- server describes itself; this draws it.
+--
+-- spec: target, title, subtitle (string or function), cards() -> list of
+-- { label, value, color }, lines() -> list of { text, color }, activity
+-- (newest first: { time, text, color }), actions (list, or a function
+-- returning one, of { id, label, hint, color, run } -- run returns true to
+-- stop), root (a folder for the main colour; none for the Bank and Vault),
+-- tick() on every tick, tickRate, running().
+function ui.serverTabs(spec)
+    local target = surface(spec.target)
+    local blink = true
+    local function actionList()
+        local list = type(spec.actions) == "function" and spec.actions() or spec.actions or {}
+        if spec.root then
+            list[#list + 1] = { id = "__color", label = "MAIN COLOUR",
+                hint = "How this server looks", color = ui.theme.accent,
+                run = function() ui.pickMainColor(target, spec.root,
+                    spec.colorTitle or "Server colour") end }
+        end
+        return list
+    end
+    local function run(id, terminated)
+        for _, entry in ipairs(actionList()) do
+            if entry.id == id then return entry.run(terminated) end
+        end
+    end
+    local function header()
+        local subtitle = type(spec.subtitle) == "function" and spec.subtitle()
+            or spec.subtitle or ""
+        ui.header(target, spec.title, subtitle, util.formatClock(blink))
+    end
+    -- The end of every page: the bar, then the wait. Nil means redraw.
+    local function finish(scene, tabSpec)
+        ui.tabBar(scene, target, tabSpec.list, tabSpec.active, nil, { home = false })
+        local action = scene:wait({ tickRate = spec.tickRate or 0.5, flash = false })
+        blink = not blink
+        if action == "__tick" or action == "__idle" then
+            if spec.tick then spec.tick() end
+            return nil
+        end
+        if action == "__terminate" then
+            run("stop", true)
+            return nil
+        end
+        if action and action:match("^tab:") then return action end
+        if action then run(action) end
+        return nil
+    end
+    local function page(draw)
+        return function(tabSpec)
+            while not spec.running or spec.running() do
+                ui.clear(target)
+                header()
+                local scene = ui.scene(target)
+                draw(scene)
+                local switched = finish(scene, tabSpec)
+                if switched then return switched end
+            end
+        end
+    end
+
+    local status = page(function()
+        local width = target.getSize()
+        local bottom = ui.contentBottom(target)
+        local y = 5
+        local cards = spec.cards and spec.cards() or {}
+        if #cards > 0 then
+            local cardWidth = math.floor((width - 1 - #cards) / #cards)
+            for index, card in ipairs(cards) do
+                local x = 2 + (index - 1) * (cardWidth + 1)
+                local panelWidth = index == #cards and width - x or cardWidth
+                ui.card(target, x, 5, panelWidth, 4, card[3] or ui.theme.accent)
+                ui.text(target, x + 2, 6, tostring(card[1]), ui.theme.muted, ui.theme.panel)
+                ui.text(target, x + 2, 7, tostring(card[2]), ui.theme.ink, ui.theme.panel,
+                    panelWidth - 3)
+            end
+            y = 10
+        end
+        for _, line in ipairs(spec.lines and spec.lines() or {}) do
+            if y > bottom then break end
+            ui.text(target, 2, y, ui.truncate(tostring(line[1]), width - 2),
+                line[2] or ui.theme.ink)
+            y = y + 1
+        end
+    end)
+
+    local activity = page(function()
+        local width = target.getSize()
+        local list = spec.activity or {}
+        ui.text(target, 2, 4, "ACTIVITY  " .. #list, ui.theme.muted)
+        for index = 1, math.min(#list, ui.contentBottom(target) - 4) do
+            local item = list[index]
+            ui.text(target, 2, 4 + index, ui.truncate(tostring(item.time) .. "  "
+                .. tostring(item.text), width - 2), item.color or ui.theme.ink)
+        end
+        if #list == 0 then ui.text(target, 2, 6, "Nothing yet", ui.theme.muted) end
+    end)
+
+    local server = page(function(scene)
+        local width = target.getSize()
+        local half = math.floor((width - 3) / 2)
+        for index, entry in ipairs(actionList()) do
+            local column = (index - 1) % 2
+            local row = math.floor((index - 1) / 2)
+            local y = 5 + row * 3
+            if y + 1 <= ui.contentBottom(target) then
+                local background = entry.color or ui.theme.panel
+                scene:button(entry.id, 2 + column * (half + 1), y,
+                    column == 0 and half or width - 3 - half, 2, entry.label,
+                    { background = background, foreground = ui.inkOn(background) })
+            end
+        end
+    end)
+
+    ui.runTabs({
+        target = target, title = spec.title, subtitle = "Everything here",
+        list = { { id = "status", label = "Status" }, { id = "activity", label = "Activity",
+            short = "Log" }, { id = "server", label = spec.serverLabel or "Server" } },
+        pages = { status = status, activity = activity, server = server },
+        running = spec.running,
+        -- More lists what the Server tab has, as it is now.
+        refresh = function(tabSpec)
+            tabSpec.more, tabSpec.actions = {}, {}
+            for _, entry in ipairs(actionList()) do
+                tabSpec.more[#tabSpec.more + 1] = { id = entry.id,
+                    label = entry.label:sub(1, 1) .. entry.label:sub(2):lower(),
+                    hint = entry.hint }
+                tabSpec.actions[entry.id] = function() run(entry.id) end
+            end
+        end,
+    })
+end
+
 -- Picking the main colour: every colour as a swatch, the choice shown at
 -- once on a sample of the tab bar, kept only on Done.
 function ui.pickMainColor(target, root, title)

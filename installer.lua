@@ -145,10 +145,11 @@ end
 -- Drawing --------------------------------------------------------------------
 
 local target = term.current()
+-- 12.0: orange, like the fox and like every PUMPE device out of the box.
 local theme = {
     background = colors.black, panel = colors.gray, panelAlt = colors.lightGray,
-    ink = colors.white, muted = colors.lightGray, accent = colors.cyan,
-    accentDark = colors.blue, success = colors.lime, warning = colors.orange,
+    ink = colors.white, muted = colors.lightGray, accent = colors.orange,
+    accentDark = colors.brown, success = colors.lime, warning = colors.yellow,
     danger = colors.red,
 }
 

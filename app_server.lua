@@ -28,7 +28,7 @@ local function logActivity(text, color)
         color = color or colors.lightGray,
         time = util.formatClock(),
     })
-    while #activity > 8 do table.remove(activity) end
+    while #activity > 16 do table.remove(activity) end
 end
 
 local state = util.loadTable(dataFile, { apps = {}, order = {}, sequence = 0 })
@@ -344,65 +344,42 @@ local function updateLoop()
     end
 end
 
+-- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
-    local blink = true
-    while running do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "PUMPE APP SERVER", "v" .. config.version,
-            util.formatClock(blink))
-        local downloads = 0
-        for _, app in pairs(state.apps) do
-            downloads = downloads + (app.downloads or 0)
-        end
-        local cardWidth = math.floor((width - 3) / 2)
-        ui.card(target, 2, 5, cardWidth, 4, ui.theme.accent)
-        ui.text(target, 4, 6, "APPS", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 7, tostring(#state.order), ui.theme.ink,
-            ui.theme.panel, cardWidth - 3)
-        ui.card(target, 3 + cardWidth, 5, width - cardWidth - 3, 4,
-            ui.theme.success)
-        ui.text(target, 5 + cardWidth, 6, "DOWNLOADS", ui.theme.muted,
-            ui.theme.panel)
-        ui.text(target, 5 + cardWidth, 7, tostring(downloads), ui.theme.ink,
-            ui.theme.panel, width - cardWidth - 6)
-
-        ui.text(target, 2, 10, "CATALOGUE", ui.theme.muted)
-        local row = 11
-        for _, appId in ipairs(state.order) do
-            local app = state.apps[appId]
-            if app and row <= height - 6 then
-                ui.text(target, 2, row,
-                    ui.truncate(app.name .. "  v" .. app.version
-                        .. "  by " .. app.author, width - 3), ui.theme.ink)
-                row = row + 1
+    ui.serverTabs({
+        target = target, title = "PUMPE APP SERVER", subtitle = "v" .. config.version,
+        cards = function()
+            local downloads = 0
+            for _, app in pairs(state.apps) do downloads = downloads + (app.downloads or 0) end
+            return { { "APPS", #state.order, ui.theme.accent },
+                { "DOWNLOADS", downloads, ui.theme.success } }
+        end,
+        lines = function()
+            local lines = { { "CATALOGUE", ui.theme.muted } }
+            for _, appId in ipairs(state.order) do
+                local app = state.apps[appId]
+                if app then
+                    lines[#lines + 1] = { app.name .. "  v" .. app.version .. "  by "
+                        .. app.author }
+                end
             end
-        end
-        if #state.order == 0 then
-            ui.text(target, 2, 11, "Nothing published yet", ui.theme.muted)
-        end
-        ui.text(target, 2, height - 4, "ACTIVITY", ui.theme.muted)
-        for index = 1, math.min(#activity, 2) do
-            local item = activity[index]
-            ui.text(target, 2, height - 4 + index,
-                item.time .. "  " .. ui.truncate(item.text, width - 10),
-                item.color)
-        end
-        local scene = ui.scene(target)
-        scene:button("stop", width - 9, height, 8, 1, "STOP",
-            { background = ui.theme.danger })
-        local action = scene:wait({ tickRate = 0.5, flash = false })
-        blink = not blink
-        if action == "stop" or action == "__terminate" then
-            if ui.confirm(target, "STOP APP SERVER",
-                "PUMPEs will not be able to download apps.",
-                "STOP", "BACK") then
-                running = false
-                save()
-                return
+            if #state.order == 0 then
+                lines[#lines + 1] = { "Nothing published yet", ui.theme.muted }
             end
-        end
-    end
+            return lines
+        end,
+        activity = activity, root = ROOT, colorTitle = "Server colour",
+        actions = { { id = "stop", label = "STOP", hint = "PUMPEs stop downloading apps",
+            color = ui.theme.danger, run = function()
+                if ui.confirm(target, "STOP APP SERVER",
+                    "PUMPEs will not be able to download apps.", "STOP", "BACK") then
+                    running = false
+                    save()
+                    return true
+                end
+            end } },
+        running = function() return running end,
+    })
 end
 
 if rawget(_G, "PUMPE_TEST_MODE") == true then
@@ -410,6 +387,8 @@ if rawget(_G, "PUMPE_TEST_MODE") == true then
         seed = seedShippedApps }
 end
 
+-- 12.0: this server's main colour, orange unless its owner chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 ui.boot(target, "PUMPE APPS", "APP SERVER v" .. config.version)
 net.autoUpdate(config, "apps", ROOT, nil,
     { force = true, programVersion = PROGRAM_VERSION })

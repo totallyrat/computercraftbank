@@ -77,50 +77,38 @@ local function hostLoop()
     net.gpsHost(device, function() return running end)
 end
 
+-- 12.0: Status, Activity and Server tabs, as on every server. An anchor
+-- keeps no log, so Activity is how many it has answered.
 local function screenLoop()
-    local blink, tick = true, 0
-    while running do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "PUMPE GPS ANCHOR", "v" .. config.version,
-            util.formatClock(blink))
-        ui.card(target, 2, 5, width - 2, 4, ui.theme.success)
-        ui.text(target, 4, 6, "SERVING POSITION", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 7,
-            device.x .. ", " .. device.y .. ", " .. device.z,
-            ui.theme.ink, ui.theme.panel)
-        ui.text(target, 2, 10, "Answered " .. served .. " location requests",
-            ui.theme.muted)
-        ui.wrappedText(target, 2, 12,
-            "Four anchors in range, spread apart and not all at the same"
-            .. " height, let any device locate itself.",
-            width - 2, 3, ui.theme.muted)
-
-        local scene = ui.scene(target)
-        scene:button("move", 2, height - 3, math.max(10,
-            math.floor((width - 3) / 2)), 2, "SET POSITION",
-            { background = ui.theme.panel })
-        scene:button("stop", width - math.max(10,
-            math.floor((width - 3) / 2)), height - 3,
-            math.max(10, math.floor((width - 3) / 2)), 2, "SHUT DOWN",
-            { background = ui.theme.danger })
-        local action = scene:wait({ tickRate = 1 })
-        blink = not blink
-        tick = tick + 1
-        if action == "__tick" then
-            net.autoUpdate(config, "anchor", ROOT, nil,
-                { programVersion = PROGRAM_VERSION })
-        elseif action == "move" then
-            if setupAnchor() then
-                ui.message(target, "success", "POSITION UPDATED", nil, 1)
-            end
-        elseif action == "stop" or action == "__terminate" then
-            running = false
-            return
-        end
-    end
+    ui.serverTabs({
+        target = target, title = "PUMPE GPS ANCHOR", subtitle = "v" .. config.version,
+        cards = function()
+            return { { "POSITION", device.x .. ", " .. device.y .. ", " .. device.z,
+                ui.theme.success }, { "ANSWERED", served, ui.theme.accent } }
+        end,
+        lines = function()
+            return { { "Four anchors in range, spread apart and not all at", ui.theme.muted },
+                { "the same height, let any device locate itself.", ui.theme.muted } }
+        end,
+        activity = {}, root = ROOT, colorTitle = "Anchor colour", tickRate = 1,
+        tick = function()
+            net.autoUpdate(config, "anchor", ROOT, nil, { programVersion = PROGRAM_VERSION })
+        end,
+        actions = {
+            { id = "move", label = "SET POSITION", hint = "Read it off F3", run = function()
+                if setupAnchor() then
+                    ui.message(target, "success", "POSITION UPDATED", nil, 1)
+                end
+            end },
+            { id = "stop", label = "SHUT DOWN", hint = "Stop answering", color = ui.theme.danger,
+                run = function() running = false return true end },
+        },
+        running = function() return running end,
+    })
 end
 
+-- 12.0: this anchor's main colour, orange unless its owner chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 ui.boot(target, "GPS ANCHOR", "PUMPE POSITIONING v" .. config.version)
 net.autoUpdate(config, "anchor", ROOT, nil,
     { force = true, programVersion = PROGRAM_VERSION })

@@ -954,50 +954,34 @@ local function updateLoop()
     end
 end
 
+-- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
-    local blink = true
-    while running do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, state.bank_name or "3RD PARTY BANK",
-            "Bank " .. tostring(state.bank_code) .. "  v" .. PROGRAM_VERSION,
-            util.formatClock(blink))
-        local count, held = 0, 0
-        for _, account in pairs(state.accounts) do
-            count = count + 1
-            held = held + (account.balance or 0)
-        end
-        local half = math.floor((width - 3) / 2)
-        ui.card(target, 2, 5, half, 4, colors.cyan)
-        ui.text(target, 4, 6, "ACCOUNTS", colors.lightGray, colors.gray)
-        ui.text(target, 4, 7, tostring(count), colors.white, colors.gray)
-        ui.card(target, 3 + half, 5, width - 3 - half, 4, colors.lime)
-        ui.text(target, 5 + half, 6, "HELD", colors.lightGray, colors.gray)
-        ui.text(target, 5 + half, 7, util.money(held, config.currency),
-            colors.white, colors.gray, width - 6 - half)
-        ui.text(target, 2, 10, "ACTIVITY", colors.lightGray)
-        local maxFeed = math.max(1, height - 12)
-        for index = 1, math.min(#activity, maxFeed) do
-            local item = activity[index]
-            ui.text(target, 2, 10 + index,
-                item.time .. "  " .. ui.truncate(item.text, width - 10),
-                item.color)
-        end
-        local scene = ui.scene(target)
-        scene:button("stop", width - 10, height, 9, 1, "STOP",
-            { background = colors.red })
-        local action = scene:wait({ tickRate = 0.5, flash = false })
-        blink = not blink
-        if action == "stop" or action == "__terminate" then
-            if action == "__terminate"
-                or ui.confirm(target, "STOP BANK", "Save and shut down?",
-                    "STOP", "BACK") then
-                running = false
-                save()
-                return
+    ui.serverTabs({
+        target = target, title = state.bank_name or "3RD PARTY BANK",
+        subtitle = function()
+            return "Bank " .. tostring(state.bank_code) .. "  v" .. PROGRAM_VERSION
+        end,
+        cards = function()
+            local count, held = 0, 0
+            for _, account in pairs(state.accounts) do
+                count = count + 1
+                held = held + (account.balance or 0)
             end
-        end
-    end
+            return { { "ACCOUNTS", count, colors.cyan },
+                { "HELD", util.money(held, config.currency), colors.lime } }
+        end,
+        activity = activity, root = ROOT, colorTitle = "Bank colour",
+        actions = { { id = "stop", label = "STOP", hint = "Save and shut down",
+            color = colors.red, run = function(terminated)
+                if terminated or ui.confirm(target, "STOP BANK", "Save and shut down?",
+                    "STOP", "BACK") then
+                    running = false
+                    save()
+                    return true
+                end
+            end } },
+        running = function() return running end,
+    })
 end
 
 if TEST_MODE then
@@ -1009,6 +993,8 @@ if TEST_MODE then
 end
 
 ui.usePhoneStyle(false)
+-- 12.0: this bank's main colour, orange unless its owner chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 ui.boot(target, "3RD PARTY BANK", "INDEPENDENT ECONOMY")
 net.openModems()
 

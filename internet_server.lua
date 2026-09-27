@@ -42,7 +42,7 @@ local function logActivity(text, color)
         color = color or colors.lightGray,
         time = util.formatClock(),
     })
-    while #activity > 8 do table.remove(activity) end
+    while #activity > 16 do table.remove(activity) end
 end
 
 local state = util.loadTable(dataFile, { sites = {}, order = {}, visits = 0 })
@@ -266,70 +266,50 @@ local function updateLoop()
 end
 
 -- The Terminal. What this machine is holding, and who has been reading it.
+-- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
-    local blink = true
-    while running do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "PUMPE INTERNET", "#" .. os.getComputerID()
-            .. "  v" .. config.version, util.formatClock(blink))
-        local cardWidth = math.floor((width - 3) / 2)
-        ui.card(target, 2, 5, cardWidth, 4, ui.theme.accent)
-        ui.text(target, 4, 6, "SITES", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 7, tostring(#state.order), ui.theme.ink,
-            ui.theme.panel, cardWidth - 3)
-        ui.card(target, 3 + cardWidth, 5, width - cardWidth - 3, 4,
-            ui.theme.success)
-        ui.text(target, 5 + cardWidth, 6, "PAGES READ", ui.theme.muted,
-            ui.theme.panel)
-        ui.text(target, 5 + cardWidth, 7, tostring(state.visits),
-            ui.theme.ink, ui.theme.panel, width - cardWidth - 6)
-
-        ui.text(target, 2, 10, "HOSTED", ui.theme.muted)
-        local row = 11
-        for _, key in ipairs(state.order) do
-            local site = state.sites[key]
-            if site and row <= height - 6 then
-                ui.text(target, 2, row,
-                    ui.truncate(site.domain .. "  by "
-                        .. tostring(site.owner_name), width - 3), ui.theme.ink)
-                row = row + 1
+    ui.serverTabs({
+        target = target, title = "PUMPE INTERNET",
+        subtitle = "#" .. os.getComputerID() .. "  v" .. config.version,
+        cards = function()
+            return { { "SITES", #state.order, ui.theme.accent },
+                { "PAGES READ", state.visits, ui.theme.success } }
+        end,
+        lines = function()
+            local lines = { { "HOSTED", ui.theme.muted } }
+            for _, key in ipairs(state.order) do
+                local site = state.sites[key]
+                if site then
+                    lines[#lines + 1] = { site.domain .. "  by " .. tostring(site.owner_name) }
+                end
             end
-        end
-        if #state.order == 0 then
-            ui.text(target, 2, 11, "Nothing published yet", ui.theme.muted)
-            ui.wrappedText(target, 2, 13, "Websites are written in Website"
-                .. " Crafter on a PUMPE and published here.", width - 3, 3,
-                ui.theme.muted)
-        end
-        ui.text(target, 2, height - 4, "ACTIVITY", ui.theme.muted)
-        for index = 1, math.min(#activity, 2) do
-            local item = activity[index]
-            ui.text(target, 2, height - 4 + index,
-                item.time .. "  " .. ui.truncate(item.text, width - 10),
-                item.color)
-        end
-        local scene = ui.scene(target)
-        scene:button("stop", width - 9, height, 8, 1, "STOP",
-            { background = ui.theme.danger })
-        local action = scene:wait({ tickRate = 0.5, flash = false })
-        blink = not blink
-        if action == "stop" or action == "__terminate" then
-            if ui.confirm(target, "STOP INTERNET SERVER",
-                "Every website on this machine goes off the web.",
-                "STOP", "BACK") then
-                running = false
-                save()
-                return
+            if #state.order == 0 then
+                lines[#lines + 1] = { "Nothing published yet. Websites are written in",
+                    ui.theme.muted }
+                lines[#lines + 1] = { "Website Crafter on a PUMPE.", ui.theme.muted }
             end
-        end
-    end
+            return lines
+        end,
+        activity = activity, root = ROOT, colorTitle = "Server colour",
+        actions = { { id = "stop", label = "STOP", hint = "Every site here goes off the web",
+            color = ui.theme.danger, run = function()
+                if ui.confirm(target, "STOP INTERNET SERVER",
+                    "Every website on this machine goes off the web.", "STOP", "BACK") then
+                    running = false
+                    save()
+                    return true
+                end
+            end } },
+        running = function() return running end,
+    })
 end
 
 if rawget(_G, "PUMPE_TEST_MODE") == true then
     return { actions = actions, state = state }
 end
 
+-- 12.0: this server's main colour, orange unless its owner chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 ui.boot(target, "PUMPE INTERNET", "INTERNET SERVER v" .. config.version)
 net.autoUpdate(config, "internet", ROOT, nil,
     { force = true, programVersion = PROGRAM_VERSION })

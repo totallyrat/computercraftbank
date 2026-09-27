@@ -354,9 +354,15 @@ assert(screen:find("VAULT NOT UPDATED", 1, true) and screen:find("delete", 1, tr
 freeNow = 1000000
 reset()
 
-local dashboard = source("../bank_server.lua")
-assert(dashboard:find('if pair%.vaultBehind%(%) then\n%s+scene:button%("update"')
-    and dashboard:find('elseif action == "update" then\n%s+pair.updateScreen%(target%)'),
+local dashboard = source("../bank_server.lua"):match(
+    "local function dashboardLoop%(%)(.-)\nend\n")
+-- 12.0: on the Server tab, UPDATE VAULT comes straight after RE-PAIR, and
+-- only while the Vault is behind.
+local repair = dashboard and dashboard:find('label = pair.paired() and "RE-PAIR"', 1, true)
+local behind = dashboard and dashboard:find("if pair.vaultBehind() then", repair or 1, true)
+local update = dashboard and dashboard:find('id = "update", label = "UPDATE VAULT"', 1, true)
+assert(repair and behind and update and repair < behind and behind < update
+    and dashboard:find("pair.updateScreen(target)", 1, true),
     "UPDATE VAULT sits beside RE-PAIR while the Vault is behind")
 
 print("host_vault_wire_update_test: OK")

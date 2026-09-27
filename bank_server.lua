@@ -5896,91 +5896,66 @@ local function count(map)
     return value
 end
 
+-- 12.0: Status, Activity and Server tabs, as on every server. RE-PAIR and
+-- UPDATE VAULT sit side by side on Server. The Bank has no colour option:
+-- it is the Bank.
 local function dashboardLoop()
     local target = term.current()
-    local blink = true
-    while running do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "PUMPE BANK SERVER", "v" .. config.version,
-            util.formatClock(blink))
-        local cardWidth = math.floor((width - 4) / 3)
-        local cards = {
-            { "ACCOUNTS", count(state.accounts), colors.cyan },
-            { "PAYMENTS", state.tx_count or 0, colors.magenta },
-            { "CCG ESCROW", count(state.ccg_escrow), colors.lime },
-        }
-        for index, card in ipairs(cards) do
-            local x = 2 + (index - 1) * (cardWidth + 1)
-            local panelWidth = index == #cards and width - 1 - x or cardWidth
-            ui.card(target, x, 5, panelWidth, 4, card[3])
-            ui.text(target, x + 2, 6, card[1], colors.lightGray, colors.gray)
-            ui.text(target, x + 2, 7, tostring(card[2]), colors.white,
-                colors.gray, panelWidth - 3)
-        end
-        ui.text(target, 2, 10,
-            ui.truncate("INTERNET  " .. dash.update_status, width - 2),
-            dash.update_color)
-        ui.text(target, 2, 11,
-            ui.truncate("DEPLOYMENT  " .. dash.deploy_status, width - 2), dash.deploy_color)
-        -- History and notifications still waiting to go down the cable.
-        local waiting = #state.outbox
-        ui.text(target, 2, 12, ui.truncate("VAULT  " .. pair.status()
-            .. (pair.vault.version and ("  v" .. pair.vault.version) or "")
-            .. (waiting > 0 and ("  " .. waiting .. " RECORDS WAITING") or ""),
-            width - 2), pair.statusColor())
-        -- 12.0: an update the Vault is waiting for says why it has not gone.
-        if pair.vaultBehind() then
-            ui.text(target, 2, 13, ui.truncate("VAULT UPDATE  " .. (pair.vault.why
-                and string.upper(pair.vault.why) or ("v" .. config.version
-                .. " READY TO SEND")), width - 2), colors.orange)
-        end
-
-        local scene = ui.scene(target)
-        local feedY = 14
-        ui.text(target, 2, feedY, "ACTIVITY", colors.lightGray)
-        local maxFeed = math.max(1, height - feedY - 2)
-        for index = 1, math.min(#activity, maxFeed) do
-            local item = activity[index]
-            ui.text(target, 2, feedY + index,
-                item.time .. "  " .. ui.truncate(item.text, width - 10),
-                item.color)
-        end
-        -- A Vault that has been destroyed, or a cable that has been cut,
-        -- must not leave the Bank with no way back: the same button that
-        -- pairs the first one pairs a replacement.
-        scene:button("vault", 2, height, 9, 1,
-            pair.paired() and "RE-PAIR" or "PAIR", { background = colors.lime })
-        if pair.vaultBehind() then
-            scene:button("update", 12, height, 14, 1, "UPDATE VAULT",
-                { background = colors.orange })
-        end
-        scene:button("save", width - 18, height, 8, 1, "SAVE",
-            { background = colors.blue })
-        scene:button("stop", width - 9, height, 8, 1, "STOP",
-            { background = colors.red })
-        local action = scene:wait({ tickRate = 0.5, flash = false })
-        blink = not blink
-        if action == "vault" then
-            pair.repairScreen(target)
-        elseif action == "update" then
-            pair.updateScreen(target)
-        elseif action == "save" then
-            save()
-            logActivity("Manual save complete", colors.lime)
-        elseif action == "stop" then
-            if ui.confirm(target, "STOP SERVER", "Save and shut down?",
-                "STOP", "BACK") then
-                running = false
-                save()
-                return
+    ui.serverTabs({
+        target = target, title = "PUMPE BANK SERVER", subtitle = "v" .. config.version,
+        cards = function()
+            return { { "ACCOUNTS", count(state.accounts), colors.cyan },
+                { "PAYMENTS", state.tx_count or 0, colors.magenta },
+                { "CCG ESCROW", count(state.ccg_escrow), colors.lime } }
+        end,
+        lines = function()
+            -- History and notifications still waiting to go down the cable.
+            local waiting = #state.outbox
+            local lines = {
+                { "INTERNET  " .. dash.update_status, dash.update_color },
+                { "DEPLOYMENT  " .. dash.deploy_status, dash.deploy_color },
+                { "VAULT  " .. pair.status() .. (pair.vault.version
+                    and ("  v" .. pair.vault.version) or "") .. (waiting > 0
+                    and ("  " .. waiting .. " RECORDS WAITING") or ""), pair.statusColor() },
+            }
+            if pair.vaultBehind() then
+                lines[#lines + 1] = { "VAULT UPDATE  " .. (pair.vault.why
+                    and string.upper(pair.vault.why) or ("v" .. config.version
+                    .. " READY TO SEND")), colors.orange }
             end
-        elseif action == "__terminate" then
-            running = false
-            save()
-            return
-        end
-    end
+            return lines
+        end,
+        activity = activity,
+        actions = function()
+            -- A Vault that has been destroyed, or a cable that has been cut,
+            -- must not leave the Bank with no way back: the same button that
+            -- pairs the first one pairs a replacement.
+            local list = { { id = "vault", label = pair.paired() and "RE-PAIR" or "PAIR",
+                hint = "Pair a Vault over the cable", color = colors.lime,
+                run = function() pair.repairScreen(target) end } }
+            if pair.vaultBehind() then
+                list[#list + 1] = { id = "update", label = "UPDATE VAULT",
+                    hint = "Send it v" .. config.version, color = colors.orange,
+                    run = function() pair.updateScreen(target) end }
+            end
+            list[#list + 1] = { id = "save", label = "SAVE", hint = "Write everything to disk",
+                color = colors.blue, run = function()
+                    save()
+                    logActivity("Manual save complete", colors.lime)
+                end }
+            list[#list + 1] = { id = "stop", label = "STOP", hint = "Save and shut down",
+                color = colors.red, run = function(terminated)
+                    if terminated or ui.confirm(target, "STOP SERVER",
+                        "Save and shut down?", "STOP", "BACK") then
+                        running = false
+                        save()
+                        return true
+                    end
+                end }
+            return list
+        end,
+        running = function() return running end,
+    })
 end
 
 -- Pair Mode -------------------------------------------------------------------
