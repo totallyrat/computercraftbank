@@ -15,6 +15,322 @@ local util = require("lib.util")
 local net = require("lib.net")
 local ui = require("lib.ui")
 
+-- Home Mode, 12.0 -----------------------------------------------------------
+-- Four games for one player, free: no lobby, no wager, and no CCG Server --
+-- this console runs them and a PUMPE is the controller. Each game is a small
+-- engine: new() makes a game for a board of a given size, input() takes a
+-- button (up, down, left, right, a), tick() moves time on, draw() paints it.
+-- Nothing in an engine touches the network or the disk.
+local HOME_PROTOCOL = "PUMPE_CCG_HOME"
+local DIRECTIONS = { up = { 0, -1 }, down = { 0, 1 }, left = { -1, 0 },
+    right = { 1, 0 } }
+
+local function sameCell(a, b) return a.x == b.x and a.y == b.y end
+
+local snake = { id = "snake", label = "SNAKE", color = colors.lime,
+    hint = "Eat, grow, and never bite yourself" }
+function snake.new(width, height, random)
+    local cx, cy = math.floor(width / 2), math.floor(height / 2)
+    local game = { width = width, height = height, random = random, score = 0,
+        body = { { x = cx, y = cy }, { x = cx - 1, y = cy }, { x = cx - 2, y = cy } },
+        dir = { 1, 0 }, want = { 1, 0 } }
+    snake.food(game)
+    return game
+end
+function snake.food(game)
+    local free = {}
+    for y = 1, game.height do
+        for x = 1, game.width do
+            local taken = false
+            for _, cell in ipairs(game.body) do
+                if cell.x == x and cell.y == y then taken = true break end
+            end
+            if not taken then free[#free + 1] = { x = x, y = y } end
+        end
+    end
+    if #free == 0 then game.over, game.status = true, "The board is full!" return end
+    game.food = free[game.random(1, #free)]
+end
+function snake.input(game, key)
+    local dir = DIRECTIONS[key]
+    -- Straight back into itself is not a turn.
+    if dir and not (dir[1] == -game.dir[1] and dir[2] == -game.dir[2]) then
+        game.want = dir
+    end
+end
+function snake.tick(game)
+    game.dir = game.want
+    local head = { x = game.body[1].x + game.dir[1], y = game.body[1].y + game.dir[2] }
+    local eats = game.food and sameCell(head, game.food)
+    if head.x < 1 or head.y < 1 or head.x > game.width or head.y > game.height then
+        game.over, game.status = true, "Hit the wall"
+        return
+    end
+    -- The tail moves out of the way this tick, unless the snake is growing.
+    for index = 1, #game.body - (eats and 0 or 1) do
+        if sameCell(game.body[index], head) then
+            game.over, game.status = true, "Bit itself"
+            return
+        end
+    end
+    table.insert(game.body, 1, head)
+    if eats then
+        game.score = game.score + 1
+        snake.food(game)
+    else
+        table.remove(game.body)
+    end
+end
+function snake.speed(game) return math.max(0.1, 0.3 - game.score * 0.008) end
+function snake.draw(game, surface, left, top)
+    ui.fill(surface, left, top, game.width, game.height, colors.black)
+    if game.food then
+        ui.fill(surface, left + game.food.x - 1, top + game.food.y - 1, 1, 1, colors.red)
+    end
+    for index, cell in ipairs(game.body) do
+        ui.fill(surface, left + cell.x - 1, top + cell.y - 1, 1, 1,
+            index == 1 and colors.yellow or colors.lime)
+    end
+end
+
+local meteors = { id = "meteors", label = "METEORS", color = colors.orange,
+    hint = "Dodge what falls. Left and right" }
+function meteors.new(width, height, random)
+    return { width = width, height = height, random = random, score = 0,
+        x = math.max(1, math.ceil(width / 2)), rocks = {},
+        step = math.max(1, math.floor(width / 16)) }
+end
+function meteors.hit(game)
+    for _, rock in ipairs(game.rocks) do
+        if rock.y == game.height and rock.x == game.x then
+            game.over, game.status = true, "Hit by a meteor"
+            return true
+        end
+    end
+    return false
+end
+function meteors.input(game, key)
+    if key == "left" then
+        game.x = math.max(1, game.x - game.step)
+    elseif key == "right" then
+        game.x = math.min(game.width, game.x + game.step)
+    end
+    meteors.hit(game)
+end
+function meteors.tick(game)
+    local kept = {}
+    for _, rock in ipairs(game.rocks) do
+        rock.y = rock.y + 1
+        if rock.y > game.height then
+            game.score = game.score + 1
+        else
+            kept[#kept + 1] = rock
+        end
+    end
+    game.rocks = kept
+    if meteors.hit(game) then return end
+    -- More of them the longer it goes on.
+    local count = 1 + math.floor(game.score / 40)
+    for _ = 1, count do
+        if game.random(1, 100) <= math.min(90, 35 + game.score) then
+            game.rocks[#game.rocks + 1] = { x = game.random(1, game.width), y = 1 }
+        end
+    end
+end
+function meteors.speed(game) return math.max(0.08, 0.22 - game.score * 0.002) end
+function meteors.draw(game, surface, left, top)
+    ui.fill(surface, left, top, game.width, game.height, colors.black)
+    for _, rock in ipairs(game.rocks) do
+        ui.fill(surface, left + rock.x - 1, top + rock.y - 1, 1, 1, colors.orange)
+    end
+    ui.fill(surface, left + game.x - 1, top + game.height - 1, 1, 1, colors.cyan)
+end
+
+-- Simon: four pads, a longer tune every round, played back from memory.
+local simon = { id = "simon", label = "SIMON", color = colors.purple,
+    hint = "Watch the pads, then play them back",
+    PADS = { "up", "right", "down", "left" },
+    BRIGHT = { up = colors.lime, right = colors.red, down = colors.yellow,
+        left = colors.lightBlue },
+    DIM = { up = colors.green, right = colors.brown, down = colors.orange,
+        left = colors.blue } }
+function simon.grow(game)
+    game.tune[#game.tune + 1] = simon.PADS[game.random(1, 4)]
+    game.phase, game.shown, game.lit, game.rest = "show", 0, nil, 2
+    game.status = "Watch"
+end
+function simon.new(width, height, random)
+    local game = { width = width, height = height, random = random, score = 0,
+        tune = {} }
+    simon.grow(game)
+    return game
+end
+function simon.tick(game)
+    if game.phase ~= "show" then
+        game.lit = nil
+        return
+    end
+    if game.rest > 0 then
+        game.rest, game.lit = game.rest - 1, nil
+    elseif game.lit then
+        game.lit = nil
+    elseif game.shown < #game.tune then
+        game.shown = game.shown + 1
+        game.lit = game.tune[game.shown]
+    else
+        game.phase, game.at, game.status = "play", 1, "Your turn"
+    end
+end
+function simon.input(game, key)
+    if game.phase ~= "play" or not simon.BRIGHT[key] then return end
+    game.lit = key
+    if game.tune[game.at] ~= key then
+        game.over, game.status = true, "That was " .. game.tune[game.at]
+        return
+    end
+    game.at = game.at + 1
+    if game.at > #game.tune then
+        game.score = #game.tune
+        simon.grow(game)
+        -- The last pad of the round still lights while the next tune waits.
+        game.lit = key
+    end
+end
+function simon.speed(game) return math.max(0.25, 0.45 - #game.tune * 0.01) end
+function simon.draw(game, surface, left, top)
+    ui.fill(surface, left, top, game.width, game.height, colors.black)
+    local padWidth = math.max(3, math.floor(game.width / 3))
+    local padHeight = math.max(1, math.floor(game.height / 3))
+    local middleX = left + math.floor((game.width - padWidth) / 2)
+    local middleY = top + math.floor((game.height - padHeight) / 2)
+    local places = {
+        up = { middleX, top }, down = { middleX, top + game.height - padHeight },
+        left = { left, middleY }, right = { left + game.width - padWidth, middleY },
+    }
+    for _, pad in ipairs(simon.PADS) do
+        local place = places[pad]
+        ui.fill(surface, place[1], place[2], padWidth, padHeight,
+            game.lit == pad and simon.BRIGHT[pad] or simon.DIM[pad])
+    end
+    ui.text(surface, middleX, middleY + math.floor(padHeight / 2),
+        ui.truncate(game.phase == "play" and "PLAY" or "WATCH", padWidth),
+        colors.white, colors.black)
+end
+
+-- 2048: slide the tiles, equal ones join.
+local tiles = { id = "2048", label = "2048", color = colors.yellow,
+    hint = "Slide tiles. Equal ones join",
+    COLORS = { [2] = colors.lightGray, [4] = colors.white, [8] = colors.orange,
+        [16] = colors.red, [32] = colors.pink, [64] = colors.magenta,
+        [128] = colors.yellow, [256] = colors.lime, [512] = colors.green,
+        [1024] = colors.cyan, [2048] = colors.lightBlue } }
+function tiles.spawn(game)
+    local free = {}
+    for row = 1, 4 do
+        for column = 1, 4 do
+            if game.grid[row][column] == 0 then free[#free + 1] = { row, column } end
+        end
+    end
+    if #free == 0 then return end
+    local cell = free[game.random(1, #free)]
+    game.grid[cell[1]][cell[2]] = game.random(1, 10) == 1 and 4 or 2
+end
+function tiles.new(width, height, random)
+    local game = { width = width, height = height, random = random, score = 0,
+        grid = {} }
+    for row = 1, 4 do game.grid[row] = { 0, 0, 0, 0 } end
+    tiles.spawn(game)
+    tiles.spawn(game)
+    return game
+end
+-- One line, in the order it slides: numbers close up, equal neighbours
+-- join once. Returns the new line and what the joins were worth.
+function tiles.slide(line)
+    local packed, out, gained = {}, {}, 0
+    for _, value in ipairs(line) do
+        if value ~= 0 then packed[#packed + 1] = value end
+    end
+    local index = 1
+    while index <= #packed do
+        if packed[index + 1] and packed[index] == packed[index + 1] then
+            out[#out + 1] = packed[index] * 2
+            gained = gained + packed[index] * 2
+            index = index + 2
+        else
+            out[#out + 1] = packed[index]
+            index = index + 1
+        end
+    end
+    while #out < #line do out[#out + 1] = 0 end
+    return out, gained
+end
+function tiles.canMove(game)
+    for row = 1, 4 do
+        for column = 1, 4 do
+            local value = game.grid[row][column]
+            if value == 0 then return true end
+            if column < 4 and game.grid[row][column + 1] == value then return true end
+            if row < 4 and game.grid[row + 1][column] == value then return true end
+        end
+    end
+    return false
+end
+function tiles.input(game, key)
+    local dir = DIRECTIONS[key]
+    if not dir then return end
+    local moved = false
+    for lane = 1, 4 do
+        -- The cells of one row or column, from the edge it slides towards.
+        local cells = {}
+        for step = 1, 4 do
+            local position = (dir[1] + dir[2] > 0) and (5 - step) or step
+            if dir[1] ~= 0 then
+                cells[step] = { lane, position }
+            else
+                cells[step] = { position, lane }
+            end
+        end
+        local line = {}
+        for step, cell in ipairs(cells) do line[step] = game.grid[cell[1]][cell[2]] end
+        local slid, gained = tiles.slide(line)
+        for step, cell in ipairs(cells) do
+            if game.grid[cell[1]][cell[2]] ~= slid[step] then moved = true end
+            game.grid[cell[1]][cell[2]] = slid[step]
+        end
+        game.score = game.score + gained
+        for _, value in ipairs(slid) do
+            if value >= 2048 then game.status = "2048!" end
+        end
+    end
+    if moved then tiles.spawn(game) end
+    if not tiles.canMove(game) then game.over, game.status = true, "No moves left" end
+end
+function tiles.draw(game, surface, left, top)
+    ui.fill(surface, left, top, game.width, game.height, colors.black)
+    local cellWidth = math.max(1, math.floor((game.width - 3) / 4))
+    local cellHeight = math.max(1, math.floor((game.height - 3) / 4))
+    for row = 1, 4 do
+        for column = 1, 4 do
+            local value = game.grid[row][column]
+            local x = left + (column - 1) * (cellWidth + 1)
+            local y = top + (row - 1) * (cellHeight + 1)
+            local tint = value == 0 and colors.gray or (tiles.COLORS[value] or colors.purple)
+            ui.fill(surface, x, y, cellWidth, cellHeight, tint)
+            if value > 0 then
+                local text = ui.truncate(tostring(value), cellWidth)
+                ui.text(surface, x + math.floor((cellWidth - #text) / 2),
+                    y + math.floor((cellHeight - 1) / 2), text, colors.black, tint)
+            end
+        end
+    end
+end
+
+local HOME_GAMES = { snake, meteors, simon, tiles }
+local homeById = {}
+for _, game in ipairs(HOME_GAMES) do homeById[game.id] = game end
+
+if PUMPE_TEST_MODE == "ccg_home_games" then return homeById end
+
 -- Since 9.1 the games live on their own computer. The console talks to the
 -- CCG Server; the Bank is not in this path at all.
 local client = net.client({
@@ -27,7 +343,11 @@ local device = util.loadTable(devicePath, {
     console_token = nil,
     name = "",
     auto = nil,
+    -- 12.0: the owner's PIN for Home Mode, and the best score at each game.
+    home_pin = nil,
+    home_best = {},
 })
+device.home_best = type(device.home_best) == "table" and device.home_best or {}
 local running = true
 
 -- Auto Mode keeps opening the next lobby on its own. It is unlocked with the
@@ -36,6 +356,8 @@ local running = true
 local auto = nil
 
 ui.usePhoneStyle(false)
+-- 12.0: the owner's main colour, orange unless they chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 
 local GAMES = {
     { id = "heads_tails", label = "HEADS OR TAILS", tag = "2X",
@@ -282,7 +604,7 @@ local function gameMenu()
     while running do
         local width, height, top, bottom, footerY = frame()
         ui.clear(target, colors.black)
-        arcadeHeader("BET PLAY", device.name, colors.magenta)
+        arcadeHeader("BET PLAY", device.name, ui.theme.accent)
         ui.center(target, top, "SELECT A GAME", colors.white, colors.black)
         local scene = ui.scene(target)
         local autoY = bottom - 1
@@ -305,9 +627,15 @@ local function gameMenu()
                     { background = game.color, foreground = game.ink })
             end
         end
-        scene:button("auto", 2, autoY, width - 2, 2,
-            "AUTO MODE // NON-STOP", {
+        -- 12.0: Home Mode beside Auto Mode. Free, one player, the owner's.
+        local half = math.floor((width - 3) / 2)
+        scene:button("auto", 2, autoY, half, 2,
+            width >= 45 and "AUTO MODE // NON-STOP" or "AUTO MODE", {
                 background = colors.lime, foreground = colors.black,
+            })
+        scene:button("home", 3 + half, autoY, width - 3 - half, 2,
+            width >= 45 and "HOME MODE // FREE" or "HOME MODE", {
+                background = ui.theme.accent, foreground = ui.inkOn(ui.theme.accent),
             })
         scene:button("close", width - 7, 1, 6, 1, "CLOSE",
             { background = colors.red })
@@ -319,6 +647,8 @@ local function gameMenu()
             return nil
         elseif action == "auto" then
             if startAuto() then return nextAutoGame() end
+        elseif action == "home" then
+            return "home"
         elseif gameById[action] then
             return action
         end
@@ -373,7 +703,7 @@ local function waitForLobby(game, existingLobby)
         local startable = ready >= definition.minimum
             and ready == (lobby.player_count or 0)
         ui.clear(target, colors.black)
-        arcadeHeader(lobby.game_name, "LOBBY // PUMPE BET APP", colors.cyan)
+        arcadeHeader(lobby.game_name, "LOBBY // CCG APP > BET", colors.cyan)
         ui.center(target, top, "JOIN CODE", colors.lightGray, colors.black)
         ui.center(target, top + 2, lobby.code, colors.white, colors.black)
         ui.fill(target, 2, top + 4, width - 2, 1, colors.gray, "-")
@@ -644,6 +974,266 @@ local function autoStandby()
     end
 end
 
+-- Home Mode, the console's half ------------------------------------------------
+-- HOME on the menu asks for the owner's PIN, then shows a six digit pairing
+-- code. A PUMPE types it into the CCG app and becomes the controller: every
+-- button it sends comes here, and this screen is where the game is played.
+-- Nothing goes to the CCG Server, and nothing is paid for.
+
+local function pinHash(pin)
+    return util.checksum("CCGHOME:" .. tostring(device.console_id or "")
+        .. ":" .. tostring(pin or ""))
+end
+
+-- Asked once: on the first start, and on the first start after this update
+-- for a console that was already running. Cancelling asks again next time.
+local function setHomePin()
+    ui.message(target, "info", "SET A HOME PIN",
+        "Home Mode is yours: this PIN opens it", 1.4)
+    local pin = ui.pin(target, "NEW HOME PIN", true)
+    if not pin then return false end
+    local again = ui.pin(target, "SAME PIN AGAIN", true)
+    if again ~= pin then
+        ui.message(target, "error", "PINS DID NOT MATCH", "Nothing was set", 1.2)
+        return false
+    end
+    device.home_pin = pinHash(pin)
+    saveDevice()
+    ui.message(target, "success", "HOME PIN SET", "Press HOME MODE to play", 1.2)
+    return true
+end
+
+local function homeCode()
+    local code = ""
+    for _ = 1, 6 do code = code .. tostring(math.random(0, 9)) end
+    return code
+end
+
+-- The board a game gets: the screen under the header, over the footer.
+local function homeBoard()
+    local width, height = target.getSize()
+    return 2, 5, math.max(4, width - 2), math.max(4, height - 7)
+end
+
+local function homeState(home)
+    local game = home.game and homeById[home.game]
+    local list = {}
+    for _, entry in ipairs(HOME_GAMES) do
+        list[#list + 1] = { id = entry.id, label = entry.label, hint = entry.hint,
+            best = device.home_best[entry.id] or 0 }
+    end
+    return {
+        console = device.name ~= "" and device.name or "CCG",
+        screen = home.screen, game = home.game, label = game and game.label,
+        score = home.play and home.play.score or 0,
+        best = home.game and device.home_best[home.game] or 0,
+        status = home.play and home.play.status or nil,
+        record = home.record, games = list,
+    }
+end
+
+local function homeStart(home, id)
+    local game = homeById[id]
+    if not game then return false end
+    local _, _, width, height = homeBoard()
+    home.game, home.play, home.screen, home.record = id, game.new(width, height,
+        math.random), "game", nil
+    return true
+end
+
+local function homeFinish(home)
+    if home.screen ~= "game" or not (home.play and home.play.over) then return end
+    home.screen = "over"
+    local best = device.home_best[home.game] or 0
+    if home.play.score > best then
+        device.home_best[home.game] = home.play.score
+        home.record = true
+        saveDevice()
+    end
+end
+
+-- Time passing in the game being played: what the screen's timer does.
+local function homeTick(home)
+    local game = home.screen == "game" and homeById[home.game]
+    if game and game.tick then
+        game.tick(home.play)
+        homeFinish(home)
+    end
+end
+
+local function homeNewCode(home)
+    if home.code then pcall(rednet.unhost, HOME_PROTOCOL) end
+    home.code, home.misses = homeCode(), 0
+    pcall(rednet.host, HOME_PROTOCOL, "CCGHOME_" .. home.code)
+end
+
+-- One request from the paired phone, or from a phone asking to pair.
+local function homeHandle(home, action, payload, sender)
+    local function refuse(code, message) error({ ccg = true, code = code,
+        message = message }, 0) end
+    if action == "HOME_PAIR" then
+        if home.peer then refuse("PAIRED", "This CCG already has a controller") end
+        if tostring(payload.code or "") ~= home.code then
+            home.misses = home.misses + 1
+            -- Guessing gets a new code, and the screen shows it.
+            if home.misses >= 5 then homeNewCode(home) end
+            refuse("BAD_CODE", "That is not the code on the CCG")
+        end
+        home.peer, home.token = sender, util.token and util.token("HOME")
+            or tostring(math.random(100000, 999999)) .. tostring(sender)
+        home.player = ui.truncate(tostring(payload.name or "Player"), 14)
+        home.screen = "menu"
+        return { token = home.token, state = homeState(home) }
+    end
+    if sender ~= home.peer or payload.token ~= home.token then
+        refuse("NOT_PAIRED", "Pair with the CCG again")
+    end
+    if action == "HOME_PLAY" then
+        if not homeStart(home, tostring(payload.game or "")) then
+            refuse("NO_SUCH_GAME", "That game is not on this CCG")
+        end
+    elseif action == "HOME_INPUT" then
+        local key = tostring(payload.key or "")
+        if home.screen == "game" then
+            homeById[home.game].input(home.play, key)
+            homeFinish(home)
+        elseif home.screen == "over" and key == "a" then
+            homeStart(home, home.game)
+        end
+    elseif action == "HOME_MENU" then
+        home.screen, home.play, home.game, home.record = "menu", nil, nil, nil
+    elseif action == "HOME_LEAVE" then
+        home.peer, home.token, home.player = nil, nil, nil
+        home.screen, home.play, home.game = "pair", nil, nil
+        homeNewCode(home)
+        return { left = true }
+    elseif action ~= "HOME_STATE" then
+        refuse("UNKNOWN", "Unknown Home Mode request")
+    end
+    return homeState(home)
+end
+
+local function homeDraw(home)
+    local width, height = target.getSize()
+    ui.clear(target, colors.black)
+    local accent = ui.theme.accent
+    if home.screen == "pair" then
+        arcadeHeader("HOME MODE", "PAIR A PUMPE", accent)
+        local top = 5
+        ui.center(target, top, "OPEN CCG ON YOUR PUMPE", colors.white, colors.black)
+        ui.center(target, top + 1, "HOME > TYPE THIS CODE", colors.lightGray, colors.black)
+        if not ui.wordmark(target, top + 3, home.code, nil, accent) then
+            ui.center(target, top + 4, home.code, accent, colors.black)
+        end
+        ui.center(target, math.min(height - 3, top + 10), "FREE // NO BETS // ONE PLAYER",
+            colors.lightGray, colors.black)
+    elseif home.screen == "menu" then
+        arcadeHeader("HOME MODE", ui.truncate(tostring(home.player), width - 4)
+            .. " IS PLAYING", accent)
+        ui.center(target, 5, "PICK A GAME ON YOUR PUMPE", colors.white, colors.black)
+        for index, game in ipairs(HOME_GAMES) do
+            local y = 5 + index * 2
+            if y <= height - 3 then
+                ui.fill(target, 2, y, width - 2, 1, game.color)
+                ui.text(target, 3, y, ui.truncate(game.label .. "  BEST "
+                    .. (device.home_best[game.id] or 0), width - 4),
+                    ui.inkOn(game.color), game.color)
+            end
+        end
+    else
+        local game = homeById[home.game]
+        arcadeHeader(game.label, "SCORE " .. home.play.score .. "  BEST "
+            .. math.max(home.play.score, device.home_best[game.id] or 0), game.color)
+        local left, top = homeBoard()
+        game.draw(home.play, target, left, top)
+        if home.screen == "over" then
+            local middle = math.floor(height / 2)
+            ui.fill(target, 2, middle - 1, width - 2, 3, colors.gray)
+            ui.center(target, middle - 1, home.record and "NEW BEST!" or "GAME OVER",
+                home.record and colors.yellow or colors.white, colors.gray)
+            ui.center(target, middle, ui.truncate(tostring(home.play.status or ""),
+                width - 4), colors.lightGray, colors.gray)
+            ui.center(target, middle + 1, "A TO PLAY AGAIN", colors.white, colors.gray)
+        end
+    end
+    ui.fill(target, 1, height, width, 1, colors.black)
+    ui.text(target, width - 6, height, "EXIT", colors.white, colors.red)
+    if home.screen == "pair" then
+        ui.text(target, 2, height, "COLOR", ui.inkOn(accent), accent)
+    end
+end
+
+local function homeMode()
+    if not device.home_pin and not setHomePin() then return end
+    local pin = ui.pin(target, "HOME PIN", true)
+    if not pin then return end
+    if pinHash(pin) ~= device.home_pin then
+        ui.message(target, "error", "WRONG PIN", "Home Mode stays shut", 1.2)
+        return
+    end
+    local home = { screen = "pair", active = true }
+    net.openModems()
+    homeNewCode(home)
+    local function listen()
+        while home.active do
+            local sender, message = rednet.receive(HOME_PROTOCOL, 1)
+            if sender and type(message) == "table" and message.kind == "request"
+                and type(message.action) == "string" then
+                local ok, result = pcall(homeHandle, home, message.action,
+                    type(message.payload) == "table" and message.payload or {}, sender)
+                if ok then
+                    net.reply(sender, HOME_PROTOCOL, message.request_id, true, result)
+                elseif type(result) == "table" and result.ccg then
+                    net.reply(sender, HOME_PROTOCOL, message.request_id, false, nil,
+                        result.message, result.code)
+                else
+                    net.reply(sender, HOME_PROTOCOL, message.request_id, false, nil,
+                        "The CCG could not do that", "HOME_ERROR")
+                end
+                os.queueEvent("ccg_home")
+            end
+        end
+    end
+    local function play()
+        local timer
+        while home.active do
+            homeDraw(home)
+            local game = home.screen == "game" and homeById[home.game]
+            if not timer then
+                timer = os.startTimer(game and game.speed and game.speed(home.play) or 1)
+            end
+            local event, a, b, c = os.pullEvent()
+            if event == "timer" and a == timer then
+                timer = nil
+                homeTick(home)
+            elseif event == "monitor_touch" or event == "mouse_click" then
+                local width, height = target.getSize()
+                if c == height and b >= width - 6 and b <= width - 3 then
+                    home.active = false
+                elseif c == height and b >= 2 and b <= 6 and home.screen == "pair"
+                    and type(ui.pickMainColor) == "function" then
+                    -- The owner's setting, behind the owner's PIN.
+                    ui.pickMainColor(target, ROOT, "CCG COLOUR")
+                end
+            elseif event == "terminate" then
+                running, home.active = false, false
+            end
+        end
+    end
+    parallel.waitForAny(listen, play)
+    pcall(rednet.unhost, HOME_PROTOCOL)
+    if home.peer then
+        -- The phone finds out on its next button: NOT_PAIRED.
+        home.peer = nil
+    end
+end
+
+if PUMPE_TEST_MODE == "ccg_home" then
+    return { handle = homeHandle, state = homeState, draw = homeDraw, tick = homeTick,
+        new_code = homeNewCode, device = device, set_pin = setHomePin,
+        pin_hash = pinHash, home_mode = homeMode, games = homeById }
+end
+
 -- Main loop ---------------------------------------------------------------
 
 bootAnimation()
@@ -651,10 +1241,44 @@ bootAnimation()
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "ccg", ROOT, client,
     { force = true, programVersion = PROGRAM_VERSION })
-if not registerConsole() then
+local firstStart = not device.console_id
+local online = registerConsole()
+if firstStart and type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+    ui.pickMainColor(target, ROOT, "CCG COLOUR")
+end
+-- 12.0: the Home Mode PIN, asked on the first start after updating too --
+-- but never over an arena in Auto Mode, which must come back by itself.
+if not device.home_pin and not (type(device.auto) == "table" and device.auto.hash) then
+    setHomePin()
+end
+-- Bet Play needs the CCG Server; Home Mode does not, so a console that
+-- cannot reach it still offers that.
+while running and not online do
+    local width, _, top, bottom, footerY = frame()
+    ui.clear(target, colors.black)
+    arcadeHeader("OFFLINE", "NO CCG SERVER", colors.red)
+    ui.center(target, top + 1, "BET PLAY NEEDS THE CCG SERVER", colors.white, colors.black)
+    ui.center(target, top + 3, "HOME MODE DOES NOT", colors.lightGray, colors.black)
+    local scene = ui.scene(target)
+    local half = math.floor((width - 3) / 2)
+    scene:button("home", 2, bottom - 2, width - 2, 2, "HOME MODE",
+        { background = ui.theme.accent, foreground = ui.inkOn(ui.theme.accent) })
+    scene:button("retry", 2, footerY, half, 2, "TRY AGAIN", { background = colors.gray })
+    scene:button("close", 3 + half, footerY, width - 3 - half, 2, "CLOSE",
+        { background = colors.red })
+    local action = scene:wait()
+    if action == "home" then
+        homeMode()
+    elseif action == "retry" then
+        online = registerConsole()
+    elseif action == "close" or action == "__terminate" then
+        running = false
+    end
+end
+if not running then
     ui.clear(target, colors.black)
     ui.center(target, math.floor(select(2, target.getSize()) / 2),
-        "CCG COULD NOT START", colors.red, colors.black)
+        "CCG OFFLINE", colors.lightGray, colors.black)
     return
 end
 
@@ -671,7 +1295,9 @@ while running do
     else
         game = gameMenu()
     end
-    if game then
+    if game == "home" then
+        homeMode()
+    elseif game then
         local lobby, failure = waitForLobby(game, resumedLobby)
         resumedLobby = nil
         if not lobby and auto and failure == "offline" then autoStandby() end

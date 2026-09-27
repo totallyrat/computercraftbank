@@ -186,6 +186,10 @@ function ui.scene()
     end
     return scene
 end
+-- 12.0: a console asks its owner for a Home Mode PIN on the first start.
+-- Cancelled here, which leaves Bet Play exactly as it was.
+local pinAsked = 0
+function ui.pin() pinAsked = pinAsked + 1 return nil end
 dofile("ui_stub_fill.lua")(ui)
 -- 12.0: a phone with an account starts on its lock screen, which waits for
 -- a tap before asking for the PIN.

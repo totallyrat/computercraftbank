@@ -649,4 +649,19 @@ for at = drawsBeforeWelcome + 1, #drawnText do
 end
 assert(welcomed, "a phone with no account is asked who it belongs to")
 
+-- 12.0: Bet is the CCG app. A dock favourite or a QuickAction that opened
+-- Bet is carried over rather than dropped.
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "ask", favorites = { "bet", "tickets" },
+    shortcuts = { { name = "Play", steps = { { kind = "open", app = "bet" } } } } }
+index, actions = 0, { "later", "__terminate" }
+local carriedOk, carriedErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(carriedOk or tostring(carriedErr):find("more actions", 1, true),
+    tostring(carriedErr))
+assert(bootDevice.favorites[1] == "ccg" and bootDevice.favorites[2] == "tickets",
+    "the Bet favourite is the CCG favourite now")
+assert(bootDevice.shortcuts[1].steps[1].app == "ccg"
+    and bootDevice.shortcuts[1].steps[1].action == "bet",
+    "and a QuickAction that opened Bet opens CCG on Bet")
+
 print("host_settings_test: OK")

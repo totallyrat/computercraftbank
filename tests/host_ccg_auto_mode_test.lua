@@ -194,6 +194,10 @@ function ui.scene()
     end
     return scene
 end
+-- 12.0: a console asks its owner for a Home Mode PIN on the first start.
+-- Cancelled here, which leaves Bet Play exactly as it was.
+local pinAsked = 0
+function ui.pin() pinAsked = pinAsked + 1 return nil end
 dofile("ui_stub_fill.lua")(ui)
 -- 12.0: a phone with an account starts on its lock screen, which waits for
 -- a tap before asking for the PIN.
@@ -236,7 +240,9 @@ local function contains(items, expected)
     end
     return false
 end
-assert(contains(labels, "AUTO MODE // NON-STOP"))
+-- 12.0: on a small monitor Auto Mode shares its row with Home Mode.
+assert(contains(labels, "AUTO MODE") and contains(labels, "HOME MODE"))
+assert(pinAsked == 1, "a console with no Home Mode PIN asks for one on starting")
 assert(contains(labels, "STOP AUTO"))
 assert(contains(labels, "ROTATE ALL GAMES"))
 
@@ -268,8 +274,10 @@ assert(requests[3] == "CCG_CREATE_LOBBY",
 assert(count(requests, "CCG_START") == 2, "both rotated rounds must start")
 assert(count(requests, "CCG_CREATE_LOBBY") == 3,
     "Auto Mode keeps opening lobbies until it is stopped")
-assert(count(labels, "AUTO MODE // NON-STOP") == 1,
+assert(count(labels, "AUTO MODE") == 1,
     "the game menu only returns once Auto Mode has been stopped")
+assert(pinAsked == 1, "and an arena coming back in Auto Mode is never held up"
+    .. " asking for a PIN")
 assert(resumed.auto == nil, "stopping clears the resumed Auto Mode")
 
 -- A Bank outage must park Auto Mode on a visible standby screen that still

@@ -22,7 +22,15 @@ local actions = {
     "tab:territories", "territory:TER000001", "citizens", "back",
     "applications", "back", "roam", "back", "back",
     "home",                                          -- leave Customs
-    "open:bet", "pick:heads", "__tick", "done",
+    -- 12.0: Bet is CCG. Bet Play is a tab; Home Mode pairs with a console
+    -- (the real one, below) and plays Snake into a wall.
+    "open:ccg", "tab:bet", "join", "pick:heads", "__tick", "done",
+    "tab:home", "pair", "play:snake", "key:up", "__tick", "__tick", "__tick",
+    "__tick", "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
+    "key:a", "menu", "leave",
+    -- Paired again, then out of the app without unpairing: the app lets
+    -- the console go on its way out.
+    "pair", "tab:scores", "home",
     "open:tax",                                      -- returns on its own
     "open:subs", "back",
     "next",                                          -- the notification centre
@@ -117,10 +125,57 @@ package.loaded["lib.util"] = {
     end,
 }
 
+-- 12.0: the CCG console, loaded for real in Home Mode's test hook, with
+-- stubs of its own so it never writes over the phone's saved device. Each
+-- tick of the phone's Home tab is a tick of the console's game.
+local ccgHome, homeState = nil, { screen = "pair", active = true }
+do
+    local phoneLoaded = {}
+    for _, name in ipairs({ "config", "lib.util", "lib.net", "lib.ui" }) do
+        phoneLoaded[name] = package.loaded[name]
+    end
+    package.loaded.config = { version = "12.0.0", currency = "$" }
+    package.loaded["lib.util"] = {
+        loadTable = function(_, fallback) return fallback end,
+        saveTable = function() end,
+        checksum = function(value) return "H" .. tostring(value) end,
+        token = function(prefix) return prefix .. "PAIRED1" end,
+        trim = function(value) return tostring(value) end,
+    }
+    package.loaded["lib.net"] = { client = function() return {} end,
+        autoUpdate = function() end, openModems = function() end }
+    local consoleUi = setmetatable({ theme = { accent = colors.orange } },
+        { __index = function() return function() return false end end })
+    consoleUi.truncate = function(value, maximum) return tostring(value):sub(1, maximum) end
+    package.loaded["lib.ui"] = consoleUi
+    peripheral = { getNames = function() return { "top" } end,
+        getType = function() return "monitor" end,
+        wrap = function() return { getSize = function() return 29, 19 end,
+            setTextScale = function() end, isColor = function() return true end } end }
+    rednet = { host = function() end, unhost = function() end }
+    local realShell = shell
+    shell = { getRunningProgram = function() return "/ccg/ccg.lua" end }
+    PUMPE_TEST_MODE = "ccg_home"
+    ccgHome = assert(loadfile("../ccg.lua"))()
+    PUMPE_TEST_MODE = nil
+    shell = realShell
+    for name, value in pairs(phoneLoaded) do package.loaded[name] = value end
+    ccgHome.new_code(homeState)
+end
+function homeCode() return homeState.code end
+local homeGames = {}
+
 local client = {
     discover = function() return true end,
     request = function(_, action, payload)
         requests[#requests + 1] = action
+        if action:match("^HOME_") then
+            if action == "HOME_STATE" then ccgHome.tick(homeState) end
+            if action == "HOME_PLAY" then homeGames[#homeGames + 1] = payload.game end
+            local ok, result = pcall(ccgHome.handle, homeState, action, payload, 9)
+            if ok then return result end
+            return nil, result.message, result.code
+        end
         if action == "REGISTER" then
             assert(payload.name == "FoxyUser")
             assert(payload.pin == "1234")
@@ -636,6 +691,10 @@ function ui.input(_, title, options)
         return "cCg2026LongScreenCode987654321"
     end
     if title == "Player Name" then return "FoxyPlayer" end
+    if title == "Pairing code" then
+        assert(options.mode == "integer" and options.maxLength == 6)
+        return homeCode()
+    end
     if title == "Set Wager" then return "10" end
     if title == "Add to Bet Wallet" then return "25" end
     if title == "Send to Foxy Account" then return "10" end
@@ -735,7 +794,7 @@ for _, glyph in ipairs({ "@", "#", "=", "?", "%", "~", "*" }) do
     assert(find(buttonLabels, glyph), "missing app icon " .. glyph)
 end
 for _, name in ipairs({ "Friends", "Tickets", "Customs",
-    "Bet", "Tax", "Subs", "Settings" }) do
+    "CCG", "Tax", "Subs", "Settings" }) do
     assert(find(drawnText, name), "missing app caption " .. name)
 end
 assert(not find(drawnText, "Bank"),
@@ -779,5 +838,21 @@ assert(not find(requests, "BET_WALLET_DEPOSIT"),
 -- the user from whatever app is open.
 assert(ringSeconds == nil or type(ringSeconds) == "number",
     "the ring watcher must be armed with an interval")
+
+-- 12.0: CCG. Home Mode paired with the console by its code, played Snake
+-- into the wall, played again, and let the console go.
+assert(find(requests, "HOME_PAIR") and find(requests, "HOME_PLAY")
+    and find(requests, "HOME_INPUT") and find(requests, "HOME_LEAVE"))
+assert(homeGames[1] == "snake")
+assert(find(drawnText, "Game over. Hit the wall"), "the phone says how it ended")
+assert(homeState.peer == nil and homeState.screen == "pair",
+    "leaving frees the console for the next phone")
+local leaves = 0
+for _, action in ipairs(requests) do
+    if action == "HOME_LEAVE" then leaves = leaves + 1 end
+end
+assert(leaves == 2, "Unpair, and closing the app while paired, both let it go")
+assert(find(buttonLabels, "Again"), "A is Again once a game is over")
+assert(find(drawnText, "Snake"), "the Scores tab lists the games")
 
 print("host_pumpe_flow_test: OK")

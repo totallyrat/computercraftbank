@@ -17,8 +17,8 @@
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 251680,
-      "checksum": "e1640d38"
+      "size": 264548,
+      "checksum": "77f52c11"
     },
     {
       "path": "service_kiosk.lua",
@@ -91,8 +91,8 @@
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
-      "size": 27129,
-      "checksum": "fca69eca"
+      "size": 52789,
+      "checksum": "a017d890"
     }
   ],
   "optional_files": [
