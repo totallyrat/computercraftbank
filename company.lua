@@ -23,8 +23,10 @@ return function(api)
     local ACCENT = colors.cyan
     local TABS = { { id = "companies", label = "Companies" },
         { id = "delivery", label = "Delivery" } }
+    -- 12.0: Discounts is the fourth, so it lives behind More.
     local COMPANY_TABS = { { id = "products", label = "Products", short = "Items" },
-        { id = "store", label = "Store" }, { id = "points", label = "Points" } }
+        { id = "store", label = "Store" }, { id = "points", label = "Points" },
+        { id = "discounts", label = "Discounts", hint = "Sales and codes" } }
 
     -- 12.0: a tap on More opens it, and comes back as the page chosen.
     local function tabbed(action, list, active, title)
@@ -326,6 +328,183 @@ return function(api)
         return "home"
     end
 
+    -- Discounts, 12.0 ---------------------------------------------------------------
+    -- A sale takes a percentage off everything; free delivery can start at an
+    -- amount; and codes are what a buyer types at checkout. The Bank works
+    -- out every price from these, so a phone never says what a thing costs.
+
+    local function describeCode(code)
+        local parts = {}
+        if (code.percent or 0) > 0 then
+            parts[#parts + 1] = code.percent .. "% off"
+        elseif (code.amount or 0) > 0 then
+            parts[#parts + 1] = money(code.amount) .. " off"
+        end
+        if code.free_shipping then
+            parts[#parts + 1] = #parts > 0 and "+ free delivery" or "Free delivery"
+        end
+        local used = tostring(code.uses or 0)
+        if (code.max_uses or 0) > 0 then used = used .. "/" .. code.max_uses end
+        parts[#parts + 1] = "used " .. used
+        return table.concat(parts, " ")
+    end
+
+    local function newCode(company)
+        local typed = ui.input(target, "New code", {
+            hint = "3-12 letters and numbers", mode = "text", maxLength = 12,
+            minLength = 3 })
+        if not typed then return end
+        local kind = choose("What does it do?", string.upper(typed), {
+            option("A percentage off", "percent"),
+            option("An amount off", "amount"),
+            option("Free delivery only", "free") }, labelOf)
+        if not kind then return end
+        local fields = { company_id = company.company_id, code = typed }
+        if kind.id == "percent" then
+            local percent = ui.input(target, "Percent off", {
+                hint = "1 to 100", mode = "integer", maxLength = 3 })
+            if not percent then return end
+            fields.percent = tonumber(percent)
+        elseif kind.id == "amount" then
+            local amount = ui.input(target, "Amount off", {
+                hint = "Taken off the basket", mode = "number", maxLength = 7 })
+            if not amount then return end
+            fields.amount = tonumber(amount)
+        end
+        fields.free_shipping = kind.id == "free" or ui.confirm(target,
+            "Free delivery too?", "Home delivery costs nothing with this code.",
+            "Yes", "No")
+        local uses = ui.input(target, "How many uses?", {
+            hint = "0 for no limit", mode = "integer", maxLength = 5,
+            initial = "0" })
+        if not uses then return end
+        fields.max_uses = tonumber(uses) or 0
+        local made, err = ask("COMPANY_SHOP_CODE", fields)
+        if not made then return failed("Not added", err) end
+        ui.message(target, "success", "Code added", string.upper(typed), 1.2)
+    end
+
+    local function editCode(company, code)
+        local chosen = choose(code.code, describeCode(code), {
+            option(code.active and "Switch it off" or "Switch it on", "toggle"),
+            option("Remove it", "remove") }, labelOf)
+        if not chosen then return end
+        if chosen.id == "remove" and not ui.confirm(target, "Remove it?",
+            code.code .. " stops working at checkout.", "Remove", "Keep") then
+            return
+        end
+        local done, err = ask("COMPANY_SHOP_CODE", { company_id = company.company_id,
+            code = code.code, op = chosen.id })
+        if not done then failed("Not changed", err) end
+    end
+
+    local function discountsPage(company)
+        local page = 1
+        while running() do
+            local state, err = ask("COMPANY_STATE",
+                { company_id = company.company_id })
+            if not state then failed("Cannot open it", err) return "home" end
+            local settings = state.settings
+            local codes = {}
+            for _, code in pairs(settings.codes or {}) do codes[#codes + 1] = code end
+            table.sort(codes, function(a, b) return a.code < b.code end)
+            local width, height = target.getSize()
+            local bottom = type(ui.contentBottom) == "function"
+                and ui.contentBottom(target) or height - 2
+            local per = math.max(1, bottom - 9)
+            local pages = math.max(1, math.ceil(#codes / per))
+            page = math.max(1, math.min(page, pages))
+            ui.clear(target)
+            ui.header(target, "Discounts", ui.truncate(((settings.sale or 0) > 0
+                and (settings.sale .. "% sale, ") or "") .. #codes
+                .. (#codes == 1 and " code" or " codes"), width - 3),
+                util.formatClock())
+            local scene = ui.scene(target)
+            local onSale = (settings.sale or 0) > 0
+            scene:button("sale", 2, 4, width - 2, 1, ui.truncate(onSale
+                and ("Sale: " .. settings.sale .. "% off all")
+                or "Sale: none", width - 4),
+                { background = onSale and ACCENT or ui.theme.panel,
+                  foreground = onSale and colors.black or colors.white })
+            local shipLabel = "Free delivery: off"
+            if settings.free_shipping then
+                shipLabel = (settings.free_over or 0) > 0 and ("Free delivery over "
+                    .. money(settings.free_over)) or "Free delivery: always"
+            end
+            scene:button("ship", 2, 6, width - 2, 1, ui.truncate(shipLabel, width - 4),
+                { background = settings.free_shipping and ACCENT or ui.theme.panel,
+                  foreground = settings.free_shipping and colors.black
+                    or colors.white })
+            scene:button("add", 2, 8, pages > 1 and width - 12 or width - 2, 1,
+                "+ New code", { background = ui.theme.accentDark })
+            if pages > 1 then
+                scene:button("prev", width - 9, 8, 4, 1, "<",
+                    { background = ui.theme.panel, disabled = page <= 1 })
+                scene:button("next", width - 4, 8, 4, 1, ">",
+                    { background = ui.theme.panel, disabled = page >= pages })
+            end
+            if #codes == 0 then
+                ui.wrappedText(target, 2, 10, "No codes yet. A code is typed"
+                    .. " at checkout in the Shop app: a percentage or an"
+                    .. " amount off, or free delivery.", width - 2,
+                    math.max(1, bottom - 9), ui.theme.muted)
+            end
+            for slot = 1, per do
+                local index = (page - 1) * per + slot
+                local code = codes[index]
+                if not code then break end
+                scene:button("code:" .. index, 2, 9 + slot, width - 2, 1,
+                    ui.truncate(code.code .. "  " .. (code.active
+                        and describeCode(code) or "off"), width - 4),
+                    { background = code.active and ui.theme.panel
+                        or ui.theme.background, foreground = code.active
+                        and colors.white or ui.theme.muted })
+            end
+            ui.tabBar(scene, target, COMPANY_TABS, "discounts", ACCENT)
+            local action = tabbed(scene:wait(), COMPANY_TABS, "discounts",
+                company.name)
+            if action == "home" or action == "__terminate" then return "home" end
+            if action and action:match("^tab:") then return action end
+            local change
+            if action == "sale" then
+                local typed = ui.input(target, "Sale", {
+                    hint = "Percent off everything. 0 ends it", mode = "integer",
+                    maxLength = 2, initial = plain(settings.sale) })
+                if typed then change = { sale = tonumber(typed) or 0 } end
+            elseif action == "ship" then
+                local chosen = choose("Free delivery", "On home deliveries", {
+                    option("Off", "off"), option("Always", "always"),
+                    option("Over an amount", "over") }, labelOf)
+                if chosen and chosen.id == "over" then
+                    local typed = ui.input(target, "Free over", {
+                        hint = "What is paid, after discounts", mode = "number",
+                        maxLength = 7, initial = plain(settings.free_over) })
+                    if typed then
+                        change = { free_shipping = true,
+                            free_over = tonumber(typed) or 0 }
+                    end
+                elseif chosen then
+                    change = { free_shipping = chosen.id == "always", free_over = 0 }
+                end
+            elseif action == "add" then
+                newCode(company)
+            elseif action == "prev" then
+                page = page - 1
+            elseif action == "next" then
+                page = page + 1
+            else
+                local index = tonumber(action and action:match("^code:(%d+)$"))
+                if index and codes[index] then editCode(company, codes[index]) end
+            end
+            if change then
+                change.company_id = company.company_id
+                local saved, saveError = ask("COMPANY_SHOP_SETUP", change)
+                if not saved then failed("Not changed", saveError) end
+            end
+        end
+        return "home"
+    end
+
     -- Pickup points, and selling at them ------------------------------------------------
 
     local function addOffer(company, point, offer)
@@ -485,6 +664,8 @@ return function(api)
             local switched
             if tab == "store" then
                 switched = storePage(company)
+            elseif tab == "discounts" then
+                switched = discountsPage(company)
             elseif tab == "points" then
                 switched = pointsPage(company)
             else

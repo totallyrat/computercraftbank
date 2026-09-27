@@ -3109,6 +3109,9 @@ local function publicOrder(order, forBuyer)
         buyer_name = order.buyer_name,
         lines = util.copy(order.lines),
         subtotal = order.subtotal,
+        -- 12.0: what the sale and any code took off, and the code.
+        discount = order.discount,
+        promo = order.promo,
         fee = order.fee,
         total = order.total,
         delivery = util.copy(order.delivery),
@@ -3255,6 +3258,8 @@ function actions.VAULT_SHOP_OPEN(payload, caller)
         buyer_name = buyer.name,
         lines = lines,
         subtotal = tonumber(payload.subtotal) or 0,
+        discount = tonumber(payload.discount) or 0,
+        promo = payload.promo and util.safeText(tostring(payload.promo), 16) or nil,
         fee = tonumber(payload.fee) or 0,
         total = tonumber(payload.total) or 0,
         delivery = delivery,

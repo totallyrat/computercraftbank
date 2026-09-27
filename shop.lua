@@ -81,6 +81,22 @@ return function(api)
             and (", cancel " .. hours .. "h") or "")
     end
 
+    -- 12.0: what a store has on, in a few words, or nil.
+    local function offers(store)
+        local parts = {}
+        if (tonumber(store.sale) or 0) > 0 then
+            parts[#parts + 1] = store.sale .. "% off all"
+        end
+        if store.free_shipping and store.home then
+            parts[#parts + 1] = (tonumber(store.free_over) or 0) > 0
+                and ("free delivery " .. money(store.free_over) .. "+")
+                or "free delivery"
+        end
+        if #parts == 0 then return nil end
+        local text = table.concat(parts, ", ")
+        return string.upper(text:sub(1, 1)) .. text:sub(2)
+    end
+
     local function where(delivery)
         delivery = delivery or {}
         local spot = delivery.x and (delivery.x .. " " .. delivery.y .. " "
@@ -279,6 +295,12 @@ return function(api)
                 ui.text(target, 2, row, ui.truncate("Paid " .. money(order.total)
                     .. "  " .. tostring(order.paid_with or ""), width - 2),
                     ui.theme.muted)
+                if (tonumber(order.discount) or 0) > 0 then
+                    row = row + 1
+                    ui.text(target, 2, row, ui.truncate("Saved "
+                        .. money(order.discount) .. (order.promo and (" with "
+                        .. order.promo) or ""), width - 2), ui.theme.muted)
+                end
                 row = row + 2
                 -- What happened, newest last, as much as fits above the
                 -- row kept for cancelling or returning.
@@ -446,34 +468,106 @@ return function(api)
         return { bank_account_id = typed }
     end
 
+    -- 12.0: the last look before paying. The Bank prices the basket --
+    -- the sale, a code if one is typed, and delivery, free or not -- and
+    -- this shows what it said. Returns the quote and the code, or nil.
+    local function review(store, items, delivery, label, subtotal)
+        local code
+        while running() do
+            local quote = ask("SHOP_QUOTE", { company_id = store.company_id,
+                items = items, delivery_kind = delivery.kind, code = code }, true)
+            if not quote then
+                -- A Bank from before 12.0 has no quotes, and no codes.
+                local fee = delivery.kind == "home" and (store.fee or 0) or 0
+                quote = { subtotal = subtotal, discount = 0, fee = fee,
+                    total = util.roundMoney(subtotal + fee), old = true }
+            end
+            if quote.code_error then
+                ui.message(target, "warning", "Code not taken", quote.code_error, 2)
+                code = nil
+            else
+                local width, height = target.getSize()
+                local background, foreground = paint(store.color)
+                ui.clear(target)
+                ui.header(target, "Checkout", ui.truncate(store.name .. ", to "
+                    .. label, width - 3), util.formatClock())
+                local scene = ui.scene(target)
+                local rows = { { "Items", money(quote.subtotal) } }
+                if (quote.sale or 0) > 0 then
+                    rows[#rows + 1] = { "Sale", "-" .. money(quote.sale) }
+                end
+                if quote.promo then
+                    rows[#rows + 1] = { ui.truncate("Code " .. quote.promo, width - 12),
+                        "-" .. money(quote.code_discount or 0) }
+                end
+                rows[#rows + 1] = { "Delivery", quote.fee_waived and "Free"
+                    or (quote.fee > 0 and money(quote.fee) or "None") }
+                for index, row in ipairs(rows) do
+                    ui.text(target, 2, 3 + index, row[1], ui.theme.muted)
+                    ui.text(target, width - #row[2], 3 + index, row[2], ui.theme.ink)
+                end
+                local y = 4 + #rows
+                ui.text(target, 2, y + 1, "Total", ui.theme.ink)
+                local total = money(quote.total)
+                ui.text(target, width - #total, y + 1, total, ui.theme.ink)
+                ui.wrappedText(target, 2, y + 3, terms(store, true) .. ".",
+                    width - 2, 3, ui.theme.muted)
+                if not quote.old then
+                    scene:button("code", 2, height - 5, width - 2, 1,
+                        ui.truncate(code and ("Code " .. code .. "  (change)")
+                            or "Add a discount code", width - 4),
+                        { background = ui.theme.panel })
+                end
+                scene:button("pay", 2, height - 3, width - 2, 2, quote.total > 0
+                    and ("Pay " .. money(quote.total)) or "Order, free",
+                    { background = background, foreground = foreground })
+                scene:button("back", 1, height, 8, 1, "< Back",
+                    { background = ui.theme.panel })
+                local action = scene:wait()
+                if action == "back" or action == "__terminate" then return nil end
+                if action == "pay" then return quote, code end
+                if action == "code" then
+                    local typed = ui.input(target, "Discount code", {
+                        hint = "Empty for none", mode = "text", maxLength = 12,
+                        minLength = 0, initial = code })
+                    if typed then
+                        typed = string.upper(util.trim(typed))
+                        code = typed ~= "" and typed or nil
+                    end
+                end
+            end
+        end
+        return nil
+    end
+
     -- Returns the order id when an order was placed.
     local function checkout(store, points, basket, subtotal)
         local delivery, label = chooseDelivery(store, points)
         if not delivery then return nil end
-        local fee = delivery.kind == "home" and (store.fee or 0) or 0
-        local total = util.roundMoney(subtotal + fee)
-        local payer = choosePayer(total)
-        if not payer then return nil end
-        if not ui.confirm(target, "Pay " .. money(total) .. "?",
-            store.name .. ", to " .. label .. (fee > 0 and (". Includes "
-                .. money(fee) .. " delivery") or "") .. ". "
-                .. terms(store, true) .. ".", "Pay", "Not yet") then
-            return nil
-        end
-        local pin = ui.pin(target, payer.foxy and "Foxy PIN"
-            or "Your bank's PIN", true)
-        if not pin then return nil end
         local items = {}
         for _, line in ipairs(basket) do
             items[#items + 1] = { item_id = line.item_id,
                 quantity = line.quantity }
         end
+        local quote, code = review(store, items, delivery, label, subtotal)
+        if not quote then return nil end
+        local total = quote.total
+        -- Nothing to pay is Foxy's to confirm: no other bank is asked for
+        -- nothing.
+        local payer = { foxy = true }
+        if total > 0 then
+            payer = choosePayer(total)
+            if not payer then return nil end
+        end
+        local pin = ui.pin(target, payer.foxy and "Foxy PIN"
+            or "Your bank's PIN", true)
+        if not pin then return nil end
         ui.clear(target)
-        ui.center(target, 9, "Paying...", ui.theme.ink)
+        ui.center(target, 9, total > 0 and "Paying..." or "Ordering...", ui.theme.ink)
         local placed, err = ask("SHOP_CHECKOUT", {
             company_id = store.company_id, items = items,
             delivery = delivery, bank_account_id = payer.bank_account_id,
-            pin = pin }, true)
+            pin = pin, code = code }, true)
         if not placed then
             ui.message(target, "error", "Not ordered", err, 2.4)
             return nil
@@ -484,7 +578,8 @@ return function(api)
         end
         ui.message(target, "success", "Ordered", delivery.kind == "pickup"
             and ("Your code is " .. tostring(placed.code))
-            or (money(placed.total) .. " paid. Follow it in Delivery"), 2)
+            or ((placed.total or 0) > 0 and (money(placed.total) .. " paid."
+                .. " Follow it in Delivery") or "Free. Follow it in Delivery"), 2)
         if type(api.refresh) == "function" then api.refresh() end
         return placed.order_id
     end
@@ -562,6 +657,11 @@ return function(api)
                 store.tagline ~= "" and store.tagline or "Online store",
                 util.formatClock())
             ui.fill(target, 1, 4, width, 1, background)
+            local onOffer = offers(store)
+            if onOffer then
+                ui.text(target, 2, 4, ui.truncate(onOffer, width - 2), foreground,
+                    background)
+            end
             ui.text(target, 2, 5, ui.truncate(terms(store), width - 2),
                 ui.theme.muted)
             local scene = ui.scene(target)
@@ -642,8 +742,9 @@ return function(api)
             for _, store in ipairs(listed and listed.stores or {}) do
                 local background, foreground = paint(store.color)
                 options[#options + 1] = { id = store.company_id,
-                    label = store.name, detail = store.tagline ~= ""
-                        and store.tagline or (store.products .. " products"),
+                    label = store.name, detail = offers(store)
+                        or (store.tagline ~= "" and store.tagline)
+                        or (store.products .. " products"),
                     color = background, ink = foreground }
             end
             tabs.empty = nil

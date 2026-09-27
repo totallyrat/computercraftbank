@@ -22,7 +22,7 @@ local realUi = dofile("../lib/ui.lua")
 
 -- A store, and the terminal that delivers for it ----------------------------------
 
-bank.register("Ana Fox", "1234")
+local ana = bank.register("Ana Fox", "1234")
 local kit = bank.register("Kit Wolf", "5678")
 bank.fund(kit, 1000)
 
@@ -263,11 +263,18 @@ push(script.inputs, "rugs", "boats", "")
 -- Into Fox Goods: two lamps and a rug, and the rug taken back out.
 push(script.actions, "pick:2", "add:1", "add:1", "add:2", "basket", "less:2",
     "checkout")
--- Deliver to "My address", from GPS, kept as Home. Pay with Foxy.
-push(script.actions, "pick:1", "pick:1", "pick:1")
+-- Deliver to "My address", from GPS, kept as Home. The checkout says what
+-- it comes to (12.0), then pay with Foxy.
+push(script.actions, "pick:1", "pick:1")
 push(script.confirms, true)
 push(script.inputs, "Home")
-push(script.confirms, true)
+push(script.actions, function(seen)
+    local frame = seen.frames[#seen.frames]
+    assert(has(frame, "Checkout") and has(frame, "Pay $45"),
+        "the checkout shows the Bank's total before paying")
+    assert(has(frame, "Add a discount code"))
+    return "pay"
+end, "pick:1")
 push(script.pins, "5678")
 -- The order's page. While it is open, the warehouse moves the order on,
 -- and the page catches up without a tap.
@@ -305,11 +312,10 @@ push(script.actions, function()
         "forgetting Home is saved at once, not with the next thing kept")
     return "tab:stores"
 end, "pick:2", "add:2", "add:3", "basket",
-    "checkout", "pick:3", "pick:2")
+    "checkout", "pick:3", "pay", "pick:2")
 -- Without the candle it is 35, and it goes through.
-push(script.actions, "less:2", "checkout", "pick:3", "pick:2")
+push(script.actions, "less:2", "checkout", "pick:3", "pay", "pick:2")
 push(script.inputs, "0042123412341234")
-push(script.confirms, true)
 push(script.pins, "4321")
 push(script.actions, function(seen)
     for id, order in pairs(orders) do
@@ -376,9 +382,9 @@ otherBankAnswers = false
 local before = util.copy(orders)
 script = newScript()
 -- The rug again, to the pickup point, from the other bank.
-push(script.actions, "pick:2", "add:2", "basket", "checkout", "pick:3", "pick:2")
+push(script.actions, "pick:2", "add:2", "basket", "checkout", "pick:3", "pay",
+    "pick:2")
 push(script.inputs, "0042999999999999")
-push(script.confirms, true)
 push(script.pins, "4321")
 push(script.actions, "back", "back")
 push(script.confirms, true)
@@ -414,8 +420,7 @@ push(script.actions, "pick:2", function(seen)
     assert(has(seen.frames[#seen.frames], "Returns 5d, cancel 2h"),
         "the store says its terms before anybody buys")
     return "add:1"
-end, "basket", "checkout", "pick:1", "pick:1")
-push(script.confirms, true)
+end, "basket", "checkout", "pick:1", "pay", "pick:1")
 push(script.pins, "5678")
 push(script.actions, function(seen)
     -- The newest order: ids count up, and pairs() has no order of its own.
@@ -452,5 +457,61 @@ end, "__terminate")
 seen = runApp(script, "delivery")
 assert(said(seen, "Return asked for"))
 assert(orders[firstOrder].return_request.reason == "It flickers")
+
+-- Discounts, 12.0: a sale, a code typed at checkout, a free order -------------------
+
+bank.request("SHOP_SETUP", till({ sale = 10 }))
+local function code(fields)
+    fields.app_id, fields.company_id = "COMPANY", company.company_id
+    bank.request("COMPANY_SHOP_CODE", bank.as(ana, fields))
+end
+code({ code = "SPRING", percent = 20 })
+code({ code = "GIFT", percent = 100, free_shipping = true })
+
+balanceBefore = bank.balanceOf(kit)
+script = newScript()
+push(script.actions, function(seen)
+    assert(has(seen.frames[#seen.frames], "10% off all"),
+        "the list of stores says there is a sale")
+    return "pick:2"
+end, function(seen)
+    assert(has(seen.frames[#seen.frames], "10% off all"), "and so does the store")
+    return "add:1"
+end, "add:1", "basket", "checkout", "pick:1", "code")
+push(script.inputs, "nope")
+push(script.actions, "code")
+push(script.inputs, "spring")
+push(script.actions, function(seen)
+    local frame = seen.frames[#seen.frames]
+    assert(has(frame, "-$4") and has(frame, "Code SPRING") and has(frame, "-$7.20"),
+        "the sale and the code, each on its own line")
+    assert(has(frame, "Pay $33.80"), "40, less 4, less a fifth of 36, plus 5")
+    return "pay"
+end, "pick:1")
+push(script.pins, "5678")
+push(script.actions, function(seen)
+    assert(has(seen.frames[#seen.frames], "Saved $11.20 with SPRING"),
+        "the order says what was saved, and with which code")
+    return "back"
+end, "__terminate")
+seen = runApp(script)
+assert(said(seen, "Code not taken"), "a code that does not work says so")
+assert(bank.balanceOf(kit) == balanceBefore - 33.8, "and the Bank charged what it said")
+
+-- Everything off, delivery too: nothing to pay, so no bank to choose.
+balanceBefore = bank.balanceOf(kit)
+script = newScript()
+push(script.actions, "pick:2", "add:2", "basket", "checkout", "pick:1", "code")
+push(script.inputs, "GIFT")
+push(script.actions, function(seen)
+    local frame = seen.frames[#seen.frames]
+    assert(has(frame, "Order, free") and has(frame, "Free"), "free, and it says so")
+    return "pay"
+end)
+push(script.pins, "5678")
+push(script.actions, "back", "__terminate")
+seen = runApp(script)
+assert(said(seen, "Ordered").body:find("Free", 1, true))
+assert(bank.balanceOf(kit) == balanceBefore, "not a coin moved")
 
 print("host_shop_app_test: OK")

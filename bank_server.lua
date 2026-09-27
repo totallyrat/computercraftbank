@@ -4143,6 +4143,11 @@ local shop = {
     max_lines = 10,
     max_quantity = 20,
     max_fee = 1000,
+    -- 12.0: discounts. A sale is a percentage off everything; a store keeps
+    -- a handful of codes a buyer types at checkout.
+    max_sale = 90,
+    max_codes = 20,
+    max_free_over = 1000000,
     -- 11.0. In in-game hours and days, like every other clock in the Shop.
     confirm_hours = tonumber(config.shop_confirm_hours) or 2,
     min_return_days = tonumber(config.shop_min_return_days) or 5,
@@ -4160,6 +4165,12 @@ function shop.settings(company)
     if settings.cancel == nil then settings.cancel = false end
     settings.return_days = math.max(shop.min_return_days,
         math.floor(tonumber(settings.return_days) or shop.min_return_days))
+    -- 12.0. Stores opened before it have no discounts.
+    settings.sale = math.max(0, math.min(shop.max_sale,
+        math.floor(tonumber(settings.sale) or 0)))
+    settings.free_shipping = settings.free_shipping == true
+    settings.free_over = math.max(0, tonumber(settings.free_over) or 0)
+    settings.codes = type(settings.codes) == "table" and settings.codes or {}
     return settings
 end
 
@@ -4190,6 +4201,11 @@ function shop.public(company)
         cancel = settings.cancel,
         return_days = settings.return_days,
         confirm_hours = shop.confirm_hours,
+        -- 12.0. What a buyer is told on the storefront. Codes are not listed:
+        -- a code is the store's to hand out.
+        sale = settings.sale,
+        free_shipping = settings.free_shipping,
+        free_over = settings.free_over,
     }
 end
 
@@ -4241,6 +4257,21 @@ function shop.setup(company, payload)
             math.floor(tonumber(payload.fee) or 0)))
     end
     if payload.cancel ~= nil then settings.cancel = payload.cancel == true end
+    if payload.sale ~= nil then
+        local sale = math.floor(tonumber(payload.sale) or -1)
+        need(sale >= 0 and sale <= shop.max_sale, "BAD_SALE",
+            "A sale is between 0 and " .. shop.max_sale .. "% off")
+        settings.sale = sale
+    end
+    if payload.free_shipping ~= nil then
+        settings.free_shipping = payload.free_shipping == true
+    end
+    if payload.free_over ~= nil then
+        local over = tonumber(payload.free_over) or -1
+        need(over >= 0 and over <= shop.max_free_over, "BAD_AMOUNT",
+            "Free delivery starts at an amount of 0 or more")
+        settings.free_over = util.roundMoney(over)
+    end
     if payload.return_days ~= nil then
         local days = math.floor(tonumber(payload.return_days) or 0)
         need(days >= shop.min_return_days, "RETURNS_TOO_SHORT",
@@ -4362,6 +4393,113 @@ function shop.price(company, raw)
     return lines, subtotal
 end
 
+-- 12.0. A code as the buyer typed it: letters and digits, any case.
+function shop.codeKey(raw)
+    return (string.upper(util.trim(tostring(raw or ""))):gsub("[^%w]", ""))
+end
+
+-- Adding, switching off and removing a store's discount codes.
+function shop.code(company, payload)
+    local settings = shop.settings(company)
+    local key = shop.codeKey(payload.code)
+    need(#key >= 3 and #key <= 12, "BAD_CODE",
+        "A code is 3 to 12 letters and numbers")
+    if payload.op == "remove" then
+        need(settings.codes[key], "NO_SUCH_CODE", "That code is not one of yours")
+        settings.codes[key] = nil
+    elseif payload.op == "toggle" then
+        local code = settings.codes[key]
+        need(code, "NO_SUCH_CODE", "That code is not one of yours")
+        code.active = not code.active
+    else
+        need(not settings.codes[key], "CODE_TAKEN", "You already have that code")
+        local count = 0
+        for _ in pairs(settings.codes) do count = count + 1 end
+        need(count < shop.max_codes, "TOO_MANY_CODES",
+            "A store keeps " .. shop.max_codes .. " codes at most")
+        local percent = math.floor(tonumber(payload.percent) or 0)
+        local amount = util.roundMoney(tonumber(payload.amount) or 0)
+        local freeShipping = payload.free_shipping == true
+        need(percent >= 0 and percent <= 100, "BAD_CODE",
+            "A code takes 0 to 100% off")
+        need(amount >= 0 and amount <= 1000000, "BAD_CODE",
+            "A code takes a sensible amount off")
+        need(not (percent > 0 and amount > 0), "BAD_CODE",
+            "A code is a percentage or an amount off, not both")
+        need(percent > 0 or amount > 0 or freeShipping, "BAD_CODE",
+            "A code has to take something off")
+        local uses = math.floor(tonumber(payload.max_uses) or 0)
+        need(uses >= 0 and uses <= 100000, "BAD_CODE",
+            "How many times it can be used: 0 for no limit")
+        settings.codes[key] = { code = key, percent = percent, amount = amount,
+            free_shipping = freeShipping, max_uses = uses, uses = 0,
+            active = true }
+    end
+    save()
+    return { codes = util.copy(settings.codes) }
+end
+
+-- What a basket costs: the sale off everything, then a code, then delivery
+-- -- free when the store says so or the code does. Never below zero. A code
+-- that does not work is reported rather than quietly ignored.
+function shop.quote(company, items, kind, rawCode)
+    local settings = shop.settings(company)
+    local lines, subtotal = shop.price(company, items)
+    local sale = util.roundMoney(subtotal * settings.sale / 100)
+    local promo, codeDiscount, codeError, freeByCode = nil, 0, nil, false
+    local key = shop.codeKey(rawCode)
+    if #key > 0 then
+        local code = settings.codes[key]
+        if not code or not code.active then
+            codeError = "That code does not work at " .. company.name
+        elseif (code.max_uses or 0) > 0 and (code.uses or 0) >= code.max_uses then
+            codeError = "That code has been used up"
+        else
+            promo = key
+            local left = subtotal - sale
+            if (code.percent or 0) > 0 then
+                codeDiscount = util.roundMoney(left * code.percent / 100)
+            elseif (code.amount or 0) > 0 then
+                codeDiscount = math.min(left, code.amount)
+            end
+            freeByCode = code.free_shipping == true
+        end
+    end
+    local discount = math.min(subtotal, util.roundMoney(sale + codeDiscount))
+    local fee, waived = 0, false
+    if kind == "home" then
+        fee = settings.fee or 0
+        local after = subtotal - discount
+        if fee > 0 and (freeByCode or (settings.free_shipping
+            and after >= (settings.free_over or 0))) then
+            fee, waived = 0, true
+        end
+    end
+    return {
+        lines = lines, subtotal = subtotal, sale = sale,
+        code_discount = codeDiscount, discount = discount, fee = fee,
+        fee_waived = waived, promo = promo, code_error = codeError,
+        total = util.roundMoney(math.max(0, subtotal - discount) + fee),
+    }
+end
+
+-- The price before paying, for the checkout screen.
+function actions.SHOP_QUOTE(payload)
+    requireSession(payload)
+    local company = state.companies[tostring(payload.company_id or "")]
+    need(company and company.status == "active" and company.shop
+        and company.shop.open, "STORE_CLOSED", "That store is not open")
+    local kind = payload.delivery_kind == "pickup" and "pickup" or "home"
+    local quote = shop.quote(company, payload.items, kind, payload.code)
+    quote.lines = nil
+    return quote
+end
+
+function actions.COMPANY_SHOP_CODE(payload)
+    local _, company = shop.owned(payload)
+    return shop.code(company, payload)
+end
+
 -- Taking money from an account at another bank, by its Account ID and its
 -- own PIN. The PIN goes from here to that bank and nowhere else. The charge
 -- carries the order id, so asking twice takes the money once; and a charge
@@ -4445,14 +4583,19 @@ function actions.SHOP_CHECKOUT(payload)
         need(settings.home, "NO_HOME", "This store does not deliver to homes")
         delivery.kind = "home"
     end
-    local lines, subtotal = shop.price(company, payload.items)
-    local fee = delivery.kind == "home" and (settings.fee or 0) or 0
-    local total = util.roundMoney(subtotal + fee)
-    need(total > 0, "BAD_AMOUNT", "There is nothing to pay for")
+    -- 12.0: the sale, a code and free delivery, all worked out here.
+    local quote = shop.quote(company, payload.items, delivery.kind, payload.code)
+    need(not quote.code_error, "BAD_CODE", quote.code_error)
+    local lines, subtotal, fee, total = quote.lines, quote.subtotal, quote.fee,
+        quote.total
+    -- Nothing to pay is a free order: no PIN is sent anywhere else, and no
+    -- money moves. A store that gives something away has said so with a code.
+    local free = total <= 0
 
     -- Who pays. No Account ID is Foxy; one from another bank is theirs.
     local elsewhere = ledger.clean(payload.bank_account_id or "")
-    local foxy = #elsewhere == 0
+    local foxy = #elsewhere == 0 or free
+    if free then elsewhere = "" end
     if foxy then
         checkAccountActive(buyer)
         checkBankOpen(buyer)
@@ -4479,6 +4622,7 @@ function actions.SHOP_CHECKOUT(payload)
     local opened = pair.forward("VAULT_SHOP_OPEN", {
         company_id = company.company_id, company_name = company.name,
         color = settings.color, lines = lines, subtotal = subtotal,
+        discount = quote.discount, promo = quote.promo,
         fee = fee, total = total, delivery = delivery,
         owner_account_id = owner.account_id,
         payer_bank_account_id = not foxy and elsewhere or nil,
@@ -4488,7 +4632,9 @@ function actions.SHOP_CHECKOUT(payload)
 
     -- 2. The money.
     local paidWith = config.bank_name or "Foxy"
-    if foxy then
+    if free then
+        paidWith = "Discount"
+    elseif foxy then
         resetDailySpend(buyer)
         buyer.balance = util.roundMoney(buyer.balance - total)
         buyer.daily_spent = util.roundMoney((buyer.daily_spent or 0) + total)
@@ -4511,7 +4657,14 @@ function actions.SHOP_CHECKOUT(payload)
     -- An order the buyer may still cancel is paid for, but the money is
     -- not the store's until the order is confirmed: a cancellation is then
     -- always refunded in full, whatever the store has spent since.
+    -- A code is used once it has paid for something.
+    if quote.promo and settings.codes[quote.promo] then
+        local used = settings.codes[quote.promo]
+        used.uses = (used.uses or 0) + 1
+    end
     if cancellable then
+        -- A free order is held too, at nothing: the buyer can still call it
+        -- off until it is confirmed, like any other.
         state.shop_held = state.shop_held or {}
         state.shop_held[opened.order_id] = {
             owner_account_id = owner.account_id,
@@ -4519,7 +4672,7 @@ function actions.SHOP_CHECKOUT(payload)
             buyer_name = buyer.name,
             amount = total, release_at = confirmAt,
         }
-    else
+    elseif not free then
         owner.balance = util.roundMoney((owner.balance or 0) + total)
         transaction(owner, "shop_sale", total, buyer.name,
             "Order " .. opened.order_id)
@@ -4597,8 +4750,11 @@ function shop.refund(orderId, why, caller, note)
     -- Take the money back into the Bank's hands before the order is marked,
     -- so nothing can spend it while the cable answers; put it back if the
     -- Vault says no.
+    local free = (tonumber(info.total) or 0) <= 0
     if held then
         state.shop_held[orderId] = nil
+    elseif free then
+        -- A free order: nothing was paid, so nothing comes back.
     else
         need(owner and (owner.balance or 0) >= info.total, "STORE_SHORT",
             "There is not enough in the store's account to refund this")
@@ -4609,22 +4765,27 @@ function shop.refund(orderId, why, caller, note)
     if not marked then
         if held then
             state.shop_held[orderId] = held
-        else
+        elseif not free then
             owner.balance = util.roundMoney(owner.balance + info.total)
         end
         error(result, 0)
     end
-    if not held then
+    if not held and not free then
         transaction(owner, "shop_refund", -info.total, info.buyer_name,
             "Refund, order " .. orderId)
     end
-    local landed = shop.payBack(info.buyer_account_id,
-        info.payer_bank_account_id, info.total, orderId, info.company_name)
+    local landed = "nobody"
+    if not free then
+        landed = shop.payBack(info.buyer_account_id,
+            info.payer_bank_account_id, info.total, orderId, info.company_name)
+    end
     local buyer = state.accounts[info.buyer_account_id]
     if buyer then
         notification(buyer, why == "return" and "Return refunded"
-            or "Order cancelled", util.money(info.total, config.currency)
-            .. " back to " .. landed .. " from " .. info.company_name, "money")
+            or "Order cancelled", free and (info.company_name
+            .. ": it was free, so there is nothing to pay back")
+            or (util.money(info.total, config.currency) .. " back to " .. landed
+            .. " from " .. info.company_name), "money")
     end
     if owner and why == "cancel" then
         notification(owner, "Order cancelled", info.company_name .. ": "
@@ -4663,9 +4824,11 @@ function shop.release()
     for orderId, held in pairs(state.shop_held or {}) do
         local owner = state.accounts[held.owner_account_id]
         if now >= held.release_at and owner then
-            owner.balance = util.roundMoney((owner.balance or 0) + held.amount)
-            transaction(owner, "shop_sale", held.amount, held.buyer_name,
-                "Order " .. orderId)
+            if (held.amount or 0) > 0 then
+                owner.balance = util.roundMoney((owner.balance or 0) + held.amount)
+                transaction(owner, "shop_sale", held.amount, held.buyer_name,
+                    "Order " .. orderId)
+            end
             state.shop_held[orderId] = nil
             changed = true
         end

@@ -287,4 +287,53 @@ assert(#bank.request("DELIVERY_OUT", bank.as(ana,
     { company_id = second.company_id })).orders == 0,
     "one company's deliveries are not another's")
 
+-- Discounts, 12.0: behind More, a sale, free delivery and codes ----------------------
+
+script = phone.script()
+-- Fox Goods is second now, after Ana Two.
+phone.push(script.actions, "company:2", "tab:more")
+phone.push(script.more, function(seen)
+    local listed = false
+    for _, tab in ipairs(seen.more[#seen.more].list) do
+        if tab.id == "discounts" then listed = true end
+    end
+    assert(listed, "Discounts is on the More page")
+    return "tab:discounts"
+end)
+phone.push(script.actions, "sale", "ship", "pick:3")
+phone.push(script.inputs, "15", "40")
+phone.push(script.actions, "add", "pick:1")
+phone.push(script.inputs, "spring", "20", "0")
+phone.push(script.confirms, false)
+phone.push(script.actions, "add", "pick:3")
+phone.push(script.inputs, "SHIP", "5")
+phone.push(script.actions, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Sale: 15% off all"), "the sale is shown")
+    assert(phone.has(frame, "Free delivery over $40"))
+    assert(phone.has(frame, "SHIP  Free delivery"), "codes, in order")
+    assert(phone.has(frame, "SPRING  20% off used 0"))
+    return "code:1"
+end, "pick:1", "code:2", "pick:2")
+phone.push(script.confirms, true)
+phone.push(script.actions, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "SHIP  off"), "switched off, and says so")
+    assert(not phone.has(frame, "SPRING"), "removed")
+    return "home"
+end, "home")
+seen = run(ana, script)
+local settings = company.shop
+assert(settings.sale == 15 and settings.free_shipping == true
+    and settings.free_over == 40, "the sale and free delivery, from the phone")
+assert(settings.codes.SHIP and settings.codes.SHIP.free_shipping
+    and settings.codes.SHIP.max_uses == 5 and settings.codes.SHIP.active == false,
+    "a free-delivery code for five uses, switched off")
+assert(settings.codes.SPRING == nil, "and the other one removed")
+for _, input in ipairs(seen.inputs) do
+    if input.title == "Sale" or input.title == "How many uses?" then
+        assert(input.mode == "integer", input.title .. " takes a whole number")
+    end
+end
+
 print("host_company_app_test: OK")
