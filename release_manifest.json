@@ -11,8 +11,8 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 193273,
-      "checksum": "1fe1ba50"
+      "size": 198568,
+      "checksum": "efe6551a"
     },
     {
       "path": "pumpe.lua",
@@ -147,8 +147,8 @@
     {
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
-      "size": 141484,
-      "checksum": "4da4d1a6"
+      "size": 143004,
+      "checksum": "6625a609"
     },
     {
       "path": "internet_server.lua",

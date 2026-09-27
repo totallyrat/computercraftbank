@@ -199,6 +199,8 @@ assert(merged.pair_protocol == "PUMPE_PAIR_V1", "and takes the release's new one
 assert(not disk["/pumpe/.wire_update/bank_vault.lua"] and not fs.exists("/pumpe/.wire_backup"),
     "nothing staged is left behind")
 assert(vault.wire.restart, "and the Vault restarts into it")
+assert(core.pair.vault.version == "99.0.0" and not core.pair.vaultBehind(),
+    "and the dashboard knows the Vault is current")
 
 -- A release this Core does not run yet is not sent: the Core updates first.
 vault.wire.restart = false
@@ -228,5 +230,133 @@ assert(scheduler and scheduler:find("pair.updateVault", 1, true),
 local sweep = source("../bank_vault.lua"):match("local function sweepLoop%(%)(.-)\nend\n")
 assert(sweep and sweep:find("wire.restart", 1, true) and sweep:find("os.reboot", 1, true),
     "the Vault restarts into a release it was sent")
+
+-- 12.0: what kept Vaults from updating, and UPDATE VAULT --------------------------------
+
+manifest.version = "99.0.0"
+sleep = function() end
+local realAsk = core.pair.ask
+local function reset()
+    vault.wire.restart = false
+    core.pair.ask = realAsk
+    core.pair.vault.why = nil
+    core.pair.nextVaultUpdate = nil
+end
+
+-- A Vault was a Bank first, and kept what that Bank left: the old download
+-- cache, staging, and the Bank's own program. It clears them, and nothing
+-- that is its own.
+disk["/updates/pumpe.lua"] = string.rep("x", 4000)
+disk["/pumpe/bank_server.lua"] = "-- the Bank this computer was"
+disk["/pumpe/.wire_update/lib/ui.lua"] = "half an update"
+disk["/pumpe/.online_update_stage/config.lua"] = "older still"
+disk["/pumpe/vault_data.dat"] = "everyone's history"
+vault.free_leftovers()
+assert(not fs.exists("/updates") and not disk["/pumpe/bank_server.lua"]
+    and not fs.exists("/pumpe/.wire_update")
+    and not fs.exists("/pumpe/.online_update_stage"), "the leftovers are gone")
+assert(disk["/pumpe/vault_data.dat"] and disk["/pumpe/bank_vault.lua"],
+    "and the Vault's own files and data are not")
+
+-- A full disk is refused before a piece is sent, and said with what it takes.
+local freeNow = 4000
+fs.getFreeSpace = function() return freeNow end
+local full, fullWhy = core.pair.updateVault(true)
+assert(not full and fullWhy:find("disk is full", 1, true)
+    and fullWhy:find("needs 9 KB", 1, true) and fullWhy:find("has 4 KB", 1, true),
+    "a full Vault says how much it needs and has: " .. tostring(fullWhy))
+assert(core.pair.vault.why == fullWhy and core.pair.vaultBehind(),
+    "and the dashboard shows it, with UPDATE VAULT still there")
+-- A Vault from before 12.0 does not say how much room it has. It refuses at
+-- the start, and that is said the same way.
+core.pair.nextVaultUpdate = nil
+core.pair.ask = function(action, payload, timeout)
+    local data, err, code = realAsk(action, payload, timeout)
+    if action == "VAULT_STATUS" and data then data.free = nil end
+    return data, err, code
+end
+full, fullWhy = core.pair.updateVault(true)
+assert(not full and fullWhy:find("disk is full", 1, true), tostring(fullWhy))
+reset()
+freeNow = 1000000
+
+-- A reply lost on the cable: the piece is sent again and taken once.
+local dropped = 0
+core.pair.ask = function(action, payload, timeout)
+    local data, err, code = realAsk(action, payload, timeout)
+    if action == "VAULT_UPDATE_CHUNK" and dropped == 0 then
+        dropped = 1
+        return nil, "Bank server timed out"
+    end
+    return data, err, code
+end
+local steps = {}
+local resent, resentWhy = core.pair.updateVault(true, function(step)
+    if steps[#steps] ~= step then steps[#steps + 1] = step end
+end)
+assert(resent and dropped == 1, "a lost answer does not stop an update: "
+    .. tostring(resentWhy))
+assert(disk["/pumpe/bank_vault.lua"] == RELEASE["bank_vault.lua"],
+    "and the piece sent twice went in once")
+assert(table.concat(steps, "|") == "Asking the Vault|Getting v99.0.0|Sending the"
+    .. " release|Installing on the Vault", "each step is told as it happens: "
+    .. table.concat(steps, "|"))
+reset()
+
+-- The install's answer lost -- a Vault saving a big disk takes a while --
+-- but the Vault comes back on the new release: that is an update that went.
+local installed = false
+core.pair.ask = function(action, payload, timeout)
+    if action == "VAULT_STATUS" and installed then
+        return { version = "99.0.0" }
+    end
+    local data, err, code = realAsk(action, payload, timeout)
+    if action == "VAULT_UPDATE_COMMIT" and data then
+        installed = true
+        return nil, "Bank server timed out"
+    end
+    return data, err, code
+end
+local slow, slowWhy = core.pair.updateVault(true)
+assert(slow and installed, "an install that answered late still counts: "
+    .. tostring(slowWhy))
+reset()
+
+-- One update at a time: the scheduler and the button never send two.
+core.pair.vault.busy = true
+local twice, twiceWhy = core.pair.updateVault(true)
+assert(not twice and twiceWhy:find("already", 1, true))
+core.pair.vault.busy = false
+
+-- UPDATE VAULT, on a real screen: a refusal is explained, with what to do.
+local drawn = {}
+local display = {
+    getSize = function() return 51, 19 end, isColor = function() return true end,
+    setBackgroundColor = function() end, setTextColor = function() end,
+    setCursorBlink = function() end, clear = function() end,
+    setCursorPos = function() end, getCursorPos = function() return 1, 1 end,
+    write = function(value) drawn[#drawn + 1] = tostring(value) end,
+    blit = function(value) drawn[#drawn + 1] = tostring(value) end,
+}
+local taps = { { 45, 19 } }
+os.startTimer = function() return 1 end
+os.cancelTimer = function() end
+os.pullEvent = function()
+    local tap = table.remove(taps, 1)
+    assert(tap, "UPDATE VAULT waited for a tap that never came")
+    return "mouse_click", 1, tap[1], tap[2]
+end
+freeNow = 4000
+assert(core.pair.updateScreen(display) == false)
+local screen = table.concat(drawn, "")
+assert(screen:find("VAULT NOT UPDATED", 1, true) and screen:find("delete", 1, true)
+    and screen:find("/updates", 1, true), "a full disk says what to do about it")
+freeNow = 1000000
+reset()
+
+local dashboard = source("../bank_server.lua")
+assert(dashboard:find('if pair%.vaultBehind%(%) then\n%s+scene:button%("update"')
+    and dashboard:find('elseif action == "update" then\n%s+pair.updateScreen%(target%)'),
+    "UPDATE VAULT sits beside RE-PAIR while the Vault is behind")
 
 print("host_vault_wire_update_test: OK")

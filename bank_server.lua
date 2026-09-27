@@ -5926,8 +5926,15 @@ local function dashboardLoop()
         -- History and notifications still waiting to go down the cable.
         local waiting = #state.outbox
         ui.text(target, 2, 12, ui.truncate("VAULT  " .. pair.status()
+            .. (pair.vault.version and ("  v" .. pair.vault.version) or "")
             .. (waiting > 0 and ("  " .. waiting .. " RECORDS WAITING") or ""),
             width - 2), pair.statusColor())
+        -- 12.0: an update the Vault is waiting for says why it has not gone.
+        if pair.vaultBehind() then
+            ui.text(target, 2, 13, ui.truncate("VAULT UPDATE  " .. (pair.vault.why
+                and string.upper(pair.vault.why) or ("v" .. config.version
+                .. " READY TO SEND")), width - 2), colors.orange)
+        end
 
         local scene = ui.scene(target)
         local feedY = 14
@@ -5944,6 +5951,10 @@ local function dashboardLoop()
         -- pairs the first one pairs a replacement.
         scene:button("vault", 2, height, 9, 1,
             pair.paired() and "RE-PAIR" or "PAIR", { background = colors.lime })
+        if pair.vaultBehind() then
+            scene:button("update", 12, height, 14, 1, "UPDATE VAULT",
+                { background = colors.orange })
+        end
         scene:button("save", width - 18, height, 8, 1, "SAVE",
             { background = colors.blue })
         scene:button("stop", width - 9, height, 8, 1, "STOP",
@@ -5952,6 +5963,8 @@ local function dashboardLoop()
         blink = not blink
         if action == "vault" then
             pair.repairScreen(target)
+        elseif action == "update" then
+            pair.updateScreen(target)
         elseif action == "save" then
             save()
             logActivity("Manual save complete", colors.lime)
@@ -6414,7 +6427,15 @@ end
 -- served from.
 local VAULT_CHUNK = 12 * 1024
 
-local function releaseFiles(paths)
+-- 12.0: what this Core knows of its Vault's release, for the dashboard --
+-- its version, the room on its disk, and why the last update did not go.
+pair.vault = { busy = false }
+
+local function kib(bytes)
+    return string.format("%d KB", math.ceil((tonumber(bytes) or 0) / 1024))
+end
+
+local function releaseFiles(paths, onFile)
     local manifestUrl = tostring(config.update_manifest_url or "")
     if manifestUrl == "" then return nil, "no release address" end
     local manifest, err = onlineUpdate.fetchManifest(manifestUrl,
@@ -6426,9 +6447,10 @@ local function releaseFiles(paths)
     local byPath = {}
     for _, file in ipairs(manifest.files) do byPath[file.path] = file end
     local out = {}
-    for _, path in ipairs(paths) do
+    for index, path in ipairs(paths) do
         local file = byPath[path]
         if not file then return nil, path .. " is not in the release" end
+        if onFile then onFile(path, index, #paths) end
         local installed = onlineUpdate.installPath(path)
         local body = util.readFile(fs.combine(ROOT, installed))
         if not body or #body ~= file.size or util.checksum(body) ~= file.checksum then
@@ -6441,53 +6463,196 @@ local function releaseFiles(paths)
     return out
 end
 
--- Checked by the scheduler once a minute; `force` skips the wait.
-function pair.updateVault(force)
+-- The Vault's refusals, in words that say what to do about them.
+local function vaultWhy(message, code, needed, free)
+    if code == "NO_SPACE" then
+        return "the Vault's disk is full: it needs " .. kib(needed)
+            .. (free and (" and has " .. kib(free)) or " free")
+    elseif code == "NOT_MY_CORE" then
+        return "the Vault belongs to another Bank. RE-PAIR it"
+    elseif code == nil then
+        return "the Vault did not answer"
+    end
+    return tostring(message or code)
+end
+
+-- Every file announced, then sent in pieces. A piece whose answer got lost
+-- is asked again once: a Vault from 12.0 takes the same piece twice as one.
+local function sendRelease(files, listed, total, progress)
+    local began, beginError, beginCode = pair.ask("VAULT_UPDATE_BEGIN",
+        { version = config.version, files = listed }, 10)
+    if not began then return false, beginError, beginCode end
+    local sentBytes = 0
+    for _, file in ipairs(files) do
+        local offset = 1
+        repeat
+            local piece = file.body:sub(offset, offset + VAULT_CHUNK - 1)
+            local chunk = { path = file.path, offset = offset, data = piece }
+            local sent, sendError, sendCode = pair.ask("VAULT_UPDATE_CHUNK", chunk, 6)
+            if not sent and not sendCode then
+                sent, sendError, sendCode = pair.ask("VAULT_UPDATE_CHUNK", chunk, 6)
+            end
+            if not sent then return false, sendError, sendCode end
+            offset = offset + #piece
+            sentBytes = sentBytes + #piece
+            progress("Sending the release", file.path .. "  "
+                .. math.floor(sentBytes * 100 / math.max(1, total)) .. "%")
+        until offset > #file.body
+    end
+    return true
+end
+
+-- Checked by the scheduler once a minute; `force` skips the wait. UPDATE
+-- VAULT on the dashboard forces it and passes `progress`, which is told
+-- each step as it happens.
+function pair.updateVault(force, progress)
+    progress = progress or function() end
     if not pair.paired() then return false, "no Vault" end
+    if pair.vault.busy then return false, "an update is already going" end
     local now = util.nowMs()
     if not force and pair.nextVaultUpdate and now < pair.nextVaultUpdate then
         return false, "later"
     end
     pair.nextVaultUpdate = now + 60 * 1000
+    progress("Asking the Vault")
     local status = pair.ask("VAULT_STATUS", {}, 3)
     if type(status) ~= "table" or not status.version then
         return false, "the Vault is not answering"
     end
+    pair.vault.version, pair.vault.free = status.version, tonumber(status.free)
     if not net.isNewerVersion(config.version, status.version) then
+        pair.vault.why = nil
         return false, "current"
     end
     local function stop(why)
         -- A release that cannot be sent now is tried again, not hammered.
-        pair.nextVaultUpdate = now + 10 * 60 * 1000
+        pair.nextVaultUpdate = util.nowMs() + 10 * 60 * 1000
+        pair.vault.why = why
         logActivity("Vault update waits: " .. tostring(why), colors.orange)
         return false, why
     end
-    local files, why = releaseFiles(onlineUpdate.rolePaths("vault") or {})
-    if not files then return stop(why) end
-    local listed = {}
-    for _, file in ipairs(files) do
-        listed[#listed + 1] = { path = file.path, size = file.size,
-            checksum = file.checksum }
-    end
-    local began, beginError = pair.ask("VAULT_UPDATE_BEGIN",
-        { version = config.version, files = listed }, 6)
-    if not began then return stop(beginError) end
-    for _, file in ipairs(files) do
-        local offset = 1
-        repeat
-            local piece = file.body:sub(offset, offset + VAULT_CHUNK - 1)
-            local sent, sendError = pair.ask("VAULT_UPDATE_CHUNK", {
-                path = file.path, offset = offset, data = piece }, 6)
-            if not sent then return stop(sendError) end
-            offset = offset + #piece
-        until offset > #file.body
-    end
-    local done, doneError = pair.ask("VAULT_UPDATE_COMMIT",
-        { version = config.version }, 15)
-    if not done then return stop(doneError) end
+    pair.vault.busy = true
+    local ok, done, why = pcall(function()
+        progress("Getting v" .. config.version)
+        local files, fetchWhy = releaseFiles(onlineUpdate.rolePaths("vault") or {},
+            function(path, index, count)
+                progress("Getting v" .. config.version, index .. " of " .. count
+                    .. "  " .. path)
+            end)
+        if not files then return false, fetchWhy end
+        local listed, total = {}, 0
+        for _, file in ipairs(files) do
+            listed[#listed + 1] = { path = file.path, size = file.size,
+                checksum = file.checksum }
+            total = total + file.size
+        end
+        local needed = total + 8192
+        -- Twice at most: a transfer the cable dropped starts again from the
+        -- top, which also clears whatever the Vault had of the first one.
+        local sent, sendError, sendCode
+        for attempt = 1, 2 do
+            sent, sendError, sendCode = sendRelease(files, listed, total, progress)
+            if sent or (sendCode and sendCode ~= "OUT_OF_ORDER"
+                and sendCode ~= "NO_UPDATE") then break end
+            if attempt == 1 then progress("Starting again", vaultWhy(sendError, sendCode)) end
+        end
+        if not sent then
+            if sendCode == "NOT_NEWER" then return true end
+            return false, vaultWhy(sendError, sendCode, needed, pair.vault.free)
+        end
+        progress("Installing on the Vault")
+        local done, doneError, doneCode = pair.ask("VAULT_UPDATE_COMMIT",
+            { version = config.version }, 60)
+        if done then return true end
+        if doneCode then return false, vaultWhy(doneError, doneCode, needed) end
+        -- No answer. A Vault saving a big disk can take longer than any
+        -- wait here, and one that finished is already restarting into the
+        -- release: whichever it was, it says so once it is back.
+        progress("Waiting for the Vault", "It restarts when it is done")
+        for _ = 1, 20 do
+            sleep(3)
+            local after = pair.ask("VAULT_STATUS", {}, 3)
+            if type(after) == "table" and after.version == config.version then
+                return true
+            end
+        end
+        return false, "the Vault stopped answering while it installed"
+    end)
+    pair.vault.busy = false
+    if not ok then done, why = false, tostring(done) end
+    if not done then return stop(why) end
     logActivity("Vault v" .. tostring(status.version) .. " -> v" .. config.version
         .. " over the cable", colors.lime)
+    pair.vault.version, pair.vault.why = config.version, nil
     return true
+end
+
+-- A Vault running an older release than this Core: UPDATE VAULT shows.
+function pair.vaultBehind()
+    return pair.paired() and pair.vault.version ~= nil
+        and net.isNewerVersion(config.version, pair.vault.version)
+end
+
+-- UPDATE VAULT, 12.0: the same update the scheduler tries, done now, with
+-- every step on the screen and the reason if it does not go.
+function pair.updateScreen(target)
+    local steps, detail = {}, ""
+    local function draw()
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "UPDATE VAULT", "v" .. tostring(pair.vault.version
+            or "?") .. " -> v" .. config.version, util.formatClock())
+        local first = math.max(1, #steps - (height - 9))
+        for index = first, #steps do
+            local last = index == #steps
+            ui.text(target, 2, 4 + index - first, ui.truncate((last and "> " or "  ")
+                .. steps[index], width - 2), last and colors.white or colors.lightGray)
+        end
+        ui.text(target, 4, height - 2, ui.truncate(detail, width - 5), colors.cyan)
+    end
+    local ok, why = pair.updateVault(true, function(step, more)
+        if steps[#steps] ~= step then steps[#steps + 1] = step end
+        detail = more or ""
+        draw()
+    end)
+    if ok then
+        ui.message(target, "success", "VAULT UPDATED", "It restarts into v"
+            .. config.version, 2)
+        return true
+    end
+    if why == "current" then
+        ui.message(target, "info", "VAULT IS CURRENT", "It already runs v"
+            .. tostring(pair.vault.version), 1.6)
+        return false
+    end
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "VAULT NOT UPDATED", "v" .. tostring(pair.vault.version
+            or "?") .. " -> v" .. config.version, util.formatClock())
+        local text = "Why: " .. tostring(why) .. "."
+        if tostring(why):find("disk is full", 1, true) then
+            -- A Vault from before 12.0 cannot clear this itself. What fills
+            -- it is almost always the cache it kept from being a Bank.
+            text = text .. " On the Vault: hold Ctrl+T, then type"
+                .. " delete /updates  and  reboot . Then press UPDATE VAULT"
+                .. " again. From 12.0 on, a Vault clears this by itself."
+        elseif tostring(why):find("updates first", 1, true) then
+            text = text .. " A newer release is out. Let this Bank update,"
+                .. " then the Vault follows it."
+        else
+            text = text .. " It is tried again every 10 minutes by itself."
+        end
+        ui.wrappedText(target, 2, 4, text, width - 2, height - 6, colors.white)
+        local scene = ui.scene(target)
+        scene:button("retry", 2, height, 9, 1, "AGAIN", { background = colors.lime })
+        scene:button("back", width - 9, height, 8, 1, "BACK",
+            { background = colors.gray })
+        local action = scene:wait()
+        if action == "retry" then return pair.updateScreen(target) end
+        return false
+    end
+    return false
 end
 
 function pair.loop()

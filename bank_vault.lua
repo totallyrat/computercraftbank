@@ -4462,6 +4462,38 @@ end
 -- own settings, every file swapped in or none -- and the Vault restarts.
 local wire = { incoming = nil, restart = false }
 
+-- 12.0. Every Vault was a Bank Server first -- the half of a pair that lost
+-- the coin toss -- and kept what that Bank left on its disk: the /updates
+-- cache from before 11.2, staging from updates that never finished, and
+-- bank_server.lua itself, which a Vault never runs. None of it can be
+-- anything but in the way, and on a disk that also holds everyone's history
+-- it was the room an update needed. Returns what it freed, in bytes.
+local function freeLeftovers()
+    local before = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT)
+    local stale = { "/updates", fs.combine(ROOT, ".online_update_stage"),
+        fs.combine(ROOT, ".online_update_backup"), fs.combine(ROOT, ".self_update"),
+        fs.combine(ROOT, ".wire_update"), fs.combine(ROOT, ".wire_backup"),
+        fs.combine(ROOT, ".easy_deployment_source.lua") }
+    if core.id then stale[#stale + 1] = fs.combine(ROOT, "bank_server.lua") end
+    for _, path in ipairs(stale) do
+        if fs.exists(path) then pcall(fs.delete, path) end
+    end
+    local after = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT)
+    if type(before) == "number" and type(after) == "number" then
+        return math.max(0, after - before)
+    end
+    return 0
+end
+
+local function freeSpace()
+    local free = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT)
+    return type(free) == "number" and free or nil
+end
+
+local function kib(bytes)
+    return string.format("%d KB", math.ceil((tonumber(bytes) or 0) / 1024))
+end
+
 local function wireAllowed()
     local update = require("lib.update")
     local allowed = {}
@@ -4480,7 +4512,11 @@ function vault.VAULT_UPDATE_BEGIN(payload, sender)
     local files, total = {}, 0
     for _, file in ipairs(type(payload.files) == "table" and payload.files or {}) do
         local path = tostring(file.path or "")
-        need(allowed[path], "BAD_PATH", "A Vault does not install " .. path)
+        -- 12.0: a library the release adds is taken as well. The list of
+        -- what a Vault installs is this program's, and a release that adds a
+        -- file to it is always sent to a Vault that has never heard of it.
+        need(allowed[path] or path:match("^lib/[%w_]+%.lua$"), "BAD_PATH",
+            "A Vault does not install " .. path)
         local size = math.floor(tonumber(file.size) or -1)
         need(size >= 0 and type(file.checksum) == "string", "BAD_FILE",
             path .. " was announced without a size or checksum")
@@ -4490,8 +4526,11 @@ function vault.VAULT_UPDATE_BEGIN(payload, sender)
     end
     need(files["bank_vault.lua"] and files["config.lua"], "INCOMPLETE",
         "An update needs the program and its config")
-    need(update.hasFreeSpace(ROOT, total), "NO_SPACE",
-        "Not enough room on the Vault for v" .. version)
+    -- Whatever an earlier attempt left is room this one needs.
+    freeLeftovers()
+    local roomy, free = update.hasFreeSpace(ROOT, total)
+    need(roomy, "NO_SPACE", "The Vault's disk is full: v" .. version .. " needs "
+        .. kib(total + 8192) .. " and there is " .. kib(free))
     wire.incoming = { version = version, files = files }
     logActivity("Receiving v" .. version .. " over the cable", colors.cyan)
     return { ready = true }
@@ -4504,8 +4543,14 @@ function vault.VAULT_UPDATE_CHUNK(payload, sender)
     local file = incoming.files[tostring(payload.path or "")]
     need(file, "BAD_PATH", "That file is not part of this update")
     local data = tostring(payload.data or "")
+    -- 12.0: the same piece twice is a reply that got lost on the way back,
+    -- and the Core asking again. It is answered, not added.
+    if #data > 0 and tonumber(payload.offset) == file.received - #data + 1
+        and file.parts[#file.parts] == data then
+        return { received = file.received }
+    end
     need(tonumber(payload.offset) == file.received + 1, "OUT_OF_ORDER",
-        "Pieces arrived out of order")
+        "Pieces arrived out of order: expected " .. (file.received + 1))
     need(file.received + #data <= file.size, "TOO_LONG",
         "More arrived than was announced")
     file.parts[#file.parts + 1] = data
@@ -4557,6 +4602,8 @@ local function updatesItself() return core.id == nil end
 function vault.VAULT_STATUS(payload, sender)
     return {
         version = PROGRAM_VERSION,
+        -- 12.0: so the Core can say a disk is full before sending anything.
+        free = freeSpace(),
         holders = mapCount(state.holders),
         conversations = mapCount(state.conversations),
         territories = mapCount(state.territories),
@@ -4584,6 +4631,7 @@ if TEST_MODE then
         mail = mail,
         wire = wire,
         updates_itself = updatesItself,
+        free_leftovers = freeLeftovers,
     }
 end
 
@@ -4724,6 +4772,14 @@ if not core.load() then
         "This computer was installed as a Vault but is not paired to a Bank."
             .. " Pair it from the Bank Server.", 6)
     logActivity("No Core paired - pair this from the Bank Server", colors.red)
+end
+
+do
+    local freed = freeLeftovers()
+    if freed > 0 then
+        logActivity("Freed " .. kib(freed) .. " left over from the Bank this was",
+            colors.orange)
+    end
 end
 
 net.openModems()

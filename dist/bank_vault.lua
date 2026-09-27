@@ -4462,6 +4462,38 @@ end
 
 local wire = { incoming = nil, restart = false }
 
+
+
+
+
+
+
+local function freeLeftovers()
+local before = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT)
+local stale = { "/updates", fs.combine(ROOT, ".online_update_stage"),
+fs.combine(ROOT, ".online_update_backup"), fs.combine(ROOT, ".self_update"),
+fs.combine(ROOT, ".wire_update"), fs.combine(ROOT, ".wire_backup"),
+fs.combine(ROOT, ".easy_deployment_source.lua") }
+if core.id then stale[#stale + 1] = fs.combine(ROOT, "bank_server.lua") end
+for _, path in ipairs(stale) do
+if fs.exists(path) then pcall(fs.delete, path) end
+end
+local after = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT)
+if type(before) == "number" and type(after) == "number" then
+return math.max(0, after - before)
+end
+return 0
+end
+
+local function freeSpace()
+local free = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT)
+return type(free) == "number" and free or nil
+end
+
+local function kib(bytes)
+return string.format("%d KB", math.ceil((tonumber(bytes) or 0) / 1024))
+end
+
 local function wireAllowed()
 local update = require("lib.update")
 local allowed = {}
@@ -4480,7 +4512,11 @@ local allowed, update = wireAllowed()
 local files, total = {}, 0
 for _, file in ipairs(type(payload.files) == "table" and payload.files or {}) do
 local path = tostring(file.path or "")
-need(allowed[path], "BAD_PATH", "A Vault does not install " .. path)
+
+
+
+need(allowed[path] or path:match("^lib/[%w_]+%.lua$"), "BAD_PATH",
+"A Vault does not install " .. path)
 local size = math.floor(tonumber(file.size) or -1)
 need(size >= 0 and type(file.checksum) == "string", "BAD_FILE",
 path .. " was announced without a size or checksum")
@@ -4490,8 +4526,11 @@ total = total + size
 end
 need(files["bank_vault.lua"] and files["config.lua"], "INCOMPLETE",
 "An update needs the program and its config")
-need(update.hasFreeSpace(ROOT, total), "NO_SPACE",
-"Not enough room on the Vault for v" .. version)
+
+freeLeftovers()
+local roomy, free = update.hasFreeSpace(ROOT, total)
+need(roomy, "NO_SPACE", "The Vault's disk is full: v" .. version .. " needs "
+.. kib(total + 8192) .. " and there is " .. kib(free))
 wire.incoming = { version = version, files = files }
 logActivity("Receiving v" .. version .. " over the cable", colors.cyan)
 return { ready = true }
@@ -4504,8 +4543,14 @@ need(incoming, "NO_UPDATE", "No update was started")
 local file = incoming.files[tostring(payload.path or "")]
 need(file, "BAD_PATH", "That file is not part of this update")
 local data = tostring(payload.data or "")
+
+
+if #data > 0 and tonumber(payload.offset) == file.received - #data + 1
+and file.parts[#file.parts] == data then
+return { received = file.received }
+end
 need(tonumber(payload.offset) == file.received + 1, "OUT_OF_ORDER",
-"Pieces arrived out of order")
+"Pieces arrived out of order: expected " .. (file.received + 1))
 need(file.received + #data <= file.size, "TOO_LONG",
 "More arrived than was announced")
 file.parts[#file.parts + 1] = data
@@ -4557,6 +4602,8 @@ local function updatesItself() return core.id == nil end
 function vault.VAULT_STATUS(payload, sender)
 return {
 version = PROGRAM_VERSION,
+
+free = freeSpace(),
 holders = mapCount(state.holders),
 conversations = mapCount(state.conversations),
 territories = mapCount(state.territories),
@@ -4584,6 +4631,7 @@ sweep_orders = sweepOrders,
 mail = mail,
 wire = wire,
 updates_itself = updatesItself,
+free_leftovers = freeLeftovers,
 }
 end
 
@@ -4724,6 +4772,14 @@ ui.message(term.current(), "error", "NO CORE",
 "This computer was installed as a Vault but is not paired to a Bank."
 .. " Pair it from the Bank Server.", 6)
 logActivity("No Core paired - pair this from the Bank Server", colors.red)
+end
+
+do
+local freed = freeLeftovers()
+if freed > 0 then
+logActivity("Freed " .. kib(freed) .. " left over from the Bank this was",
+colors.orange)
+end
 end
 
 net.openModems()
