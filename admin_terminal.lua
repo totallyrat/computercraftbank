@@ -15,6 +15,8 @@ local target = term.current()
 local client = net.client(config)
 local governmentToken
 local running = true
+-- 12.0: this terminal's main colour, orange unless the government chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 
 local function money(value)
     return util.money(value, config.currency)
@@ -45,6 +47,9 @@ local function login()
     end
     governmentToken = result.government_token
     ui.message(target, "success", "ACCESS GRANTED", "Controller unlocked", 0.8)
+    if type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+        ui.pickMainColor(target, ROOT, "Terminal colour")
+    end
     return true
 end
 
@@ -52,7 +57,7 @@ local function loginScreen()
     local width, height = target.getSize()
     while running and not governmentToken do
         ui.clear(target)
-        ui.header(target, "TAX CONTROLLER", "Government administration",
+        ui.header(target, "ADMIN TERMINAL", "Government administration",
             util.formatClock())
         ui.center(target, 6, "RESTRICTED SYSTEM", ui.theme.warning)
         ui.center(target, 8, "Every action is logged by the bank", ui.theme.muted)
@@ -698,19 +703,21 @@ local function controlsScreen()
     end
 end
 
--- Every thread the government is holding, so a reply is not missed.
-local function messageInbox()
+-- Every thread the government is holding, so a reply is not missed. The
+-- Inbox tab since 12.0.
+local function messageInbox(spec)
     local page = 1
     while running and governmentToken do
         local loaded = adminRequest("ADMIN_MESSAGE_THREADS")
-        if not loaded then return end
+        if not loaded then return "tab:tax" end
         local threads = loaded.threads
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "GOVERNMENT MESSAGES", #threads .. " threads",
             util.formatClock())
         local scene = ui.scene(target)
-        local pageItems, actualPage, pages = util.page(threads, page, 5)
+        local per = math.max(1, math.floor((ui.contentBottom(target) - 3) / 3))
+        local pageItems, actualPage, pages = util.page(threads, page, per)
         page = actualPage
         if #threads == 0 then
             ui.center(target, 9, "No threads yet", ui.theme.muted)
@@ -726,18 +733,19 @@ local function messageInbox()
                     foreground = thread.waiting and colors.black or colors.white,
                 })
         end
-        scene:button("back", 1, height, 8, 1, "< BACK",
-            { background = ui.theme.panel })
         if pages > 1 then
-            scene:button("prev", width - 11, height, 4, 1, "<",
+            scene:button("prev", width - 12, 2, 4, 1, "<",
                 { background = ui.theme.panel, disabled = page <= 1 })
-            ui.text(target, width - 6, height, page .. "/" .. pages,
-                ui.theme.muted)
-            scene:button("next", width - 2, height, 2, 1, ">",
+            ui.text(target, width - 7, 2, page .. "/" .. pages, ui.theme.muted)
+            scene:button("next", width - 3, 2, 3, 1, ">",
                 { background = ui.theme.panel, disabled = page >= pages })
         end
+        ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
         local action = scene:wait({ tickRate = 3 })
-        if action == "back" or action == "__terminate" then return
+        if action == "__terminate" then running = false return nil end
+        if action and action:match("^tab:") then return action end
+        if action == "__tick" then
+            net.autoUpdate(config, "admin", ROOT, client)
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
         else
@@ -753,76 +761,117 @@ local function messageInbox()
     end
 end
 
+-- 12.0: three tabs -- Tax, People, Inbox -- and More, which has every
+-- control on this terminal.
 local function dashboard()
-    local blink, tick = true, 0
     local stats = request("GOVERNMENT_STATS")
-    while running and governmentToken and stats do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "TAX CONTROLLER", "Government administration",
-            util.formatClock(blink))
-        ui.card(target, 2, 5, width - 2, 3, ui.theme.success)
-        ui.text(target, 4, 5, "TAX REVENUE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 6, money(stats.tax_revenue), ui.theme.success, ui.theme.panel)
-        ui.text(target, width - 13, 6, stats.accounts .. " citizens",
-            ui.theme.muted, ui.theme.panel)
-
-        local scene = ui.scene(target)
-        local labels = {
-            { "open", "OPEN PERIOD", ui.theme.warning },
-            { "rates", "SET RATES", ui.theme.panel },
-            { "revenue", "REVENUE", ui.theme.panel },
-            { "audit", "AUDIT CO.", ui.theme.panel },
-            { "deposit", "STATE DEPOSIT", ui.theme.accentDark },
-            { "stats", "BANK STATS", ui.theme.panel },
-            { "close", "CLOSE PERIOD", ui.theme.danger },
-            { "accounts", "ACCOUNTS", ui.theme.accentDark },
-            { "announce", "ANNOUNCE", colors.magenta },
-            { "messages", "MESSAGES", colors.purple },
-            { "controls", "CONTROLS", ui.theme.panel },
-            { "system", "SYSTEM", ui.theme.panel },
-        }
-        -- Three columns. Two ran the last row off the bottom of a 51x19
-        -- Advanced Computer once the list grew past ten entries.
-        local buttonWidth = math.floor((width - 6) / 3)
-        for index, item in ipairs(labels) do
-            local column = (index - 1) % 3
-            local row = math.floor((index - 1) / 3)
-            scene:button(item[1], 2 + column * (buttonWidth + 1),
-                9 + row * 2, buttonWidth, 2, item[2], {
-                    background = item[3],
-                    foreground = item[1] == "open" and colors.black or colors.white,
-                })
-        end
-        scene:button("lock", 1, height, 7, 1, "LOCK",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        blink = not blink
-        tick = tick + 1
-        -- Refresh on a five second cadence and straight after any change,
-        -- instead of asking the Bank for statistics twice a second.
-        local refresh = false
-        if action == "__tick" then
-            net.autoUpdate(config, "admin", ROOT, client)
-            refresh = tick % 10 == 0
-        elseif action == "open" then openPeriod() refresh = true
-        elseif action == "rates" then setRates() refresh = true
-        elseif action == "revenue" then revenueScreen()
-        elseif action == "audit" then auditCompany()
-        elseif action == "deposit" then stateDeposit() refresh = true
-        elseif action == "stats" then statsScreen()
-        elseif action == "close" then closePeriod() refresh = true
-        elseif action == "accounts" then accountBrowser(false)
-        elseif action == "announce" then announceScreen()
-        elseif action == "messages" then messageInbox()
-        elseif action == "controls" then controlsScreen()
-        elseif action == "system" then systemScreen()
-        elseif action == "lock" then governmentToken = nil
-        elseif action == "__terminate" then running = false end
-        if refresh and governmentToken then
+    if not stats then return end
+    local ACTIONS = {
+        open = { "OPEN PERIOD", "Start a tax period", function() openPeriod() end, true },
+        rates = { "SET RATES", "Tax rates by kind", function() setRates() end, true },
+        close = { "CLOSE PERIOD", "Collect and close", function() closePeriod() end, true },
+        deposit = { "STATE DEPOSIT", "Move state money", function() stateDeposit() end, true },
+        revenue = { "REVENUE", "What came in", function() revenueScreen() end },
+        audit = { "AUDIT CO.", "One company's books", function() auditCompany() end },
+        accounts = { "FIND ACCOUNT", "Search every account", function() accountBrowser(false) end },
+        pending = { "PENDING", "Waiting for approval", function() accountBrowser(true) end },
+        announce = { "ANNOUNCE", "To every PUMPE", function() announceScreen() end },
+        controls = { "CONTROLS", "Approval and the key", function() controlsScreen() end },
+        stats = { "BANK STATS", "Totals across the bank", function() statsScreen() end },
+        system = { "SYSTEM", "This terminal", function() systemScreen() end },
+    }
+    local function run(id)
+        local entry = ACTIONS[id]
+        if not entry then return end
+        entry[3]()
+        if entry[4] and governmentToken then
             stats = request("GOVERNMENT_STATS", {}, true) or stats
         end
     end
+    -- A page of big buttons: the dashboard's old grid, split by what it is for.
+    local function grid(title, ids, withRevenue)
+        return function(spec)
+            local blink, tick = true, 0
+            while running and governmentToken do
+                local width = target.getSize()
+                ui.clear(target)
+                ui.header(target, title, "Government administration",
+                    util.formatClock(blink))
+                local top = 5
+                if withRevenue then
+                    ui.card(target, 2, 5, width - 2, 3, ui.theme.success)
+                    ui.text(target, 4, 5, "TAX REVENUE", ui.theme.muted, ui.theme.panel)
+                    ui.text(target, 4, 6, money(stats.tax_revenue), ui.theme.success,
+                        ui.theme.panel)
+                    ui.text(target, width - 13, 6, stats.accounts .. " citizens",
+                        ui.theme.muted, ui.theme.panel)
+                    top = 9
+                end
+                local scene = ui.scene(target)
+                local buttonWidth = math.floor((width - 5) / 2)
+                for index, id in ipairs(ids) do
+                    local column = (index - 1) % 2
+                    local row = math.floor((index - 1) / 2)
+                    local y = top + row * 3
+                    if y + 1 <= ui.contentBottom(target) then
+                        local label = ACTIONS[id][1]
+                        if id == "pending" and stats.pending_approvals then
+                            label = label .. " " .. stats.pending_approvals
+                        end
+                        local background = id == "open" and ui.theme.warning
+                            or id == "close" and ui.theme.danger
+                            or (id == "deposit" or id == "accounts") and ui.theme.accent
+                            or ui.theme.panel
+                        scene:button(id, 2 + column * (buttonWidth + 1), y, buttonWidth, 2,
+                            label, { background = background,
+                                foreground = ui.inkOn(background) })
+                    end
+                end
+                ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
+                local action = scene:wait({ tickRate = 0.5 })
+                blink = not blink
+                tick = tick + 1
+                if action == "__terminate" then running = false return nil end
+                if action and action:match("^tab:") then return action end
+                if action == "__tick" then
+                    net.autoUpdate(config, "admin", ROOT, client)
+                    -- Every five seconds, not twice a second.
+                    if tick % 10 == 0 then
+                        stats = request("GOVERNMENT_STATS", {}, true) or stats
+                    end
+                else
+                    run(action)
+                end
+            end
+        end
+    end
+
+    local more = {}
+    for _, id in ipairs({ "open", "rates", "close", "deposit", "revenue", "audit",
+        "accounts", "pending", "announce", "controls", "stats", "system" }) do
+        more[#more + 1] = { id = id, label = ACTIONS[id][1], hint = ACTIONS[id][2] }
+    end
+    more[#more + 1] = { id = "color", label = "Main colour", hint = "How this terminal looks" }
+    more[#more + 1] = { id = "lock", label = "Lock", hint = "Sign the key out" }
+    local actions = {
+        color = function() ui.pickMainColor(target, ROOT, "Terminal colour") end,
+        lock = function() governmentToken = nil end,
+    }
+    for id in pairs(ACTIONS) do actions[id] = function() run(id) end end
+    ui.runTabs({
+        target = target, title = "Admin", subtitle = "Every control",
+        list = { { id = "tax", label = "Tax" }, { id = "people", label = "People" },
+            { id = "inbox", label = "Inbox" } },
+        pages = {
+            tax = grid("TAX", { "open", "rates", "close", "deposit", "revenue", "audit" },
+                true),
+            people = grid("PEOPLE", { "accounts", "pending", "announce", "controls",
+                "stats", "system" }),
+            inbox = messageInbox,
+        },
+        more = more, actions = actions,
+        running = function() return running and governmentToken ~= nil end,
+    })
 end
 
 ui.boot(target, "ADMIN TERMINAL", "GOVERNMENT CORE v" .. config.version)

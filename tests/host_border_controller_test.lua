@@ -1,7 +1,8 @@
 -- Advanced Computer flow for a configured Border Controller.
 
 local WIDTH, HEIGHT = 51, 19
-local actions = { "enter", "done", "exit", "done", "stop" }
+-- 12.0: Gate, Scan and Owner are tabs; closing is on Owner, behind the PIN.
+local actions = { "enter", "done", "exit", "done", "tab:scan", "tab:owner", "stop" }
 local requests, drawnText, redstoneStates = {}, {}, {}
 local oneSecondSleeps = 0
 
@@ -156,6 +157,10 @@ end
 function ui.card(_, x, y, width, height)
     assertBox("card", x, y, width, height)
 end
+function ui.wrappedText(_, x, y, value, width, lines)
+    assertBox("wrapped text", x, y, width, lines)
+    drawnText[#drawnText + 1] = tostring(value or "")
+end
 function ui.progress(_, x, y, width)
     assertBox("progress", x, y, width, 1)
 end
@@ -175,6 +180,9 @@ function ui.scene()
     local scene = {}
     function scene:button(_, x, y, width, height)
         assertBox("button", x, y, width, height)
+    end
+    function scene:hotspot(_, x, y, width, height)
+        assertBox("hotspot", x, y, width, height)
     end
     function scene:wait()
         local action = table.remove(actions, 1)

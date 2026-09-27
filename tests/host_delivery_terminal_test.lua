@@ -230,6 +230,9 @@ local function runTerminal(bank, files, WIDTH, HEIGHT, script, offline)
                 "button label clipped: " .. tostring(label))
             seen.labels[#seen.labels + 1] = tostring(label)
         end
+        function scene:hotspot(_, x, y, width, height)
+            box("hotspot", x, y, width, height)
+        end
         function scene:wait()
             return take(script.actions, "tap")
         end
@@ -391,9 +394,9 @@ local function fullRun(WIDTH, HEIGHT)
     typed("Stuck in the rain", "Left by the door")
     confirm(true)
 
-    -- The PICKUP button: a new pickup point, with the first chest as the
-    -- one customers open and a redstone pulse out of the back.
-    tap("pickup", "pick:1", "pick:2")
+    -- The Pickup tab (12.0): a new pickup point, with the first chest as
+    -- the one customers open and a redstone pulse out of the back.
+    tap("tab:pickup", "setup", "pick:1", "pick:2")
     typed("North Point")
     pin("2468", "2468")
 
@@ -558,13 +561,13 @@ local function fullRun(WIDTH, HEIGHT)
         assert(os.pullEvent == terminatingPullEvent
             or os.pullEvent ~= os.pullEventRaw,
             "and Ctrl+T works again for staff")
-        return "pickup"
+        return "tab:pickup"
     end, "start", "code")
     typed({ crash = "boom" })
     pin("1357")
 
     -- Retiring the point, and closing the board.
-    tap("pickup", "start", "staff", "pin", "retire", "__terminate")
+    tap("tab:pickup", "start", "staff", "pin", "retire", "__terminate")
     pin("1357")
     confirm(true)
 
@@ -736,8 +739,8 @@ push(script.actions, function()
         "cancelled from the board, and the buyer has it all back")
     unwanted = buy()
     arrivedAndReturned(unwanted, "Too stale")
-    -- The board asks again every few seconds; let it.
-    return "__tick"
+    -- 12.0: a delivered order is on the Done tab, a return asked for first.
+    return "tab:done"
 end, "order:1", "take_back")
 push(script.confirms, true)
 push(script.actions, function()

@@ -18,6 +18,14 @@ local organizer
 local running = true
 local deviceFile = fs.combine(ROOT, "event_kiosk_device.dat")
 local device = util.loadTable(deviceFile, { last_name = "" })
+-- 12.0: this kiosk's main colour, orange unless its organizer chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
+
+-- 12.0: the bar every page ends with. A kiosk has no home screen to go
+-- back to, so it is only the three tabs and More.
+local function tabBar(scene, spec)
+    ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
+end
 
 local function money(value)
     return util.money(value, config.currency)
@@ -54,6 +62,10 @@ local function login()
     device.last_name = organizer.name
     util.saveTable(deviceFile, device)
     ui.message(target, "success", "WELCOME", organizer.name, 0.8)
+    -- Setting up a new kiosk: its colour, once.
+    if type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+        ui.pickMainColor(target, ROOT, "Kiosk colour")
+    end
     return true
 end
 
@@ -230,15 +242,17 @@ local function analyticsScreen(event)
     end
 end
 
-local function myEvents()
+-- 12.0: the Events tab. What it lists is paged above the tab bar.
+local function myEvents(spec)
     local result = request("MY_EVENTS")
-    if not result then return end
+    if not result then return "tab:home" end
     local events, page, blink = result.events, 1, true
-    while true do
+    while running and sessionToken do
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "MY EVENTS", #events .. " total", util.formatClock(blink))
-        local pageItems, actualPage, pages = util.page(events, page, 4)
+        local per = math.max(1, math.floor((ui.contentBottom(target) - 4) / 3))
+        local pageItems, actualPage, pages = util.page(events, page, per)
         page = actualPage
         local scene = ui.scene(target)
         if #events == 0 then ui.center(target, 9, "No events yet", ui.theme.muted) end
@@ -251,18 +265,20 @@ local function myEvents()
                     background = event.status == "active" and ui.theme.panel or colors.gray,
                 })
         end
-        scene:button("back", 1, height, 7, 1, "< BACK",
-            { background = ui.theme.panel })
         if pages > 1 then
-            scene:button("prev", width - 11, height, 4, 1, "<",
+            scene:button("prev", width - 12, 2, 4, 1, "<",
                 { background = ui.theme.panel, disabled = page <= 1 })
-            ui.text(target, width - 6, height, page .. "/" .. pages, ui.theme.muted)
-            scene:button("next", width - 2, height, 2, 1, ">",
+            ui.text(target, width - 7, 2, page .. "/" .. pages, ui.theme.muted)
+            scene:button("next", width - 3, 2, 3, 1, ">",
                 { background = ui.theme.panel, disabled = page >= pages })
         end
+        tabBar(scene, spec)
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
-        if action == "back" or action == "__terminate" then return
+        if action == "__terminate" then running = false return nil end
+        if action and action:match("^tab:") then return action end
+        if action == "__tick" then
+            net.autoUpdate(config, "event", ROOT, client)
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
         else
@@ -280,6 +296,7 @@ local function myEvents()
             end
         end
     end
+    return nil
 end
 
 local function ticketResultScreen(result)
@@ -473,63 +490,115 @@ local function proximityScan()
     stop()
 end
 
+-- 12.0: three tabs -- Home, Events, Door -- and More, which has all of it.
 local function dashboard()
-    local blink, tick = true, 0
     local stats = request("EVENT_DASHBOARD")
-    while running and sessionToken and stats do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "EVENT DASHBOARD", organizer.name, util.formatClock(blink))
-        local cardWidth = math.floor((width - 5) / 3)
-        local cards = {
-            { "ACTIVE", stats.active_events, ui.theme.accent },
-            { "SOLD", stats.tickets_sold, colors.magenta },
-            { "REVENUE", money(stats.revenue), ui.theme.success },
-        }
-        for index, card in ipairs(cards) do
-            local x = 2 + (index - 1) * (cardWidth + 1)
-            ui.card(target, x, 5, cardWidth, 4, card[3])
-            ui.text(target, x + 2, 6, card[1], ui.theme.muted, ui.theme.panel)
-            ui.text(target, x + 2, 7, tostring(card[2]), ui.theme.ink, ui.theme.panel,
-                cardWidth - 3)
-        end
-        local scene = ui.scene(target)
-        local buttonWidth = math.floor((width - 5) / 2)
-        scene:button("create", 2, 11, buttonWidth, 3, "CREATE EVENT",
-            { background = ui.theme.accentDark, shadow = true })
-        scene:button("events", 3 + buttonWidth, 11, buttonWidth, 3, "MY EVENTS",
-            { background = ui.theme.panel, shadow = true })
-        scene:button("verify", 2, 15, buttonWidth, 3, "VERIFY TICKET",
-            { background = ui.theme.success, foreground = colors.black, shadow = true })
-        scene:button("scan", 3 + buttonWidth, 15, buttonWidth, 3,
-            "PROXIMITY SCAN",
-            { background = colors.purple, shadow = true })
-        scene:button("exit", 1, height, 6, 1, "EXIT",
-            { background = ui.theme.panel })
-        scene:button("logout", width - 9, height, 9, 1, "LOG OUT",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 0.5 })
-        tick = tick + 1
-        blink = not blink
-        -- The clock blinks twice a second; the Bank is only asked for fresh
-        -- numbers every five seconds, or right after something changed them.
-        local refresh = false
-        if action == "__tick" then
-            net.autoUpdate(config, "event", ROOT, client)
-            refresh = tick % 10 == 0
-        elseif action == "create" then createEvent() refresh = true
-        elseif action == "events" then ui.wipe(target) myEvents() refresh = true
-        elseif action == "verify" then verifyTicket() refresh = true
-        elseif action == "scan" then ui.wipe(target) proximityScan() refresh = true
-        elseif action == "logout" then
-            if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT", "BACK") then
-                sessionToken, organizer = nil, nil
+    if not stats then return end
+    local function homePage(spec)
+        local blink, tick = true, 0
+        while running and sessionToken do
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "EVENT DASHBOARD", organizer.name, util.formatClock(blink))
+            local cardWidth = math.floor((width - 5) / 3)
+            local cards = {
+                { "ACTIVE", stats.active_events, ui.theme.accent },
+                { "SOLD", stats.tickets_sold, colors.magenta },
+                { "REVENUE", money(stats.revenue), ui.theme.success },
+            }
+            for index, card in ipairs(cards) do
+                local x = 2 + (index - 1) * (cardWidth + 1)
+                ui.card(target, x, 5, cardWidth, 4, card[3])
+                ui.text(target, x + 2, 6, card[1], ui.theme.muted, ui.theme.panel)
+                ui.text(target, x + 2, 7, tostring(card[2]), ui.theme.ink,
+                    ui.theme.panel, cardWidth - 3)
             end
-        elseif action == "exit" or action == "__terminate" then running = false end
-        if refresh and sessionToken then
-            stats = request("EVENT_DASHBOARD", {}, true) or stats
+            local scene = ui.scene(target)
+            scene:button("create", 2, 11, width - 2, 3, "CREATE EVENT",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk,
+                  shadow = true })
+            tabBar(scene, spec)
+            local action = scene:wait({ tickRate = 0.5 })
+            tick = tick + 1
+            blink = not blink
+            -- The clock blinks twice a second; the Bank is asked for fresh
+            -- numbers every five seconds, or right after they changed.
+            local refresh = false
+            if action == "__terminate" then running = false return nil end
+            if action and action:match("^tab:") then return action end
+            if action == "__tick" then
+                net.autoUpdate(config, "event", ROOT, client)
+                refresh = tick % 10 == 0
+            elseif action == "create" then
+                createEvent()
+                refresh = true
+            end
+            if refresh and sessionToken then
+                stats = request("EVENT_DASHBOARD", {}, true) or stats
+            end
         end
     end
+    local function doorPage(spec)
+        while running and sessionToken do
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "AT THE DOOR", organizer.name, util.formatClock())
+            local scene = ui.scene(target)
+            -- Two big buttons, as tall as the screen allows.
+            local tall = math.max(2, math.min(4,
+                math.floor((ui.contentBottom(target) - 5) / 2)))
+            scene:button("verify", 2, 5, width - 2, tall,
+                "VERIFY TICKET\nType the guest's entry code",
+                { background = ui.theme.success, foreground = colors.black,
+                  shadow = true })
+            scene:button("scan", 2, 6 + tall, width - 2, tall,
+                "PROXIMITY SCAN\nAsk whoever walks up",
+                { background = colors.purple, shadow = true })
+            tabBar(scene, spec)
+            local action = scene:wait({ tickRate = 1 })
+            if action == "__terminate" then running = false return nil end
+            if action and action:match("^tab:") then return action end
+            if action == "verify" then
+                verifyTicket()
+            elseif action == "scan" then
+                ui.wipe(target)
+                proximityScan()
+            elseif action == "__tick" then
+                net.autoUpdate(config, "event", ROOT, client)
+            end
+        end
+    end
+    ui.runTabs({
+        target = target, title = "Event Kiosk", subtitle = "Everything here",
+        list = { { id = "home", label = "Home" }, { id = "events", label = "Events" },
+            { id = "door", label = "Door" } },
+        pages = { home = homePage, events = myEvents, door = doorPage },
+        more = {
+            { id = "create", label = "Create event", hint = "Title, day, tickets" },
+            { id = "verify", label = "Verify ticket", hint = "By its entry code" },
+            { id = "scan", label = "Proximity scan", hint = "At the door" },
+            { id = "color", label = "Main colour", hint = "How this kiosk looks" },
+            { id = "logout", label = "Log out", hint = "End the organizer session" },
+            { id = "exit", label = "Close kiosk", hint = "Stop this program" },
+        },
+        actions = {
+            create = function()
+                createEvent()
+                stats = request("EVENT_DASHBOARD", {}, true) or stats
+            end,
+            verify = verifyTicket,
+            scan = function() ui.wipe(target) proximityScan() end,
+            color = function() ui.pickMainColor(target, ROOT, "Kiosk colour") end,
+            logout = function()
+                if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT",
+                    "BACK") then
+                    sessionToken, organizer = nil, nil
+                end
+            end,
+            exit = function() running = false end,
+        },
+        running = function() return running and sessionToken ~= nil end,
+    })
 end
 
 ui.boot(target, "PUMPE EVENTS", "VENUE CONTROL v" .. config.version)

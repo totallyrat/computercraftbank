@@ -23,14 +23,14 @@
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
-      "size": 72184,
-      "checksum": "9c80a197"
+      "size": 73547,
+      "checksum": "e5a6a3ab"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
-      "size": 22621,
-      "checksum": "d7216a79"
+      "size": 25740,
+      "checksum": "de9eb3da"
     },
     {
       "path": "tax_controller.lua",
@@ -85,8 +85,8 @@
     {
       "path": "border_controller.lua",
       "source": "border_controller.lua",
-      "size": 18919,
-      "checksum": "a144a0a5"
+      "size": 23479,
+      "checksum": "5ca25779"
     },
     {
       "path": "ccg.lua",
@@ -105,8 +105,8 @@
     {
       "path": "admin_terminal.lua",
       "source": "admin_terminal.lua",
-      "size": 35128,
-      "checksum": "4ba3b441"
+      "size": 37960,
+      "checksum": "4ff0333a"
     },
     {
       "path": "app_server.lua",
@@ -171,8 +171,8 @@
     {
       "path": "delivery_terminal.lua",
       "source": "delivery_terminal.lua",
-      "size": 54108,
-      "checksum": "ca281fdc"
+      "size": 57245,
+      "checksum": "f7ba9176"
     },
     {
       "path": "shop.lua",

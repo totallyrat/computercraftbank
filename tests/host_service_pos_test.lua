@@ -2,19 +2,21 @@
 
 local WIDTH, HEIGHT = 51, 19
 local actions = {
-    "tab:all",
+    "cat:all",
     "favorite:P1",
-    "tab:subscriptions",
-    "settings",
-    -- 10.2: the online store, from a company-linked kiosk.
-    "store", "color", "products", "item:1", "back", "open",
+    "cat:subscriptions",
+    -- 10.2: the online store, from a company-linked kiosk. 12.0: a tab.
+    "tab:store", "color", "products", "item:1", "back", "open",
     -- 11.0: the buyer's rights. Too short a window is refused, then set.
-    "cancel", "returns", "returns", "back",
-    -- 11.0: company mail. Reply to what came in, look at Sent, move on to
-    -- the company's other address, and leave by the top-left mark.
-    "mail", "open:1", "reply", "tab:sent", "tab:switch", "home",
-    "close",
+    "cancel", "returns", "returns",
+    -- 11.0: company mail, from More since 12.0. Reply to what came in, look
+    -- at Sent, move on to the company's other address, and leave by the
+    -- top-left mark -- back on the Store tab.
+    "tab:more", "open:1", "reply", "tab:sent", "tab:switch", "home",
+    "tab:more",
 }
+-- 12.0: what More is answered with, and what it offered.
+local moreScript, moreOffered = { "mail", "close" }, {}
 local buttonLabels, requests = {}, {}
 
 colors = {
@@ -302,6 +304,10 @@ function ui.scene(surface)
     end
     return scene
 end
+function ui.moreMenu(_, spec)
+    for _, entry in ipairs(spec.more or {}) do moreOffered[entry.id] = entry.label end
+    return table.remove(moreScript, 1)
+end
 dofile("ui_stub_fill.lua")(ui)
 -- 12.0: a phone with an account starts on its lock screen, which waits for
 -- a tap before asking for the PIN.
@@ -327,8 +333,13 @@ assert(contains(buttonLabels, "Subscriptions"))
 -- everything else here, and every change goes to the Bank rather than being
 -- kept on the kiosk: a store is the company's, and a company has more than
 -- one till.
-assert(contains(buttonLabels, "ONLINE STORE"), "Settings offers the store")
-assert(contains(buttonLabels, "COMPANY MAIL"), "and the company's mail")
+-- 12.0: what the settings screen held is in More.
+for _, id in ipairs({ "balance", "withdraw", "mail", "company", "display", "portable",
+    "dev", "color", "close" }) do
+    assert(moreOffered[id], "More offers " .. id)
+end
+assert(moreOffered.portable == "Foxy Pay: on", "and says whether Foxy Pay is on")
+assert(#moreScript == 0)
 assert(#mailSent == 1 and mailSent[1].from == "hello@foxcafe.com"
     and mailSent[1].to == "kit@foxy.com" and mailSent[1].reply_to == "MAIL00000001",
     "a reply goes out from the company address, marked as a reply")
@@ -353,7 +364,6 @@ assert(contains(buttonLabels, "RETURNS: 14 DAYS"))
 assert(products[1].online == true,
     "a product put online is put online at the Bank")
 assert(contains(buttonLabels, "+"))
-assert(contains(buttonLabels, "S"))
 assert(contains(buttonLabels, "PAY"))
 assert(contains(buttonLabels, "F"))
 assert(contains(requests, "SET_PRODUCT_FAVORITE"))

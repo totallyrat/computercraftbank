@@ -16,6 +16,8 @@ local client = net.client(config)
 local deviceFile = fs.combine(ROOT, "border_device.dat")
 local device = util.loadTable(deviceFile, {})
 local running = true
+-- 12.0: the owner's main colour, orange unless they chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 
 local function saveDevice()
     util.saveTable(deviceFile, device)
@@ -137,6 +139,9 @@ local function setupController()
                     saveDevice()
                     ui.message(target, "success", "BORDER READY",
                         registered.territory_name, 1.2)
+                    if type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+                        ui.pickMainColor(target, ROOT, "Border colour")
+                    end
                     return true
                 end
                 ui.message(target, "error", "SETUP FAILED",
@@ -393,63 +398,155 @@ local function ownerUnlock(reason)
     return false
 end
 
+-- 12.0: three tabs -- Gate, Scan, Owner -- and More. Anything that
+-- changes the controller asks for the territory owner's PIN first.
 local function dashboard()
-    local blink, tick = true, 0
-    while running and device.controller_id do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "BORDER CONTROLLER",
-            device.territory_name or "Territory", util.formatClock(blink))
-        ui.center(target, 4, "DAY " .. util.ingameDay(), ui.theme.muted)
-        local scene = ui.scene(target)
-        scene:button("enter", 3, 6, width - 5, 4,
-            "ENTER TERRITORY\nScan VISA or Citizenship Code", {
-                background = ui.theme.accentDark,
-                shadow = true,
-            })
-        scene:button("exit", 3, 11, width - 5, 4,
-            "EXIT TERRITORY\nClose the active visit", {
-                background = ui.theme.success,
-                foreground = colors.black,
-                shadow = true,
-            })
-        scene:button("proximity", 3, 16, width - 5, 2,
-            "PROXIMITY VISA  -  scan whoever walks up", {
-                background = colors.purple,
-            })
-        scene:button("setup", 2, height - 1,
-            math.max(12, math.floor((width - 6) / 2)), 2,
-            "CHANGE TERRITORY", { background = ui.theme.panel })
-        scene:button("stop", width - 11, height - 1, 10, 2,
-            "CLOSE", { background = ui.theme.danger })
-        local action = scene:wait({ tickRate = 1 })
-        if action == "__tick" or action == "__idle" then
-            blink = not blink
-            tick = tick + 1
-            net.autoUpdate(config, "border", ROOT, client)
-            -- The clock blinks every second; visitor counts only need the
-            -- Bank every five.
-            if tick % 5 == 0 then refreshStatus(true) end
-        elseif action == "enter" then
-            checkVisa("enter")
-        elseif action == "exit" then
-            checkVisa("exit")
-        elseif action == "proximity" then
-            ui.wipe(target, "PROXIMITY VISA")
-            proximityVisaLoop()
-        elseif action == "setup" then
-            if ownerUnlock("OWNER PIN TO CHANGE")
-                and ui.confirm(target, "CHANGE TERRITORY",
-                "Register this computer to a different territory?",
-                "CHANGE", "BACK") then
-                device = {}
-                saveDevice()
-                return
-            end
-        elseif action == "stop" or action == "__terminate" then
+    local function bar(scene, spec)
+        ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
+    end
+    -- Whatever a page does with a tap it does not own.
+    local function passOn(action)
+        if action == "__terminate" then
             if ownerUnlock("OWNER PIN TO CLOSE") then running = false end
+            return "stay"
+        end
+        if action and action:match("^tab:") then return action end
+        return nil
+    end
+    local function changeTerritory()
+        if ownerUnlock("OWNER PIN TO CHANGE")
+            and ui.confirm(target, "CHANGE TERRITORY",
+            "Register this computer to a different territory?", "CHANGE", "BACK") then
+            device = {}
+            saveDevice()
         end
     end
+    local function pickColour()
+        if ownerUnlock("OWNER PIN") then ui.pickMainColor(target, ROOT, "Border colour") end
+    end
+    local function close()
+        if ownerUnlock("OWNER PIN TO CLOSE") then running = false end
+    end
+
+    local function gatePage(spec)
+        local blink, tick = true, 0
+        while running and device.controller_id do
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "BORDER CONTROLLER",
+                device.territory_name or "Territory", util.formatClock(blink))
+            ui.center(target, 4, "DAY " .. util.ingameDay(), ui.theme.muted)
+            local tall = math.max(2, math.min(4,
+                math.floor((ui.contentBottom(target) - 5) / 2)))
+            local scene = ui.scene(target)
+            scene:button("enter", 3, 6, width - 5, tall,
+                "ENTER TERRITORY\nScan VISA or Citizenship Code", {
+                    background = ui.theme.accent, foreground = ui.theme.accentInk,
+                    shadow = true,
+                })
+            scene:button("exit", 3, 7 + tall, width - 5, tall,
+                "EXIT TERRITORY\nClose the active visit", {
+                    background = ui.theme.success, foreground = colors.black,
+                    shadow = true,
+                })
+            bar(scene, spec)
+            local action = scene:wait({ tickRate = 1 })
+            local passed = passOn(action)
+            if passed and passed ~= "stay" then return passed end
+            if action == "__tick" or action == "__idle" then
+                blink = not blink
+                tick = tick + 1
+                net.autoUpdate(config, "border", ROOT, client)
+                -- The clock blinks every second; the Bank is asked every five.
+                if tick % 5 == 0 then refreshStatus(true) end
+            elseif action == "enter" then
+                checkVisa("enter")
+            elseif action == "exit" then
+                checkVisa("exit")
+            end
+        end
+    end
+
+    local function scanPage(spec)
+        while running and device.controller_id do
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "PROXIMITY VISA", device.territory_name or "Territory",
+                util.formatClock())
+            ui.wrappedText(target, 2, 5, "The gate asks whoever walks up with a"
+                .. " visa or citizenship on their PUMPE, and opens for two"
+                .. " seconds once they confirm.", width - 2, 4, ui.theme.muted)
+            local scene = ui.scene(target)
+            scene:button("proximity", 2, 10, width - 2, 3, "TURN ON",
+                { background = colors.purple, shadow = true })
+            bar(scene, spec)
+            local action = scene:wait({ tickRate = 2 })
+            local passed = passOn(action)
+            if passed and passed ~= "stay" then return passed end
+            if action == "proximity" then
+                ui.wipe(target, "PROXIMITY VISA")
+                proximityVisaLoop()
+            elseif action == "__tick" then
+                net.autoUpdate(config, "border", ROOT, client)
+            end
+        end
+    end
+
+    local function ownerPage(spec)
+        while running and device.controller_id do
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "OWNER", device.label or "Border", util.formatClock())
+            ui.text(target, 2, 4, ui.truncate("Territory  " .. tostring(device.territory_name),
+                width - 2), ui.theme.muted)
+            local scene = ui.scene(target)
+            local entries = {
+                { "setup", "CHANGE TERRITORY", ui.theme.panel },
+                { "color", "MAIN COLOUR", ui.theme.accent },
+                { "stop", "CLOSE", ui.theme.danger },
+            }
+            for index, entry in ipairs(entries) do
+                local y = 4 + index * 3
+                if y + 1 <= ui.contentBottom(target) then
+                    scene:button(entry[1], 2, y, width - 2, 2, entry[2], {
+                        background = entry[3], foreground = ui.inkOn(entry[3]) })
+                end
+            end
+            bar(scene, spec)
+            local action = scene:wait({ tickRate = 2 })
+            local passed = passOn(action)
+            if passed and passed ~= "stay" then return passed end
+            if action == "setup" then
+                changeTerritory()
+            elseif action == "color" then
+                pickColour()
+            elseif action == "stop" then
+                close()
+            end
+        end
+    end
+
+    ui.runTabs({
+        target = target, title = "Border", subtitle = "Everything here",
+        list = { { id = "gate", label = "Gate" }, { id = "scan", label = "Scan" },
+            { id = "owner", label = "Owner" } },
+        pages = { gate = gatePage, scan = scanPage, owner = ownerPage },
+        more = {
+            { id = "enter", label = "Enter territory", hint = "By visa code" },
+            { id = "exit", label = "Exit territory", hint = "Close a visit" },
+            { id = "proximity", label = "Proximity visa", hint = "Ask whoever walks up" },
+            { id = "setup", label = "Change territory", hint = "Owner PIN" },
+            { id = "color", label = "Main colour", hint = "Owner PIN" },
+            { id = "stop", label = "Close", hint = "Owner PIN" },
+        },
+        actions = {
+            enter = function() checkVisa("enter") end,
+            exit = function() checkVisa("exit") end,
+            proximity = function() ui.wipe(target, "PROXIMITY VISA") proximityVisaLoop() end,
+            setup = changeTerritory, color = pickColour, stop = close,
+        },
+        running = function() return running and device.controller_id ~= nil end,
+    })
 end
 
 pcall(redstone.setOutput, "back", false)

@@ -43,6 +43,8 @@ local lockFile = fs.combine(ROOT, "keyboard.lock")
 local device = util.loadTable(deviceFile, {})
 local running = true
 local company
+-- 12.0: this terminal's main colour, orange unless its owner chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 
 local STAFF = { tries = 5, lock_ms = 5 * 60 * 1000 }
 local SIDES = { "none", "back", "top", "bottom", "left", "right", "front" }
@@ -209,6 +211,10 @@ local function linkCompany()
         return false
     end
     company = linked.company
+    -- Setting up a new terminal: its colour, once.
+    if type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+        ui.pickMainColor(target, ROOT, "Terminal colour")
+    end
     return true
 end
 
@@ -1173,49 +1179,43 @@ local function setupPickup()
         (#found - 1) .. " lockers. Leaving takes the PIN", 2)
 end
 
-local function pickupButton()
-    if not device.pickup then return setupPickup() end
-    local width, height = target.getSize()
-    ui.clear(target)
-    ui.header(target, "PICKUP POINT", ui.truncate(device.pickup.name,
-        width - 3))
-    local scene = ui.scene(target)
-    scene:button("start", 2, 5, width - 2, 3, "START PICKUP MODE",
-        { background = ui.theme.accentDark, shadow = true })
-    scene:button("setup", 2, 10, width - 2, 1, "SET IT UP AGAIN",
-        { background = ui.theme.panel })
-    scene:button("back", 1, height, 8, 1, "< BACK",
-        { background = ui.theme.panel })
-    local action = scene:wait()
-    if action == "start" then
-        device.mode = "pickup"
-        saveDevice()
-    elseif action == "setup" then
-        setupPickup()
-    end
+-- The board ------------------------------------------------------------------------
+-- 12.0: three tabs -- Open, Done, Pickup -- and More. Pickup mode faces the
+-- public, so it has no tabs: a customer at the counter sees the counter.
+
+local function bar(scene, spec)
+    ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
 end
 
--- The board ------------------------------------------------------------------------
+-- A tap a page does not handle itself: a tab, or closing.
+local function passOn(action)
+    if action == "__terminate" then running = false return "stop" end
+    if action and action:match("^tab:") then return action end
+    return nil
+end
 
-local function board()
-    local offset = 0
-    while running do
-        if device.mode == "pickup" and device.pickup then
-            pickupMode()
-        else
-            local width, height = target.getSize()
+-- One list of orders, for Open or Done. `open` picks which.
+local function ordersPage(open)
+    return function(spec)
+        local offset = 0
+        while running and device.mode ~= "pickup" do
+            local width = target.getSize()
             local listed = request("DELIVERY_ORDERS", {}, true)
-            local orders = listed and listed.orders or {}
-            local open = 0
-            for _, order in ipairs(orders) do
-                if order.status == "open" then open = open + 1 end
+            local orders = {}
+            for _, order in ipairs(listed and listed.orders or {}) do
+                local returning = order.return_request
+                    and order.return_request.status == "requested"
+                if (order.status == "open") == open or (not open and returning) then
+                    orders[#orders + 1] = order
+                end
             end
             ui.clear(target)
-            ui.header(target, "DELIVERIES", ui.truncate(open .. " open  "
-                .. tostring(company and company.name or device.name or ""),
-                width - 3), util.formatClock())
+            ui.header(target, open and "DELIVERIES" or "DONE",
+                ui.truncate(#orders .. (open and " open  " or "  ")
+                    .. tostring(company and company.name or device.name or ""),
+                    width - 3), util.formatClock())
             local scene = ui.scene(target)
-            local rows = math.max(1, math.floor((height - 6) / 2))
+            local rows = math.max(1, math.floor((ui.contentBottom(target) - 3) / 2))
             offset = math.max(0, math.min(offset, #orders - rows))
             for slot = 1, rows do
                 local order = orders[offset + slot]
@@ -1232,46 +1232,106 @@ local function board()
                         or done and ui.theme.panel
                         or (pickup and colors.purple or ui.theme.accentDark),
                       foreground = returning and colors.black or nil })
-                ui.text(target, 3, y + 1, ui.truncate((done and "Done. " or "")
-                    .. tostring(order.stage) .. "  " .. addressOf(order),
-                    width - 4), ui.theme.muted)
+                ui.text(target, 3, y + 1, ui.truncate((returning and "Return asked. "
+                    or done and "Done. " or "") .. tostring(order.stage) .. "  "
+                    .. addressOf(order), width - 4), ui.theme.muted)
             end
             if #orders == 0 then
-                ui.wrappedText(target, 2, 5, listed
-                    and "No orders yet. They land here the moment somebody"
-                        .. " checks out in the Shop app."
-                    or "The Bank is not answering.", width - 2, 4,
-                    ui.theme.muted)
+                ui.wrappedText(target, 2, 5, not listed and "The Bank is not answering."
+                    or open and ("Nothing to deliver. Orders land here the moment"
+                        .. " somebody checks out in the Shop app.")
+                    or "Nothing delivered yet.", width - 2, 4, ui.theme.muted)
             end
             if #orders > rows then
-                scene:button("up", width - 8, height, 3, 1, "^",
+                scene:button("up", width - 8, 2, 3, 1, "^",
                     { background = ui.theme.panel, disabled = offset <= 0 })
-                scene:button("down", width - 4, height, 3, 1, "v",
+                scene:button("down", width - 4, 2, 3, 1, "v",
                     { background = ui.theme.panel,
                         disabled = offset + rows >= #orders })
             end
-            scene:button("pickup", 1, height, 8, 1, "PICKUP",
-                { background = ui.theme.accentDark })
+            bar(scene, spec)
             -- Every few seconds the board asks again, so an order placed a
             -- moment ago is on screen without anybody touching anything.
             local action = scene:wait({ tickRate = 5 })
-            if action == "__terminate" then
-                running = false
-                return
-            end
+            local passed = passOn(action)
+            if passed == "stop" then return nil end
+            if passed then return passed end
             if action == "up" then
                 offset = math.max(0, offset - rows)
             elseif action == "down" then
                 offset = offset + rows
-            elseif action == "pickup" then
-                pickupButton()
             else
-                local index = tonumber(action
-                    and action:match("^order:(%d+)$"))
+                local index = tonumber(action and action:match("^order:(%d+)$"))
                 if index and orders[index] then
                     orderScreen(orders[index], listed.stages or {})
                 end
             end
+        end
+    end
+end
+
+local function pickupPage(spec)
+    while running and device.mode ~= "pickup" do
+        local width = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PICKUP POINT", ui.truncate(device.pickup
+            and device.pickup.name or "Not set up", width - 3), util.formatClock())
+        local scene = ui.scene(target)
+        if device.pickup then
+            scene:button("start", 2, 5, width - 2, 3, "START PICKUP MODE",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk,
+                  shadow = true })
+            scene:button("setup", 2, 10, width - 2, 1, "SET IT UP AGAIN",
+                { background = ui.theme.panel })
+        else
+            ui.wrappedText(target, 2, 5, "This terminal can be a pickup point:"
+                .. " one chest for customers and lockers behind a wall, on one"
+                .. " cable.", width - 2, 4, ui.theme.muted)
+            scene:button("setup", 2, 10, width - 2, 3, "SET UP A PICKUP POINT",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk })
+        end
+        bar(scene, spec)
+        local action = scene:wait()
+        local passed = passOn(action)
+        if passed == "stop" then return nil end
+        if passed then return passed end
+        if action == "start" then
+            device.mode = "pickup"
+            saveDevice()
+        elseif action == "setup" then
+            setupPickup()
+        end
+    end
+end
+
+local function board()
+    while running do
+        if device.mode == "pickup" and device.pickup then
+            pickupMode()
+        else
+            ui.runTabs({
+                target = target, title = "Deliveries", subtitle = "Everything here",
+                list = { { id = "open", label = "Open" }, { id = "done", label = "Done" },
+                    { id = "pickup", label = "Pickup" } },
+                pages = { open = ordersPage(true), done = ordersPage(false),
+                    pickup = pickupPage },
+                more = {
+                    { id = "color", label = "Main colour", hint = "How this terminal looks" },
+                    { id = "link", label = "Link a company", hint = "Owner sign in" },
+                    { id = "close", label = "Close terminal", hint = "Stop this program" },
+                },
+                actions = {
+                    color = function() ui.pickMainColor(target, ROOT, "Terminal colour") end,
+                    link = function() linkCompany() end,
+                    close = function()
+                        if ui.confirm(target, "CLOSE", "Stop the Delivery Terminal?",
+                            "CLOSE", "BACK") then
+                            running = false
+                        end
+                    end,
+                },
+                running = function() return running and device.mode ~= "pickup" end,
+            })
         end
     end
 end

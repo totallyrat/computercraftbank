@@ -26,6 +26,15 @@ local running = true
 local customerMonitor
 local customerMonitorName
 local customerView = { mode = "idle", data = {}, frame = 0 }
+-- 12.0: the owner's main colour, orange unless they chose one.
+if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
+-- 12.0: every page ends with the same bar. A kiosk has no home screen, so
+-- it is three tabs and More; the cart lives out here so a trip to another
+-- tab does not empty it.
+local posCart = {}
+local function tabBar(scene, spec)
+    ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
+end
 
 local function saveKiosk()
     util.saveTable(kioskFile, kiosk)
@@ -240,10 +249,15 @@ local function registerKiosk()
         ui.message(target, "error", "SETUP FAILED", err, 1.3)
         return false
     end
+    local fresh = not kiosk.terminal_id
     kiosk.terminal_id = result.terminal_id
     kiosk.terminal_token = result.terminal_token
     kiosk.name = result.name
     saveKiosk()
+    -- Setting up a new kiosk: its colour, once.
+    if fresh and type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+        ui.pickMainColor(target, ROOT, "Kiosk colour")
+    end
     return true
 end
 
@@ -804,13 +818,15 @@ local function balanceScreen()
     scene:wait()
 end
 
-local function productManager()
+-- The Products tab, 12.0.
+local function productManager(spec)
     local page = 1
-    while true do
+    while running do
         refreshState(true)
         local products = kioskState.products or {}
         local width, height = target.getSize()
-        local visible, actualPage, pages = util.page(products, page, 5)
+        local per = math.max(1, math.floor((ui.contentBottom(target) - 3) / 3))
+        local visible, actualPage, pages = util.page(products, page, per)
         page = actualPage
         ui.clear(target)
         ui.header(target, "MANAGE PRODUCTS", #products .. " total",
@@ -832,19 +848,27 @@ local function productManager()
                     background = ui.theme.danger,
                 })
         end
-        scene:button("back", 1, height, 8, 1, "< BACK", {
-            background = ui.theme.panel,
+        scene:button("add", width - 8, 2, 7, 1, "+ ADD", {
+            background = ui.theme.accent, foreground = ui.theme.accentInk,
         })
         if pages > 1 then
-            scene:button("prev", width - 9, height, 4, 1, "<", {
+            scene:button("prev", width - 19, 2, 4, 1, "<", {
                 background = ui.theme.panel, disabled = page <= 1,
             })
-            scene:button("next", width - 4, height, 4, 1, ">", {
+            scene:button("next", width - 14, 2, 4, 1, ">", {
                 background = ui.theme.panel, disabled = page >= pages,
             })
         end
+        if #products == 0 then
+            ui.wrappedText(target, 2, 5, "No products yet. + ADD puts one on"
+                .. " the till; favourite it there to find it fast.", width - 2, 3,
+                ui.theme.muted)
+        end
+        tabBar(scene, spec)
         local action = scene:wait()
-        if action == "back" or action == "__terminate" then return
+        if action == "__terminate" or (action and action:match("^tab:")) then
+            return action
+        elseif action == "add" then addProduct()
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
         else
@@ -862,6 +886,7 @@ local function productManager()
             end
         end
     end
+    return nil
 end
 
 -- Dev Mode ------------------------------------------------------------------
@@ -1071,18 +1096,19 @@ local function storeProducts(state)
     end
 end
 
-local function onlineStore()
-    while true do
+-- The Store tab, 12.0.
+local function onlineStore(spec)
+    while running do
         local state, err, code = request("SHOP_STATE", {}, true)
         if not state then
             if code == "NOT_LINKED" then
                 if not ui.confirm(target, "ONLINE STORE",
                     "A store belongs to a company. Link one now?", "LINK",
-                    "BACK") then return end
+                    "BACK") then return "tab:sell" end
                 companyOnboarding(true)
             else
                 ui.message(target, "error", "STORE UNAVAILABLE", err, 1.4)
-                return
+                return "tab:sell"
             end
         else
             local settings = state.settings
@@ -1137,15 +1163,16 @@ local function onlineStore()
                 local column = (index - 1) % columns
                 local row = math.floor((index - 1) / columns)
                 local y = 9 + row * 2
-                if y <= height - 2 then
+                if y <= ui.contentBottom(target) then
                     scene:button(entry[1], 2 + column * (buttonWidth + 1), y,
                         buttonWidth, 1, entry[2], { background = entry[3] })
                 end
             end
-            scene:button("back", 1, height, 8, 1, "< BACK",
-                { background = ui.theme.panel })
+            tabBar(scene, spec)
             local action = scene:wait()
-            if action == "back" or action == "__terminate" then return end
+            if action == "__terminate" or (action and action:match("^tab:")) then
+                return action
+            end
             local change
             if action == "open" then
                 change = { open = not settings.open }
@@ -1199,6 +1226,7 @@ local function onlineStore()
             end
         end
     end
+    return nil
 end
 
 -- Company mail, 11.0 ---------------------------------------------------------------
@@ -1341,80 +1369,37 @@ local function kioskMail()
     end
 end
 
-local function settingsScreen()
-    while true do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "POS SETTINGS", merchantName(), util.formatClock())
-        local scene = ui.scene(target)
-        -- Three columns: eight entries ran the last row into the footer.
-        local buttonWidth = math.floor((width - 6) / 3)
-        local entries = {
-            { "balance", "BALANCE", ui.theme.success },
-            { "withdraw", "WITHDRAW", ui.theme.accentDark },
-            { "products", "MANAGE PRODUCTS", colors.purple },
-            { "company", "LINK COMPANY", ui.theme.warning },
-            { "display", "RESCAN DISPLAY", ui.theme.panel },
-            { "portable", kiosk.portable and "FOXY PAY ON"
-                or "PORTABLE MODE OFF",
-                kiosk.portable and colors.cyan or ui.theme.panel },
-            { "dev", kiosk.developer_id and "DEV MODE" or "ENTER DEV MODE",
-                colors.purple },
-            { "store", "ONLINE STORE", colors.cyan },
-            { "mail", "COMPANY MAIL", colors.orange },
-            { "close", "CLOSE KIOSK", ui.theme.danger },
-        }
-        -- Four rows since 11.0 brought a tenth entry.
-        for index, entry in ipairs(entries) do
-            local column = (index - 1) % 3
-            local row = math.floor((index - 1) / 3)
-            scene:button(entry[1], 2 + column * (buttonWidth + 1),
-                5 + row * 3, buttonWidth, 2, entry[2], {
-                    background = entry[3],
-                    foreground = (entry[1] == "balance"
-                        or entry[1] == "company")
-                            and colors.black or colors.white,
-                    shadow = true,
-                })
-        end
-        ui.text(target, 2, height - 2,
-            "Service Kiosk v" .. config.version
-                .. "  Display " .. (customerMonitor and "ON" or "OFF"),
-            ui.theme.muted)
-        scene:button("back", 1, height, 8, 1, "< POS", {
-            background = ui.theme.panel,
-        })
-        local action = scene:wait()
-        if action == "back" or action == "__terminate" then return false
-        elseif action == "balance" then balanceScreen()
-        elseif action == "withdraw" then directWithdrawal()
-        elseif action == "products" then productManager()
-        elseif action == "store" then onlineStore()
-        elseif action == "mail" then kioskMail()
-        elseif action == "company" then companyOnboarding(true)
-        elseif action == "display" then
-            findCustomerMonitor()
-            setCustomerView("idle", { merchant = merchantName() })
-            ui.message(target, customerMonitor and "success" or "warning",
-                customerMonitor and "DISPLAY CONNECTED" or "NO DISPLAY FOUND",
-                customerMonitorName or "Attach an advanced monitor", 0.9)
-        elseif action == "dev" then
-            ui.wipe(target, "DEV MODE")
-            devMode()
-        elseif action == "portable" then
-            kiosk.portable = not kiosk.portable
-            saveKiosk()
-            if not kiosk.portable then portableRelease() end
-            ui.message(target, "info",
-                kiosk.portable and "FOXY PAY ON" or "FOXY PAY OFF",
-                kiosk.portable
-                    and "Find the customer before ringing up"
-                    or "Back to codes and NEARBY", 1.2)
-        elseif action == "close" and ui.confirm(target, "CLOSE KIOSK",
-            "End this terminal session?", "CLOSE", "BACK") then
-            return true
-        end
+-- 12.0: what the old settings screen did, one action at a time, for More.
+-- Returns true when the kiosk should close.
+local function settingAction(action)
+    if action == "balance" then balanceScreen()
+    elseif action == "withdraw" then directWithdrawal()
+    elseif action == "mail" then kioskMail()
+    elseif action == "company" then companyOnboarding(true)
+    elseif action == "color" then ui.pickMainColor(target, ROOT, "Kiosk colour")
+    elseif action == "display" then
+        findCustomerMonitor()
+        setCustomerView("idle", { merchant = merchantName() })
+        ui.message(target, customerMonitor and "success" or "warning",
+            customerMonitor and "DISPLAY CONNECTED" or "NO DISPLAY FOUND",
+            customerMonitorName or "Attach an advanced monitor", 0.9)
+    elseif action == "dev" then
+        ui.wipe(target, "DEV MODE")
+        devMode()
+    elseif action == "portable" then
+        kiosk.portable = not kiosk.portable
+        saveKiosk()
+        if not kiosk.portable then portableRelease() end
+        ui.message(target, "info",
+            kiosk.portable and "FOXY PAY ON" or "FOXY PAY OFF",
+            kiosk.portable
+                and "Find the customer before ringing up"
+                or "Back to codes and NEARBY", 1.2)
+    elseif action == "close" and ui.confirm(target, "CLOSE KIOSK",
+        "End this terminal session?", "CLOSE", "BACK") then
+        return true
     end
+    return false
 end
 
 -- Square-style POS ----------------------------------------------------------
@@ -1436,8 +1421,9 @@ local function filteredProducts(products, tab)
     return output
 end
 
-local function posLoop()
-    local cart = {}
+-- The Sell tab.
+local function posPage(spec)
+    local cart = posCart
     local tab, page, frame = "favorites", 1, 0
     setCustomerView("idle", { merchant = merchantName() })
     while running do
@@ -1466,20 +1452,19 @@ local function posLoop()
             ui.truncate(merchantName(), math.max(1, width - 15)),
             colors.lightGray, colors.black)
         local scene = ui.scene(target)
-        scene:button("add", width - 6, 1, 3, 2, "+", {
-            background = ui.theme.accentDark,
+        scene:button("add", width - 3, 1, 3, 2, "+", {
+            background = ui.theme.accent, foreground = ui.theme.accentInk,
         })
-        scene:button("settings", width - 2, 1, 3, 2, "S", {
-            background = colors.gray,
-        })
+        -- Everything above the floating tab bar (12.0).
+        local bottom = ui.contentBottom(target)
 
-        ui.fill(target, 1, 3, receiptWidth, height - 2, colors.lightGray)
+        ui.fill(target, 1, 3, receiptWidth, bottom - 2, colors.lightGray)
         ui.text(target, 2, 4,
             portableOffer and ui.truncate(
                 (portableOffer.target_name or "CUSTOMER"), receiptWidth - 2)
                 or "RECEIPT",
             portableOffer and colors.blue or colors.gray, colors.lightGray)
-        local maxReceiptRows = math.max(1, height - 11)
+        local maxReceiptRows = math.max(1, bottom - 11)
         local firstReceipt = math.max(1, #cartItems - maxReceiptRows + 1)
         local receiptRow = 6
         for index = firstReceipt, #cartItems do
@@ -1503,29 +1488,29 @@ local function posLoop()
             ui.text(target, 2, 9, "for custom amount", colors.gray,
                 colors.lightGray)
         end
-        ui.text(target, 2, height - 6,
+        ui.text(target, 2, bottom - 4,
             cartKind == "subscription" and "PER DAY" or "TOTAL",
             colors.gray, colors.lightGray)
         local totalText = money(total)
         ui.text(target, math.max(2, receiptWidth - #totalText),
-            height - 6, totalText, colors.black, colors.lightGray)
+            bottom - 4, totalText, colors.black, colors.lightGray)
         -- CLEAR and NEARBY were drawn on the same row, so CLEAR could never
         -- be tapped. They share the row side by side now.
         local halfWidth = math.max(5, math.floor((receiptWidth - 3) / 2))
-        scene:button("clear", 2, height - 4, halfWidth, 1,
+        scene:button("clear", 2, bottom - 2, halfWidth, 1,
             "CLEAR", {
                 background = colors.gray,
                 disabled = #cartItems == 0,
             })
         if kiosk.portable then
-            scene:button("customer", 3 + halfWidth, height - 4,
+            scene:button("customer", 3 + halfWidth, bottom - 2,
                 receiptWidth - halfWidth - 3, 1,
                 portableOffer and "CUSTOMER" or "FIND", {
                     background = portableOffer and colors.lime or colors.cyan,
                     foreground = colors.black,
                 })
         else
-            scene:button("nearby", 3 + halfWidth, height - 4,
+            scene:button("nearby", 3 + halfWidth, bottom - 2,
                 receiptWidth - halfWidth - 3, 1,
                 "NEARBY", {
                     background = colors.cyan,
@@ -1533,7 +1518,7 @@ local function posLoop()
                     disabled = #cartItems == 0,
                 })
         end
-        scene:button("pay", 2, height - 2, receiptWidth - 2, 2,
+        scene:button("pay", 2, bottom - 1, receiptWidth - 2, 2,
             total > 0 and ("PAY  " .. money(total)) or "PAY", {
                 background = colors.lime,
                 foreground = colors.black,
@@ -1547,7 +1532,8 @@ local function posLoop()
         }
         local tabWidth = math.max(6, math.floor((productWidth - 1) / 3))
         for index, entry in ipairs(tabLabels) do
-            scene:button("tab:" .. entry[1],
+            -- Categories, not tabs: "tab:" is the tab bar's since 12.0.
+            scene:button("cat:" .. entry[1],
                 productX + (index - 1) * tabWidth, 3,
                 index == 3 and (width - productX
                     - (index - 1) * tabWidth + 1) or tabWidth,
@@ -1613,8 +1599,10 @@ local function posLoop()
             foreground = colors.black,
             disabled = page >= pages,
         })
-        ui.text(target, navX, 16, page .. "/" .. pages, colors.gray, colors.white)
+        ui.text(target, navX, math.min(16, bottom), page .. "/" .. pages, colors.gray,
+            colors.white)
 
+        tabBar(scene, spec)
         local action = scene:wait({ tickRate = 0.5, flash = false })
         frame = frame + 1
         if action == "__tick" or action == "__idle" then
@@ -1625,17 +1613,21 @@ local function posLoop()
         elseif action == "add" then
             addProduct()
             page = 1
-        elseif action == "settings" or action == "__terminate" then
-            if settingsScreen() then running = false end
+        elseif action == "__terminate" then
+            if settingAction("close") then running = false end
+        elseif action and action:match("^tab:") then
+            return action
         elseif action == "clear" then
-            cart = {}
+            for key in pairs(cart) do cart[key] = nil end
         elseif action == "pay" then
             -- In Portable Mode the customer is already attached, so the
             -- basket goes to their PUMPE instead of becoming a code.
             if portableOffer then
-                if portableBill(cart) then cart = {} end
+                if portableBill(cart) then
+                    for key in pairs(cart) do cart[key] = nil end
+                end
             elseif checkout(cart) then
-                cart = {}
+                for key in pairs(cart) do cart[key] = nil end
             end
         elseif action == "customer" then
             if portableOffer then
@@ -1648,13 +1640,15 @@ local function posLoop()
                 portableClaim()
             end
         elseif action == "nearby" then
-            if proximityCheckout(cart) then cart = {} end
+            if proximityCheckout(cart) then
+                for key in pairs(cart) do cart[key] = nil end
+            end
         elseif action == "prev" then
             page = math.max(1, page - 1)
         elseif action == "next" then
             page = math.min(pages, page + 1)
         else
-            local newTab = action and action:match("^tab:(.+)$")
+            local newTab = action and action:match("^cat:(.+)$")
             local productId = action and action:match("^product:(.+)$")
             local favoriteId = action and action:match("^favorite:(.+)$")
             local removeId = action and action:match("^remove:(.+)$")
@@ -1688,7 +1682,7 @@ local function posLoop()
                             if ui.confirm(target, "NEW CART TYPE",
                                 "Clear the current cart and switch?",
                                 "SWITCH", "KEEP") then
-                                cart = {}
+                                for key in pairs(cart) do cart[key] = nil end
                             else
                                 break
                             end
@@ -1708,6 +1702,45 @@ local function posLoop()
             end
         end
     end
+end
+
+-- 12.0: Sell, Products, Store -- and More, with everything the settings
+-- screen used to hold.
+local function posLoop()
+    local more, actions = {}, {}
+    for _, entry in ipairs({
+        { "balance", "Balance", "What the till holds" },
+        { "withdraw", "Withdraw", "A code for the cash" },
+        { "mail", "Company mail", "FoxMail, as the company" },
+        { "company", "Link company", "Owner sign in" },
+        { "display", "Rescan display", "Find the customer monitor" },
+        { "portable", kiosk.portable and "Foxy Pay: on" or "Foxy Pay: off",
+          "Find the customer first" },
+        { "dev", "Dev Mode", "Publish PUMPE apps" },
+        { "color", "Main colour", "How this kiosk looks" },
+        { "close", "Close kiosk", "End this session" },
+    }) do
+        more[#more + 1] = { id = entry[1], label = entry[2], hint = entry[3] }
+        actions[entry[1]] = function()
+            if settingAction(entry[1]) then running = false end
+        end
+    end
+    ui.runTabs({
+        target = target, title = "Service Kiosk", subtitle = merchantName(),
+        list = { { id = "sell", label = "Sell" }, { id = "products", label = "Products",
+            short = "Items" }, { id = "store", label = "Store" } },
+        pages = { sell = posPage, products = productManager, store = onlineStore },
+        more = more, actions = actions,
+        -- Foxy Pay says what it is now, not what it was at the start.
+        refresh = function()
+            for _, entry in ipairs(more) do
+                if entry.id == "portable" then
+                    entry.label = kiosk.portable and "Foxy Pay: on" or "Foxy Pay: off"
+                end
+            end
+        end,
+        running = function() return running end,
+    })
 end
 
 if rawget(_G, "PUMPE_SERVICE_TEST_MODE") == true then
