@@ -235,6 +235,11 @@ ui.scene = function()
     end
     return scene
 end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 -- What each app does when the phone opens it -----------------------------------
@@ -313,13 +318,12 @@ probes[3] = function(api)
 end
 
 actions = {
-    "login",
     "open:ext:APP00009",               -- open an account and bring it over
     "go",                              -- the phone's own confirmation sheet
     "open:ext:FOXY",                   -- then go back to Foxy for it
     "__terminate",
 }
-inputs = { "Ana Fox" }
+inputs = {}
 pins = { "1234", "1234" }
 
 package.loaded["lib.net"].autoUpdate = function() end

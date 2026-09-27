@@ -730,6 +730,11 @@ return function(api)
         else
             switched = storesPage(tabs)
         end
+        -- 12.0: More opens here, and comes back as the page chosen.
+        if switched == "tab:more" and type(ui.resolveTab) == "function" then
+            switched = ui.resolveTab(target, switched, { list = TABS,
+                active = tab, title = "Shop", subtitle = "Everything in Shop" })
+        end
         -- "home", or anything that is not a tab, leaves the app.
         local nextTab = type(switched) == "string"
             and switched:match("^tab:(.+)$")

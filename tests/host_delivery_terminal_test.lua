@@ -264,7 +264,12 @@ local function runTerminal(bank, files, WIDTH, HEIGHT, script, offline)
         end,
         locate = function() return { x = 10, y = 64, z = -20 } end,
     }
-    package.loaded["lib.ui"] = ui
+    dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
+package.loaded["lib.ui"] = ui
     local ok, err = pcall(assert(loadfile("../delivery_terminal.lua")))
     package.loaded["lib.net"], package.loaded["lib.ui"] = savedNet, savedUi
     assert(ok, err)

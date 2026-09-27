@@ -29,8 +29,10 @@ local actions = {
     "note:1", "back",                                -- read one in full
     "markread",
     "prev",                                          -- back to the apps
-    "open:settings", "guide", "next", "done",        -- the guide from Settings
-    "dock", "back", "close",
+    -- 12.0: Settings has tabs. The guide is on Account, the dock on Apps,
+    -- and Close PUMPE is in More.
+    "open:settings", "tab:account", "guide", "next", "done",
+    "tab:apps", "dock", "back", "tab:more",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
 ticketVisits = 0
@@ -681,6 +683,13 @@ do
     local realUi = dofile("real_ui.lua")
     ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 end
+-- More, reached from Settings at the end of the run, is where Close is.
+function ui.moreMenu() return "set:close" end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 assert(loadfile("../pumpe.lua"))()
@@ -703,8 +712,9 @@ assert(find(drawnText, "Preparing your PUMPE"))
 assert(find(drawnText, "How PUMPE Works"))
 assert(find(drawnText, "Step 1 of 6"))
 assert(find(buttonLabels, "Finish"))
-assert(find(buttonLabels, "How PUMPE Works"))
-assert(find(buttonLabels, "Edit Your Dock"))
+-- 12.0: a Settings row is a label drawn on its button, as in the Foxy app.
+assert(find(drawnText, "How PUMPE Works"))
+assert(find(drawnText, "Edit Your Dock"))
 
 -- 9.4: the PUMPE itself offers no way to pay. Foxy Cash and Foxy Pay are
 -- the Foxy app's, and a kiosk code belongs to a third-party bank app, so

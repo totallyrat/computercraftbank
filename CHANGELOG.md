@@ -1,5 +1,12 @@
 # Changelog
 
+## 11.9.1
+
+12.0 Part 1.
+
+**A new look everywhere.** Tabs float in a pill above the bottom of the
+screen, with three parts of every program on them and More for the rest.
+
 ## 11.9.0
 
 12.0 Pre. Easy Deployment, rebuilt from nothing as a downloader.

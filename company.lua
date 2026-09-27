@@ -23,8 +23,15 @@ return function(api)
     local ACCENT = colors.cyan
     local TABS = { { id = "companies", label = "Companies" },
         { id = "delivery", label = "Delivery" } }
-    local COMPANY_TABS = { { id = "products", label = "Products" },
+    local COMPANY_TABS = { { id = "products", label = "Products", short = "Items" },
         { id = "store", label = "Store" }, { id = "points", label = "Points" } }
+
+    -- 12.0: a tap on More opens it, and comes back as the page chosen.
+    local function tabbed(action, list, active, title)
+        if type(ui.resolveTab) ~= "function" then return action end
+        return ui.resolveTab(target, action, { list = list, active = active,
+            title = title or "Company", subtitle = "Everything here" })
+    end
     local STORE_COLORS = { "orange", "red", "lime", "green", "cyan",
         "lightBlue", "blue", "purple", "magenta", "pink", "yellow", "brown",
         "gray" }
@@ -202,7 +209,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, COMPANY_TABS, "products", ACCENT)
-            local action = scene:wait()
+            local action = tabbed(scene:wait(), COMPANY_TABS, "products", company.name)
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "add" then
@@ -267,7 +274,7 @@ return function(api)
                 end
             end
             ui.tabBar(scene, target, COMPANY_TABS, "store", ACCENT)
-            local action = scene:wait()
+            local action = tabbed(scene:wait(), COMPANY_TABS, "store", company.name)
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             local change
@@ -461,7 +468,7 @@ return function(api)
                     .. " its board.", width - 2, 5, ui.theme.muted)
             end
             ui.tabBar(scene, target, COMPANY_TABS, "points", ACCENT)
-            local action = scene:wait()
+            local action = tabbed(scene:wait(), COMPANY_TABS, "points", company.name)
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             local slot = tonumber(action and action:match("^point:(%d+)$"))
@@ -544,7 +551,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, TABS, "companies", ACCENT)
-            local action = scene:wait()
+            local action = tabbed(scene:wait(), TABS, "companies")
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "start" then
@@ -717,7 +724,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, TABS, "delivery", ACCENT)
-            local action = scene:wait({ tickRate = 5 })
+            local action = tabbed(scene:wait({ tickRate = 5 }), TABS, "delivery")
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "prev" then

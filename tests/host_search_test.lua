@@ -257,19 +257,43 @@ function ui.scene()
     end
     return scene
 end
+-- 12.0: Settings is searched from its More page. The real search runs over
+-- exactly what Settings hands More, and what it finds is recorded the way
+-- the old filtered list was.
+do
+    local realUi = dofile("real_ui.lua")
+    function ui.moreMenu(_, spec)
+        local query = table.remove(inputs, 1)
+        filterAt = #buttonLabels
+        buttonLabels[#buttonLabels + 1] = "Q  " .. tostring(query)
+        local entries = {}
+        for _, tab in ipairs(spec.list or {}) do
+            entries[#entries + 1] = { id = "tab:" .. tab.id, label = tab.label }
+        end
+        for _, extra in ipairs(spec.more or {}) do entries[#entries + 1] = extra end
+        for _, found in ipairs(realUi.searchEntries(entries, query)) do
+            buttonLabels[#buttonLabels + 1] = found.label
+        end
+        return "tab:" .. tostring(spec.active)
+    end
+end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 actions = {
-    "login",
     "__tick",                          -- the reminder and the daily action
     "search", "hit:1",                 -- find an app action and run it
     "back",
     "search",                          -- 11.0: tap a suggestion instead
     "open:quick:1",                    -- a QuickAction living on the grid
-    "open:settings", "find", "back",   -- searching Settings
+    "open:settings", "tab:more", "home",   -- searching Settings
     "__terminate",
 }
-inputs = { "Ana Fox", "cash", { typed = "activ", choose = "Activity" },
+inputs = { "cash", { typed = "activ", choose = "Activity" },
     "modem" }
 
 -- showBanner draws straight onto the screen rather than through ui.message,

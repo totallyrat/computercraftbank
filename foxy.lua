@@ -20,8 +20,38 @@ return function(api)
     local FOX = colors.orange
     local INK = colors.white
     local TABS = { { id = "bank", label = "Bank" },
-        { id = "security", label = "Security" },
-        { id = "account", label = "Account" } }
+        { id = "security", label = "Security", short = "Safe" },
+        { id = "account", label = "Account", short = "Me" } }
+    -- 12.0: More is also the quick way to the bank's own screens. Each is
+    -- an action the bank page already answers.
+    local MORE = {
+        { id = "cash", label = "Foxy Cash", hint = "Pay a friend" },
+        { id = "activity", label = "Activity", hint = "What came and went" },
+        { id = "wallet", label = "Bet Wallet", hint = "Money for CCG" },
+        { id = "id", label = "Account ID + Transfer", hint = "Your sixteen digits" },
+        { id = "cashout", label = "Cash out with a code", hint = "At a kiosk" },
+        { id = "new", label = "New account", hint = "Savings, rent, holiday" },
+    }
+    local pending
+    -- A tap on More opens it. A page comes back as its tab; one of the bank's
+    -- screens goes to the bank page, which opens it first thing.
+    local function tabbed(action, active)
+        -- Only a tap on More is translated: the shortcuts share their ids
+        -- with the bank page's own buttons, which are answered as they are.
+        if action ~= "tab:more" or type(ui.resolveTab) ~= "function" then
+            return action
+        end
+        local chosen = ui.resolveTab(target, action, { list = TABS, more = MORE,
+            active = active, title = "Foxy", subtitle = "Everything in Foxy" })
+        for _, extra in ipairs(MORE) do
+            if chosen == extra.id then
+                if active == "bank" then return chosen end
+                pending = chosen
+                return "tab:bank"
+            end
+        end
+        return chosen
+    end
 
     local function running()
         return api.running()
@@ -835,7 +865,7 @@ return function(api)
                 closed:button("id", 2, height - 5, width - 2, 2,
                     "Show my Account ID", { background = ui.theme.panel })
                 ui.tabBar(closed, target, TABS, "bank", FOX)
-                local closedAction = closed:wait({ tickRate = 5 })
+                local closedAction = tabbed(closed:wait({ tickRate = 5 }), "bank")
                 if closedAction == "bringback" then
                     bringMoneyIn(here.moved_to_name)
                 elseif closedAction == "id" then accountIdScreen()
@@ -934,13 +964,19 @@ return function(api)
                     end
                 end
             end
-            scene:button("up", width - 8, height - 1, 3, 1, "^",
+            -- 12.0: the scroll arrows sit beside BALANCE, clear of the bar.
+            scene:button("up", width - 8, 11, 3, 1, "^",
                 { background = ui.theme.panel, disabled = offset <= 0 })
-            scene:button("down", width - 4, height - 1, 3, 1, "v",
+            scene:button("down", width - 4, 11, 3, 1, "v",
                 { background = ui.theme.panel,
                   disabled = offset + perView >= #rows })
             ui.tabBar(scene, target, TABS, "bank", FOX)
-            local action = scene:wait({ tickRate = 5 })
+            local action
+            if pending then
+                action, pending = pending, nil
+            else
+                action = tabbed(scene:wait({ tickRate = 5 }), "bank")
+            end
             if action == "home" or action == "__terminate"
                 or (action or ""):match("^tab:") then
                 return action
@@ -1071,7 +1107,7 @@ return function(api)
                       foreground = status and colors.black or colors.white })
             end
             ui.tabBar(scene, target, TABS, "security", FOX)
-            local action = scene:wait({ tickRate = 3 })
+            local action = tabbed(scene:wait({ tickRate = 3 }), "security")
             if action == "home" or action == "__terminate"
                 or (action or ""):match("^tab:") then
                 return action
@@ -1107,7 +1143,7 @@ return function(api)
             ui.wrappedText(target, 2, 17, "More coming to your account soon.",
                 width - 2, 2, ui.theme.muted)
             ui.tabBar(scene, target, TABS, "account", FOX)
-            local action = scene:wait({ tickRate = 5 })
+            local action = tabbed(scene:wait({ tickRate = 5 }), "account")
             if action == "home" or action == "__terminate"
                 or (action or ""):match("^tab:") then
                 return action
@@ -1160,9 +1196,12 @@ return function(api)
     -- that was asked for, and close when it is done. Nobody who searched for
     -- "Foxy Cash" wanted two taps of Foxy's front door first.
     local wanted = type(api.action) == "function" and api.action() or nil
-    if wanted then
+    -- A tab is a place, not an errand: it opens with the tabs working,
+    -- where 11.x closed Foxy the moment another tab was tapped.
+    local startTab = (wanted == "bank" or wanted == "security"
+        or wanted == "account") and wanted or nil
+    if wanted and not startTab then
         local jump = {
-            bank = bankScreen,
             cash = function()
                 local overview = request("FOXY_OVERVIEW", {}, true)
                 if overview then foxyCash(overview) end
@@ -1170,7 +1209,6 @@ return function(api)
             wallet = betWalletScreen,
             activity = historyScreen,
             id = accountIdScreen,
-            security = securityScreen,
         }
         if jump[wanted] then
             jump[wanted]()
@@ -1178,14 +1216,16 @@ return function(api)
         end
     end
 
-    ui.clear(target)
-    sweepIn("FOXY", 8, FOX)
-    sweepIn("small bank, big vault", 10, ui.theme.muted)
-    sleep(0.5)
+    if not startTab then
+        ui.clear(target)
+        sweepIn("FOXY", 8, FOX)
+        sweepIn("small bank, big vault", 10, ui.theme.muted)
+        sleep(0.5)
+    end
 
     -- 11.0: Bank and Account along the bottom, the way every app is laid
     -- out now. Foxy opens on the bank, which is what it is opened for.
-    local tab = "bank"
+    local tab = startTab or "bank"
     while running() do
         local switched
         if tab == "account" then

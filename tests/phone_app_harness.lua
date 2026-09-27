@@ -27,7 +27,9 @@ local function wrap(value, width)
 end
 
 function phone.script()
-    return { actions = {}, inputs = {}, pins = {}, confirms = {} }
+    -- `more` is what the More page is answered with (12.0): a tap on More
+    -- takes the next entry, "tab:<id>" or an extra's id.
+    return { actions = {}, inputs = {}, pins = {}, confirms = {}, more = {} }
 end
 
 function phone.push(queue, ...)
@@ -57,7 +59,15 @@ function phone.run(options)
     local function draw(value) frame[#frame + 1] = tostring(value) end
 
     local ui = { theme = realUi.theme, wrap = realUi.wrap }
-    ui.tabBar = realUi.tabBar
+    -- 12.0: the bar paints its labels rather than putting them on buttons,
+    -- so the first three and More are written into the frame here.
+    function ui.tabBar(scene, target, tabs, active, ...)
+        for index, tab in ipairs(tabs) do
+            if index <= realUi.TAB_COUNT then draw(tab.label) end
+        end
+        draw("More")
+        return realUi.tabBar(scene, target, tabs, active, ...)
+    end
     function ui.clear()
         frame = {}
         seen.frames[#seen.frames + 1] = frame
@@ -97,6 +107,17 @@ function phone.run(options)
             mode = spec and spec.mode, initial = spec and spec.initial }
         return take(script.inputs, "text box: " .. title)
     end
+    ui.inkOn, ui.searchEntries = realUi.inkOn, realUi.searchEntries
+    ui.MAIN_COLORS, ui.mainColor = realUi.MAIN_COLORS, "orange"
+    function ui.contentBottom() return HEIGHT - 2 end
+    function ui.resolveTab(_, action, spec)
+        if action ~= "tab:more" then return action end
+        draw("more:" .. tostring(spec and spec.title))
+        seen.more = seen.more or {}
+        seen.more[#seen.more + 1] = spec
+        return take(script.more, "More page")
+    end
+    ui.moreMenu = function(target, spec) return ui.resolveTab(target, "tab:more", spec) end
     function ui.pin(_, title)
         draw("pin:" .. title)
         return take(script.pins, "PIN pad: " .. title)
@@ -110,6 +131,8 @@ function phone.run(options)
     end
     function ui.scene()
         local scene, tappable = {}, {}
+        -- As a real scene carries them: some screens lay out from these.
+        scene.width, scene.height, scene.target = WIDTH, HEIGHT, surface
         function scene:button(id, x, y, width, height, label, spec)
             box("button " .. tostring(label), x, y, width, height)
             assert(#wrap(label, math.max(1, width - 2)) <= height,
@@ -156,6 +179,8 @@ function phone.run(options)
         save = function(value) options.kept.value = util.copy(value) return true end,
         load = function() return util.copy(options.kept.value or {}) end,
         action = function() return options.wanted end,
+        -- The phone's web browser, when the test wants to see where it went.
+        browse = options.browse,
         -- A bank app's own 3rd Party Bank Server, when the test has one.
         bank = options.bank_app,
         banks = function() return {} end,

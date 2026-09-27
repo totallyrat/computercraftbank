@@ -284,7 +284,8 @@ actions = {
     "back",                            -- leave Yap
     -- 9.4: the Bank app left the Home Screen, so the built-in apps fit on
     -- one page and Settings needs no page turn.
-    "open:settings", "connected", "back", "back",
+    -- 12.0: Connected Apps is on Settings' Apps tab, and home leaves.
+    "open:settings", "tab:apps", "connected", "back", "home",
     "__terminate",
 }
 local index = 0
@@ -315,6 +316,11 @@ function ui.scene()
     end
     return scene
 end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 local ok, err = pcall(assert(loadfile("../pumpe.lua")))

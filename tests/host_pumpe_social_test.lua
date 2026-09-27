@@ -242,7 +242,6 @@ function ui.networkError(_, err) error("unexpected network error: " .. tostring(
 -- login() asks for the account name first, then each screen's own input, in
 -- the order the scripted actions below reach them.
 inputs = {
-    "FoxyUser",         -- sign in
     "On my way now",    -- chat message
     "25",               -- money request amount
     "Market Run",       -- group name
@@ -254,7 +253,6 @@ function ui.pin() return "1234" end
 function ui.confirm() return false end
 
 actions = {
-    "login",                    -- the welcome screen
     "open:friends",             -- opens on its Chats tab since 11.0
     "open:CHAT0001",            -- chat list
     "type",                     -- send a message
@@ -318,7 +316,19 @@ end
 do
     local realUi = dofile("real_ui.lua")
     ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
+    -- 12.0: the bar paints its labels rather than putting them on buttons,
+    -- so what the app asked it to show is read here instead.
+    local paint = ui.tabBar
+    ui.tabBar = function(scene, target, tabs, ...)
+        for _, tab in ipairs(tabs) do buttonLabels[#buttonLabels + 1] = tab.label end
+        return paint(scene, target, tabs, ...)
+    end
 end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 local ok, err = pcall(assert(loadfile("../pumpe.lua")))
@@ -390,9 +400,8 @@ ringHandler = nil
 buttonLabels, drawnText, requests = {}, {}, {}
 urgentStatus = "ringing"
 index = 0
-inputs = { "FoxyUser" }
+inputs = {}
 actions = {
-    "login",
     "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
     "__terminate",
 }

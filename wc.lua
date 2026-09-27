@@ -473,9 +473,15 @@ return function(api)
             end
         end
         -- 11.0: the standard tab bar. Your sites, and a new one.
-        ui.tabBar(scene, target, { { id = "sites", label = "Sites" },
-            { id = "new", label = "New" } }, "sites", WC)
+        local tabs = { { id = "sites", label = "Sites" },
+            { id = "new", label = "New", hint = "Reserve a name" } }
+        ui.tabBar(scene, target, tabs, "sites", WC)
         local action = scene:wait({ tickRate = 5 })
+        -- 12.0: More searches the app's parts.
+        if action == "tab:more" and type(ui.resolveTab) == "function" then
+            action = ui.resolveTab(target, action, { list = tabs, active = "sites",
+                title = "Website Crafter", subtitle = "Your websites" })
+        end
         if action == "home" or action == "__terminate" then return end
         if action == "tab:new" then
             if not mine then

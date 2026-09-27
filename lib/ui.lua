@@ -18,13 +18,86 @@ ui.theme = {
     panelAlt = colors.lightGray,
     ink = colors.white,
     muted = colors.lightGray,
-    accent = colors.cyan,
-    accentDark = colors.blue,
+    accent = colors.orange,
+    accentDark = colors.brown,
+    accentInk = colors.black,
     success = colors.lime,
     danger = colors.red,
-    warning = colors.orange,
+    -- Yellow since 12.0: orange is the main colour now, and a warning that
+    -- looks like a highlight is not a warning.
+    warning = colors.yellow,
     shadow = colors.gray,
 }
+
+-- Writing that reads on a colour: white on the dark ones, black on the rest.
+function ui.inkOn(color)
+    if color == colors.purple or color == colors.blue or color == colors.red
+        or color == colors.green or color == colors.brown
+        or color == colors.gray or color == colors.black then
+        return colors.white
+    end
+    return colors.black
+end
+
+-- Main colour, 12.0 ----------------------------------------------------------------
+-- Every device but the Bank and its Vault picks one, in its setup or its
+-- settings, and everything accented follows it: tabs, buttons, headers.
+-- Orange by default, like the fox. `dark` is the partner a filled button
+-- uses, so white writing on it still reads.
+ui.MAIN_COLORS = {
+    { id = "orange", label = "Orange", color = colors.orange, dark = colors.brown },
+    { id = "red", label = "Red", color = colors.red, dark = colors.brown },
+    { id = "pink", label = "Pink", color = colors.pink, dark = colors.magenta },
+    { id = "magenta", label = "Magenta", color = colors.magenta, dark = colors.purple },
+    { id = "purple", label = "Purple", color = colors.purple, dark = colors.purple },
+    { id = "blue", label = "Blue", color = colors.blue, dark = colors.blue },
+    { id = "lightBlue", label = "Sky", color = colors.lightBlue, dark = colors.blue },
+    { id = "cyan", label = "Cyan", color = colors.cyan, dark = colors.blue },
+    { id = "green", label = "Green", color = colors.green, dark = colors.green },
+    { id = "lime", label = "Lime", color = colors.lime, dark = colors.green },
+    { id = "yellow", label = "Yellow", color = colors.yellow, dark = colors.brown },
+}
+ui.mainColor = "orange"
+
+local function mainColorEntry(id)
+    for _, entry in ipairs(ui.MAIN_COLORS) do
+        if entry.id == id then return entry end
+    end
+    return nil
+end
+
+-- Makes `id` the colour everything is drawn in. Unknown ids are ignored.
+function ui.setMainColor(id)
+    local entry = mainColorEntry(id)
+    if not entry then return false end
+    ui.mainColor = entry.id
+    ui.theme.accent = entry.color
+    ui.theme.accentDark = entry.dark
+    ui.theme.accentInk = ui.inkOn(entry.color)
+    return true
+end
+
+local function mainColorFile(root)
+    return fs.combine(root or "/pumpe", "main_color.dat")
+end
+
+-- Whether this device has chosen yet: setup asks once, and only then.
+function ui.hasMainColor(root)
+    return fs.exists(mainColorFile(root))
+end
+
+-- Loads this device's choice from beside its program, and uses it.
+function ui.useMainColor(root)
+    local saved = util.loadTable(mainColorFile(root), {})
+    if not ui.setMainColor(saved.color) then ui.setMainColor("orange") end
+    return ui.mainColor
+end
+
+function ui.saveMainColor(root, id)
+    if not ui.setMainColor(id) then return false end
+    pcall(util.saveTable, mainColorFile(root), { color = ui.mainColor })
+    return true
+end
 
 function ui.usePhoneStyle(enabled)
     phoneStyle = enabled == true
@@ -251,11 +324,13 @@ function Scene:button(id, x, y, width, height, label, options)
     end
     ui.fill(self.target, x, y, width, height, background)
     if phoneStyle and height >= 2 and width >= 4 then
-        ui.fill(self.target, x, y, 1, 1, ui.theme.background)
-        ui.fill(self.target, x + width - 1, y, 1, 1, ui.theme.background)
-        ui.fill(self.target, x, y + height - 1, 1, 1, ui.theme.background)
-        ui.fill(self.target, x + width - 1, y + height - 1,
-            1, 1, ui.theme.background)
+        -- The corners are whatever the button sits on: the wallpaper, or a
+        -- panel such as the dock.
+        local corner = options.corner or ui.theme.background
+        ui.fill(self.target, x, y, 1, 1, corner)
+        ui.fill(self.target, x + width - 1, y, 1, 1, corner)
+        ui.fill(self.target, x, y + height - 1, 1, 1, corner)
+        ui.fill(self.target, x + width - 1, y + height - 1, 1, 1, corner)
     end
 
     local labelWidth = math.max(1, width - 2)
@@ -417,65 +492,251 @@ function Scene:wait(options)
     end
 end
 
--- Tabs, 11.0 ----------------------------------------------------------------------
--- Every app with more than one part puts its parts in a row along the
--- bottom, the way Shop did first. `tabs` is a list of { id = , label = };
--- tapping one returns "tab:<id>". Each tab is as wide as its label needs,
--- and whatever is left over is shared out, so a short list does not leave
--- a gap at the end and a long one still fits.
+-- Tabs, 12.0 ----------------------------------------------------------------------
+-- Every program with more than one part puts them in a floating bar along
+-- the bottom: a pill that stops short of both sides and of the bottom row.
+-- It holds the first three parts and "More"; everything else, and anything
+-- a program adds, is on the More page with a search. `tabs` is a list of
+-- { id = , label = , short = , hint = }; tapping one returns "tab:<id>",
+-- More returns "tab:more". The bar is always in the main colour: `accent`
+-- is accepted from programs written before it and no longer used.
 --
 -- Home is the mark at the top left, drawn as "<PUMPE" over the phone's own
 -- status bar: it returns "home", which every app with tabs takes as "leave".
--- It costs the tab row nothing, which is why it is up there.
 --
--- Only scene:button, scene:hotspot and the target's size are used, so a
+-- Only scene:hotspot and the target's size are used for the hit areas, so a
 -- test can run this exact function against a stub scene.
-function ui.tabBar(scene, target, tabs, active, accent)
-    local width, height = target.getSize()
-    local count = #tabs
-    if count == 0 then return end
-    local widths, needed = {}, 0
-    for index, tab in ipairs(tabs) do
-        widths[index] = #tostring(tab.label) + 2
-        needed = needed + widths[index]
-    end
-    if needed > width then
-        -- Too many to spell out in full: equal shares, labels cut to fit.
-        for index = 1, count do widths[index] = math.floor(width / count) end
-        needed = math.floor(width / count) * count
-    end
-    local spare = width - needed
-    local each, over = math.floor(spare / count), spare % count
-    -- Black reads on orange and cyan, not on purple or blue.
-    local shade = accent or ui.theme.accent
-    local ink = (shade == colors.purple or shade == colors.blue
-        or shade == colors.red or shade == colors.green
-        or shade == colors.brown or shade == colors.gray
-        or shade == colors.black) and colors.white or colors.black
-    local x = 1
-    for index, tab in ipairs(tabs) do
-        local tabWidth = widths[index] + each + (index <= over and 1 or 0)
-        local on = tab.id == active
-        scene:button("tab:" .. tab.id, x, height, tabWidth, 1,
-            ui.truncate(tostring(tab.label), math.max(1, tabWidth - 2)), {
-                background = on and shade or ui.theme.panel,
-                foreground = on and ink or colors.white,
-            })
-        x = x + tabWidth
-    end
-    scene:button("home", 1, 1, 1, 1, "<", {
-        background = shade, foreground = ink, flash = false,
-    })
-    scene:hotspot("home", 2, 1, 5, 1)
+ui.TAB_COUNT = 3
+local PILL_CAP = string.char(149)
+
+-- The row the bar sits on, and the last row a page can use above it.
+function ui.tabRow(target)
+    local _, height = surface(target).getSize()
+    return height - 1
 end
 
--- Runs an app made of tab pages. `spec.pages[id]` draws its page with the
+function ui.contentBottom(target)
+    return ui.tabRow(target) - 1
+end
+
+-- Which tab lights up: the page's own, or More for anything behind it.
+local function litTab(tabs, active)
+    for index = 1, math.min(#tabs, ui.TAB_COUNT) do
+        if tabs[index].id == active then return active end
+    end
+    return "more"
+end
+
+local function fitLabel(tab, room)
+    local label = tostring(tab.label or tab.id)
+    if #label > room and tab.short then label = tostring(tab.short) end
+    return label:sub(1, math.max(1, room))
+end
+
+function ui.tabBar(scene, target, tabs, active, accent, options)
+    target = surface(target)
+    local width, height = target.getSize()
+    local y = height - 1
+    local shown = {}
+    for index = 1, math.min(#tabs, ui.TAB_COUNT) do shown[index] = tabs[index] end
+    shown[#shown + 1] = { id = "more", label = "More", short = "..." }
+    local lit = litTab(tabs, active)
+    local shade, ink = ui.theme.accent, ui.theme.accentInk or ui.inkOn(ui.theme.accent)
+    -- Every screen in ComputerCraft can paint; a test's stand-in for one
+    -- may only know its size, and then only the tap areas matter.
+    local paint = type(target.setBackgroundColor) == "function"
+
+    -- The pill: rounded ends drawn as half cells, the body in panel grey.
+    if paint then
+        ui.fill(target, 1, height, width, 1, ui.theme.background)
+        ui.fill(target, 3, y, math.max(0, width - 4), 1, ui.theme.panel)
+        ui.text(target, 2, y, PILL_CAP, ui.theme.background, ui.theme.panel)
+        ui.text(target, width - 1, y, PILL_CAP, ui.theme.panel, ui.theme.background)
+    end
+
+    local inner = math.max(#shown, width - 4)
+    local each, over = math.floor(inner / #shown), inner % #shown
+    local x = 3
+    for index, tab in ipairs(shown) do
+        local slot = each + (index <= over and 1 or 0)
+        local on = tab.id == lit
+        if paint then
+            if on then ui.fill(target, x, y, slot, 1, shade) end
+            local label = fitLabel(tab, slot >= 4 and slot - 1 or slot)
+            ui.text(target, x + math.floor((slot - #label) / 2), y, label,
+                on and ink or ui.theme.ink, on and shade or ui.theme.panel)
+        end
+        scene:hotspot("tab:" .. tab.id, x, y, slot, 1)
+        x = x + slot
+    end
+    -- A PUMPE app goes home from its top left corner. A kiosk or a server
+    -- is not inside anything, so it has no home to go to.
+    if not (options and options.home == false) then
+        scene:button("home", 1, 1, 1, 1, "<", {
+            background = shade, foreground = ink, flash = false,
+        })
+        scene:hotspot("home", 2, 1, 5, 1)
+    end
+end
+
+-- Everything More holds: the parts past the third, then whatever the
+-- program adds (`spec.more`, each { id = , label = , hint = }).
+local function moreEntries(spec)
+    local entries = {}
+    for index, tab in ipairs(spec.list or {}) do
+        entries[#entries + 1] = { id = "tab:" .. tab.id, label = tab.label,
+            hint = tab.hint, main = index <= ui.TAB_COUNT }
+    end
+    for _, extra in ipairs(spec.more or {}) do
+        entries[#entries + 1] = { id = extra.id, label = extra.label,
+            hint = extra.hint, words = extra.words }
+    end
+    return entries
+end
+
+-- Search, the way Easy Deployment's works: every word typed has to be
+-- somewhere, and a label that starts with it comes first.
+function ui.searchEntries(entries, query)
+    local results = {}
+    for order, entry in ipairs(entries) do
+        local label = string.lower(tostring(entry.label or ""))
+        local everything = label .. " " .. string.lower(tostring(entry.hint or "")
+            .. " " .. tostring(entry.words or ""))
+        local score = 0
+        for word in string.lower(query or ""):gmatch("%S+") do
+            if label:sub(1, #word) == word then
+                score = score + 3
+            elseif (" " .. label):find(" " .. word, 1, true) then
+                score = score + 2
+            elseif everything:find(word, 1, true) then
+                score = score + 1
+            else
+                score = nil
+                break
+            end
+        end
+        if score then results[#results + 1] = { entry = entry, score = score,
+            order = order } end
+    end
+    table.sort(results, function(a, b)
+        if a.score ~= b.score then return a.score > b.score end
+        return a.order < b.order
+    end)
+    local out = {}
+    for index, result in ipairs(results) do out[index] = result.entry end
+    return out
+end
+
+-- The More page. With nothing typed it suggests everything behind More;
+-- typing searches every part of the program, the ones on the bar too.
+-- Returns "tab:<id>", an extra's id, "home" or "__terminate".
+function ui.moreMenu(target, spec)
+    target = surface(target)
+    local query, selected = "", 1
+    local entries = moreEntries(spec)
+    while true do
+        local width, height = target.getSize()
+        local list
+        if query:match("%S") then
+            list = ui.searchEntries(entries, query)
+        else
+            list = {}
+            for _, entry in ipairs(entries) do
+                if not entry.main then list[#list + 1] = entry end
+            end
+        end
+        selected = math.max(1, math.min(selected, #list))
+        ui.clear(target)
+        ui.header(target, spec.title or "More", spec.subtitle or "Everything else")
+        local scene = ui.scene(target)
+        ui.fill(target, 2, 5, width - 2, 1, ui.theme.panel)
+        local shown = #query > width - 7 and query:sub(-(width - 7)) or query
+        ui.text(target, 3, 5, query == "" and "Search..." or ("> " .. shown .. "_"),
+            query == "" and ui.theme.muted or ui.theme.ink, ui.theme.panel)
+        scene:hotspot("search", 2, 5, width - 2, 1)
+        ui.text(target, 2, 7, query:match("%S")
+            and (#list == 0 and "NOTHING MATCHES" or "RESULTS") or "SUGGESTED",
+            ui.theme.muted)
+        local rows = height >= 16 and 2 or 1
+        local top, bottom = 8, ui.contentBottom(target)
+        local room = math.max(1, math.floor((bottom - top + 1) / rows))
+        local first = math.max(1, math.min(selected - room + 1, #list - room + 1))
+        for index = first, math.min(#list, first + room - 1) do
+            local entry = list[index]
+            local y = top + (index - first) * rows
+            local on = index == selected
+            local background = on and ui.theme.accentDark or ui.theme.panel
+            ui.fill(target, 2, y, width - 2, rows, background)
+            ui.text(target, 3, y, ui.truncate(tostring(entry.label), width - 4),
+                ui.theme.ink, background)
+            if rows == 2 and entry.hint then
+                ui.text(target, 3, y + 1, ui.truncate(tostring(entry.hint), width - 4),
+                    ui.theme.muted, background)
+            end
+            scene:hotspot("pick:" .. index, 2, y, width - 2, rows)
+        end
+        ui.tabBar(scene, target, spec.list or {}, "more", nil,
+            { home = spec.home })
+        local action = scene:wait({
+            keys = keyBindings({ up = "up", down = "down", enter = "open",
+                numPadEnter = "open", backspace = "erase" }),
+            onChar = function(character) return "typed:" .. character end,
+        })
+        local typed = action and action:match("^typed:(.)$")
+        local picked = tonumber(action and action:match("^pick:(%d+)$"))
+        if typed then
+            query, selected = query .. typed, 1
+        elseif action == "erase" then
+            if query == "" then return "tab:" .. (spec.active or "more") end
+            query, selected = query:sub(1, -2), 1
+        elseif action == "up" then
+            selected = math.max(1, selected - 1)
+        elseif action == "down" then
+            selected = math.min(#list, selected + 1)
+        elseif action == "open" and list[selected] then
+            return list[selected].id
+        elseif picked and list[picked] then
+            return list[picked].id
+        elseif action == "search" then
+            -- Somebody holding a pocket computer taps rather than types.
+            local _, item = ui.input(target, "Search", {
+                hint = spec.title or "More", initial = query, allowSpace = true,
+                suggest = function(value)
+                    local found = {}
+                    for index, entry in ipairs(ui.searchEntries(entries, value)) do
+                        if index > 4 then break end
+                        found[index] = { label = entry.label, detail = entry.hint,
+                            id = entry.id }
+                    end
+                    return found
+                end,
+            })
+            if item and item.id then return item.id end
+        elseif action == "tab:more" or action == "__tick" or action == "__idle"
+            or action == "__wake" then
+            -- Already here.
+        elseif action then
+            return action
+        end
+    end
+end
+
+-- A tapped tab, with More opened and answered. Programs that run their own
+-- loop pass every action through this; it hands back "tab:<id>" for the page
+-- to go to, or whatever else was chosen.
+function ui.resolveTab(target, action, spec)
+    if action ~= "tab:more" then return action end
+    return ui.moreMenu(target, spec)
+end
+
+-- Runs a program made of tab pages. `spec.pages[id]` draws its page with the
 -- tab bar -- it is handed `spec` itself, which carries `list`, `active` and
 -- `color` for ui.tabBar -- and returns what was tapped. "tab:<id>" moves to
--- that page; anything else leaves the app and is returned.
+-- that page; More opens the More page; anything else leaves and is returned.
 --
 -- A tab named in `spec.once` is a thing to do rather than a place to be --
 -- write a message, place a call. It runs, and the tab before it comes back.
+-- So is an entry of `spec.more` with a function in `spec.actions`.
 function ui.runTabs(spec)
     local first = spec.list[1].id
     local tab, previous = spec.start or first, nil
@@ -484,6 +745,14 @@ function ui.runTabs(spec)
         -- A chance to relabel the tabs -- an unread count -- each time.
         if spec.refresh then spec.refresh(spec) end
         local switched = spec.pages[tab](spec)
+        if switched == "tab:more" then
+            switched = ui.moreMenu(spec.target, spec)
+            local run = spec.actions and spec.actions[switched]
+            if run then
+                run(spec)
+                switched = "tab:" .. tab
+            end
+        end
         local once = spec.once and spec.once[tab]
         if once then switched = "tab:" .. (previous or first) end
         local nextTab = type(switched) == "string"
@@ -491,6 +760,61 @@ function ui.runTabs(spec)
         if not nextTab or not spec.pages[nextTab] then return switched end
         if not once then previous = tab end
         tab = nextTab
+    end
+end
+
+-- Picking the main colour: every colour as a swatch, the choice shown at
+-- once on a sample of the tab bar, kept only on Done.
+function ui.pickMainColor(target, root, title)
+    target = surface(target)
+    local before, chosen = ui.mainColor, ui.mainColor
+    while true do
+        local width, height = target.getSize()
+        ui.setMainColor(chosen)
+        ui.clear(target)
+        ui.header(target, title or "Main colour", "How this device looks")
+        local scene = ui.scene(target)
+        local columns = width >= 40 and 4 or 2
+        local gap = 1
+        local cellWidth = math.floor((width - 2 - (columns - 1) * gap) / columns)
+        local rows = math.ceil(#ui.MAIN_COLORS / columns)
+        local top = 5
+        local step = math.max(1, math.min(2, math.floor((height - top - 5) / rows)))
+        for index, entry in ipairs(ui.MAIN_COLORS) do
+            local column = (index - 1) % columns
+            local row = math.floor((index - 1) / columns)
+            local x = 2 + column * (cellWidth + gap)
+            local y = top + row * step
+            local label = (entry.id == chosen and "* " or "") .. entry.label
+            ui.fill(target, x, y, cellWidth, 1, entry.color)
+            ui.text(target, x + math.max(0, math.floor((cellWidth - #label) / 2)), y,
+                label:sub(1, cellWidth), ui.inkOn(entry.color), entry.color)
+            scene:hotspot("color:" .. entry.id, x, y, cellWidth, 1)
+        end
+        local previewY = top + rows * step + 1
+        if previewY <= height - 3 then
+            local sample = ui.scene(target)
+            ui.center(target, previewY, "Looks like this", ui.theme.muted)
+            ui.tabBar(sample, target, { { id = "a", label = "Home" },
+                { id = "b", label = "Pay" }, { id = "c", label = "Me" } }, "a")
+            ui.fill(target, 1, height, width, 1, ui.theme.background)
+        end
+        scene:button("cancel", 2, height - 3, math.floor((width - 3) / 2), 1, "Back",
+            { background = ui.theme.panel })
+        scene:button("done", width - math.floor((width - 3) / 2), height - 3,
+            math.floor((width - 3) / 2), 1, "Done",
+            { background = ui.theme.accentDark, foreground = colors.white })
+        local action = scene:wait()
+        local picked = action and action:match("^color:(.+)$")
+        if picked then
+            chosen = picked
+        elseif action == "done" then
+            ui.saveMainColor(root, chosen)
+            return chosen
+        elseif action == "cancel" or action == "__terminate" or action == "home" then
+            ui.setMainColor(before)
+            return nil
+        end
     end
 end
 
@@ -538,6 +862,19 @@ local GLYPHS = {
     U = { "# #", "# #", "# #", "# #", "###" },
     M = { "# #", "###", "###", "# #", "# #" },
     E = { "###", "#  ", "###", "#  ", "###" },
+    -- 12.0: digits, for the lock screen's clock.
+    ["0"] = { "###", "# #", "# #", "# #", "###" },
+    ["1"] = { " # ", "## ", " # ", " # ", "###" },
+    ["2"] = { "###", "  #", "###", "#  ", "###" },
+    ["3"] = { "###", "  #", " ##", "  #", "###" },
+    ["4"] = { "# #", "# #", "###", "  #", "  #" },
+    ["5"] = { "###", "#  ", "###", "  #", "###" },
+    ["6"] = { "###", "#  ", "###", "# #", "###" },
+    ["7"] = { "###", "  #", "  #", "  #", "  #" },
+    ["8"] = { "###", "# #", "###", "# #", "###" },
+    ["9"] = { "###", "# #", "###", "  #", "###" },
+    [":"] = { "   ", " # ", "   ", " # ", "   " },
+    [" "] = { "   ", "   ", "   ", "   ", "   " },
 }
 local GLYPH_WIDTH, GLYPH_HEIGHT = 3, 5
 

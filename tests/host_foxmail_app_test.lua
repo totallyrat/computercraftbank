@@ -73,7 +73,9 @@ script = phone.script()
 phone.push(script.actions, function(seen)
     assert(phone.has(phone.last(seen), "ana@foxy.com"),
         "her own address shows first")
-    return "tab:me"
+    -- 12.0: Me is behind More.
+    phone.push(script.more, "tab:me")
+    return "tab:more"
 end, function(seen)
     assert(phone.has(phone.last(seen), "Fox Goods  1 new"),
         "the Me tab shows her company's address, with mail waiting")
@@ -110,7 +112,9 @@ assert(mail.messages[kitsInbox[1].id].reply_to, "and it is marked as a reply")
 script = phone.script()
 phone.push(script.actions, function(seen)
     assert(phone.has(phone.last(seen), "hello@foxgoods.com"), "where she left off")
-    return "tab:me"
+    -- 12.0: Me is behind More.
+    phone.push(script.more, "tab:me")
+    return "tab:more"
 end, "pick:3")
 phone.push(script.inputs, "support")
 phone.push(script.actions, "home")

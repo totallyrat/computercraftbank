@@ -301,6 +301,11 @@ do
     local realUi = dofile("real_ui.lua")
     ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 -- The website under test. It draws one line, and it reaches for every door
@@ -353,7 +358,6 @@ do
 end
 
 actions = {
-    "login",
     "open:ext:WC",                     -- Website Crafter
     "tab:new",                         -- reserve a domain (a tab since 11.0)
     "pick:1",                          -- start from a template
@@ -366,10 +370,10 @@ actions = {
     "open:ext:NET",                    -- the Internet app
     "go",                              -- open the one already up
     "yes",                             -- the page asks who you are
-    "back",
+    "home",                            -- out of Internet (tabs since 12.0)
     "__terminate",
 }
-inputs = { "Ana Fox", "foxden", "-- one more line", "probe" }
+inputs = { "foxden", "-- one more line", "probe" }
 pins = { "1234" }
 
 local ok, err = pcall(assert(realLoadfile("../pumpe.lua")))

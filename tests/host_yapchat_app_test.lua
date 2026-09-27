@@ -328,12 +328,13 @@ actions = {
     "back",                            -- back to the chat list
     "back",                            -- leave the app
     -- 9.4: the built-in apps fit one page, so no page turn to Settings.
-    "open:settings", "apps",           -- App Settings
+    "open:settings", "tab:apps",       -- 12.0: on Settings' Apps tab
+    "apps",                            -- App Settings
     "open:YAPCHAT",                    -- the app's own permissions
     "full",                            -- turn fullscreen on
     "notify",                          -- block: fullscreen goes with it
     "notify",                          -- allow again, fullscreen stays off
-    "back", "back", "back",
+    "back", "back", "home",
     "__wake:FULLSCREEN", "ok",         -- the loud one, and dismissing it
     "__wake:BANNER",                   -- and the quiet one
     "__terminate",
@@ -373,6 +374,11 @@ function ui.scene()
     end
     return scene
 end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 local ok, err = pcall(assert(loadfile("../pumpe.lua")))
@@ -484,8 +490,8 @@ assert(pressed("Call"), "and there is a call button in the conversation")
 
 -- App Settings ---------------------------------------------------------------------
 
+-- 12.0: a Settings row is its label drawn on the button, so drawn is enough.
 assert(drew("App Settings"), "Settings has an App Settings entry")
-assert(pressed("App Settings"))
 assert(drewAt("NOTIFICATIONS"), "an app's own permissions screen")
 assert(pressed("Fullscreen"),
     "fullscreen lives here and nowhere else -- an app cannot ask for it")

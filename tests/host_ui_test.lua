@@ -39,31 +39,107 @@ term = { current = function() return mockTerminal(51, 19) end }
 
 local ui = require("lib.ui")
 
--- The bottom tab bar, 11.0: every app's parts in one row, each tab as wide
--- as its label needs, the leftovers shared out, and home at the top left.
-for _, size in ipairs({ { 26, 20 }, { 51, 19 } }) do
-    local display = mockTerminal(size[1], size[2])
+-- The floating tab bar, 12.0: a pill on the row above the bottom, clear of
+-- both sides and of the bottom row, holding three parts and More.
+local four = { { id = "stores", label = "Stores" },
+    { id = "delivery", label = "Delivery", short = "Deliv" },
+    { id = "places", label = "Places" }, { id = "orders", label = "Orders" } }
+for _, size in ipairs({ { 26, 20 }, { 51, 19 }, { 39, 13 } }) do
+    local width, height = size[1], size[2]
+    local display = mockTerminal(width, height)
     ui.usePhoneStyle(true)
     ui.clear(display)
     ui.header(display, "Shop", "Tabs", "12:00")
     local bar = ui.scene(display)
-    ui.tabBar(bar, display, { { id = "stores", label = "Stores" },
-        { id = "delivery", label = "Delivery" },
-        { id = "places", label = "Places" } }, "delivery", colors.orange)
-    assert(bar:hit(1, size[2]) == "tab:stores")
-    assert(bar:hit(size[1], size[2]) == "tab:places", "the row is filled to the edge")
+    ui.tabBar(bar, display, four, "delivery", colors.orange)
     local seen = {}
-    for x = 1, size[1] do seen[bar:hit(x, size[2]) or "gap"] = true end
-    assert(seen["tab:delivery"] and not seen.gap, "no gaps between tabs")
+    for x = 1, width do seen[#seen + 1] = bar:hit(x, height - 1) or "gap" end
+    assert(seen[1] == "gap" and seen[2] == "gap" and seen[width] == "gap"
+        and seen[width - 1] == "gap", "it stops short of both sides")
+    assert(seen[3] == "tab:stores" and seen[width - 2] == "tab:more",
+        "three parts, then More: " .. table.concat(seen, ","))
+    local found = {}
+    for _, id in ipairs(seen) do found[id] = true end
+    assert(found["tab:delivery"] and found["tab:places"] and not found["tab:orders"],
+        "the fourth part is behind More")
+    for x = 1, width do
+        assert(bar:hit(x, height) == nil, "the bottom row is left clear")
+    end
+    assert(ui.contentBottom(display) == height - 2)
     assert(bar:hit(1, 1) == "home" and bar:hit(4, 1) == "home",
         "the PUMPE mark at the top left goes home")
-    -- More tabs than fit: equal shares, still the whole row.
-    local crowded = ui.scene(display)
-    ui.tabBar(crowded, display, { { id = "a", label = "Messages" },
-        { id = "b", label = "Friends" }, { id = "c", label = "Urgent" },
-        { id = "d", label = "Requests" } }, "a")
-    assert(crowded:hit(size[1], size[2]) == "tab:d")
+    -- A part behind More lights More up.
+    local behind = ui.scene(display)
+    ui.tabBar(behind, display, four, "orders")
     ui.usePhoneStyle(false)
+end
+
+-- Two parts still get More, for what a program adds and for search.
+do
+    local display = mockTerminal(26, 20)
+    local bar = ui.scene(display)
+    ui.tabBar(bar, display, { { id = "a", label = "Take" },
+        { id = "b", label = "Pay" } }, "a")
+    local ids = {}
+    for x = 1, 26 do local id = bar:hit(x, 19) if id then ids[id] = true end end
+    assert(ids["tab:a"] and ids["tab:b"] and ids["tab:more"])
+end
+
+-- What the bar draws: every label inside its slot, the lit one in the main
+-- colour's writing colour.
+do
+    local writes = {}
+    local display = mockTerminal(26, 20)
+    local realWrite = display.write
+    local cursorY, fg, bg = 1, nil, nil
+    display.setCursorPos = function(x, y) cursorY = y end
+    display.setTextColor = function(c) fg = c end
+    display.setBackgroundColor = function(c) bg = c end
+    display.write = function(value)
+        writes[#writes + 1] = { y = cursorY, text = value, fg = fg, bg = bg }
+    end
+    ui.setMainColor("purple")
+    ui.tabBar(ui.scene(display), display, four, "stores")
+    local lit
+    for _, write in ipairs(writes) do
+        if write.y == 19 and write.text:sub(1, 5) == "Store" then lit = write end
+    end
+    assert(lit and lit.bg == colors.purple and lit.fg == colors.white,
+        "white on purple")
+    ui.setMainColor("orange")
+    writes = {}
+    ui.tabBar(ui.scene(display), display, four, "stores")
+    for _, write in ipairs(writes) do
+        if write.y == 19 and write.text:sub(1, 5) == "Store" then lit = write end
+    end
+    assert(lit.bg == colors.orange and lit.fg == colors.black, "black on orange")
+end
+
+-- The main colour: orange unless chosen, and what everything is drawn in.
+do
+    assert(ui.mainColor == "orange" and ui.theme.accent == colors.orange,
+        "orange by default, like the fox")
+    assert(ui.setMainColor("blue") and ui.theme.accent == colors.blue
+        and ui.theme.accentInk == colors.white)
+    assert(not ui.setMainColor("plaid") and ui.mainColor == "blue",
+        "an unknown colour changes nothing")
+    local files = {}
+    fs = { combine = function(a, b) return a .. "/" .. b end,
+        exists = function(path) return files[path] ~= nil end }
+    local util = require("lib.util")
+    local realLoad, realSave = util.loadTable, util.saveTable
+    util.loadTable = function(path, fallback) return files[path] or fallback end
+    util.saveTable = function(path, value) files[path] = value end
+    ui.setMainColor("orange")
+    assert(not ui.hasMainColor("/pumpe") and ui.useMainColor("/pumpe") == "orange")
+    assert(ui.saveMainColor("/pumpe", "lime") and ui.hasMainColor("/pumpe"))
+    ui.setMainColor("orange")
+    assert(ui.useMainColor("/pumpe") == "lime" and ui.theme.accent == colors.lime,
+        "the choice is kept beside the program")
+    files["/pumpe/main_color.dat"] = { color = "nonsense" }
+    assert(ui.useMainColor("/pumpe") == "orange", "a bad file is orange")
+    util.loadTable, util.saveTable = realLoad, realSave
+    fs = nil
 end
 
 -- The tab host: each page returns what was tapped. A "once" tab is a thing
@@ -71,8 +147,6 @@ end
 -- known tab leaves, and is handed back to whoever opened the app.
 do
     local visited, refreshed = {}, 0
-    -- Chats taps Urgent; Urgent returns something that is ignored; Chats is
-    -- back and taps Friends; Friends taps a tab nobody has.
     local script = { "tab:urgent", "ignored", "tab:people", "tab:nowhere" }
     local function page(name)
         return function(spec)
@@ -94,21 +168,6 @@ do
         "urgent ran once and chats came back: " .. table.concat(visited, ","))
     assert(left == "tab:nowhere", "an unknown tab leaves the app")
     assert(refreshed == 4, "the labels are refreshed before every page")
-end
-
--- The active tab's writing reads on its colour: white on purple, black on
--- orange.
-do
-    local drawn = {}
-    local recorder = { button = function(_, id, _, _, _, _, _, spec)
-        drawn[id] = spec
-    end, hotspot = function() end }
-    local screen = { getSize = function() return 26, 20 end }
-    local list = { { id = "a", label = "Take" }, { id = "b", label = "Pay" } }
-    ui.tabBar(recorder, screen, list, "a", colors.purple)
-    assert(drawn["tab:a"].foreground == colors.white, "white on purple")
-    ui.tabBar(recorder, screen, list, "a", colors.orange)
-    assert(drawn["tab:a"].foreground == colors.black, "black on orange")
 end
 
 local wrapped = ui.wrap(
@@ -191,6 +250,72 @@ assert(pinWithEvents({
     { "mouse_click", 1, 18, 11 },
     { "mouse_click", 1, 4, 13 },
 }) == "1234")
+
+-- The More page. Nothing typed: what is behind More. Typing: every part
+-- and every extra, best match first. Picking returns its id.
+local function moreWith(events, spec)
+    local index = 0
+    os.pullEvent = function()
+        index = index + 1
+        local event = events[index]
+        assert(event, "More asked for more events than the script has")
+        if type(event) == "function" then event = event() end
+        return table.unpack(event)
+    end
+    return ui.moreMenu(mockTerminal(26, 20), spec)
+end
+keys.up, keys.down, keys.numPadEnter = 200, 208, 156
+local shopSpec = { title = "Shop", active = "stores", list = {
+        { id = "stores", label = "Stores" }, { id = "cart", label = "Basket" },
+        { id = "orders", label = "Orders" }, { id = "returns", label = "Returns",
+            hint = "Send something back" }, { id = "saved", label = "Saved" } },
+    more = { { id = "help", label = "How the Shop works", hint = "Help" } } }
+assert(moreWith({ { "key", 28 } }, shopSpec) == "tab:returns",
+    "the first thing behind More is suggested first")
+assert(moreWith({ { "key", 208 }, { "key", 208 }, { "key", 28 } }, shopSpec)
+    == "help", "then the rest, and the extras after the parts")
+assert(moreWith({ { "char", "b" }, { "char", "a" }, { "key", 28 } }, shopSpec)
+    == "tab:cart", "typing searches the parts on the bar too")
+assert(moreWith({ { "char", "s" }, { "char", "e" }, { "char", "n" },
+    { "char", "d" }, { "key", 28 } }, shopSpec) == "tab:returns",
+    "and what they are for")
+assert(moreWith({ { "key", 14 } }, shopSpec) == "tab:stores",
+    "backspace on an empty search goes back to the page")
+assert(moreWith({ { "mouse_click", 1, 5, 19 } }, shopSpec) == "tab:stores",
+    "the bar is still there")
+assert(moreWith({ { "mouse_click", 1, 5, 8 } }, shopSpec) == "tab:returns",
+    "a tap on a suggestion opens it")
+
+-- runTabs opens More itself, and an extra with a function runs and comes
+-- back to the page it was opened from.
+do
+    local ran = 0
+    local visited = {}
+    local script = { "tab:more", "tab:more", "done" }
+    os.pullEvent = function() return "key", 28 end
+    local left = ui.runTabs({
+        list = { { id = "a", label = "A" }, { id = "b", label = "B" },
+            { id = "c", label = "C" }, { id = "d", label = "D" } },
+        more = { { id = "about", label = "About" } },
+        actions = { about = function() ran = ran + 1 end },
+        pages = {
+            a = function(spec) visited[#visited + 1] = "a" return table.remove(script, 1) end,
+            d = function(spec)
+                visited[#visited + 1] = "d"
+                -- Enter picks the first suggestion again: now "about" is
+                -- first, since "d" is the page this is opened from.
+                os.pullEvent = (function()
+                    local events = { { "key", 208 }, { "key", 28 } }
+                    return function() return table.unpack(table.remove(events, 1)) end
+                end)()
+                return table.remove(script, 1)
+            end,
+        },
+    })
+    assert(table.concat(visited, ",") == "a,d,d" and ran == 1 and left == "done",
+        "More opened a page, then ran an extra and came back: "
+            .. table.concat(visited, ",") .. " " .. ran)
+end
 
 -- Long CCG codes use the same touch/keyboard code field without inheriting
 -- the normal 24-character text-input ceiling. The field keeps the newest

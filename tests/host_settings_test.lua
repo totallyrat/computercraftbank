@@ -76,6 +76,9 @@ package.loaded["lib.util"] = {
             return { last_name = "Ana Fox", onboarding_complete = true,
                 modem_on = false, update_mode = "ask" }
         end
+        if bootDevice and tostring(path):find("device", 1, true) then
+            return bootDevice
+        end
         if tostring(path):find("apps", 1, true) then
             -- One installed app, so the built-in apps still fit on the
             -- first Home Screen page. It reaches a bank of its own, because
@@ -139,6 +142,8 @@ local client = {
     request = function(_, action, payload)
         requests[#requests + 1] = action
         if action == "LOGIN" then
+            loginNames = loginNames or {}
+            loginNames[#loginNames + 1] = payload.name
             return { account = account, session_token = "S" }
         elseif action == "ACCOUNT_SUMMARY" then
             return { account = account }
@@ -167,7 +172,12 @@ package.loaded["lib.net"] = {
         -- turning itself back on the moment an app or the App Browser
         -- builds a client of its own.
         package.loaded["lib.net"].openModems()
-        return client
+        -- A client of its own each time, as the real one is: the phone
+        -- wraps its client's request in the modem switch, and one shared
+        -- table would carry an earlier boot's switch into the next.
+        local fresh = {}
+        for key, value in pairs(client) do fresh[key] = value end
+        return fresh
     end,
     autoUpdate = function(_, _, _, _, options)
         updateOptions[#updateOptions + 1] = options or {}
@@ -312,9 +322,10 @@ function ui.pin(_, prompt)
     return "1234"
 end
 
--- Two sign-ins: the one at the start, and the one attempted after the modem
--- has been turned off.
-inputs = { "Ana Fox", "Ana Fox" }
+-- This phone has never been set up, so it signs in once, at the start. From
+-- then on (12.0) it opens on its account's lock screen, and the PIN is all
+-- it asks: turning the modem off and on again never types the name again.
+inputs = { "Ana Fox" }
 function ui.input() return table.remove(inputs, 1) end
 function ui.networkError(_, err) error("network error: " .. tostring(err)) end
 function ui.pin() return "1234" end
@@ -331,16 +342,18 @@ actions = {
     "check", "go",                     -- ask again, and take it this time
     "mode",                            -- then switch updates to automatic
     "back",
+    "tab:apps", "tab:account", "tab:phone",  -- 12.0: every tab
     -- 9.5: turning the modem off leaves you signed in. It used to drop the
     -- session, which parked the phone on a sign-in screen that needed the
     -- radio it had just switched off.
     "network", "toggle",               -- turn the modem off
-    "back",                            -- Settings still answers offline
+    "tab:account",                     -- still signed in: the account tab
+    "home",                            -- Settings still answers offline
     "open:tax",                        -- something that needs a server
     "open:browser", "back",            -- and something that builds a client
     "open:ext:TESTBANK",               -- including an app reaching its bank
     "open:settings", "network", "toggle", "back",  -- and back on again
-    "back",
+    "home",
     "__terminate",
 }
 local index = 0
@@ -378,6 +391,11 @@ function ui.scene()
     end
     return scene
 end
+dofile("ui_stub_fill.lua")(ui)
+-- 12.0: a phone with an account starts on its lock screen, which waits for
+-- a tap before asking for the PIN.
+os.startTimer = os.startTimer or function() return 0 end
+os.pullEvent = os.pullEvent or function() return "mouse_click", 1, 1, 1 end
 package.loaded["lib.ui"] = ui
 
 local ok, err = pcall(assert(loadfile("../pumpe.lua")))
@@ -412,10 +430,10 @@ assert(not drew("stopped"), "the PUMPE must not have crashed")
 -- 9.0 added enough to Settings that the old fixed layout stopped fitting a
 -- 20-row screen. The list pages instead, and every entry keeps its name on
 -- its own button rather than being drawn over a blank one.
-for _, label in ipairs({ "Network", "Storage", "Updates",
+for _, label in ipairs({ "Main colour", "Network", "Storage", "Updates",
     "App Settings", "Connected Apps", "How PUMPE Works", "Edit Your Dock",
-    "Sign Out", "Close PUMPE" }) do
-    assert(pressed(label), "Settings is missing " .. label)
+    "Remove account" }) do
+    assert(drew(label), "Settings is missing " .. label)
 end
 -- The Account ID moves money, so in 9.4 it left Settings for the bank
 -- section of the Foxy app, where the rest of the banking is.
@@ -550,7 +568,7 @@ savedDevice.modem_on = false
 index, actions = 0, {
     "open:settings",                   -- reachable with no session at all
     "network", "back",                 -- and the switch is right there
-    "back",
+    "home",
     "open:browser", "back",            -- nothing builds a client behind it
     "open:ext:TESTBANK",               -- and what is downloaded still opens
     "__terminate",
@@ -582,5 +600,53 @@ assert(appLiveRuns > appRunsBeforeBoot,
     "an app that is already downloaded still runs with no session and no"
         .. " network; browsing what is on the phone is the whole of what is"
         .. " left when the radio is off")
+
+-- 12.0: a PUMPE belongs to its Foxy Account -----------------------------------------
+-- It starts on the lock screen of the account it was set up with; the PIN is
+-- all it asks, and there is no sign-in screen to reach from there. Leaving is
+-- Remove account in Settings, and only then does it ask who it belongs to.
+
+bootOffline = false
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true,
+    modem_on = true, update_mode = "ask" }
+loginNames, inputs = {}, {}
+local drawsBeforeLock = #drawnText
+index, actions = 0, { "later", "__terminate" }
+local lockOk, lockErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(lockOk or tostring(lockErr):find("more actions", 1, true), tostring(lockErr))
+local function drewSinceLock(text)
+    for at = drawsBeforeLock + 1, #drawnText do
+        if drawnText[at]:find(text, 1, true) then return true end
+    end
+    return false
+end
+assert(drewSinceLock("PIN to unlock"), "it opens on the lock screen")
+assert(not drewSinceLock("Let us get you started"),
+    "and never on the sign-in screen")
+assert(#loginNames == 1 and loginNames[1] == "Ana Fox",
+    "the PIN opens the account it belongs to, with nothing typed")
+
+-- Remove account, from Settings.
+index, actions = 0, { "later", "open:settings", "tab:account", "logout",
+    "__terminate" }
+local removeOk, removeErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(removeOk or tostring(removeErr):find("more actions", 1, true),
+    tostring(removeErr))
+assert(savedDevice.last_name == "" and savedDevice.onboarding_complete == false,
+    "Remove account takes it off the phone")
+
+-- So the next start asks who it belongs to.
+bootDevice = { last_name = "", onboarding_complete = false, modem_on = true,
+    update_mode = "ask" }
+local drawsBeforeWelcome = #drawnText
+index, actions = 0, { "later", "exit", "__terminate" }
+local welcomeOk, welcomeErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(welcomeOk or tostring(welcomeErr):find("more actions", 1, true),
+    tostring(welcomeErr))
+local welcomed = false
+for at = drawsBeforeWelcome + 1, #drawnText do
+    if drawnText[at]:find("Let us get you started", 1, true) then welcomed = true end
+end
+assert(welcomed, "a phone with no account is asked who it belongs to")
 
 print("host_settings_test: OK")

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "11.9.0"
+local PROGRAM_VERSION = "11.9.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -81,6 +81,11 @@ local installed = util.loadTable(appsFile, { list = {} })
 installed.list = installed.list or {}
 
 ui.usePhoneStyle(true)
+-- 12.0: the colour this phone was given in its setup or in Settings. A
+-- phone left holding an older lib/ui.lua keeps the old colours rather
+-- than failing to start.
+local hasColors = type(ui.useMainColor) == "function"
+if hasColors then ui.useMainColor(ROOT) end
 
 local disableDeviceLock
 -- Settings opens the dock picker, which is defined with the Home Screen.
@@ -209,22 +214,31 @@ local function unlockAnimation()
     end
 end
 
+-- The lock screen, 12.0: the time in big block digits in the main colour,
+-- whose phone this is, and one pill at the bottom saying what opens it.
+local function drawLockScreen(name, blink, prompt, promptColor)
+    local width, height = target.getSize()
+    ui.clear(target)
+    ui.text(target, 2, 1, "PUMPE", ui.theme.muted, ui.theme.background)
+    ui.text(target, width - 2, 1, "[]", ui.theme.success, ui.theme.background)
+    local clock = util.formatClock(blink)
+    if not ui.wordmark(target, 4, clock, nil, ui.theme.accent) then
+        ui.center(target, 5, clock, ui.theme.ink)
+    end
+    ui.center(target, 10, "Day " .. util.ingameDay(), ui.theme.muted)
+    ui.center(target, 13, ui.truncate(name, width - 4), ui.theme.ink)
+    ui.center(target, 14, offline() and "Offline" or "Foxy Account",
+        ui.theme.muted)
+    local pillWidth = math.min(width - 4, #prompt + 6)
+    local x = math.floor((width - pillWidth) / 2) + 1
+    ui.fill(target, x, height - 2, pillWidth, 1, promptColor)
+    ui.center(target, height - 2, prompt, ui.inkOn(promptColor), promptColor)
+end
+
 local function lockScreen(forcePin)
     if not account then return end
     local blink = true
     while running and (sessionToken or offline()) do
-        local width, height = target.getSize()
-        ui.clear(target, colors.blue)
-        for row = 1, height do
-            if row % 4 == 0 then
-                ui.fill(target, 1, row, width, 1, colors.black, ".")
-            end
-        end
-        ui.text(target, 2, 1, "PUMPE", colors.lightGray, colors.blue)
-        ui.text(target, width - 2, 1, "[]", colors.lime, colors.blue)
-        ui.center(target, 5, util.formatClock(blink), colors.white, colors.blue)
-        ui.center(target, 7, "Day " .. util.ingameDay(), colors.lightGray, colors.blue)
-        ui.center(target, 11, account.name, colors.white, colors.blue)
         -- The PIN is checked by the Bank, and off the network there is no
         -- Bank to check it. Keeping the prompt would lock the phone for
         -- good; the money it guards is unreachable from here anyway, and
@@ -232,13 +246,11 @@ local function lockScreen(forcePin)
         local pinRequired = not offline() and (forcePin
             or ui.idleForMs()
                 >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000)
-        ui.center(target, height - 4,
-            pinRequired and "PIN required" or "Tap to open",
-            pinRequired and colors.orange or colors.white, colors.blue)
-        ui.center(target, height - 2, offline() and "Offline" or "Foxy Account",
-            colors.lightGray, colors.blue)
+        drawLockScreen(account.name, blink,
+            pinRequired and "PIN to unlock" or "Tap to open",
+            pinRequired and ui.theme.accent or ui.theme.panel)
 
-        local timer = os.startTimer(0.5)
+        os.startTimer(0.5)
         local event = { os.pullEvent() }
         if event[1] == "timer" then
             blink = not blink
@@ -276,6 +288,42 @@ local function lockScreen(forcePin)
     end
 end
 
+-- 12.0: a PUMPE belongs to its Foxy Account. It starts on the lock screen
+-- of the account it was set up with, and only that account's PIN opens it;
+-- there is no sign-in screen to wander off to. Taking the account off the
+-- phone is done from inside it, in Settings. Returns true once unlocked.
+local function lockedStart()
+    local blink = true
+    while running and not sessionToken do
+        drawLockScreen(device.last_name, blink, "PIN to unlock", ui.theme.accent)
+        os.startTimer(0.5)
+        local event = { os.pullEvent() }
+        if event[1] == "timer" then
+            blink = not blink
+        elseif event[1] == "terminate" then
+            running = false
+            return false
+        elseif event[1] == "mouse_click" or event[1] == "monitor_touch"
+            or event[1] == "key" or event[1] == "char" then
+            local pin = ui.pin(target, "Unlock PUMPE", true)
+            if pin then
+                local result, err = client:request("LOGIN", {
+                    name = device.last_name, pin = pin })
+                if result then
+                    sessionToken = result.session_token
+                    account = result.account
+                    ui.noteActivity()
+                    unlockAnimation()
+                    return true
+                end
+                ui.message(target, "error", "PUMPE Locked",
+                    err or "Incorrect PIN", 0.8)
+            end
+        end
+    end
+    return sessionToken ~= nil
+end
+
 local watchForUrgentCalls
 
 -- A PUMPE can be left holding a newer program than lib/ui.lua after a partial
@@ -301,11 +349,12 @@ disableDeviceLock = function()
     if canRingAnywhere then ui.setBackgroundTask(nil) end
 end
 
--- 11.0: a page of an app with tabs has them on the bottom row and its page
--- arrows one row up; anything else keeps Home down there.
+-- A page of an app with tabs has the floating bar a row above the bottom
+-- (12.0) and its page arrows just above that; anything else keeps Home on
+-- the bottom row.
 local function pageFooter(scene, page, pages, tabs)
     local width, height = scene.width, scene.height
-    local row = tabs and height - 1 or height
+    local row = tabs and height - 2 or height
     if tabs then
         ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
     else
@@ -768,7 +817,7 @@ local function myTicketsScreen(tabs)
         drawTicket(ticket, blink)
         local width, height = target.getSize()
         local scene = ui.scene(target)
-        local row = tabs and height - 1 or height
+        local row = tabs and height - 2 or height
         if tabs then
             ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
         else
@@ -3374,41 +3423,48 @@ end
 -- searches it, and a QuickAction can name one -- off one table rather than
 -- three that drift apart.
 local SETTINGS_ACTIONS = {
-    { id = "network", label = "Network", hint = "Modem on or off" },
-    { id = "storage", label = "Storage", hint = "What is on this PUMPE" },
-    { id = "updates", label = "Updates", hint = "Ask first, or automatic" },
-    { id = "apps", label = "App Settings", hint = "What apps may do" },
-    { id = "connected", label = "Connected Apps", hint = "Who you signed in" },
-    { id = "guide", label = "How PUMPE Works", hint = "The tour" },
-    { id = "dock", label = "Edit Your Dock", hint = "Your favourites" },
-    { id = "logout", label = "Sign Out", hint = "Leave this session" },
+    { id = "color", label = "Main colour", hint = "How your PUMPE looks",
+      tab = "phone" },
+    { id = "network", label = "Network", hint = "Modem on or off", tab = "phone" },
+    { id = "updates", label = "Updates", hint = "Ask first, or automatic",
+      tab = "phone" },
+    { id = "storage", label = "Storage", hint = "What is on this PUMPE",
+      tab = "phone" },
+    { id = "apps", label = "App Settings", hint = "What apps may do", tab = "apps" },
+    { id = "connected", label = "Connected Apps", hint = "Who you signed in",
+      tab = "apps" },
+    { id = "dock", label = "Edit Your Dock", hint = "Your favourites", tab = "apps" },
+    { id = "guide", label = "How PUMPE Works", hint = "The tour", tab = "account" },
+    { id = "logout", label = "Remove account", hint = "Take it off this PUMPE",
+      tab = "account" },
     { id = "close", label = "Close PUMPE", hint = "Stop the program" },
 }
 
--- Settings is a list now rather than a handful of buttons: 9.0 added
--- enough to it that a fixed layout stopped fitting a 20-row pocket screen,
--- and paging works on any size rather than only the two I happened to try.
--- 10.0 Simple put a search bar on top of it, because nine screens behind two
--- page turns is nine screens you have to already know the position of.
+-- Settings, 12.0: three tabs -- the phone, its apps, the account -- and More,
+-- whose search finds any setting. A deep link (search, a QuickAction) still
+-- opens one setting and comes straight back out.
 local function settingsScreen(wanted)
-    local page, filter = 1, nil
-
     local function settingValue(id)
         if id == "network" then
             return device.modem_on == false and "Off" or "On",
                 device.modem_on == false
         elseif id == "updates" then
             return device.update_mode == "auto" and "Auto" or "Ask", false
+        elseif id == "color" then
+            for _, entry in ipairs(ui.MAIN_COLORS) do
+                if entry.id == ui.mainColor then return entry.label, false end
+            end
         end
         return "", false
     end
 
-    -- One place that knows what each setting opens, so the list, the search
-    -- results and a QuickAction all reach the same screen.
+    -- One place that knows what each setting opens, so the tabs, More's
+    -- search and a QuickAction all reach the same screen.
     local function openSetting(id)
         if id == "network" then
             networkScreen()
             if not sessionToken and not offline() then return "exit" end
+        elseif id == "color" then ui.pickMainColor(target, ROOT)
         elseif id == "storage" then storageScreen()
         elseif id == "updates" then updatesScreen()
         elseif id == "apps" then appSettingsScreen()
@@ -3416,9 +3472,17 @@ local function settingsScreen(wanted)
         elseif id == "guide" then guideScreen(true)
         elseif id == "dock" then favouritesPicker()
         elseif id == "logout" then
-            if ui.confirm(target, "Sign Out", "Leave this PUMPE session?",
-                "Sign Out", "Back") then
+            -- 12.0: a PUMPE opens on its account's lock screen, so leaving
+            -- is not signing out for a moment -- it is this phone forgetting
+            -- the account, and the next start asks who it belongs to.
+            if ui.confirm(target, "Remove account",
+                "Take " .. (account and account.name or "this account")
+                    .. " off this PUMPE? It will ask who it belongs to next.",
+                "Remove", "Back") then
                 sessionToken, betAccessToken, account = nil, nil, nil
+                device.last_name = ""
+                device.onboarding_complete = false
+                saveDevice()
                 disableDeviceLock()
                 return "exit"
             end
@@ -3431,8 +3495,6 @@ local function settingsScreen(wanted)
         end
     end
 
-    -- Opened from search or a QuickAction: go straight there and come back
-    -- out, rather than dropping somebody into a list they did not ask for.
     if wanted then
         for _, item in ipairs(SETTINGS_ACTIONS) do
             if item.id == wanted then
@@ -3442,85 +3504,81 @@ local function settingsScreen(wanted)
         end
     end
 
-    while running and (sessionToken or offline()) do
-        if not account then account = cachedProfile() end
-        local width, height = target.getSize()
-        local entries = {}
-        local needle = filter and string.lower(filter) or nil
-        for _, item in ipairs(SETTINGS_ACTIONS) do
-            local value, warn = settingValue(item.id)
-            if not needle
-                or string.lower(item.label):find(needle, 1, true)
-                or string.lower(item.hint):find(needle, 1, true) then
-                entries[#entries + 1] = { id = item.id, label = item.label,
-                    value = value, warn = warn }
+    local closed = false
+    local function page(tabId, title)
+        return function(spec)
+            while running and (sessionToken or offline()) and not closed do
+                if not account then account = cachedProfile() end
+                local width = target.getSize()
+                ui.clear(target)
+                ui.header(target, title, account.name, util.formatClock())
+                local scene = ui.scene(target)
+                local y = 5
+                if tabId == "account" then
+                    ui.card(target, 2, y, width - 2, 3, ui.theme.accent)
+                    ui.text(target, 4, y, "FOXY ACCOUNT", ui.theme.muted,
+                        ui.theme.panel)
+                    ui.text(target, 4, y + 1, ui.truncate(account.name, width - 6),
+                        ui.theme.ink, ui.theme.panel)
+                    ui.text(target, 4, y + 2, ui.truncate(account.personal_number
+                        and ("NO " .. tostring(account.personal_number))
+                        or "Offline", width - 6), ui.theme.muted, ui.theme.panel)
+                    y = y + 4
+                end
+                for _, item in ipairs(SETTINGS_ACTIONS) do
+                    if item.tab == tabId and y + 1 <= ui.contentBottom(target) then
+                        local danger = item.id == "logout"
+                        local background = danger and ui.theme.danger or ui.theme.panel
+                        scene:button(item.id, 2, y, width - 2, 2, "", {
+                            background = background })
+                        ui.text(target, 4, y, item.label, ui.theme.ink, background)
+                        ui.text(target, 4, y + 1, ui.truncate(item.hint, width - 6),
+                            danger and ui.theme.ink or ui.theme.muted, background)
+                        local value, warn = settingValue(item.id)
+                        if value ~= "" then
+                            ui.text(target, width - #value - 1, y, value,
+                                warn and ui.theme.warning or ui.theme.accent,
+                                background)
+                        end
+                        y = y + 3
+                    end
+                end
+                ui.tabBar(scene, target, spec.list, spec.active)
+                local action = scene:wait()
+                if action == "home" or action == "__terminate"
+                    or (action or ""):match("^tab:") then
+                    return action
+                end
+                if openSetting(action) == "exit" then
+                    closed = true
+                    return "home"
+                end
             end
-        end
-        ui.clear(target)
-        ui.header(target, "Settings", account.name, util.formatClock())
-        ui.card(target, 2, 5, width - 2, 3, ui.theme.accent)
-        ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 6, ui.truncate(account.name, width - 6),
-            ui.theme.ink, ui.theme.panel)
-        ui.text(target, 4, 7, ui.truncate(account.personal_number
-            and ("NO " .. tostring(account.personal_number)) or "Offline",
-            width - 6), ui.theme.muted, ui.theme.panel)
-
-        local top = 9
-        local bottom = height - 2
-        local perPage = math.max(1, bottom - top + 1)
-        local pages = math.max(1, math.ceil(#entries / perPage))
-        page = math.max(1, math.min(page, pages))
-        local scene = ui.scene(target)
-        scene:button("find", 2, top - 1, width - 2, 1,
-            ui.truncate(filter and ("Q  " .. filter) or "Q  Search settings",
-                width - 4),
-            { background = filter and ui.theme.accentDark or ui.theme.panel })
-        if #entries == 0 then
-            ui.text(target, 2, top + 1, "Nothing matches", ui.theme.muted)
-        end
-        for slot = 1, perPage do
-            local entry = entries[(page - 1) * perPage + slot]
-            if not entry then break end
-            local y = top + slot - 1
-            -- The label goes on the button rather than being drawn over an
-            -- empty one: a button nobody can read the name of is a button
-            -- nobody can find, and it is what these rows are called.
-            local background = entry.id == "logout" and ui.theme.danger
-                or ui.theme.panel
-            scene:button(entry.id, 2, y, width - 2, 1, entry.label,
-                { background = background })
-            if entry.value ~= "" then
-                ui.text(target, width - #entry.value, y, entry.value,
-                    entry.warn and ui.theme.warning or ui.theme.muted,
-                    background)
-            end
-        end
-        if pages > 1 then
-            scene:button("prev", width - 8, height, 3, 1, "^",
-                { background = ui.theme.panel, disabled = page <= 1 })
-            scene:button("next", width - 4, height, 3, 1, "v",
-                { background = ui.theme.panel, disabled = page >= pages })
-        end
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
-
-        local action = scene:wait()
-        if action == "back" or action == "__terminate" then return end
-        if action == "prev" then page = page - 1
-        elseif action == "next" then page = page + 1
-        elseif action == "find" then
-            local typed = ui.input(target, "Search settings", {
-                hint = "Leave it empty to see all", initial = filter,
-                maxLength = 20, allowSpace = true,
-            })
-            filter = typed and util.trim(typed) ~= "" and util.trim(typed)
-                or nil
-            page = 1
-        elseif openSetting(action) == "exit" then
-            return
+            return "home"
         end
     end
+
+    local more, actions = {}, {}
+    for _, item in ipairs(SETTINGS_ACTIONS) do
+        more[#more + 1] = { id = "set:" .. item.id, label = item.label,
+            hint = item.hint }
+        actions["set:" .. item.id] = function()
+            if openSetting(item.id) == "exit" then closed = true end
+        end
+    end
+    ui.runTabs({
+        title = "Settings",
+        list = { { id = "phone", label = "Phone" },
+            { id = "apps", label = "Apps" },
+            { id = "account", label = "Account", short = "Me" } },
+        pages = { phone = page("phone", "Settings"), apps = page("apps", "Apps"),
+            account = page("account", "Account") },
+        more = more,
+        actions = actions,
+        running = function()
+            return running and (sessionToken or offline()) and not closed
+        end,
+    })
 end
 
 -- The PUMPE OS: consolidated apps, alerts, banners, and favourites ----------
@@ -3545,8 +3603,8 @@ local function friendsApp(action)
     if action == "urgent" then urgentScreen() return end
     ui.runTabs({
         list = { { id = "messages", label = "Chats" },
-            { id = "people", label = "Friends" },
-            { id = "urgent", label = "Urgent" } },
+            { id = "people", label = "Friends", short = "Pals" },
+            { id = "urgent", label = "Urgent", short = "SOS" } },
         color = colors.cyan,
         start = action == "people" and "people" or "messages",
         pages = { messages = messagesScreen, people = friendsScreen,
@@ -3560,6 +3618,8 @@ local function friendsApp(action)
             local unread = poll.unread_messages or 0
             spec.list[1].label = unread > 0
                 and ("Chats " .. math.min(unread, 9)) or "Chats"
+            spec.list[1].short = unread > 0 and ("Chat" .. math.min(unread, 9))
+                or nil
         end,
     })
 end
@@ -3567,7 +3627,7 @@ end
 local function ticketsApp(action)
     ui.runTabs({
         list = { { id = "events", label = "Events" },
-            { id = "mine", label = "My tickets" } },
+            { id = "mine", label = "My tickets", short = "Mine" } },
         color = colors.orange,
         start = action == "mine" and "mine" or "events",
         pages = { events = eventsScreen, mine = myTicketsScreen },
@@ -3578,7 +3638,7 @@ end
 local function customsApp(action)
     ui.runTabs({
         list = { { id = "visas", label = "Visas" },
-            { id = "territories", label = "Territories" } },
+            { id = "territories", label = "Territories", short = "Land" } },
         color = colors.lightBlue,
         start = action == "territories" and "territories" or "visas",
         pages = { visas = visasScreen, territories = customsScreen },
@@ -5001,9 +5061,23 @@ local function homeLayout(width, height)
         dividerY = dockY - 1,
         dockY = dockY,
         listBottom = dockY - 2,
+        -- 12.0: the page dots, the lock and the page arrows share one
+        -- floating pill, clear of the bottom row like every tab bar.
         dotsY = height - 1,
-        navY = height,
+        navY = height - 1,
     }
+end
+
+-- A pill of panel grey, `rows` high, from column 2 to the second-last: the
+-- shape of every bar along the bottom since 12.0.
+local PILL_CAP = string.char(149)
+local function pill(y, rows, width)
+    ui.fill(target, 3, y, math.max(0, width - 4), rows, ui.theme.panel)
+    for row = y, y + rows - 1 do
+        ui.text(target, 2, row, PILL_CAP, ui.theme.background, ui.theme.panel)
+        ui.text(target, width - 1, row, PILL_CAP, ui.theme.panel,
+            ui.theme.background)
+    end
 end
 
 -- One icon: a small coloured square, the app name under it, and an unread
@@ -5025,11 +5099,13 @@ local function drawIcon(scene, action, app, x, y, layout, badge)
     scene:hotspot(action, nameX, y + 2, #name, 1)
 end
 
--- The dock follows every app page. An empty slot is the way into the picker.
+-- The dock follows every app page, floating on a pill of its own. An empty
+-- slot is the way into the picker.
 local function drawDock(scene, layout, poll, width)
-    local slotWidth = math.max(3, math.floor((width - 2) / DOCK_SLOTS) - 1)
+    pill(layout.dockY, 2, width)
+    local slotWidth = math.max(3, math.floor((width - 4) / DOCK_SLOTS) - 1)
     local span = DOCK_SLOTS * (slotWidth + 1) - 1
-    local left = math.max(1, math.floor((width - span) / 2) + 1)
+    local left = math.max(3, math.floor((width - span) / 2) + 1)
     -- The search bar: one row where the divider line was, so the grid of
     -- apps keeps every row it had. It looks like the field it opens.
     ui.fill(target, 2, layout.dividerY, width - 2, 1, ui.theme.panel)
@@ -5042,7 +5118,8 @@ local function drawDock(scene, layout, poll, width)
         local id = chosen[slot]
         if id then
             scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
-                APPS[id].glyph, { background = APPS[id].color })
+                APPS[id].glyph, { background = APPS[id].color,
+                    corner = ui.theme.panel })
             local badge = appBadge(id, poll)
             if badge then
                 ui.text(target, x + slotWidth - 2, layout.dockY,
@@ -5050,7 +5127,8 @@ local function drawDock(scene, layout, poll, width)
             end
         else
             scene:button("edit", x, layout.dockY, slotWidth, 2, "+",
-                { background = ui.theme.panel })
+                { background = ui.theme.panelAlt, foreground = colors.black,
+                    corner = ui.theme.panel })
         end
     end
 end
@@ -5734,19 +5812,27 @@ local function mainMenu()
             drawDock(scene, layout, poll, width)
         end
 
+        -- One pill: back a page, the dots with the lock beside them, on a
+        -- page. The bottom row stays clear.
         local dots = {}
         for dot = 1, pages do
             dots[dot] = dot == page and "o"
                 or (dot == pages and unread > 0 and "!" or ".")
         end
-        ui.center(target, layout.dotsY, table.concat(dots, " "),
-            ui.theme.muted, ui.theme.background)
-        scene:button("prev", 1, layout.navY, 7, 1, "<",
-            { background = ui.theme.panel, disabled = page == 1 })
-        scene:button("next", width - 6, layout.navY, 7, 1, ">",
-            { background = ui.theme.panel, disabled = page == pages })
-        scene:button("lock", math.floor(width / 2) - 3, layout.navY, 7, 1,
-            "()", { background = ui.theme.panel })
+        local middle = table.concat(dots, " ") .. "   ()"
+        pill(layout.navY, 1, width)
+        local middleX = math.floor((width - #middle) / 2) + 1
+        ui.text(target, middleX, layout.navY, middle, ui.theme.muted,
+            ui.theme.panel)
+        ui.text(target, middleX + #middle - 2, layout.navY, "()",
+            ui.theme.accent, ui.theme.panel)
+        scene:hotspot("lock", middleX + #middle - 3, layout.navY, 4, 1)
+        ui.text(target, 4, layout.navY, "<", page == 1 and ui.theme.shadow
+            or ui.theme.ink, ui.theme.panel)
+        ui.text(target, width - 3, layout.navY, ">", page == pages
+            and ui.theme.shadow or ui.theme.ink, ui.theme.panel)
+        if page > 1 then scene:hotspot("prev", 3, layout.navY, 4, 1) end
+        if page < pages then scene:hotspot("next", width - 5, layout.navY, 4, 1) end
 
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
@@ -5820,7 +5906,21 @@ end
 while running do
     -- Off the network there is nobody to sign in to, so the phone opens as
     -- itself instead of parking on a sign-in screen it cannot finish.
-    if not sessionToken and not offline() then welcome() end
+    if not sessionToken and not offline() then
+        -- A phone with an account opens on its lock screen; only a phone
+        -- with none is asked who it belongs to.
+        if device.onboarding_complete and device.last_name ~= "" then
+            lockedStart()
+        else
+            welcome()
+        end
+        -- Once, for every phone: new ones as the last step of setting up,
+        -- the rest the first time they open on 12.0.
+        if sessionToken and hasColors and not ui.hasMainColor(ROOT) then
+            ui.pickMainColor(target, ROOT, "Pick your colour")
+            if not ui.hasMainColor(ROOT) then ui.saveMainColor(ROOT, ui.mainColor) end
+        end
+    end
     if sessionToken or offline() then mainMenu() end
 end
 

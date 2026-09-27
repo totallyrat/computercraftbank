@@ -17,9 +17,17 @@ return function(api)
     local ui, util, target, colors = api.ui, api.util, api.target, api.colors
 
     local FOX = colors.orange
+    -- 12.0: three on the bar, and Me -- your addresses -- behind More.
     local TABS = { { id = "inbox", label = "Inbox" },
         { id = "sent", label = "Sent" }, { id = "write", label = "Write" },
-        { id = "me", label = "Me" } }
+        { id = "me", label = "Me", hint = "Your addresses" } }
+
+    -- A tap on More opens it, and comes back as the page chosen there.
+    local function tabbed(action, active)
+        if type(ui.resolveTab) ~= "function" then return action end
+        return ui.resolveTab(target, action, { list = TABS, active = active,
+            title = "FoxMail", subtitle = "Everything in FoxMail" })
+    end
 
     local saved = type(api.load) == "function" and api.load() or {}
     local me, current
@@ -278,7 +286,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, TABS, box, FOX)
-            local action = scene:wait({ tickRate = 5 })
+            local action = tabbed(scene:wait({ tickRate = 5 }), box)
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "prev" then
@@ -351,7 +359,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, TABS, "me", FOX)
-            local action = scene:wait()
+            local action = tabbed(scene:wait(), "me")
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "prev" then

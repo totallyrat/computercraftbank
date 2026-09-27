@@ -4,22 +4,40 @@
 -- Reading the web. Type a domain and the phone fetches it, runs it and
 -- throws it away again.
 --
--- This app does almost nothing on purpose. It is an address bar and a short
--- history; everything that matters happens in api.browse, on the phone,
--- because running code somebody else wrote is not a thing an app should be
--- able to do on its own.
+-- This app does almost nothing on purpose. It is an address bar, the sites
+-- you saved and the ones you visited; everything that matters happens in
+-- api.browse, on the phone, because running code somebody else wrote is not
+-- a thing an app should be able to do on its own.
+--
+-- 12.0: tabs -- Go, Saved, Recent -- and More, which searches both lists.
+-- What you visited and saved is kept on the phone now; it used to be
+-- forgotten every time the app closed.
 
 return function(api)
     local ui, util, target = api.ui, api.util, api.target
     local colors = api.colors
 
     local NET = colors.lightBlue
-    local history = {}
+    local HISTORY_SIZE = 12
+    local saved = type(api.load) == "function" and api.load() or {}
+    saved.history = type(saved.history) == "table" and saved.history or {}
+    saved.bookmarks = type(saved.bookmarks) == "table" and saved.bookmarks or {}
+    local history, bookmarks = saved.history, saved.bookmarks
+
+    local TABS = { { id = "go", label = "Go" },
+        { id = "saved", label = "Saved" }, { id = "recent", label = "Recent" } }
 
     local function running() return api.running() end
+    local function keep()
+        if type(api.save) == "function" then api.save(saved) end
+    end
+
+    local function clean(domain)
+        return string.lower(util.trim(tostring(domain or "")))
+    end
 
     local function visit(domain)
-        domain = string.lower(util.trim(tostring(domain or "")))
+        domain = clean(domain)
         if domain == "" then return end
         if type(api.browse) ~= "function" then
             ui.message(target, "info", "Not on this PUMPE",
@@ -30,7 +48,8 @@ return function(api)
             if history[index] == domain then table.remove(history, index) end
         end
         table.insert(history, 1, domain)
-        while #history > 4 do table.remove(history) end
+        while #history > HISTORY_SIZE do table.remove(history) end
+        keep()
         api.browse(domain)
     end
 
@@ -41,6 +60,13 @@ return function(api)
         })
     end
 
+    local function isSaved(domain)
+        for index, item in ipairs(bookmarks) do
+            if item == domain then return index end
+        end
+        return nil
+    end
+
     -- Opened by name from search: straight to the address bar.
     if type(api.action) == "function" and api.action() == "go" then
         local typed = ask()
@@ -48,41 +74,123 @@ return function(api)
         return
     end
 
-    while running() do
-        local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, "Internet", "Type a domain", util.formatClock())
-        local scene = ui.scene(target)
-        scene:button("go", 2, 5, width - 2, 3, "Go to a domain",
-            { background = NET, foreground = colors.black, shadow = true })
-        if #history == 0 then
-            -- No list of every site on the server. It was a phone book
-            -- nobody asked for, and a front page belonging to whoever
-            -- happened to publish first.
-            ui.wrappedText(target, 2, 10, "Websites are made in Website"
-                .. " Crafter. Ask somebody for theirs, or make one.",
-                width - 2, 5, ui.theme.muted)
-        else
-            ui.text(target, 2, 10, "RECENTLY", ui.theme.muted)
-            for index, domain in ipairs(history) do
-                local y = 11 + index
-                if y <= height - 2 then
-                    scene:button("again:" .. index, 2, y, width - 2, 1,
-                        ui.truncate(domain, width - 4),
-                        { background = ui.theme.panel })
-                end
+    -- A list of domains, one row each, on whatever tab is showing. Saved
+    -- ones also get an x, to take them off the list.
+    local function drawList(scene, list, top, prefix, empty, removable)
+        local width = target.getSize()
+        local bottom = type(ui.contentBottom) == "function"
+            and ui.contentBottom(target) or select(2, target.getSize()) - 2
+        if #list == 0 then
+            ui.wrappedText(target, 2, top, empty, width - 2, 4, ui.theme.muted)
+            return
+        end
+        for index, domain in ipairs(list) do
+            local y = top + (index - 1)
+            if y > bottom then break end
+            scene:button(prefix .. index, 2, y, removable and width - 6 or width - 2, 1,
+                ui.truncate((isSaved(domain) and "* " or "") .. domain, width - 8),
+                { background = ui.theme.panel })
+            if removable then
+                scene:button("unmark:" .. index, width - 3, y, 3, 1, "x",
+                    { background = ui.theme.danger })
             end
         end
-        scene:button("back", 1, height, 8, 1, "< Home",
-            { background = ui.theme.panel })
+    end
+
+    local tab = "go"
+    while running() do
+        local width = target.getSize()
+        ui.clear(target)
+        local scene = ui.scene(target)
+        if tab == "go" then
+            ui.header(target, "Internet", "Type a domain", util.formatClock())
+            scene:button("go", 2, 5, width - 2, 3, "Go to a domain",
+                { background = NET, foreground = colors.black, shadow = true })
+            if #history == 0 then
+                -- No list of every site on the server. It was a phone book
+                -- nobody asked for, and a front page belonging to whoever
+                -- happened to publish first.
+                ui.wrappedText(target, 2, 10, "Websites are made in Website"
+                    .. " Crafter. Ask somebody for theirs, or make one.",
+                    width - 2, 5, ui.theme.muted)
+            else
+                ui.text(target, 2, 10, "RECENTLY", ui.theme.muted)
+                local recent = {}
+                for index = 1, math.min(4, #history) do recent[index] = history[index] end
+                drawList(scene, recent, 11, "again:", "")
+            end
+        elseif tab == "saved" then
+            ui.header(target, "Saved", #bookmarks .. " sites", util.formatClock())
+            scene:button("add", 2, 4, width - 2, 1, "+ Save a domain",
+                { background = ui.theme.accentDark })
+            drawList(scene, bookmarks, 6, "mark:",
+                "Nothing saved yet. Save a site to find it here.", true)
+        else
+            ui.header(target, "Recent", #history .. " sites", util.formatClock())
+            if #history > 0 then
+                scene:button("clear", 2, 4, width - 2, 1, "Clear what you visited",
+                    { background = ui.theme.panel })
+            end
+            drawList(scene, history, 6, "again:", "Nothing visited yet.")
+        end
+        if type(ui.tabBar) == "function" then
+            ui.tabBar(scene, target, TABS, tab, NET)
+        else
+            local _, height = target.getSize()
+            scene:button("home", 1, height, 8, 1, "< Home",
+                { background = ui.theme.panel })
+        end
         local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return end
-        if action == "go" then
+        if action == "tab:more" and type(ui.resolveTab) == "function" then
+            -- More searches every site in both lists.
+            local more, seen = {}, {}
+            for _, list in ipairs({ bookmarks, history }) do
+                for _, domain in ipairs(list) do
+                    if not seen[domain] then
+                        seen[domain] = true
+                        more[#more + 1] = { id = "visit:" .. domain, label = domain,
+                            hint = isSaved(domain) and "Saved" or "Visited" }
+                    end
+                end
+            end
+            action = ui.resolveTab(target, action, { list = TABS, active = tab,
+                more = more, title = "Internet", subtitle = "Your sites" })
+        end
+        if action == "home" or action == "back" or action == "__terminate" then
+            return
+        end
+        local picked = (action or ""):match("^tab:(.+)$")
+        local visitDomain = (action or ""):match("^visit:(.+)$")
+        local again = tonumber(action and action:match("^again:(%d+)$"))
+        local mark = tonumber(action and action:match("^mark:(%d+)$"))
+        local unmark = tonumber(action and action:match("^unmark:(%d+)$"))
+        if picked then
+            tab = picked
+        elseif visitDomain then
+            visit(visitDomain)
+        elseif action == "go" then
             local typed = ask()
             if typed then visit(typed) end
-        else
-            local index = tonumber(action and action:match("^again:(%d+)$"))
-            if index and history[index] then visit(history[index]) end
+        elseif action == "add" then
+            local typed = ask()
+            local domain = typed and clean(typed)
+            if domain and domain ~= "" and not isSaved(domain) then
+                table.insert(bookmarks, 1, domain)
+                keep()
+            end
+        elseif action == "clear" then
+            if ui.confirm(target, "Clear it?", "The sites you visited are"
+                .. " forgotten. Saved ones stay.", "Clear", "Keep") then
+                for index = #history, 1, -1 do history[index] = nil end
+                keep()
+            end
+        elseif again and history[again] then
+            visit(history[again])
+        elseif mark and bookmarks[mark] then
+            visit(bookmarks[mark])
+        elseif unmark and bookmarks[unmark] then
+            table.remove(bookmarks, unmark)
+            keep()
         end
     end
 end
