@@ -8,8 +8,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | --- | --- | --- |
 | `bank_server.lua` | Advanced Computer + wireless/Ender modem + wired modem to its Vault | The Bank Core: balances, sessions, PINs, the inter-bank ledger, tax, CCG escrow, pay codes, companies, Easy Deployment. Everything else goes to its Vault |
 | `bank_vault.lua` | Advanced Computer + wired modem to its Core | The Bank Vault: friends and chat, travel, events and tickets, app records, the Shop's orders, FoxMail, and since 11.2 every account's history and notifications |
-| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, Bet and Bet Wallet apps, Customs and Visas, events, tickets, tax, subscriptions |
-| `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track, and Survivor arena |
+| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, the CCG app (Bet Play and Home Mode), Customs and Visas, events, tickets, tax, subscriptions |
+| `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track and Survivor arena; since 12.0 Home Mode, four free games for one player with a PUMPE as the controller |
 | `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Square-style touch POS, favorites, products, receipts, payment codes, withdrawals, subscriptions |
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
 | `admin_terminal.lua` | Advanced Computer + wireless/Ender modem | Government-only tax controls, account approval, balances, bans, tax demands, announcements |
@@ -31,6 +31,9 @@ All screens support touch. Physical keyboard input also works.
 
 PUMPE now behaves like a small phone rather than a list of bank buttons:
 
+- **Since 12.0 a PUMPE belongs to its Foxy Account.** It starts on the lock screen of the account it was set up with — a big clock and the account's name — and the PIN is all it asks. There is no sign-in screen to reach from there; **Remove account** in Settings is how a phone changes hands.
+- **Every device has a main colour** (12.0). Orange like the fox out of the box; the PUMPE asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it in More; the Bank Server and Vault keep the Bank's colours.
+
 - Start-up spells **PUMPE** one letter at a time, then holds **Small yet Mighty** for two seconds. Installing a release is the opposite: since 10.0 the wordmark sits over a bar that fills for twenty seconds whether or not it needs to, because a release lands in about two and a phone that goes dark and comes back subtly different reads as a glitch rather than an update.
 - Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a six-step guide to the phone. **How PUMPE Works** in Settings re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
@@ -43,7 +46,7 @@ PUMPE now behaves like a small phone rather than a list of bank buttons:
 - **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
 - Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
 - The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
-- **Bet** and **Bet Wallet** are separate apps. Bet requires the Foxy Account PIN every time it opens; Bet Wallet shows available and held game funds and requires the PIN for transfers.
+- **CCG** (the Bet app until 12.0) has three tabs: **Home** plays Home Mode on your own console, **Bet** joins a lobby and needs the Foxy Account PIN every time, and **Scores** keeps your best at home. The Bet Wallet is in Foxy.
 - After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 - **Turning the modem off leaves you signed in.** Settings → Network takes the phone off the network; since 9.5 that is all it does. The Home Screen, Settings and everything already downloaded keep working, the header reads **Offline** where the balance goes, and anything needing a server says so instead of hanging. A phone that starts up with the modem off opens the same way, under the name it last signed in as — a label, not a session, and the first thing it can do back on the network is sign in properly. Off the network the Lock Screen opens on a tap, because the PIN is checked by the Bank and there is no Bank to check it.
 
@@ -70,11 +73,16 @@ Reminders and QuickActions are kept on the phone and fired by the Home Screen's 
 
 **Tabs along the bottom are the standard.** An app with more than one part puts its parts in a row on the bottom line, the way Shop did first, and **the mark at the top left (`<PUMPE`) goes home** from any of them.
 
+**Since 12.0 the tabs float.** They sit in a pill on the row above the bottom, clear of both sides and of the bottom row. Three parts go on it, and the fourth place is always **More**: every other page, a search box, and suggestions as you type. The same bar is on every kiosk, terminal and server — there without the home mark, because a kiosk has no home screen to go back to.
+
 | App | Tabs |
 | --- | --- |
 | Foxy | Bank, Account |
 | FoxMail | Inbox, Sent, Write, Me |
 | Shop | Stores, Delivery, Places |
+| CCG | Home, Bet, Scores |
+| Company | Products, Store, Points; Discounts in More |
+| Settings | Phone, Apps, Account; every setting in More |
 | Friends | Chats (with the unread count), Friends, Urgent |
 | Tickets | Events, My tickets |
 | Customs | Visas, Territories |
@@ -159,7 +167,15 @@ Waiting lobbies expire after five minutes and return every reserved wager, and a
 
 Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
 
-Home Play and its Pocket Computer controller are intentionally deferred to a later update; v6.2.0 contains the complete Bet Play mode.
+### Home Mode (12.0)
+
+Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048** — free: no lobby, no wager, and no CCG Server. The console runs them and your PUMPE is the controller.
+
+1. On the console, press **HOME MODE** and enter its **Home PIN**. The owner sets it on the console's first start; a console that was already running asks on its first start after 12.0 (never over an arena in Auto Mode, which has to come back by itself).
+2. The console shows a **six digit code**. Open **CCG → Home** on your PUMPE and type it.
+3. Your PUMPE shows the games, then a pad: arrows and **A** (arrow keys and Space work too). The game is on the big screen, the score on your phone.
+
+One controller at a time. Five wrong codes and the console shows a new one. **Unpair** on the phone, closing the app, or **EXIT** on the console lets it go, and it shows a new code for the next player. The best score at each game is kept on the console; **Scores** on the phone keeps yours. A console that cannot reach the CCG Server still offers Home Mode, and its main colour is changed with **COLOR** on the pairing screen, behind the PIN.
 
 ### Auto Mode
 
@@ -237,6 +253,8 @@ Which half is which is decided by where the data already is: the server holding 
 If a Vault is destroyed or a cable is cut, the Bank Server's dashboard shows it, and its **PAIR** button pairs a replacement.
 
 **History and notifications are the Vault's (11.2).** They are what a bank accumulates for ever, and until 11.2 the Core kept them in the same file as the money — three thousand transactions and fifty notifications per account — until they filled its disk and it would not start. Now every transaction and notification goes down the cable to the Vault, which keeps each account's newest thirty transactions and twenty notifications in a small file of its own (`records/<account>.dat`), so saving one person's never rewrites anybody else's. The Core keeps what money needs: balances, each account's unread count and newest notification (so a phone's poll never crosses the cable), and a day-by-day income tally that tax periods add up. Records wait in an outbox the Core saves with the money, so a Vault that is away — or still on an older release — loses nothing; Foxy's Activity and the phone's notifications show waiting records too, and the dashboard counts them. The Vault ignores a record it already has, so sending one twice is harmless.
+
+**UPDATE VAULT (12.0).** While the Vault runs an older release than the Bank, the Bank Server's **Server** tab shows **UPDATE VAULT** next to **RE-PAIR**, and its status says why the last try did not go. Pressing it sends the release over the cable with every step on screen. Since 12.0 a Vault clears what it kept from being a Bank Server — the old `/updates` download cache, unfinished staging, `bank_server.lua` — at boot and before every update, and reports its free space; a full disk is refused with how much it needs. A Vault from before 12.0 that says its disk is full needs that done by hand once: hold Ctrl+T on it, type `delete /updates`, then `reboot`.
 
 **Updates travel down the cable (11.0).** When the Core runs a newer release than its Vault, it sends the Vault that release over the pair cable — the Vault's program and the shared files, each checked against the published manifest — and the Vault installs it the way an internet update is installed (its own `config.lua` settings kept, every file swapped in or none) and restarts. A paired Vault no longer fetches its own, so the two halves always run the same release; an unpaired one still updates itself. The Vault takes a release only from its own Core, and only a newer one.
 
@@ -428,7 +446,7 @@ New in 10.2. Buying something no longer means walking to the store.
 
 ### Opening a store
 
-A store belongs to a company, so it is opened from a **Service Kiosk linked to that company** (`S` for settings, then **ONLINE STORE**), or since 11.1 from the **Company app** on the owner's phone (the company, then **Store**).
+A store belongs to a company, so it is opened from a **Service Kiosk linked to that company** (its **Store** tab), or since 11.1 from the **Company app** on the owner's phone (the company, then **Store**).
 
 - **Colour** — one of thirteen. The store's cards, buttons and order screens are painted in it on every buyer's phone.
 - **Tagline** — what the store sells, in a line. Search reads it as well as the name.
@@ -447,13 +465,24 @@ The money for every order goes to the company owner's Foxy account, fee included
 - A store's terms are fixed when somebody pays; changing them changes new orders only.
 - **The two hours and five days are in-game time**, like every clock in the Shop. A Minecraft day is twenty real minutes, so that is about 1m40s and 1h40m of real time. `shop_confirm_hours`, `shop_min_return_days` and `shop_max_return_days` in `config.lua` change them.
 
+### Discounts (12.0)
+
+Set up in the Company app: the company, then **More → Discounts**.
+
+- **A sale** takes a percentage off everything in the store, up to 90%.
+- **Free delivery** on home deliveries — always, or when what is paid (after discounts) reaches an amount.
+- **Codes**, typed by a buyer at checkout: a percentage *or* an amount off, and/or free delivery, with a number of uses (0 for no limit). Up to twenty per store, kept in capitals; switch one off without deleting it. Codes are never listed on the storefront — handing them out is the store's business.
+
+The Bank works out every price: the sale first, then the code on what is left, then delivery. A code that does not work is refused at checkout rather than quietly ignored. An order a code makes free moves no money — no other bank is asked for nothing — and can still be cancelled while the store allows it. Every order keeps what was taken off and the code, and the buyer's order page says what they saved.
+
 ### Buying
 
 The **Shop** app lists every open store; tap one, tap products to add them, then **Checkout**:
 
 1. **Where.** A place you kept, *Where I am now* (needs GPS anchors), typed coordinates, or one of the store's pickup points. A new address can be kept, by name, **on the phone only** — the Bank sees an address once, on the order it belongs to.
-2. **How.** Foxy, or **another bank** by its 16-digit Account ID. Another bank pays whole amounts only, because the inter-bank ledger does.
-3. **Your PIN.** Foxy's, or your own bank's. The price always comes from the store's list at the Bank; the basket the phone sends is item ids and quantities.
+2. **Checkout** (12.0) shows what the Bank says it comes to — items, the sale, a code, delivery or *Free* — and has a box for a discount code.
+3. **How.** Foxy, or **another bank** by its 16-digit Account ID. Another bank pays whole amounts only, because the inter-bank ledger does. Nothing to pay skips this.
+4. **Your PIN.** Foxy's, or your own bank's. The price always comes from the store's list at the Bank; the basket the phone sends is item ids and quantities.
 
 Paying from another bank is a charge Foxy asks that bank to make. The PIN goes to that bank and nowhere else; only the Foxy Core may ask; five wrong PINs lock charges on that account for ten minutes. A charge that got no answer is never guessed at — if it turns out it landed, it is refunded by itself.
 
@@ -466,6 +495,7 @@ The **Delivery** tab lists your orders, open first, and follows each one live: i
 - **Companies** lists yours: products, whether the store is open. **+ Start a company** makes a new one.
 - Inside one, **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every kiosk of the company sells.
 - **Store** is the online store: open or closed, colour, tagline, home delivery and its fee, pickup points, cancelling, and the return window.
+- **Discounts**, in More (12.0): the sale, free delivery and discount codes — see *Discounts* above.
 - **Points** lists the company's pickup points and what each one sells on the spot (see below).
 - **Delivery** — Delivery Mode — lists everything **Out for delivery** across your companies. A parcel for a pickup point shows its **delivery code** and the point; a home delivery shows its coordinates, how far and which way (it needs GPS anchors), and a **Delivered** button with an optional note.
 

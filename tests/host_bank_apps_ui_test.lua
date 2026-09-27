@@ -93,6 +93,23 @@ walk("../revolution.lua", "REVO", "Revolution", {
     account = { "My Account ID", "Bring money in", "Move money out" },
 })
 
+-- 12.0: opening a Revolution account offers to bring money over. The call
+-- was to a function declared further down, which Lua reads as a global
+-- that is not there, so opening an account stopped the app.
+do
+    local server = bankServer("REVO", "Revolution")
+    local script = phone.script()
+    phone.push(script.actions, "open", function(seen)
+        assert(phone.has(phone.last(seen), "Bring it over"),
+            "a new account is offered to bring money in")
+        return "back"
+    end, "home")
+    phone.push(script.inputs, "Rob Hare")
+    phone.push(script.pins, "2468", "2468")
+    phone.run({ bank = bank, who = kit, file = "../revolution.lua", script = script,
+        app_id = "REVO", bank_app = server })
+end
+
 -- BuckApp opens on Money.
 walk("../buckapp.lua", "BUCK", "BuckApp", {
     { before = "money", tap = "tab:account" },

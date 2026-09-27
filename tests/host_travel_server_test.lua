@@ -144,6 +144,14 @@ local application = actions.VISA_APPLY({
     requested_days = 5,
 })
 assert(application.application.status == "pending")
+-- 12.0: the territory's owner hears about it. The Vault read a name that
+-- was never set and told nobody.
+local toldOwner = false
+for _, note in ipairs(actions.NOTIFICATIONS({
+    session_token = alphaOwner.session_token }).notifications) do
+    if note.title == "New visa request" then toldOwner = true end
+end
+assert(toldOwner, "the territory owner is told a visa was asked for")
 
 local reviewed = actions.CUSTOMS_REVIEW_APPLICATION({
     session_token = alphaOwner.session_token,

@@ -1882,7 +1882,8 @@ created_day = util.ingameDay(),
 }
 state.visa_applications[applicationId] = application
 local ownerId = territory.owner_account_id
-if owner then
+
+if ownerId then
 core.notify(ownerId, "New visa request",
 account.name .. " requests " .. requestedDays
 .. " day(s) in " .. territory.name, "travel")

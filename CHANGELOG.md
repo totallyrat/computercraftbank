@@ -2,10 +2,73 @@
 
 ## 11.9.1
 
-12.0 Part 1.
+12.0 Part 1. A new look in every program, Home Mode on the CCG, discounts in
+the Shop, and the Vault update over the cable made visible and sturdier.
 
 **A new look everywhere.** Tabs float in a pill above the bottom of the
-screen, with three parts of every program on them and More for the rest.
+screen, clear of both sides and of the bottom row. Every program puts its
+three main parts there, and the fourth is More: every other page, with a
+search box and suggestions as you type. The PUMPE, every app, every kiosk and
+terminal, and every server -- the Bank and Vault included.
+
+**Pick a main colour.** Every device starts orange, like the fox. Pick
+another when it is set up, or later in its settings (on a server, in More).
+The Bank Server and Vault keep the Bank's colours.
+
+**The PUMPE opens on its lock screen.** A big clock and the account's name;
+the PIN unlocks the account the phone belongs to, and there is no sign-in
+screen to reach from there. Remove account in Settings is how a phone
+changes hands.
+
+**CCG Home Mode.** Four games made for one player -- Snake, Meteors, Simon
+and 2048 -- free, with no lobby, no wager and no CCG Server. Press HOME MODE
+on the console, enter its PIN, and type the code it shows into the CCG app:
+your PUMPE is the controller. Best scores are kept on the console.
+
+**Consoles ask for a Home Mode PIN.** A console asks its owner for a PIN on
+its first start after this update, never over an arena in Auto Mode. A
+console that cannot reach the CCG Server still offers Home Mode.
+
+**The Bet app is the CCG app.** Home, Bet and Scores tabs. Bet Play is as it
+was. Your dock and QuickActions that opened Bet open CCG.
+
+**Discounts in the Shop.** A store can put everything on sale, make home
+delivery free (always, or above an amount), and hand out codes: a percentage
+or an amount off, free delivery, a limited number of uses. Set it all up on
+the Company app's new Discounts page, behind More.
+
+**Discount codes at checkout.** The Shop app shows what a basket comes to
+before you pay -- the sale, a code, delivery or free delivery -- and has a box
+for a code. The Bank works out every price. An order a code makes free moves
+no money and can still be cancelled. The order page says what you saved.
+
+**UPDATE VAULT, next to RE-PAIR.** While the Vault runs an older release than
+the Bank, the Bank's Server tab shows UPDATE VAULT. It sends the release over
+the cable step by step on screen, and says why if it does not go.
+
+**Vaults make room for their updates.** A Vault was a Bank Server first and
+kept that Bank's old download cache and program. It clears them now, and a
+full disk is refused with how much it needs. A dropped piece is sent again,
+and a slow install is waited for. On a Vault from before this release that
+says its disk is full: hold Ctrl+T on it, type delete /updates, then reboot.
+
+**Kiosks and terminals on tabs.** Service Kiosk: Sell, Products, Store.
+Delivery Terminal: Open, Done, Pickup. Event Kiosk: Home, Events, Door.
+Border Controller: Gate, Scan, Owner. Admin Terminal: Tax, People, Inbox.
+
+**Servers on tabs.** Status, Activity and Server on every server, with More.
+
+**Fixed: territory owners never heard about visa requests.** The Vault
+looked up the owner under a name that was never set, so the notification
+was never sent.
+
+**Fixed: opening a Revolution account stopped the app.** It now offers to
+bring money over, as it was meant to.
+
+**Fixed: smaller things.** Foxy opened on a tab from search no longer
+closes on the first tap. The Internet app keeps the sites you visited and
+saved. Cancelling FIND ACCOUNT on the Admin Terminal goes back instead of
+listing everyone.
 
 ## 11.9.0
 

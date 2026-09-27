@@ -33,6 +33,11 @@ return function(api)
         return me
     end
 
+    -- Defined with Fast Bank Transfer below; the welcome screen offers it
+    -- first. 12.0: declared here, or the call above it reached a global that
+    -- does not exist and opening an account stopped the app.
+    local bringMoneyIn
+
     -- Signing in ---------------------------------------------------------------
 
     local function signIn(opening)
@@ -376,7 +381,7 @@ return function(api)
     -- phone opens this app because the money is here, and here is the only
     -- place that can authorise it leaving.
 
-    local function bringMoneyIn()
+    function bringMoneyIn()
         if type(api.banks) ~= "function" or not me then return end
         while running() do
             local banks = {}

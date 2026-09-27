@@ -25,7 +25,7 @@ end
 
 local script = kiosk.script()
 kiosk.push(script.actions, "login")
-kiosk.push(script.inputs, "Government1234")
+kiosk.push(script.inputs, "Government1234", false)
 kiosk.push(script.actions, function(seen)
     local frame = seen.frames[#seen.frames]
     assert(kiosk.has(frame, "TAX REVENUE") and kiosk.has(frame, "OPEN PERIOD")
@@ -35,8 +35,9 @@ kiosk.push(script.actions, function(seen)
     return "tab:people"
 end, function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "FIND ACCOUNT"))
-    return "pending"
-end, function(seen)
+    -- Cancelling the search goes back; it does not list everybody.
+    return "accounts"
+end, "pending", function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "Kit Wolf"),
         "pending approval lists who is waiting")
     return "back"

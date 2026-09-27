@@ -1882,7 +1882,8 @@ function actions.VISA_APPLY(payload, caller)
     }
     state.visa_applications[applicationId] = application
     local ownerId = territory.owner_account_id
-    if owner then
+    -- 12.0: this read `owner`, a name nothing set, so no owner was ever told.
+    if ownerId then
         core.notify(ownerId, "New visa request",
             account.name .. " requests " .. requestedDays
                 .. " day(s) in " .. territory.name, "travel")

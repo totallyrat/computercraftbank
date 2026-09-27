@@ -587,10 +587,12 @@ end
 local function accountBrowser(pendingOnly)
     local query = ""
     if not pendingOnly then
+        -- Blank lists everyone; cancelling goes back.
         query = ui.input(target, "FIND ACCOUNT", {
             hint = "Leave blank to list everyone",
             maxLength = 20, allowSpace = true, minLength = 0,
-        }) or ""
+        })
+        if not query then return end
     end
     local page = 1
     while running and governmentToken do

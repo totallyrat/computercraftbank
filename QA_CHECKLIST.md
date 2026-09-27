@@ -7,6 +7,41 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## 12.0 Part 1 (11.9.1)
+
+### The Vault updates
+
+- [ ] After the Bank takes 11.9.1, open its **Server** tab. If the Vault is still behind, **UPDATE VAULT** is next to **RE-PAIR** and Status says why. Press it and watch the steps; the Vault restarts on 11.9.1 and the button goes away.
+- [ ] If it says the Vault's disk is full: on the Vault, hold Ctrl+T, `delete /updates`, `reboot`, then **UPDATE VAULT** again. Report what it said either way.
+
+### The new look
+
+- [ ] On a PUMPE: it starts on its lock screen with the big clock; the PIN opens it. Settings → Main colour changes it everywhere, and it is kept after a restart.
+- [ ] In every app, the tabs float above the bottom row with More at the end. More's search finds a page as you type, and Backspace on an empty search goes back.
+- [ ] On each kiosk and terminal (Service Kiosk, Delivery Terminal, Event Kiosk, Border Controller, Admin Terminal) walk the three tabs and More, and change the main colour from More (the Border Controller asks for the owner's PIN).
+- [ ] On each server walk Status, Activity and Server; STOP asks before it stops.
+- [ ] The Service Kiosk keeps a half-rung-up cart when you visit Products and come back to Sell.
+
+### CCG Home Mode
+
+- [ ] A running console asks for a Home PIN on its first start after updating (unless it is in Auto Mode). Set one.
+- [ ] Press **HOME MODE**, enter the PIN, and pair a PUMPE with **CCG → Home** and the six digits. Play all four games; beat a score and see **NEW BEST!** on the console and the best on the phone.
+- [ ] A second PUMPE cannot pair while the first is paired. **Unpair**, and the console shows a new code.
+- [ ] With the CCG Server off, the console still offers Home Mode.
+- [ ] Bet Play still works from **CCG → Bet**. A dock favourite that was Bet is CCG now.
+
+### Shop discounts
+
+- [ ] In the Company app: the company → More → **Discounts**. Put on a 10% sale and free delivery over an amount, and add a code (20% off) and a free-delivery code with 1 use.
+- [ ] In the Shop app the store shows the sale. Checkout shows the sale, then the code, then delivery; the total charged is what it showed.
+- [ ] A wrong code says so and nothing is charged. A used-up code is refused.
+- [ ] A 100% + free-delivery code orders for free: no bank is asked, nothing moves, and the order is delivered like any other.
+
+### Fixes
+
+- [ ] Apply for a visa to a territory: its owner gets **New visa request**.
+- [ ] Open a Revolution account: it offers to bring money over instead of closing.
+
 ## 12.0 Pre (11.9.0)
 
 ### Every Bank updates and comes back
