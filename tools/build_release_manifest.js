@@ -68,6 +68,8 @@ const forwardOptionalFiles = [
   "foxmail.lua",
   // The Company app, 11.1: in the App Browser, shipped by the App Server.
   "company.lua",
+  // 12.0 Final: a game for the CCG's Game Browser, shipped by the App Server.
+  "brickbreaker.lua",
 ];
 
 function checksum(buffer) {

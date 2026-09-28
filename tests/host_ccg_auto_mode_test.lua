@@ -125,7 +125,14 @@ package.loaded["lib.net"] = {
     -- Since 9.1 the console talks to the CCG Server, not the Bank. A stub
     -- that hands back the same fake whatever it is asked for would pass
     -- even if the console were pointed at the wrong computer.
+    -- 12.0 Final: it also opens the App Server, for Home Mode's Game
+    -- Browser, which these runs never touch.
     client = function(spec)
+        if spec.protocol == "PUMPE_APPS_V1" then
+            return setmetatable({}, { __index = function()
+                error("the App Server was asked for something outside Home Mode")
+            end })
+        end
         askedFor = spec
         return client
     end,
@@ -136,13 +143,15 @@ package.loaded["lib.net"] = {
 -- Scripted operator: start Auto Mode on Heads or Tails, let two rounds run
 -- untouched, try to stop with the wrong code, then stop with the right one.
 local actions = {
+    "bet",                      -- 12.0 Final: the main menu
     "auto",                     -- game menu
     "game:heads_tails",         -- Auto Mode setup
     "__tick", "__tick",         -- lobby ticks reach the auto-start countdown
     "__tick",                   -- result screen advances on its own
     "cancel",                   -- STOP AUTO with the wrong code
     "cancel",                   -- STOP AUTO with the right code
-    "close",                    -- manual game menu again
+    "back",                     -- manual game menu again
+    "close",                    -- and the main menu
 }
 local codes = { "ARCADE1", "ARCADE1", "NOPE1", "ARCADE1" }
 
@@ -240,8 +249,10 @@ local function contains(items, expected)
     end
     return false
 end
--- 12.0: on a small monitor Auto Mode shares its row with Home Mode.
-assert(contains(labels, "AUTO MODE") and contains(labels, "HOME MODE"))
+-- 12.0 Final: Home Mode is on the main menu, beside Bet Play; Auto Mode is
+-- Bet Play's.
+assert(contains(labels, "AUTO MODE") and contains(labels, "HOME MODE\nFREE // ONE PLAYER")
+    and contains(labels, "BET PLAY\nCASINO // CCG SERVER"))
 assert(pinAsked == 1, "a console with no Home Mode PIN asks for one on starting")
 assert(contains(labels, "STOP AUTO"))
 assert(contains(labels, "ROTATE ALL GAMES"))
@@ -263,7 +274,7 @@ for _, item in ipairs({
     "__tick", "__tick",     -- second rotated game starts itself
     "__tick",
     "cancel",               -- stop Auto Mode with the saved code
-    "close",
+    "back", "close",
 }) do actions[#actions + 1] = item end
 codes[#codes + 1] = "ARCADE1"
 
@@ -306,7 +317,7 @@ for _, item in ipairs({
     "__tick", "__tick",     -- the retried lobby starts itself
     "__tick",               -- result rolls on
     "cancel",               -- stop Auto Mode
-    "close",
+    "back", "close",
 }) do actions[#actions + 1] = item end
 codes[#codes + 1] = "ARCADE1"
 

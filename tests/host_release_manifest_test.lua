@@ -66,7 +66,9 @@ local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
     -- app that places them.
     "delivery_terminal.lua", "shop.lua",
     -- FoxMail, 11.0, and the Company app, 11.1.
-    "foxmail.lua", "company.lua" }
+    "foxmail.lua", "company.lua",
+    -- 12.0 Final: the Game Browser's first game.
+    "brickbreaker.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

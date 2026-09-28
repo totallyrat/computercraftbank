@@ -941,14 +941,50 @@ local function becomeDeveloper()
     return true
 end
 
+-- App or game, for a file going out for the first time.
+local function choosePublishKind()
+    while running do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "WHAT IS IT?", "Chosen once, when it first goes out",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local half = math.floor((width - 3) / 2)
+        scene:button("app", 2, 5, half, 6,
+            "APP\nFor the PUMPE.\nIn the App Browser", {
+                background = ui.theme.accent, foreground = ui.theme.accentInk,
+                shadow = true })
+        scene:button("game", 3 + half, 5, width - 3 - half, 6,
+            "GAME\nFor a CCG in Home Mode.\nIn its Game Browser", {
+                background = colors.magenta, shadow = true })
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "app" or action == "game" then return action end
+        if action == "back" or action == "__terminate" then return nil end
+    end
+end
+
 local function publishApp(file)
     local body = util.readFile(file.path)
     if not body then
         ui.message(target, "error", "COULD NOT READ IT", file.name, 1.6)
         return false
     end
-    local name = ui.input(target, "APP NAME", {
-        hint = "Shown in the App Browser", maxLength = 18,
+    -- 12.0 Final: an app is for the PUMPE, a game for a CCG in Home Mode.
+    -- It is chosen once, the first time a file goes out; after that the
+    -- file is an update to what it already is.
+    kiosk.published = kiosk.published or {}
+    kiosk.published_kinds = kiosk.published_kinds or {}
+    local kind = kiosk.published_kinds[file.name]
+    if not kiosk.published[file.name] then
+        kind = choosePublishKind()
+        if not kind then return false end
+    end
+    kind = kind or "app"
+    local name = ui.input(target, kind == "game" and "GAME NAME" or "APP NAME", {
+        hint = kind == "game" and "Shown in the CCG's Game Browser"
+            or "Shown in the App Browser", maxLength = 18,
         allowSpace = true, minLength = 2,
     })
     if not name then return false end
@@ -959,7 +995,6 @@ local function publishApp(file)
     if not description then return false end
     -- Republishing a file this kiosk already launched is an update rather
     -- than a second copy, so the app keeps its place and its downloads.
-    kiosk.published = kiosk.published or {}
     local existingId = kiosk.published[file.name]
     local width = target.getSize()
     ui.clear(target)
@@ -974,6 +1009,7 @@ local function publishApp(file)
         developer_id = kiosk.developer_id,
         developer_token = kiosk.developer_token,
         app_id = existingId,
+        kind = kind,
         name = name,
         description = description,
         body = body,
@@ -983,8 +1019,10 @@ local function publishApp(file)
         return false
     end
     kiosk.published[file.name] = published.app.app_id
+    kiosk.published_kinds[file.name] = published.app.kind or kind
     saveKiosk()
-    ui.message(target, "success", "LIVE IN THE APP BROWSER",
+    ui.message(target, "success", (published.app.kind or kind) == "game"
+        and "LIVE IN THE GAME BROWSER" or "LIVE IN THE APP BROWSER",
         name .. "  v" .. published.app.version, 2)
     return true
 end
@@ -1019,9 +1057,10 @@ local function devMode()
             if #files == 0 then
                 ui.center(target, 8, "NOTHING IN " .. devDir, ui.theme.warning)
                 ui.wrappedText(target, 2, 10,
-                    "Put a .lua file there. It must return one function,"
-                        .. " which the PUMPE calls with its api table.",
-                    width - 2, 4, ui.theme.muted)
+                    "Put a .lua file there. An app returns one function, which"
+                        .. " the PUMPE calls with its api table; a game for a CCG"
+                        .. " returns a table -- see brickbreaker.lua.",
+                    width - 2, 5, ui.theme.muted)
             end
             for index, file in ipairs(files) do
                 if index <= 4 then

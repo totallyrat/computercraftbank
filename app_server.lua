@@ -80,6 +80,8 @@ end
 local function publicApp(app)
     return {
         app_id = app.app_id,
+        -- 12.0 Final: an app is for the PUMPE, a game for a CCG in Home Mode.
+        kind = app.kind or "app",
         bank_name = app.bank_name,
         clearing_hours = app.clearing_hours,
         fee_rate = app.fee_rate,
@@ -94,11 +96,14 @@ local function publicApp(app)
     }
 end
 
-local function catalogue(banksOnly)
+-- `kind` is "app" or "game". A PUMPE from before 12.0 Final asks for no
+-- kind and is given apps, which is all it can run.
+local function catalogue(banksOnly, kind)
+    kind = kind == "game" and "game" or "app"
     local list = {}
     for _, appId in ipairs(state.order) do
         local app = state.apps[appId]
-        if app and (not banksOnly or app.bank_name) then
+        if app and (app.kind or "app") == kind and (not banksOnly or app.bank_name) then
             list[#list + 1] = publicApp(app)
         end
     end
@@ -147,6 +152,10 @@ local SHIPPED = {
     -- 11.1. Starting and running companies, and Delivery Mode.
     { file = "company.lua", id = "COMPANY", name = "Company",
       description = "Start and run companies. Delivery Mode." },
+    -- 12.0 Final: a game, for the CCG's Game Browser in Home Mode -- and the
+    -- example for anybody writing one.
+    { file = "brickbreaker.lua", id = "BRICKS", name = "Brick Breaker",
+      description = "Bounce the ball, break the wall.", kind = "game" },
 }
 
 local function seedShippedApps()
@@ -159,6 +168,7 @@ local function seedShippedApps()
             util.writeFile(appPath(shipped.id), body)
             state.apps[shipped.id] = {
                 app_id = shipped.id,
+                kind = shipped.kind or "app",
                 name = shipped.name,
                 description = shipped.description,
                 author = "PUMPE",
@@ -187,11 +197,13 @@ local actions = {}
 -- A 3rd Party Bank Server asks for this, so it can show which banks it
 -- could host.
 function actions.APP_BANKS()
-    return { apps = catalogue(true) }
+    return { apps = catalogue(true, "app") }
 end
 
-function actions.APP_LIST()
-    return { apps = catalogue(), server_version = config.version }
+function actions.APP_LIST(payload)
+    local kind = payload and payload.kind
+    return { apps = catalogue(false, kind), kind = kind == "game" and "game" or "app",
+        server_version = config.version }
 end
 
 function actions.APP_INFO(payload)
@@ -252,8 +264,13 @@ function actions.APP_PUBLISH(payload)
         state.order[#state.order + 1] = appId
     end
     local existing = state.apps[appId]
+    -- What it is is chosen once, when it is first published: an app does not
+    -- turn into a game on the PUMPEs that already have it.
+    local kind = existing and (existing.kind or "app")
+        or (payload.kind == "game" and "game" or "app")
     state.apps[appId] = {
         app_id = appId,
+        kind = kind,
         name = name,
         description = description,
         author = developer.name,
@@ -284,8 +301,8 @@ function actions.APP_PUBLISH(payload)
         logActivity("Bank did not record who owns " .. name
             .. " -- publish again", colors.orange)
     end
-    logActivity((existing and "Updated " or "Published ") .. name
-        .. " by " .. developer.name, colors.lime)
+    logActivity((existing and "Updated " or "Published ") .. (kind == "game"
+        and "game " or "") .. name .. " by " .. developer.name, colors.lime)
     return { app = publicApp(state.apps[appId]) }
 end
 
@@ -349,9 +366,13 @@ local function dashboardLoop()
     ui.serverTabs({
         target = target, title = "PUMPE APP SERVER", subtitle = "v" .. config.version,
         cards = function()
-            local downloads = 0
-            for _, app in pairs(state.apps) do downloads = downloads + (app.downloads or 0) end
-            return { { "APPS", #state.order, ui.theme.accent },
+            local downloads, games = 0, 0
+            for _, app in pairs(state.apps) do
+                downloads = downloads + (app.downloads or 0)
+                if app.kind == "game" then games = games + 1 end
+            end
+            return { { "APPS", #state.order - games, ui.theme.accent },
+                { "GAMES", games, colors.magenta },
                 { "DOWNLOADS", downloads, ui.theme.success } }
         end,
         lines = function()
@@ -359,8 +380,8 @@ local function dashboardLoop()
             for _, appId in ipairs(state.order) do
                 local app = state.apps[appId]
                 if app then
-                    lines[#lines + 1] = { app.name .. "  v" .. app.version .. "  by "
-                        .. app.author }
+                    lines[#lines + 1] = { (app.kind == "game" and "GAME  " or "")
+                        .. app.name .. "  v" .. app.version .. "  by " .. app.author }
                 end
             end
             if #state.order == 0 then

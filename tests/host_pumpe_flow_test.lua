@@ -27,7 +27,13 @@ local actions = {
     "open:ccg", "tab:bet", "join", "pick:heads", "__tick", "done",
     "tab:home", "pair", "play:snake", "key:up", "__tick", "__tick", "__tick",
     "__tick", "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
-    "key:a", "menu", "leave",
+    "key:a", "menu",
+    -- 12.0 Final: the Game Browser, in Home Mode. Fetch Brick Breaker onto
+    -- the console and play it.
+    "browse", "game:1", "get", "play", "key:left", "key:a", "__tick", "menu",
+    -- and take it off again: the browser offers it to get once more.
+    "browse", "game:1", "remove", "game:1", "back", "back",
+    "leave",
     -- Paired again, then out of the app without unpairing: the app lets
     -- the console go on its way out.
     "pair", "tab:scores", "home",
@@ -135,14 +141,42 @@ do
         phoneLoaded[name] = package.loaded[name]
     end
     package.loaded.config = { version = "12.0.0", currency = "$" }
+    local consoleFiles = {}
+    os.queueEvent = os.queueEvent or function() end
+    local function sum(value) return "H" .. #tostring(value) .. tostring(value):sub(1, 9) end
     package.loaded["lib.util"] = {
         loadTable = function(_, fallback) return fallback end,
         saveTable = function() end,
-        checksum = function(value) return "H" .. tostring(value) end,
+        checksum = sum,
         token = function(prefix) return prefix .. "PAIRED1" end,
         trim = function(value) return tostring(value) end,
+        readFile = function(path) return consoleFiles[path] end,
+        writeFile = function(path, body) consoleFiles[path] = body end,
     }
-    package.loaded["lib.net"] = { client = function() return {} end,
+    -- 12.0 Final: an App Server with one game, for the Game Browser.
+    local handle = assert(io.open("../brickbreaker.lua", "r"))
+    local bricks = handle:read("a")
+    handle:close()
+    local game = { app_id = "BRICKS", name = "Brick Breaker", kind = "game",
+        description = "Bounce the ball", author = "PUMPE", version = 1,
+        size = #bricks, checksum = sum(bricks) }
+    local appServer = {}
+    function appServer:request(action, payload)
+        requests[#requests + 1] = "APPS:" .. action
+        if action == "APP_LIST" then
+            return { apps = payload.kind == "game" and { game } or {} }
+        elseif action == "APP_INFO" then
+            return { app = game }
+        elseif action == "APP_CHUNK" then
+            local data = bricks:sub(payload.offset + 1, payload.offset + 4000)
+            return { data = data, next_offset = payload.offset + #data }
+        end
+    end
+    package.loaded["lib.net"] = {
+        client = function(spec)
+            if spec.protocol == "PUMPE_APPS_V1" then return appServer end
+            return {}
+        end,
         autoUpdate = function() end, openModems = function() end }
     local consoleUi = setmetatable({ theme = { accent = colors.orange } },
         { __index = function() return function() return false end end })
@@ -174,6 +208,9 @@ local client = {
             if action == "HOME_PLAY" then homeGames[#homeGames + 1] = payload.game end
             local ok, result = pcall(ccgHome.handle, homeState, action, payload, 9)
             if ok then return result end
+            -- The console's own refusals come back to the phone; anything
+            -- else is a bug in it.
+            if type(result) ~= "table" then error(result, 0) end
             return nil, result.message, result.code
         end
         if action == "REGISTER" then
@@ -844,6 +881,16 @@ assert(ringSeconds == nil or type(ringSeconds) == "number",
 assert(find(requests, "HOME_PAIR") and find(requests, "HOME_PLAY")
     and find(requests, "HOME_INPUT") and find(requests, "HOME_LEAVE"))
 assert(homeGames[1] == "snake")
+assert(homeGames[2] == "BRICKS", "a game fetched in the Game Browser is played")
+assert(find(requests, "HOME_BROWSE") and find(requests, "HOME_GET")
+    and find(requests, "APPS:APP_CHUNK"), "the console fetched it from the App Server")
+assert(find(drawnText, "On the CCG"), "the phone says it is on the console")
+local offered = 0
+for _, label in ipairs(buttonLabels) do
+    if label == "Get it" then offered = offered + 1 end
+end
+assert(find(requests, "HOME_REMOVE") and offered == 2,
+    "removed from the CCG, the Game Browser offers it again: " .. offered)
 assert(find(drawnText, "Game over. Hit the wall"), "the phone says how it ended")
 assert(homeState.peer == nil and homeState.screen == "pair",
     "leaving frees the console for the next phone")

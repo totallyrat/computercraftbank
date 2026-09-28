@@ -461,34 +461,67 @@ local function arcadeHeader(title, subtitle, accent)
     end
 end
 
+-- What the console could find, for the menu to say. 12.0 Final: Bet Play
+-- needs the CCG Server and the CCG Server needs the Bank; Home Mode needs
+-- neither. Until then a console with no CCG Server said "BANK OFFLINE" and,
+-- before 12.0, stopped -- with a Bank right there on the network.
+local found = { ccg = nil, bank = nil, why = nil }
+
+local function lookFor(protocol, hostname)
+    local ok, id = pcall(function() return rednet.lookup(protocol, hostname) end)
+    return ok and id or nil
+end
+
+local function checkServers()
+    found.ccg = client:discover()
+    found.bank = lookFor(config.protocol or "PUMPE_BANK_V5",
+        config.hostname or "BANK_SERVER")
+end
+
+-- Signing this console in to the CCG Server, for Bet Play. On failure
+-- found.why says why, in words for the screen.
 local function registerConsole()
+    found.why = nil
     if not client:discover() then
-        ui.message(target, "error", "BANK OFFLINE",
-            "CCG needs the PUMPE Bank Server", 1.5)
+        found.ccg = nil
+        found.why = "No CCG Server answers. Bet Play runs on one: another"
+            .. " computer with an Ender modem, set up from Easy Deployment as"
+            .. " CCG SERVER. Home Mode does not need it."
         return false
     end
-    local result = request("CCG_REGISTER", {
+    found.ccg = client.serverId
+    local result, err = request("CCG_REGISTER", {
         console_id = device.console_id,
         console_token = device.console_token,
         name = device.name ~= "" and device.name or nil,
     }, true)
     if not result then
-        local name = ui.input(target, "NAME THIS CCG", {
-            hint = "Shown on the lobby screen",
-            maxLength = 24,
-            minLength = 2,
-            allowSpace = true,
-            initial = device.name,
-        })
-        if not name then return false end
-        result = request("CCG_REGISTER", { name = name })
+        found.why = "The CCG Server did not sign this console in: "
+            .. tostring(err or "no answer") .. "."
+        return false
     end
-    if not result then return false end
     device.console_id = result.console_id
     device.console_token = result.console_token
     device.name = result.name
     saveDevice()
     return true
+end
+
+-- A reason, in full, until it is read.
+local function explain(title, body, color)
+    while running do
+        local width, height, top, _, footerY = frame()
+        ui.clear(target, colors.black)
+        arcadeHeader(title, "COMPUTERCRAFTGAMING", color or colors.red)
+        ui.wrappedText(target, 2, top + 1, body, width - 2,
+            math.max(1, footerY - top - 2), colors.white, colors.black)
+        local scene = ui.scene(target)
+        scene:button("ok", 2, footerY, width - 2, 2, "OK",
+            { background = colors.gray })
+        local action = scene:wait()
+        if action == "ok" then return end
+        if action == "__terminate" then running = false return end
+    end
 end
 
 local function drawLogo(frameIndex)
@@ -627,28 +660,23 @@ local function gameMenu()
                     { background = game.color, foreground = game.ink })
             end
         end
-        -- 12.0: Home Mode beside Auto Mode. Free, one player, the owner's.
-        local half = math.floor((width - 3) / 2)
-        scene:button("auto", 2, autoY, half, 2,
+        scene:button("auto", 2, autoY, width - 2, 2,
             width >= 45 and "AUTO MODE // NON-STOP" or "AUTO MODE", {
                 background = colors.lime, foreground = colors.black,
             })
-        scene:button("home", 3 + half, autoY, width - 3 - half, 2,
-            width >= 45 and "HOME MODE // FREE" or "HOME MODE", {
-                background = ui.theme.accent, foreground = ui.inkOn(ui.theme.accent),
-            })
-        scene:button("close", width - 7, 1, 6, 1, "CLOSE",
-            { background = colors.red })
+        -- 12.0 Final: Bet Play is one of two modes; BACK is the main menu.
+        scene:button("back", width - 6, 1, 5, 1, "BACK",
+            { background = colors.gray })
         local action = scene:wait({ tickRate = 1 })
         if action == "__tick" then
             net.autoUpdate(config, "ccg", ROOT, client)
-        elseif action == "close" or action == "__terminate" then
+        elseif action == "back" then
+            return nil
+        elseif action == "__terminate" then
             running = false
             return nil
         elseif action == "auto" then
             if startAuto() then return nextAutoGame() end
-        elseif action == "home" then
-            return "home"
         elseif gameById[action] then
             return action
         end
@@ -956,8 +984,8 @@ end
 local function autoStandby()
     local width, _, top, bottom, footerY = frame()
     ui.clear(target, colors.black)
-    arcadeHeader("AUTO MODE", "WAITING FOR THE BANK SERVER", colors.orange)
-    ui.center(target, math.floor((top + bottom) / 2), "BANK OFFLINE",
+    arcadeHeader("AUTO MODE", "WAITING FOR A SERVER", colors.orange)
+    ui.center(target, math.floor((top + bottom) / 2), "CCG SERVER OFFLINE",
         colors.red, colors.black)
     ui.center(target, math.floor((top + bottom) / 2) + 2,
         "RETRYING AUTOMATICALLY", colors.lightGray, colors.black)
@@ -1015,12 +1043,265 @@ local function homeBoard()
     return 2, 5, math.max(4, width - 2), math.max(4, height - 7)
 end
 
+local function homeRefuse(code, message)
+    error({ ccg = true, code = code, message = message }, 0)
+end
+
+-- Games from the Game Browser, 12.0 Final ------------------------------------------
+-- Home Mode plays the four built in and whatever the owner fetched from the
+-- App Server's games. A fetched game is the same shape as the four -- new,
+-- input, tick, speed, draw -- but it runs in a box: it is handed maths,
+-- strings, tables and colours and a board to paint, and nothing that reaches
+-- the disk, the network or the monitor itself. A game that fails ends its
+-- round; the console carries on. See brickbreaker.lua for the whole of it.
+local gamesDir = fs.combine(ROOT, "games")
+local gamesFile = fs.combine(ROOT, "ccg_games.dat")
+local gameShelf = util.loadTable(gamesFile, { list = {} })
+gameShelf.list = type(gameShelf.list) == "table" and gameShelf.list or {}
+local shelfGames = {}
+local appStore = net.client({ protocol = config.app_protocol or "PUMPE_APPS_V1",
+    hostname = config.app_hostname or "APP_SERVER" })
+local MAX_GAMES = 12
+local SHELF_COLORS = { colors.cyan, colors.pink, colors.lightBlue, colors.green,
+    colors.magenta, colors.red }
+
+local function shelved(appId)
+    for index, entry in ipairs(gameShelf.list) do
+        if entry.app_id == appId then return entry, index end
+    end
+    return nil
+end
+
+local function copyOf(source)
+    local out = {}
+    for key, value in pairs(source) do out[key] = value end
+    return out
+end
+
+-- Everything a game is given. Copies, so a game cannot change the console's.
+local function gameBox()
+    local box = {
+        math = copyOf(math), string = copyOf(string), table = copyOf(table),
+        colors = copyOf(colors), pairs = pairs, ipairs = ipairs, next = next,
+        select = select, tonumber = tonumber, tostring = tostring, type = type,
+        pcall = pcall, error = error, assert = assert,
+        setmetatable = setmetatable, unpack = table.unpack or unpack,
+    }
+    box.colours, box._G = box.colors, box
+    return box
+end
+
+-- A game's file, run in its box. Its table, or nil and why.
+local function loadGame(appId, body)
+    body = body or util.readFile(fs.combine(gamesDir, appId .. ".lua"))
+    if not body then return nil, "its file is missing" end
+    local chunk, err = load(body, "=" .. appId, "t", gameBox())
+    if not chunk then return nil, tostring(err) end
+    local ok, engine = pcall(chunk)
+    if not ok then return nil, type(engine) == "string" and engine or "it stopped as it loaded" end
+    if type(engine) ~= "table" or type(rawget(engine, "new")) ~= "function"
+        or type(rawget(engine, "draw")) ~= "function" then
+        return nil, "a game returns a table with new and draw"
+    end
+    return engine
+end
+
+-- Only a game's words: an error that is a table could run its own code
+-- the moment it is turned into text.
+local function short(err)
+    err = (type(err) == "string" or type(err) == "number") and tostring(err) or "?"
+    return ui.truncate(err:gsub("^[^:]*:%d+: ", ""), 40)
+end
+
+-- The board, as a fetched game sees it: its own coordinates, clipped.
+local function boardFor(surface, left, top, width, height)
+    local function tint(value, fallback)
+        value = tonumber(value)
+        for _, known in pairs(colors) do
+            if type(known) == "number" and known == value then return value end
+        end
+        return fallback
+    end
+    local board = { width = width, height = height }
+    function board.fill(x, y, w, h, color)
+        x, y = math.floor(tonumber(x) or 1), math.floor(tonumber(y) or 1)
+        w, h = math.floor(tonumber(w) or 1), math.floor(tonumber(h) or 1)
+        local x1, y1 = math.max(1, x), math.max(1, y)
+        local x2, y2 = math.min(width, x + w - 1), math.min(height, y + h - 1)
+        if x2 < x1 or y2 < y1 then return end
+        ui.fill(surface, left + x1 - 1, top + y1 - 1, x2 - x1 + 1, y2 - y1 + 1,
+            tint(color, colors.black))
+    end
+    function board.text(x, y, text, color, background)
+        x, y = math.floor(tonumber(x) or 1), math.floor(tonumber(y) or 1)
+        text = tostring(text or "")
+        if y < 1 or y > height or x > width then return end
+        if x < 1 then text, x = text:sub(2 - x), 1 end
+        text = text:sub(1, width - x + 1)
+        ui.text(surface, left + x - 1, top + y - 1, text,
+            tint(color, colors.white), tint(background, colors.black))
+    end
+    return board
+end
+
+-- A fetched game, dressed as one of the four.
+local function shelfGame(entry, index)
+    local engine, why = loadGame(entry.app_id)
+    local game = { id = entry.app_id, label = string.upper(tostring(entry.name or entry.app_id)),
+        hint = entry.description or "", color = SHELF_COLORS[(index - 1) % #SHELF_COLORS + 1],
+        fetched = true }
+    local function call(name, ...)
+        if not engine then return false, why end
+        local fn = rawget(engine, name)
+        if type(fn) ~= "function" then return true, nil end
+        return pcall(fn, ...)
+    end
+    -- The game keeps its own state; the console keeps a plain copy of the
+    -- three things it reads, so nothing of the game's runs outside the box.
+    local function sync(play, err)
+        if err then play.stopped = "The game stopped: " .. short(err) end
+        if play.stopped then
+            play.over, play.status = true, play.stopped
+            return
+        end
+        local score = tonumber(rawget(play.inner, "score"))
+        if not score or score ~= score or math.abs(score) == math.huge then score = 0 end
+        local status = rawget(play.inner, "status")
+        play.score = math.floor(score)
+        play.over = rawget(play.inner, "over") and true or false
+        play.status = type(status) == "string" and ui.truncate(status, 60) or nil
+    end
+    function game.new(width, height, random)
+        local ok, state = call("new", width, height, random)
+        if not ok or type(state) ~= "table" then
+            local play = { inner = {}, stopped = "It did not start: "
+                .. short(ok and "no game came back" or state) }
+            sync(play)
+            return play
+        end
+        local play = { inner = state }
+        sync(play)
+        return play
+    end
+    function game.input(play, key)
+        local ok, err = call("input", play.inner, key)
+        sync(play, not ok and (err or "?"))
+    end
+    function game.tick(play)
+        local ok, err = call("tick", play.inner)
+        sync(play, not ok and (err or "?"))
+    end
+    function game.speed(play)
+        local ok, value = call("speed", play.inner)
+        return math.max(0.05, math.min(2, ok and tonumber(value) or 0.25))
+    end
+    function game.draw(play, surface, left, top)
+        local _, _, width, height = homeBoard()
+        ui.fill(surface, left, top, width, height, colors.black)
+        local ok, err = call("draw", play.inner, boardFor(surface, left, top, width, height))
+        sync(play, not ok and (err or "?"))
+    end
+    return game
+end
+
+-- One of the four, or a fetched one.
+local function homeGame(id)
+    if homeById[id] then return homeById[id] end
+    local entry, index = shelved(id)
+    if not entry then return nil end
+    shelfGames[id] = shelfGames[id] or shelfGame(entry, index)
+    return shelfGames[id]
+end
+
+local function saveShelf()
+    util.saveTable(gamesFile, gameShelf)
+end
+
+-- The Game Browser: the App Server's games, and which of them are here.
+local function browseGames()
+    local listed = appStore:request("APP_LIST", { kind = "game" }, 5)
+    if not listed then
+        homeRefuse("NO_APP_SERVER", "No App Server answers. Games come from one:"
+            .. " a computer set up from Easy Deployment as APP SERVER")
+    end
+    local games = {}
+    for _, app in ipairs(listed.apps or {}) do
+        -- An App Server from before 12.0 Final lists apps and says nothing
+        -- of kinds. None of those are games.
+        if app.kind == "game" then
+            local here = shelved(app.app_id)
+            games[#games + 1] = { app_id = app.app_id, name = app.name,
+                description = app.description, author = app.author,
+                version = app.version, size = app.size, here = here ~= nil,
+                update = here ~= nil and here.version ~= app.version }
+        end
+    end
+    return games
+end
+
+-- Fetching one, in pieces, checked, tried in its box, then kept.
+local function fetchGame(home, appId)
+    local info = appStore:request("APP_INFO", { app_id = appId }, 5)
+    local app = info and info.app
+    if not app then homeRefuse("NO_APP_SERVER", "The App Server did not answer") end
+    if app.kind ~= "game" then homeRefuse("NOT_A_GAME", "That is an app, not a game") end
+    if not shelved(appId) and #gameShelf.list >= MAX_GAMES then
+        homeRefuse("FULL", "This CCG holds " .. MAX_GAMES .. " games. Remove one first")
+    end
+    local chunks, offset = {}, 0
+    while offset < (tonumber(app.size) or 0) do
+        home.busy = "GETTING " .. string.upper(tostring(app.name)) .. " "
+            .. math.floor(offset * 100 / math.max(1, app.size)) .. "%"
+        os.queueEvent("ccg_home")
+        local chunk = appStore:request("APP_CHUNK", { app_id = appId, offset = offset,
+            limit = config.app_chunk_size }, 5)
+        if not chunk or type(chunk.data) ~= "string" or #chunk.data == 0 then
+            home.busy = nil
+            homeRefuse("DOWNLOAD", "The download stopped")
+        end
+        chunks[#chunks + 1] = chunk.data
+        offset = chunk.next_offset
+    end
+    home.busy = nil
+    local body = table.concat(chunks)
+    if #body ~= app.size or util.checksum(body) ~= app.checksum then
+        homeRefuse("DAMAGED", "The download was damaged. Nothing changed")
+    end
+    local engine, why = loadGame(appId, body)
+    if not engine then homeRefuse("BROKEN", "It does not run: " .. short(why)) end
+    pcall(fs.makeDir, gamesDir)
+    if not pcall(util.writeFile, fs.combine(gamesDir, appId .. ".lua"), body) then
+        homeRefuse("NO_SPACE", "No room for it on this CCG")
+    end
+    local record = { app_id = appId, name = app.name, description = app.description,
+        author = app.author, version = app.version, checksum = app.checksum }
+    local _, index = shelved(appId)
+    if index then gameShelf.list[index] = record
+    else gameShelf.list[#gameShelf.list + 1] = record end
+    shelfGames[appId] = nil
+    saveShelf()
+end
+
+local function removeGame(appId)
+    local _, index = shelved(appId)
+    if not index then homeRefuse("NOT_HERE", "That game is not on this CCG") end
+    table.remove(gameShelf.list, index)
+    shelfGames[appId] = nil
+    pcall(fs.delete, fs.combine(gamesDir, appId .. ".lua"))
+    saveShelf()
+end
+
 local function homeState(home)
-    local game = home.game and homeById[home.game]
+    local game = home.game and homeGame(home.game)
     local list = {}
     for _, entry in ipairs(HOME_GAMES) do
         list[#list + 1] = { id = entry.id, label = entry.label, hint = entry.hint,
             best = device.home_best[entry.id] or 0 }
+    end
+    for _, entry in ipairs(gameShelf.list) do
+        list[#list + 1] = { id = entry.app_id, label = string.upper(tostring(entry.name)),
+            hint = entry.description, best = device.home_best[entry.app_id] or 0,
+            fetched = true }
     end
     return {
         console = device.name ~= "" and device.name or "CCG",
@@ -1032,21 +1313,26 @@ local function homeState(home)
     }
 end
 
+local homeFinish
+
 local function homeStart(home, id)
-    local game = homeById[id]
+    local game = homeGame(id)
     if not game then return false end
     local _, _, width, height = homeBoard()
     home.game, home.play, home.screen, home.record = id, game.new(width, height,
         math.random), "game", nil
+    -- A game that could not start is over before it began, and says why.
+    homeFinish(home)
     return true
 end
 
-local function homeFinish(home)
+function homeFinish(home)
     if home.screen ~= "game" or not (home.play and home.play.over) then return end
     home.screen = "over"
     local best = device.home_best[home.game] or 0
-    if home.play.score > best then
-        device.home_best[home.game] = home.play.score
+    local score = tonumber(home.play.score) or 0
+    if score > best then
+        device.home_best[home.game] = score
         home.record = true
         saveDevice()
     end
@@ -1054,7 +1340,7 @@ end
 
 -- Time passing in the game being played: what the screen's timer does.
 local function homeTick(home)
-    local game = home.screen == "game" and homeById[home.game]
+    local game = home.screen == "game" and homeGame(home.game)
     if game and game.tick then
         game.tick(home.play)
         homeFinish(home)
@@ -1069,8 +1355,7 @@ end
 
 -- One request from the paired phone, or from a phone asking to pair.
 local function homeHandle(home, action, payload, sender)
-    local function refuse(code, message) error({ ccg = true, code = code,
-        message = message }, 0) end
+    local refuse = homeRefuse
     if action == "HOME_PAIR" then
         if home.peer then refuse("PAIRED", "This CCG already has a controller") end
         if tostring(payload.code or "") ~= home.code then
@@ -1095,13 +1380,23 @@ local function homeHandle(home, action, payload, sender)
     elseif action == "HOME_INPUT" then
         local key = tostring(payload.key or "")
         if home.screen == "game" then
-            homeById[home.game].input(home.play, key)
+            homeGame(home.game).input(home.play, key)
             homeFinish(home)
         elseif home.screen == "over" and key == "a" then
             homeStart(home, home.game)
         end
     elseif action == "HOME_MENU" then
         home.screen, home.play, home.game, home.record = "menu", nil, nil, nil
+    -- 12.0 Final: the Game Browser. Only here, in Home Mode.
+    elseif action == "HOME_BROWSE" then
+        return { games = browseGames(), state = homeState(home) }
+    elseif action == "HOME_GET" then
+        fetchGame(home, tostring(payload.app_id or ""))
+    elseif action == "HOME_REMOVE" then
+        if home.game == payload.app_id then
+            home.screen, home.play, home.game = "menu", nil, nil
+        end
+        removeGame(tostring(payload.app_id or ""))
     elseif action == "HOME_LEAVE" then
         home.peer, home.token, home.player = nil, nil, nil
         home.screen, home.play, home.game = "pair", nil, nil
@@ -1130,20 +1425,33 @@ local function homeDraw(home)
     elseif home.screen == "menu" then
         arcadeHeader("HOME MODE", ui.truncate(tostring(home.player), width - 4)
             .. " IS PLAYING", accent)
-        ui.center(target, 5, "PICK A GAME ON YOUR PUMPE", colors.white, colors.black)
-        for index, game in ipairs(HOME_GAMES) do
+        ui.center(target, 5, ui.truncate(home.busy or "PICK A GAME ON YOUR PUMPE",
+            width), home.busy and colors.yellow or colors.white, colors.black)
+        -- The four, then what was fetched, as many as fit.
+        local games = {}
+        for _, game in ipairs(HOME_GAMES) do games[#games + 1] = game end
+        for _, entry in ipairs(gameShelf.list) do
+            local game = homeGame(entry.app_id)
+            if game then games[#games + 1] = game end
+        end
+        local room = math.max(1, math.floor((height - 9) / 2) + 1)
+        for index, game in ipairs(games) do
             local y = 5 + index * 2
-            if y <= height - 3 then
-                ui.fill(target, 2, y, width - 2, 1, game.color)
-                ui.text(target, 3, y, ui.truncate(game.label .. "  BEST "
-                    .. (device.home_best[game.id] or 0), width - 4),
-                    ui.inkOn(game.color), game.color)
+            if index == room and #games > room then
+                ui.text(target, 3, y, "+" .. (#games - room + 1) .. " MORE",
+                    colors.lightGray, colors.black)
+                break
             end
+            ui.fill(target, 2, y, width - 2, 1, game.color)
+            ui.text(target, 3, y, ui.truncate(game.label .. "  BEST "
+                .. (device.home_best[game.id] or 0), width - 4),
+                ui.inkOn(game.color), game.color)
         end
     else
-        local game = homeById[home.game]
-        arcadeHeader(game.label, "SCORE " .. home.play.score .. "  BEST "
-            .. math.max(home.play.score, device.home_best[game.id] or 0), game.color)
+        local game = homeGame(home.game)
+        local score = tonumber(home.play.score) or 0
+        arcadeHeader(game.label, "SCORE " .. score .. "  BEST "
+            .. math.max(score, device.home_best[game.id] or 0), game.color)
         local left, top = homeBoard()
         game.draw(home.play, target, left, top)
         if home.screen == "over" then
@@ -1160,6 +1468,7 @@ local function homeDraw(home)
     ui.text(target, width - 6, height, "EXIT", colors.white, colors.red)
     if home.screen == "pair" then
         ui.text(target, 2, height, "COLOR", ui.inkOn(accent), accent)
+        ui.text(target, 8, height, "PIN", colors.white, colors.gray)
     end
 end
 
@@ -1198,7 +1507,7 @@ local function homeMode()
         local timer
         while home.active do
             homeDraw(home)
-            local game = home.screen == "game" and homeById[home.game]
+            local game = home.screen == "game" and homeGame(home.game)
             if not timer then
                 timer = os.startTimer(game and game.speed and game.speed(home.play) or 1)
             end
@@ -1214,6 +1523,9 @@ local function homeMode()
                     and type(ui.pickMainColor) == "function" then
                     -- The owner's setting, behind the owner's PIN.
                     ui.pickMainColor(target, ROOT, "CCG COLOUR")
+                elseif c == height and b >= 8 and b <= 10 and home.screen == "pair" then
+                    -- A new Home PIN; the old one opened this screen.
+                    setHomePin()
                 end
             elseif event == "terminate" then
                 running, home.active = false, false
@@ -1234,90 +1546,121 @@ if PUMPE_TEST_MODE == "ccg_home" then
         pin_hash = pinHash, home_mode = homeMode, games = homeById }
 end
 
--- Main loop ---------------------------------------------------------------
+-- Bet Play ------------------------------------------------------------------
+-- The casino: lobbies on the CCG Server, wagers held by the Bank. Signed in
+-- when it is opened, not at start-up, so nothing else waits for it. An arena
+-- in Auto Mode waits here for its CCG Server and never falls back to a menu.
+
+local function playRound(game, resumedLobby)
+    local lobby, failure = waitForLobby(game, resumedLobby)
+    if not lobby and auto and failure == "offline" then autoStandby() end
+    if lobby and lobby.status == "running" then
+        if game == "heads_tails" then
+            lobby = coinAnimation(lobby)
+        elseif game == "race" then
+            lobby = raceAnimation(lobby)
+        else
+            lobby = survivorAnimation(lobby)
+        end
+    end
+    if lobby and lobby.status == "finished" then
+        resultScreen(lobby)
+    elseif lobby and lobby.status == "cancelled" and not auto then
+        ui.message(target, "warning", "LOBBY CLOSED",
+            lobby.cancelled_reason or "Every wager was returned", 1.2)
+    end
+end
+
+local function betPlay()
+    while running and not registerConsole() do
+        if not auto then
+            explain("BET PLAY", found.why or "The CCG Server is not answering.")
+            return
+        end
+        autoStandby()
+    end
+    local resume = request("CCG_CONSOLE_STATUS", {}, true)
+    local resumedLobby = resume and resume.lobby or nil
+    while running do
+        local game
+        if resumedLobby then
+            game = resumedLobby.game
+        elseif auto then
+            game = nextAutoGame()
+        else
+            game = gameMenu()
+        end
+        if not game then return end
+        playRound(game, resumedLobby)
+        resumedLobby = nil
+    end
+end
+
+-- The main menu -----------------------------------------------------------------
+-- 12.0 Final: two modes and what the console could find. It needs no server
+-- to be shown, and Home Mode needs none to be played.
+
+local function mainMenu()
+    while running do
+        local width, _, top, bottom, footerY = frame()
+        ui.clear(target, colors.black)
+        arcadeHeader(device.name ~= "" and device.name or "CCG", "PICK A MODE",
+            ui.theme.accent)
+        local scene = ui.scene(target)
+        local statusY = bottom - 1
+        local tall = math.max(2, math.min(5, math.floor((statusY - top - 3) / 2)))
+        scene:button("home", 2, top + 1, width - 2, tall,
+            "HOME MODE\nFREE // ONE PLAYER", {
+                background = ui.theme.accent, foreground = ui.inkOn(ui.theme.accent) })
+        scene:button("bet", 2, top + 2 + tall, width - 2, tall,
+            "BET PLAY\nCASINO // CCG SERVER", {
+                background = colors.magenta, foreground = colors.white })
+        ui.text(target, 2, statusY, ui.truncate("CCG SERVER  " .. (found.ccg
+            and "FOUND" or "NOT FOUND"), width - 2), found.ccg and colors.lime
+            or colors.orange, colors.black)
+        ui.text(target, 2, statusY + 1, ui.truncate("BANK  " .. (found.bank
+            and "FOUND" or "NOT FOUND"), width - 2), found.bank and colors.lime
+            or colors.orange, colors.black)
+        local half = math.floor((width - 3) / 2)
+        scene:button("check", 2, footerY, half, 2, "CHECK AGAIN",
+            { background = colors.gray })
+        scene:button("close", 3 + half, footerY, width - 3 - half, 2, "CLOSE",
+            { background = colors.red })
+        local action = scene:wait({ tickRate = 1 })
+        if action == "__tick" then
+            net.autoUpdate(config, "ccg", ROOT, client)
+        elseif action == "home" then
+            homeMode()
+        elseif action == "bet" then
+            betPlay()
+        elseif action == "check" then
+            checkServers()
+        elseif action == "close" or action == "__terminate" then
+            running = false
+        end
+    end
+end
+
+-- Starting ---------------------------------------------------------------
 
 bootAnimation()
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "ccg", ROOT, client,
     { force = true, programVersion = PROGRAM_VERSION })
-local firstStart = not device.console_id
-local online = registerConsole()
-if firstStart and type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
-    ui.pickMainColor(target, ROOT, "CCG COLOUR")
-end
--- 12.0: the Home Mode PIN, asked on the first start after updating too --
--- but never over an arena in Auto Mode, which must come back by itself.
-if not device.home_pin and not (type(device.auto) == "table" and device.auto.hash) then
-    setHomePin()
-end
--- Bet Play needs the CCG Server; Home Mode does not, so a console that
--- cannot reach it still offers that.
-while running and not online do
-    local width, _, top, bottom, footerY = frame()
-    ui.clear(target, colors.black)
-    arcadeHeader("OFFLINE", "NO CCG SERVER", colors.red)
-    ui.center(target, top + 1, "BET PLAY NEEDS THE CCG SERVER", colors.white, colors.black)
-    ui.center(target, top + 3, "HOME MODE DOES NOT", colors.lightGray, colors.black)
-    local scene = ui.scene(target)
-    local half = math.floor((width - 3) / 2)
-    scene:button("home", 2, bottom - 2, width - 2, 2, "HOME MODE",
-        { background = ui.theme.accent, foreground = ui.inkOn(ui.theme.accent) })
-    scene:button("retry", 2, footerY, half, 2, "TRY AGAIN", { background = colors.gray })
-    scene:button("close", 3 + half, footerY, width - 3 - half, 2, "CLOSE",
-        { background = colors.red })
-    local action = scene:wait()
-    if action == "home" then
-        homeMode()
-    elseif action == "retry" then
-        online = registerConsole()
-    elseif action == "close" or action == "__terminate" then
-        running = false
-    end
-end
-if not running then
-    ui.clear(target, colors.black)
-    ui.center(target, math.floor(select(2, target.getSize()) / 2),
-        "CCG OFFLINE", colors.lightGray, colors.black)
-    return
-end
-
 if type(device.auto) == "table" and device.auto.hash then auto = device.auto end
-
-local resume = request("CCG_CONSOLE_STATUS", {}, true)
-local resumedLobby = resume and resume.lobby or nil
-while running do
-    local game
-    if resumedLobby then
-        game = resumedLobby.game
-    elseif auto then
-        game = nextAutoGame()
-    else
-        game = gameMenu()
+-- A new console: its colour, and the owner's Home PIN. Never over an arena
+-- in Auto Mode, which has to come back by itself.
+if not auto then
+    if type(ui.hasMainColor) == "function" and not ui.hasMainColor(ROOT) then
+        ui.pickMainColor(target, ROOT, "CCG COLOUR")
     end
-    if game == "home" then
-        homeMode()
-    elseif game then
-        local lobby, failure = waitForLobby(game, resumedLobby)
-        resumedLobby = nil
-        if not lobby and auto and failure == "offline" then autoStandby() end
-        if lobby and lobby.status == "running" then
-            if game == "heads_tails" then
-                lobby = coinAnimation(lobby)
-            elseif game == "race" then
-                lobby = raceAnimation(lobby)
-            else
-                lobby = survivorAnimation(lobby)
-            end
-        end
-        if lobby and lobby.status == "finished" then
-            resultScreen(lobby)
-        elseif lobby and lobby.status == "cancelled" and not auto then
-            ui.message(target, "warning", "LOBBY CLOSED",
-                lobby.cancelled_reason or "Every wager was returned", 1.2)
-        end
-    end
+    if not device.home_pin then setHomePin() end
 end
+checkServers()
+-- An arena goes straight back to Bet Play in Auto Mode.
+if auto then betPlay() end
+mainMenu()
 
 ui.clear(target, colors.black)
 ui.center(target, math.floor(select(2, target.getSize()) / 2),

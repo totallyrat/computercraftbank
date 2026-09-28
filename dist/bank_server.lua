@@ -124,6 +124,7 @@ RELEASE.optional = {
 "shop.lua",
 "foxmail.lua",
 "company.lua",
+"brickbreaker.lua",
 }
 
 RELEASE.programs = {

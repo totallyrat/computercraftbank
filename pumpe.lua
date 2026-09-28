@@ -1951,6 +1951,8 @@ do
     ccgApp = function(action)
         device.ccg_scores = type(device.ccg_scores) == "table" and device.ccg_scores
             or {}
+        -- 12.0 Final: games from the Game Browser have names of their own.
+        device.ccg_names = type(device.ccg_names) == "table" and device.ccg_names or {}
         local home
 
         -- The best score each game has reached on this phone's console, kept
@@ -1958,26 +1960,37 @@ do
         local function remember(state)
             for _, game in ipairs(type(state.games) == "table" and state.games or {}) do
                 local best = tonumber(game.best) or 0
-                if HOME_NAMES[game.id] and best > (device.ccg_scores[game.id] or 0) then
-                    device.ccg_scores[game.id] = best
+                local id = tostring(game.id)
+                if not HOME_NAMES[id] and game.label and device.ccg_names[id] == nil then
+                    device.ccg_names[id] = ui.truncate(tostring(game.label), 16)
+                    saveDevice()
+                end
+                if best > (device.ccg_scores[id] or 0) then
+                    device.ccg_scores[id] = best
                     saveDevice()
                 end
             end
         end
 
-        local function ask(homeAction, payload)
+        -- `timeout` for what takes the console a while: fetching a game.
+        -- A CCG that says this phone is not its controller any more, or goes
+        -- quiet three times running, is let go.
+        local function ask(homeAction, payload, timeout)
             if not home then return nil, "Not paired", "NOT_PAIRED" end
             payload = payload or {}
             payload.token = home.token
-            local result, err, code = home.client:request(homeAction, payload, 3)
-            if result and result.screen then
-                home.state = result
-                remember(result)
-            elseif code == "NOT_PAIRED" or (not result and not code) then
-                -- The CCG left Home Mode, or cannot be heard any more.
+            local result, err, code = home.client:request(homeAction, payload, timeout or 3)
+            local state = result and (result.screen and result or result.state)
+            if state and state.screen then
+                home.state, home.misses = state, 0
+                remember(state)
+            elseif code == "NOT_PAIRED" or (not result and not code
+                and (home.misses or 0) >= 2) then
                 home = nil
                 ui.message(target, "warning", "CCG disconnected",
                     err or "Pair it again with its code", 1.6)
+            elseif not result and not code then
+                home.misses = (home.misses or 0) + 1
             end
             return result, err, code
         end
@@ -2018,7 +2031,119 @@ do
             KEYS[keys.space or -5], KEYS[keys.enter or -6] = "key:a", "key:a"
         end
 
+        -- The Game Browser, 12.0 Final: the App Server's games, fetched onto
+        -- the console. Only here, in Home Mode.
+        local function gameDetail(game)
+            while running and sessionToken and home do
+                local width, height = target.getSize()
+                ui.clear(target)
+                ui.header(target, ui.truncate(tostring(game.name), width - 9),
+                    "by " .. ui.truncate(tostring(game.author or "?"), width - 6),
+                    util.formatClock())
+                ui.card(target, 2, 5, width - 2, 6, colors.magenta)
+                ui.wrappedText(target, 4, 6, tostring(game.description or ""),
+                    width - 6, 4, ui.theme.muted, ui.theme.panel)
+                ui.text(target, 4, 10, "v" .. tostring(game.version) .. "  "
+                    .. math.ceil((tonumber(game.size) or 0) / 1024) .. " KiB",
+                    ui.theme.muted, ui.theme.panel)
+                local scene = ui.scene(target)
+                if game.here and not game.update then
+                    scene:button("play", 2, 12, width - 2, 2, "Play",
+                        { background = ui.theme.accent, foreground = ui.theme.accentInk })
+                    scene:button("remove", 2, 15, width - 2, 1, "Remove from the CCG",
+                        { background = ui.theme.panel })
+                else
+                    scene:button("get", 2, 12, width - 2, 2,
+                        game.here and "Update" or "Get it",
+                        { background = ui.theme.accent, foreground = ui.theme.accentInk })
+                end
+                scene:button("back", 1, height, 9, 1, "< Games",
+                    { background = ui.theme.panel })
+                local pressed = scene:wait()
+                if pressed == "back" or pressed == "__terminate" then return end
+                if pressed == "get" then
+                    ui.clear(target)
+                    ui.center(target, 9, "The CCG is fetching it", ui.theme.ink)
+                    local done, err = ask("HOME_GET", { app_id = game.app_id }, 30)
+                    if done then
+                        game.here, game.update = true, false
+                        ui.message(target, "success", "On the CCG", tostring(game.name), 1)
+                    else
+                        ui.message(target, "error", "Not fetched", err, 1.8)
+                    end
+                elseif pressed == "play" then
+                    ask("HOME_PLAY", { game = game.app_id })
+                    return "played"
+                elseif pressed == "remove" and ui.confirm(target, "Remove it?",
+                    tostring(game.name) .. " comes off the CCG. Its best score stays.",
+                    "Remove", "Keep") then
+                    local gone, err = ask("HOME_REMOVE", { app_id = game.app_id })
+                    if gone then
+                        game.here, game.update = false, false
+                        return
+                    end
+                    ui.message(target, "error", "Not removed", err, 1.6)
+                end
+            end
+        end
+
+        local function gameBrowser()
+            local listed, err = ask("HOME_BROWSE", {}, 10)
+            if not listed then
+                if home then ui.message(target, "error", "No games", err, 1.8) end
+                return
+            end
+            local games, page = listed.games or {}, 1
+            while running and sessionToken and home do
+                local width, height = target.getSize()
+                local per = math.max(1, math.floor((height - 6) / 3))
+                local pages = math.max(1, math.ceil(#games / per))
+                page = math.max(1, math.min(page, pages))
+                ui.clear(target)
+                ui.header(target, "Game Browser", #games .. " for the CCG",
+                    util.formatClock())
+                local scene = ui.scene(target)
+                if #games == 0 then
+                    ui.wrappedText(target, 2, 5, "No games on the App Server yet."
+                        .. " A game is published from Dev Mode on a Service Kiosk,"
+                        .. " as a GAME.", width - 2, 5, ui.theme.muted)
+                end
+                for slot = 1, per do
+                    local game = games[(page - 1) * per + slot]
+                    if not game then break end
+                    local mark = game.update and "^ " or game.here and "* " or "+ "
+                    scene:button("game:" .. ((page - 1) * per + slot), 2, 1 + slot * 3,
+                        width - 2, 2, ui.truncate(mark .. tostring(game.name), width - 4)
+                            .. "\n" .. ui.truncate(tostring(game.description or ""),
+                            width - 4),
+                        { background = game.here and ui.theme.accentDark or ui.theme.panel })
+                end
+                if pages > 1 then
+                    scene:button("prev", width - 8, height, 3, 1, "<",
+                        { background = ui.theme.panel, disabled = page <= 1 })
+                    scene:button("next", width - 4, height, 3, 1, ">",
+                        { background = ui.theme.panel, disabled = page >= pages })
+                end
+                scene:button("back", 1, height, 8, 1, "< CCG",
+                    { background = ui.theme.panel })
+                local pressed = scene:wait()
+                if pressed == "back" or pressed == "__terminate" then return end
+                if pressed == "prev" then
+                    page = page - 1
+                elseif pressed == "next" then
+                    page = page + 1
+                else
+                    local index = tonumber((pressed or ""):match("^game:(%d+)$"))
+                    if index and games[index]
+                        and gameDetail(games[index]) == "played" then
+                        return
+                    end
+                end
+            end
+        end
+
         local function homePage(spec)
+            local page = 1
             while running and sessionToken do
                 local width = target.getSize()
                 local bottom = ui.contentBottom(target)
@@ -2034,16 +2159,30 @@ do
                     scene:button("pair", 2, 11, width - 2, 3, "Enter pairing code",
                         { background = ui.theme.accent, foreground = ui.theme.accentInk })
                 elseif state.screen == "menu" then
+                    local games = state.games or {}
+                    local per = math.max(1, math.floor((bottom - 7) / 3))
+                    local pages = math.max(1, math.ceil(#games / per))
+                    page = math.max(1, math.min(page, pages))
                     ui.header(target, ui.truncate(tostring(state.console), width - 9),
-                        "Pick a game", util.formatClock())
-                    for index, game in ipairs(state.games or {}) do
-                        local y = 3 + index * 3
-                        if y + 1 <= bottom - 2 then
-                            scene:button("play:" .. game.id, 2, y, width - 2, 2,
-                                ui.truncate(game.label .. "  best " .. (game.best or 0),
-                                    width - 4) .. "\n" .. ui.truncate(game.hint or "",
-                                    width - 4), { background = ui.theme.panel })
-                        end
+                        pages > 1 and ("Pick a game  " .. page .. "/" .. pages)
+                            or "Pick a game", util.formatClock())
+                    for slot = 1, per do
+                        local game = games[(page - 1) * per + slot]
+                        if not game then break end
+                        scene:button("play:" .. game.id, 2, 1 + slot * 3, width - 2, 2,
+                            ui.truncate(tostring(game.label) .. "  best " .. (game.best or 0),
+                                width - 4) .. "\n" .. ui.truncate(tostring(game.hint or ""),
+                                width - 4), { background = game.fetched
+                                and ui.theme.accentDark or ui.theme.panel })
+                    end
+                    local browseWidth = pages > 1 and width - 10 or width - 2
+                    scene:button("browse", 2, bottom - 2, browseWidth, 1, "Game Browser",
+                        { background = colors.magenta })
+                    if pages > 1 then
+                        scene:button("prev", width - 7, bottom - 2, 3, 1, "<",
+                            { background = ui.theme.panel, disabled = page <= 1 })
+                        scene:button("next", width - 3, bottom - 2, 3, 1, ">",
+                            { background = ui.theme.panel, disabled = page >= pages })
                     end
                     scene:button("leave", 2, bottom, width - 2, 1, "Unpair",
                         { background = ui.theme.danger })
@@ -2091,6 +2230,12 @@ do
                     ask("HOME_INPUT", { key = key })
                 elseif pressed == "menu" then
                     ask("HOME_MENU")
+                elseif pressed == "browse" then
+                    gameBrowser()
+                elseif pressed == "prev" then
+                    page = page - 1
+                elseif pressed == "next" then
+                    page = page + 1
                 elseif pressed == "leave" then
                     ask("HOME_LEAVE")
                     home = nil
@@ -2126,14 +2271,25 @@ do
                 local width = target.getSize()
                 ui.clear(target)
                 ui.header(target, "Scores", "Your best at home", util.formatClock())
-                for index, id in ipairs(HOME_ORDER) do
+                -- The four, then games from the Game Browser that have a score.
+                local rows = {}
+                for _, id in ipairs(HOME_ORDER) do rows[#rows + 1] = { HOME_NAMES[id], id } end
+                local fetched = {}
+                for id, name in pairs(device.ccg_names) do
+                    if (device.ccg_scores[id] or 0) > 0 then fetched[#fetched + 1] = { name, id } end
+                end
+                table.sort(fetched, function(a, b) return a[1] < b[1] end)
+                for _, row in ipairs(fetched) do rows[#rows + 1] = row end
+                local bottom = ui.contentBottom(target)
+                for index, row in ipairs(rows) do
                     local y = 3 + index * 2
-                    ui.text(target, 3, y, HOME_NAMES[id], ui.theme.ink)
-                    local best = tostring(device.ccg_scores[id] or 0)
+                    if y > bottom - 4 then break end
+                    ui.text(target, 3, y, ui.truncate(row[1], width - 10), ui.theme.ink)
+                    local best = tostring(device.ccg_scores[row[2]] or 0)
                     ui.text(target, width - #best - 1, y, best, ui.theme.accent)
                 end
-                ui.wrappedText(target, 2, 14, "Kept on the CCG you play on, and"
-                    .. " here once you have played.", width - 2, 3, ui.theme.muted)
+                ui.wrappedText(target, 2, bottom - 2, "Kept on the CCG you play on,"
+                    .. " and here once you have played.", width - 2, 3, ui.theme.muted)
                 local scene = ui.scene(target)
                 ui.tabBar(scene, target, spec.list, spec.active)
                 return scene:wait()

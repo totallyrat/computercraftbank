@@ -360,6 +360,7 @@ update.PUBLISHED_OPTIONAL = {
 "shop.lua",
 "foxmail.lua",
 "company.lua",
+"brickbreaker.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -400,7 +401,9 @@ end
 
 local ROLE_EXTRA_FILES = {
 apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
-"internet.lua", "shop.lua", "foxmail.lua", "company.lua" },
+"internet.lua", "shop.lua", "foxmail.lua", "company.lua",
+
+"brickbreaker.lua" },
 }
 
 

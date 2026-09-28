@@ -122,7 +122,14 @@ package.loaded["lib.net"] = {
     -- Since 9.1 the console talks to the CCG Server, not the Bank. A stub
     -- that hands back the same fake whatever it is asked for would pass
     -- even if the console were pointed at the wrong computer.
+    -- 12.0 Final: it also opens the App Server, for Home Mode's Game
+    -- Browser, which these runs never touch.
     client = function(spec)
+        if spec.protocol == "PUMPE_APPS_V1" then
+            return setmetatable({}, { __index = function()
+                error("the App Server was asked for something outside Home Mode")
+            end })
+        end
         askedFor = spec
         return client
     end,
@@ -208,7 +215,9 @@ local console = assert(loadfile("../ccg.lua"))
 local function playOneRound(width, height)
     WIDTH, HEIGHT = width, height
     requests, labels = {}, {}
-    for _, action in ipairs({ "heads_tails", "start", "again", "close" }) do
+    -- 12.0 Final: the main menu first, then Bet Play; BACK, then CLOSE.
+    for _, action in ipairs({ "bet", "heads_tails", "start", "again", "back",
+        "close" }) do
         actions[#actions + 1] = action
     end
     console()

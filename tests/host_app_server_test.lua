@@ -101,6 +101,13 @@ local function rejected(action, expectedCode, payload)
         "expected " .. expectedCode .. ", got " .. tostring(result.code))
 end
 
+local function readFile(path)
+    local handle = assert(io.open(path, "r"))
+    local body = handle:read("a")
+    handle:close()
+    return body
+end
+
 local GOOD = { developer_id = "DEV001", developer_token = "GOOD" }
 local BODY = "return function(api) return api end\n"
 
@@ -209,6 +216,53 @@ server.seed()
 local company = listedId("COMPANY")
 assert(company and company.name == "Company" and company.author == "PUMPE",
     "the Company app is in the App Browser, from PUMPE")
+
+-- Games, 12.0 Final ------------------------------------------------------------------
+-- An app is for the PUMPE and a game is for a CCG in Home Mode. The App
+-- Browser asks with no kind -- as every PUMPE before this release does --
+-- and gets apps; the CCG's Game Browser asks for games.
+local GAME = "return { new = function() return { score = 0 } end,"
+    .. " draw = function() end }\n"
+local game = actions.APP_PUBLISH({
+    developer_id = GOOD.developer_id, developer_token = GOOD.developer_token,
+    kind = "game", name = "Blocks", description = "Stack them", body = GAME,
+}).app
+assert(game.kind == "game")
+local function listed(list, id)
+    for _, app in ipairs(list) do
+        if app.app_id == id then return app end
+    end
+end
+assert(not listed(actions.APP_LIST().apps, game.app_id),
+    "a PUMPE's App Browser never lists a game")
+assert(not listed(actions.APP_LIST({ kind = "app" }).apps, game.app_id))
+local games = actions.APP_LIST({ kind = "game" }).apps
+assert(listed(games, game.app_id), "the Game Browser lists it")
+for _, entry in ipairs(games) do
+    assert(entry.kind == "game", "and nothing but games")
+end
+assert(not listed(actions.APP_BANKS().apps, game.app_id))
+-- What it is was chosen when it first went out.
+local again = actions.APP_PUBLISH({
+    developer_id = GOOD.developer_id, developer_token = GOOD.developer_token,
+    app_id = game.app_id, kind = "app", name = "Blocks", body = GAME .. "-- 2\n",
+}).app
+assert(again.kind == "game" and again.version == 2,
+    "republishing is an update to what it already is")
+-- An app published with no kind is an app, as before.
+local plain = actions.APP_PUBLISH({
+    developer_id = GOOD.developer_id, developer_token = GOOD.developer_token,
+    name = "Plain", body = BODY,
+}).app
+assert(plain.kind == "app" and listed(actions.APP_LIST().apps, plain.app_id))
+
+-- Brick Breaker ships with the server, as a game.
+files["/pumpe/brickbreaker.lua"] = readFile("../brickbreaker.lua")
+server.seed()
+local bricks = listed(actions.APP_LIST({ kind = "game" }).apps, "BRICKS")
+assert(bricks and bricks.name == "Brick Breaker" and bricks.author == "PUMPE",
+    "Brick Breaker is in the Game Browser, from PUMPE")
+assert(not listed(actions.APP_LIST().apps, "BRICKS"))
 
 print("host_app_server_test: OK")
 
