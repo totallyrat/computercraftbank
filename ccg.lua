@@ -403,6 +403,8 @@ local function findAdvancedMonitor()
 end
 
 local target, monitorName = findAdvancedMonitor()
+-- FoxyOS 12: an update shows on the monitor, where the players are.
+net.updateTarget = target
 if not target then
     term.setBackgroundColor(colors.black)
     term.setTextColor(colors.red)

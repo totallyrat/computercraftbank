@@ -1,5 +1,7 @@
 -- Ask-first updates. A device with somebody in front of it checks for a
--- release, shows what changed, and installs nothing until it is answered.
+-- release and installs nothing until it is answered. FoxyOS 12 downloads
+-- first and asks after -- Install, or Cancel & Delete -- so a no has to
+-- delete what came down, and a yes installs what is already there.
 -- The three things worth holding on to: refusing writes nothing, the answer
 -- carries the release's own words, and a device that cannot read the manifest
 -- still asks rather than quietly falling back to installing.
@@ -113,11 +115,16 @@ local config = {
 
 -- Refusing --------------------------------------------------------------------
 
-local asked
+local asked, stagedWhenAsked
 local refused = net.autoUpdate(config, "pumpe", "/pumpe", nil, {
     force = true,
-    confirm = function(found) asked = found return false end,
+    confirm = function(found)
+        asked, stagedWhenAsked = found, files["/pumpe/.self_update/pumpe.lua"]
+        return false
+    end,
 })
+assert(stagedWhenAsked == "body of pumpe.lua",
+    "FoxyOS 12 downloads first, then asks")
 assert(asked, "the owner was never asked")
 assert(asked.version == "9.9.9", "the question names the release")
 assert(asked.label == "10.0 Pre", "and what the release is called")
@@ -125,15 +132,17 @@ assert(#asked.changes == 2 and asked.changes[1] == "Updates ask first.",
     "and lists what changed, in the release's own words")
 assert(refused == false, "refusing is not an update")
 assert(next(files) == nil,
-    "saying Later must write nothing at all, not stage a release for later")
+    "Cancel & Delete leaves nothing: the download is deleted, nothing installed")
 assert(rebooted == 0, "and must not restart the device")
 
 -- Accepting ---------------------------------------------------------------------
 
+local fetchedBeforeYes
 local accepted = net.autoUpdate(config, "pumpe", "/pumpe", nil, {
     force = true,
-    confirm = function() return true end,
+    confirm = function() fetchedBeforeYes = fetched return true end,
 })
+assert(fetched == fetchedBeforeYes, "Install installs what is here: nothing more is fetched")
 assert(accepted, "saying yes installs")
 assert(files["/pumpe/pumpe.lua"] == "body of pumpe.lua",
     "the program landed")

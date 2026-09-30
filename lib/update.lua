@@ -548,10 +548,16 @@ function update.check(options)
     }
 end
 
--- Installs a release that check() already found and validated. The download
--- is staged in full and committed in one move, so a device that loses the
--- network halfway through still starts on the release it had.
-function update.apply(found, options)
+-- FoxyOS 12 splits installing into its two halves, so a device with somebody
+-- in front of it can download first and ask after: "Install" or "Cancel &
+-- Delete". stage() downloads everything into a staging folder and checks
+-- it; commit() puts it in place in one move; discard() throws the staged
+-- download away. A device that loses the network halfway through still
+-- starts on the release it had.
+
+local function stagingOf(root) return fs.combine(root or "/pumpe", ".self_update") end
+
+function update.stage(found, options)
     options = options or {}
     local config = options.config or {}
     local root = options.root or "/pumpe"
@@ -570,8 +576,7 @@ function update.apply(found, options)
             .. " KiB more free space"
     end
 
-    local staging = fs.combine(root, ".self_update")
-    local backup = fs.combine(root, ".self_backup")
+    local staging = stagingOf(root)
     if fs.exists(staging) then fs.delete(staging) end
     for index, file in ipairs(files) do
         if options.onProgress then options.onProgress(file, index, #files) end
@@ -599,15 +604,35 @@ function update.apply(found, options)
             return nil, mergeError
         end
     end
+    return true
+end
 
+function update.commit(found, options)
+    options = options or {}
+    local root = options.root or "/pumpe"
+    local staging = stagingOf(root)
+    if not fs.exists(staging) then return nil, "nothing was downloaded" end
     local plan = { files = {} }
-    for _, file in ipairs(files) do
+    for _, file in ipairs(found.files) do
         plan.files[#plan.files + 1] = { path = update.installPath(file.path) }
     end
     local committed, commitError = update.commitRelease(plan, staging, root,
-        backup)
+        fs.combine(root, ".self_backup"))
     if not committed then return nil, commitError end
-    return true, manifest.version
+    return true, found.manifest.version
+end
+
+function update.discard(root)
+    local staging = stagingOf(root)
+    if fs.exists(staging) then fs.delete(staging) end
+    return true
+end
+
+-- Both halves at once, for a device nobody is asked on.
+function update.apply(found, options)
+    local staged, why = update.stage(found, options)
+    if not staged then return nil, why end
+    return update.commit(found, options)
 end
 
 -- Downloads and installs just this role's files. Returns true when the device

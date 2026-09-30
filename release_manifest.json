@@ -22,14 +22,14 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 199413,
-      "checksum": "75ba4e98"
+      "size": 199915,
+      "checksum": "e5bc09a4"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 277301,
-      "checksum": "d98c352b"
+      "size": 273128,
+      "checksum": "afe12667"
     },
     {
       "path": "service_kiosk.lua",
@@ -52,8 +52,8 @@
     {
       "path": "startup.lua",
       "source": "startup.lua",
-      "size": 46181,
-      "checksum": "670200f3"
+      "size": 47054,
+      "checksum": "daa79d94"
     },
     {
       "path": "launcher.lua",
@@ -70,20 +70,20 @@
     {
       "path": "lib/net.lua",
       "source": "dist/lib/net.lua",
-      "size": 7619,
-      "checksum": "c67cee98"
+      "size": 9071,
+      "checksum": "29f97333"
     },
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 41067,
-      "checksum": "5ea57571"
+      "size": 43898,
+      "checksum": "612231d2"
     },
     {
       "path": "lib/update.lua",
       "source": "dist/lib/update.lua",
-      "size": 16194,
-      "checksum": "1c74fa44"
+      "size": 16778,
+      "checksum": "4df59fdf"
     },
     {
       "path": "lib/util.lua",
@@ -102,8 +102,8 @@
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
-      "size": 67613,
-      "checksum": "1c118749"
+      "size": 67708,
+      "checksum": "dbc9c4d9"
     }
   ],
   "optional_files": [
@@ -182,8 +182,8 @@
     {
       "path": "delivery_terminal.lua",
       "source": "delivery_terminal.lua",
-      "size": 67178,
-      "checksum": "a49109b8"
+      "size": 67017,
+      "checksum": "ae716a06"
     },
     {
       "path": "shop.lua",

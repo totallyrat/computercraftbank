@@ -1276,13 +1276,9 @@ local function pickupScreen()
                 -- Walked away: Me signs itself out, and back to the start.
                 if me then signOut() end
                 tab = "code"
+                -- The FoxyOS update screen says what is happening.
                 net.autoUpdate(config, "delivery", ROOT, client, {
-                    programVersion = PROGRAM_VERSION,
-                    onProgress = function()
-                        ui.clear(target)
-                        ui.center(target, math.floor(height / 2),
-                            "UPDATING, ONE MOMENT", ui.theme.ink)
-                    end })
+                    programVersion = PROGRAM_VERSION, idle = true })
             end
         end
         local picked = (action or ""):match("^tab:(.+)$")

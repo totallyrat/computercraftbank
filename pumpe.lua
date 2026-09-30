@@ -3619,124 +3619,30 @@ local function storageScreen()
     end
 end
 
--- The update alert ----------------------------------------------------------
--- A release lands, the phone stops and says what is in it, and nothing is
--- written until somebody answers. "Later" holds until the phone restarts or
--- Settings asks again, so the question is put once rather than every half
--- minute.
+-- Updates, FoxyOS 12 ---------------------------------------------------------
+-- A release comes down with FOXY blinking and a thin bar along the bottom
+-- (lib/ui draws it for every device). Asked first, the phone downloads and
+-- then asks: the release, its version, what it is, and Install over Cancel
+-- & Delete. Cancel holds until the phone restarts or Settings checks again,
+-- so the question is put once rather than every half minute.
 local updateDeferred
 
--- Installing takes twenty seconds whether or not it needs to. A release
--- lands in about two, and an update nobody saw happen is an update nobody
--- trusts -- the phone went dark and came back subtly different. So the bar
--- is the clock rather than the download: it fills over twenty seconds, the
--- line under it says what is actually landing, and the files are long since
--- down by the time it reaches the end.
-local UPDATE_MS = 20 * 1000
-local updateDeadline
-
-local function updateScreen(note)
-    local width, height = target.getSize()
-    local remaining = math.max(0, (updateDeadline or 0) - util.nowMs())
-    local filled = math.min(1, (UPDATE_MS - remaining) / UPDATE_MS)
-    ui.clear(target)
-    local top = math.max(2, math.floor(height / 2) - 6)
-    if type(ui.wordmark) ~= "function"
-        or not ui.wordmark(target, top, "PUMPE", 5, ui.theme.accent) then
-        ui.center(target, top + 2, "PUMPE", ui.theme.accent)
-    end
-    local bar = width - 8
-    local barY = top + (tonumber(ui.wordmarkHeight) or 5) + 3
-    ui.fill(target, 5, barY, bar, 1, ui.theme.panel)
-    local done = math.floor(bar * filled)
-    if done > 0 then ui.fill(target, 5, barY, done, 1, ui.theme.ink) end
-    ui.center(target, barY + 2, ui.truncate(tostring(note or ""), width - 2),
-        ui.theme.muted)
-    ui.center(target, height - 1, "Do not turn this off", ui.theme.muted)
-end
-
-local function updateProgress(file, index, count)
-    updateDeadline = updateDeadline or (util.nowMs() + UPDATE_MS)
-    updateScreen(index .. " of " .. count .. "  "
-        .. tostring(file and file.path or ""))
-end
-
--- Holds the screen out to its twenty seconds once the files are down. The
--- iteration cap is there because a device with a stopped clock would
--- otherwise wait here for good.
 local function updateInstalled()
-    updateDeadline = updateDeadline or (util.nowMs() + UPDATE_MS)
-    for _ = 1, 200 do
-        if util.nowMs() >= updateDeadline then break end
-        updateScreen("Installing")
-        sleep(0.2)
-    end
-    updateDeadline = util.nowMs()
-    updateScreen("Restarting")
+    ui.updateFrame(target, 1, true, "Restarting")
     sleep(0.4)
 end
 
-local function updateAlertScreen(found)
-    local offset = 0
-    while running do
-        local width, height = target.getSize()
-        local named = found.label
-            and (found.label .. "  v" .. tostring(found.version))
-            or ("v" .. tostring(found.version))
-        ui.clear(target)
-        ui.header(target, "Update ready", found.label
-            or ("v" .. tostring(found.version)), util.formatClock())
-        ui.card(target, 2, 5, width - 2, 3, ui.theme.accent)
-        ui.text(target, 4, 5, "NEW RELEASE", ui.theme.muted, ui.theme.panel)
-        ui.text(target, 4, 6, ui.truncate(named, width - 6), ui.theme.ink,
-            ui.theme.panel)
-
-        local top = 9
-        local rows = math.max(1, height - 6 - top + 1)
-        local lines = {}
-        for _, change in ipairs(found.changes or {}) do
-            for _, line in ipairs(ui.wrap("- " .. change, width - 6)) do
-                lines[#lines + 1] = line
-            end
-        end
-        if #lines == 0 then
-            lines = ui.wrap("This PUMPE could not read what changed. A newer"
-                .. " release is there either way.", width - 6)
-        end
-        offset = math.max(0, math.min(offset, #lines - rows))
-        for row = 1, rows do
-            local line = lines[offset + row]
-            if not line then break end
-            ui.text(target, 2, top + row - 1, ui.truncate(line, width - 5),
-                line:sub(1, 1) == "-" and ui.theme.ink or ui.theme.muted)
-        end
-        local scene = ui.scene(target)
-        if #lines > rows then
-            scene:button("up", width - 3, top, 3, 1, "^",
-                { background = ui.theme.panel, disabled = offset <= 0 })
-            scene:button("down", width - 3, top + rows - 1, 3, 1, "v",
-                { background = ui.theme.panel,
-                  disabled = offset + rows >= #lines })
-        end
-        scene:button("go", 2, height - 4, width - 2, 2, "Update now",
-            { background = ui.theme.success, foreground = colors.black })
-        scene:button("later", 2, height - 1, width - 2, 2, "Later",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 5 })
-        if action == "go" then return true end
-        if action == "later" or action == "__terminate" then return false end
-        if action == "up" then offset = math.max(0, offset - rows) end
-        if action == "down" then offset = offset + rows end
-    end
-    return false
-end
-
--- Handed to net.autoUpdate. Returning false leaves the release exactly where
--- it was: check() reads the manifest, apply() is what writes.
+-- Handed to net.autoUpdate once the release is down. False deletes it.
 local function confirmUpdate(found)
     if device.update_mode == "auto" then return true end
     if updateDeferred == found.version then return false end
-    if updateAlertScreen(found) then return true end
+    local size = tonumber(found.bytes)
+    local wanted = ui.updateReady(target, {
+        title = found.label or "FoxyOS",
+        version = found.version,
+        what = "For this Pocket" .. (size and ("  " .. math.ceil(size / 1024) .. " KiB") or ""),
+    })
+    if wanted then return true end
     updateDeferred = found.version
     return false
 end
@@ -3753,7 +3659,7 @@ local function checkForUpdate(force)
         force = force or nil,
         programVersion = force and PROGRAM_VERSION or nil,
         confirm = asking and confirmUpdate or nil,
-        onProgress = updateProgress,
+        target = target,
         onInstalled = updateInstalled,
     })
 end

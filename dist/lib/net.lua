@@ -213,6 +213,11 @@ local ok, result = pcall(shell.run, installer, "--auto", role)
 return ok and result ~= false
 end
 
+
+
+
+net.updateTarget = nil
+
 function net.autoUpdate(config, role, root, client, options)
 options = options or {}
 if type(config) ~= "table" or config.auto_update == false then return false end
@@ -246,6 +251,32 @@ local updater = loadUpdater()
 
 
 
+local function underScreen(found, work)
+local okUi, ui = pcall(require, "lib.ui")
+local target = options.target or net.updateTarget
+or (type(term) == "table" and type(term.current) == "function"
+and term.current()) or nil
+local function progressOf(progress)
+return function(file, index, count)
+if progress then progress((index - 1) / math.max(1, count)) end
+if options.onProgress then
+pcall(options.onProgress, file, index, count)
+end
+end
+end
+if not okUi or type(ui) ~= "table" or type(ui.updating) ~= "function"
+or not target or options.screen == false then
+return work(progressOf(nil), nil)
+end
+return ui.updating(target, function(progress)
+return work(progressOf(progress), progress)
+end, options.note or found.label
+or ("FoxyOS " .. tostring(found.version)))
+end
+
+
+
+
 
 
 if options.confirm then
@@ -272,29 +303,47 @@ return false
 end
 found = { version = ping.version, changes = {}, depot = true }
 end
+local stages = not found.depot and updater
+and type(updater.stage) == "function"
+if stages then
+local staged, detail = underScreen(found, function(onProgress, progress)
+local ok, why = updater.stage(found, {
+config = config, role = role, root = root,
+onProgress = onProgress,
+onSpaceNeeded = options.onSpaceNeeded,
+})
+if ok and progress then progress(1) end
+return ok, why
+end)
+if not staged then
+net.lastUpdateError = detail
+return false
+end
+end
 
 
 
 local askedOk, wanted = pcall(options.confirm, found)
-if not askedOk or not wanted then return false end
-if not found.depot and updater then
-local applied, detail = updater.apply(found, {
-config = config, role = role, root = root,
-onProgress = options.onProgress,
-onSpaceNeeded = options.onSpaceNeeded,
-})
-if applied then
+if not askedOk or not wanted then
+if stages then updater.discard(root) end
+return false
+end
+if stages then
+local committed, detail = updater.commit(found, { root = root })
+if committed then
 if options.onInstalled then pcall(options.onInstalled, detail) end
 os.reboot()
 return true
 end
 net.lastUpdateError = detail
+updater.discard(root)
+return false
 end
 return depotUpdate(config, role, root, nil)
 end
 
 if updater then
-local updated, detail = updater.selfUpdate({
+local found, why = updater.check({
 config = config,
 role = role,
 root = root,
@@ -303,17 +352,29 @@ root = root,
 repair = true,
 requiredPaths = options.requiredPaths,
 optionalPaths = options.optionalPaths,
-onProgress = options.onProgress,
 })
+if found then
+local updated, detail = underScreen(found, function(onProgress, progress)
+local ok, result = updater.apply(found, {
+config = config, role = role, root = root,
+onProgress = onProgress,
+})
+if ok and progress then progress(1) end
+return ok, result
+end)
 if updated then
 if options.onInstalled then pcall(options.onInstalled, detail) end
 os.reboot()
 return true
 end
-
-
-if detail == "current" or detail == "disabled" then return false end
 net.lastUpdateError = detail
+elseif why == "current" or why == "disabled" then
+
+return false
+else
+
+net.lastUpdateError = why
+end
 end
 return depotUpdate(config, role, root, client)
 end

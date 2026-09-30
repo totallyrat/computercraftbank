@@ -1094,6 +1094,100 @@ function ui.splash(target, word, tagline, options)
     end
 end
 
+-- FoxyOS updates, FoxyOS 12 -----------------------------------------------------------
+-- One screen on every device while a release comes down: FOXY in the middle,
+-- blinking, and a thin bar along the bottom row, side to side, filling as the
+-- files land -- grey on black, there if you look for it. When a device asks
+-- before installing, the question slides up over the same screen.
+
+-- Where FOXY sits: high enough that the question fits under it.
+local function updateWordTop(height)
+    return math.max(1, math.min(math.floor((height - GLYPH_HEIGHT) / 2), height - 15))
+end
+
+function ui.updateFrame(target, fraction, lit, note)
+    target = surface(target)
+    local width, height = target.getSize()
+    ui.fill(target, 1, 1, width, height, ui.theme.background)
+    local top = updateWordTop(height)
+    if not ui.wordmark(target, top, "FOXY", nil,
+        lit and ui.theme.accent or ui.theme.background) then
+        ui.center(target, math.max(1, math.floor(height / 2)), "FOXY",
+            lit and ui.theme.accent or ui.theme.panel, ui.theme.background)
+    elseif note and top + GLYPH_HEIGHT + 1 < height then
+        ui.center(target, top + GLYPH_HEIGHT + 1, ui.truncate(tostring(note), width - 2),
+            ui.theme.panel, ui.theme.background)
+    end
+    local filled = math.floor(width * util.clamp(tonumber(fraction) or 0, 0, 1) + 0.5)
+    if filled > 0 then ui.fill(target, 1, height, filled, 1, ui.theme.panel) end
+end
+
+-- Runs `work(progress)` with the screen up, FOXY blinking twice a second
+-- while it runs. `progress(fraction, note)` moves the bar. Returns what
+-- `work` returned.
+function ui.updating(target, work, note)
+    local fraction, lit = 0, true
+    local function draw() ui.updateFrame(target, fraction, lit, note) end
+    local function progress(value, text)
+        fraction = util.clamp(tonumber(value) or 0, 0, 1)
+        if text then note = text end
+        draw()
+    end
+    local results = { n = 0 }
+    local function run() results = table.pack(work(progress)) end
+    draw()
+    if type(parallel) == "table" and type(parallel.waitForAny) == "function" then
+        parallel.waitForAny(run, function()
+            while true do
+                sleep(0.5)
+                lit = not lit
+                draw()
+            end
+        end)
+    else
+        run()
+    end
+    return table.unpack(results, 1, results.n)
+end
+
+-- The question, once a release is down. It rises from the bottom of the
+-- download screen, under FOXY: the release and its version, what it is, and
+-- two buttons, one over the other. `info` is { title, version, what }.
+-- True installs it; false throws the download away.
+function ui.updateReady(target, info)
+    target = surface(target)
+    local width, height = target.getSize()
+    local wordTop = updateWordTop(height)
+    local drawn = ui.wordmark(target, wordTop, "FOXY", nil, ui.theme.accent)
+    local panelTop = drawn and math.max(wordTop + GLYPH_HEIGHT + 1, height - 9)
+        or math.max(1, height - 9)
+    local frames = 6
+    for step = 1, frames do
+        local y = height - math.floor((height - panelTop + 1) * step / frames) + 1
+        ui.fill(target, 1, y, width, height - y + 1, ui.theme.panel)
+        sleep(0.04)
+    end
+    local function line(y, text, color)
+        if y >= panelTop and y <= height then
+            ui.center(target, y, ui.truncate(tostring(text or ""), width - 2),
+                color, ui.theme.panel)
+        end
+    end
+    line(height - 8, info.title or "FoxyOS", ui.theme.ink)
+    line(height - 7, "Version " .. tostring(info.version or "?"), ui.theme.muted)
+    line(height - 6, info.what, ui.theme.muted)
+    while true do
+        local scene = ui.scene(target)
+        scene:button("install", 2, height - 4, width - 2, 2, "Install",
+            { background = ui.theme.accent, foreground = ui.theme.accentInk })
+        scene:button("cancel", 2, height - 1, width - 2, 2, "Cancel & Delete",
+            { background = ui.theme.background, foreground = ui.theme.ink })
+        local action = scene:wait()
+        if action == "install" then return true end
+        if action == "cancel" or action == "__terminate" then return false end
+    end
+end
+
 function ui.boot(target, product, subtitle)
     target = surface(target)
     local width, height = target.getSize()

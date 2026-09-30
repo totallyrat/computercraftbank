@@ -5815,7 +5815,7 @@ local function checkForOnlineUpdate()
     end
 
     dash.update_status, dash.update_color = "CHECKING INTERNET", colors.orange
-    local updated, detail = onlineUpdate.selfUpdate({
+    local options = {
         config = config,
         role = "bank",
         root = ROOT,
@@ -5823,11 +5823,29 @@ local function checkForOnlineUpdate()
         optionalPaths = RELEASE.optional,
         -- Up to date, but missing a file this role installs: fetch it.
         repair = true,
-        onProgress = function(_, index, total)
-            dash.update_status = "DOWNLOADING " .. index .. "/" .. total
-            dash.update_color = colors.cyan
-        end,
-    })
+    }
+    local updated, detail = onlineUpdate.check(options)
+    if updated then
+        -- FoxyOS 12: the screen every device shows while a release comes
+        -- down -- FOXY blinking, a thin bar along the bottom.
+        local found = updated
+        local function download(progress)
+            options.onProgress = function(_, index, total)
+                dash.update_status = "DOWNLOADING " .. index .. "/" .. total
+                dash.update_color = colors.cyan
+                if progress then progress((index - 1) / math.max(1, total)) end
+            end
+            local ok, result = onlineUpdate.apply(found, options)
+            if ok and progress then progress(1) end
+            return ok, result
+        end
+        if type(ui.updating) == "function" and type(term) == "table" then
+            updated, detail = ui.updating(term.current(), download,
+                found.label or ("FoxyOS " .. tostring(found.version)))
+        else
+            updated, detail = download(nil)
+        end
+    end
 
     if updated then
         ensureBankStartup()

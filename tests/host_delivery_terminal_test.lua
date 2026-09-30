@@ -271,9 +271,9 @@ local function runTerminal(bank, files, WIDTH, HEIGHT, script, offline)
     local savedNet, savedUi = package.loaded["lib.net"], package.loaded["lib.ui"]
     package.loaded["lib.net"] = {
         client = function() return client end,
-        -- Only the pickup counter passes onProgress: it draws "updating".
+        -- Only the pickup counter's idle check says it is idle.
         autoUpdate = function(_, _, _, _, options)
-            if options and options.onProgress then
+            if options and options.idle then
                 seen.idleUpdates = seen.idleUpdates + 1
             end
         end,

@@ -332,14 +332,14 @@ function ui.pin() return "1234" end
 function ui.confirm() return true end
 
 actions = {
-    "later",                           -- the update alert, before anything
+    "cancel",                          -- the update question, before anything
     "login",
     -- 9.4: the Bank app left the Home Screen, so the built-in apps fit on
     -- one page and Settings no longer needs a page turn to reach.
     "open:settings",
     "storage", "back",                 -- what the phone is holding
     "updates",
-    "check", "go",                     -- ask again, and take it this time
+    "check", "install",                -- ask again, and take it this time
     "mode",                            -- then switch updates to automatic
     "back",
     "tab:apps", "tab:account", "tab:phone",  -- 12.0: every tab
@@ -390,6 +390,20 @@ function ui.scene()
         return action
     end
     return scene
+end
+-- FoxyOS 12: the question once a release is down. Install over Cancel &
+-- Delete, answered from the script like any other screen.
+readyShown = {}
+function ui.updateReady(_, info)
+    readyShown[#readyShown + 1] = info
+    local scene = ui.scene()
+    scene:button("install", 2, HEIGHT - 4, WIDTH - 2, 2, "Install")
+    scene:button("cancel", 2, HEIGHT - 1, WIDTH - 2, 2, "Cancel & Delete")
+    return scene:wait() == "install"
+end
+restartingDrawn = false
+function ui.updateFrame(_, _, _, note)
+    if note == "Restarting" then restartingDrawn = true end
 end
 dofile("ui_stub_fill.lua")(ui)
 -- 12.0: a phone with an account starts on its lock screen, which waits for
@@ -475,21 +489,15 @@ assert(#updateOptions > 0, "the PUMPE never looked for a release at all")
 assert(type(updateOptions[1].confirm) == "function",
     "a PUMPE in ask mode must hand the updater something to ask with")
 assert(updateAsked, "and the question has to actually be put")
-assert(drew("10.0 Pre"), "the alert names the release")
-assert(drew("- Updates ask first."),
-    "and lists what changed, in the release's own words")
-assert(pressed("Update now") and pressed("Later"),
-    "with both answers on screen")
+assert(readyShown[1].title == "10.0 Pre" and readyShown[1].version == "9.9.9",
+    "the question names the release and its version")
+assert(tostring(readyShown[1].what):find("Pocket", 1, true),
+    "and what it is")
+assert(pressed("Install") and pressed("Cancel & Delete"),
+    "with both answers on screen, one over the other")
 assert(updateAnswer == true,
-    "and Check now puts the question again, so Later is not the end of it")
--- 10.0: installing is deliberately slow. A release lands in about two
--- seconds and the phone comes back subtly different, which reads as a
--- glitch rather than an update. Twenty seconds of wordmark and bar is the
--- whole point, so a well-meaning speed-up has to fail here.
-assert(installTook and installTook >= 20000,
-    "installing held the screen for " .. tostring(installTook)
-        .. "ms; it is meant to take twenty seconds whether or not it needs to")
-assert(installTook < 40000, "but not forever")
+    "and Check now puts the question again, so Cancel is not the end of it")
+assert(restartingDrawn, "installed, it says it is restarting")
 -- And the boot that is not an update stays short. The tagline holds for two
 -- seconds and the wordmark does not blink; anything longer is the phone
 -- looking busy while doing nothing, which is what the update screen is for.
@@ -611,7 +619,7 @@ bootDevice = { last_name = "Ana Fox", onboarding_complete = true,
     modem_on = true, update_mode = "ask" }
 loginNames, inputs = {}, {}
 local drawsBeforeLock = #drawnText
-index, actions = 0, { "later", "__terminate" }
+index, actions = 0, { "cancel", "__terminate" }
 local lockOk, lockErr = pcall(assert(loadfile("../pumpe.lua")))
 assert(lockOk or tostring(lockErr):find("more actions", 1, true), tostring(lockErr))
 local function drewSinceLock(text)
@@ -627,7 +635,7 @@ assert(#loginNames == 1 and loginNames[1] == "Ana Fox",
     "the PIN opens the account it belongs to, with nothing typed")
 
 -- Remove account, from Settings.
-index, actions = 0, { "later", "open:settings", "tab:account", "logout",
+index, actions = 0, { "cancel", "open:settings", "tab:account", "logout",
     "__terminate" }
 local removeOk, removeErr = pcall(assert(loadfile("../pumpe.lua")))
 assert(removeOk or tostring(removeErr):find("more actions", 1, true),
@@ -639,7 +647,7 @@ assert(savedDevice.last_name == "" and savedDevice.onboarding_complete == false,
 bootDevice = { last_name = "", onboarding_complete = false, modem_on = true,
     update_mode = "ask" }
 local drawsBeforeWelcome = #drawnText
-index, actions = 0, { "later", "exit", "__terminate" }
+index, actions = 0, { "cancel", "exit", "__terminate" }
 local welcomeOk, welcomeErr = pcall(assert(loadfile("../pumpe.lua")))
 assert(welcomeOk or tostring(welcomeErr):find("more actions", 1, true),
     tostring(welcomeErr))
@@ -654,7 +662,7 @@ assert(welcomed, "a phone with no account is asked who it belongs to")
 bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
     update_mode = "ask", favorites = { "bet", "tickets" },
     shortcuts = { { name = "Play", steps = { { kind = "open", app = "bet" } } } } }
-index, actions = 0, { "later", "__terminate" }
+index, actions = 0, { "cancel", "__terminate" }
 local carriedOk, carriedErr = pcall(assert(loadfile("../pumpe.lua")))
 assert(carriedOk or tostring(carriedErr):find("more actions", 1, true),
     tostring(carriedErr))

@@ -551,7 +551,13 @@ end
 
 
 
-function update.apply(found, options)
+
+
+
+
+local function stagingOf(root) return fs.combine(root or "/pumpe", ".self_update") end
+
+function update.stage(found, options)
 options = options or {}
 local config = options.config or {}
 local root = options.root or "/pumpe"
@@ -570,8 +576,7 @@ return nil, "needs " .. math.ceil((total + 8192 - (free or 0)) / 1024)
 .. " KiB more free space"
 end
 
-local staging = fs.combine(root, ".self_update")
-local backup = fs.combine(root, ".self_backup")
+local staging = stagingOf(root)
 if fs.exists(staging) then fs.delete(staging) end
 for index, file in ipairs(files) do
 if options.onProgress then options.onProgress(file, index, #files) end
@@ -599,15 +604,35 @@ if fs.exists(staging) then fs.delete(staging) end
 return nil, mergeError
 end
 end
+return true
+end
 
+function update.commit(found, options)
+options = options or {}
+local root = options.root or "/pumpe"
+local staging = stagingOf(root)
+if not fs.exists(staging) then return nil, "nothing was downloaded" end
 local plan = { files = {} }
-for _, file in ipairs(files) do
+for _, file in ipairs(found.files) do
 plan.files[#plan.files + 1] = { path = update.installPath(file.path) }
 end
 local committed, commitError = update.commitRelease(plan, staging, root,
-backup)
+fs.combine(root, ".self_backup"))
 if not committed then return nil, commitError end
-return true, manifest.version
+return true, found.manifest.version
+end
+
+function update.discard(root)
+local staging = stagingOf(root)
+if fs.exists(staging) then fs.delete(staging) end
+return true
+end
+
+
+function update.apply(found, options)
+local staged, why = update.stage(found, options)
+if not staged then return nil, why end
+return update.commit(found, options)
 end
 
 

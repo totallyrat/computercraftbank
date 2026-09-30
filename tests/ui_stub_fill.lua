@@ -21,6 +21,10 @@ return function(stub)
     stub.setMainColor = stub.setMainColor or function() return true end
     stub.pickMainColor = stub.pickMainColor or function() return nil end
     stub.wordmark = stub.wordmark or function() return false end
+    -- FoxyOS 12's update screens: drawn by the real library in its own test.
+    stub.updateFrame = stub.updateFrame or function() end
+    stub.updating = stub.updating or function(_, work) return work(function() end) end
+    stub.updateReady = stub.updateReady or function() return false end
     stub.moreMenu = stub.moreMenu or function(_, spec)
         return "tab:" .. tostring(spec and spec.active or "more")
     end

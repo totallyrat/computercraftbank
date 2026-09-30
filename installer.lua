@@ -522,25 +522,44 @@ local function configFor(program, body, existingPath, version)
         .. "return " .. textutils.serialize(defaults) .. "\n"
 end
 
-local progressDrawn
-local function progress(program, entry, done, total, index, count)
+-- FoxyOS 12: the download screen every device shows -- FOXY blinking in the
+-- middle, and a thin bar along the bottom row, side to side, grey on black.
+local downloading = { lit = true, fraction = 0, note = "" }
+local function downloadFrame()
     local width, height = target.getSize()
-    local barWidth = math.max(8, width - 6)
-    local barY = math.max(9, math.min(height - 4, 11))
-    if progressDrawn ~= program.id then
-        progressDrawn = program.id
-        clear()
-        header("INSTALLING " .. string.upper(program.name), "From the published release")
-        fill(4, barY, barWidth, 2, theme.panel)
+    clear()
+    local top = math.max(1, math.min(math.floor((height - 5) / 2), height - 15))
+    if not wordmark(top, "FOXY", downloading.lit and theme.accent or theme.background) then
+        center(math.max(1, math.floor(height / 2)), "FOXY",
+            downloading.lit and theme.accent or theme.panel)
+    elseif top + 6 < height then
+        center(top + 6, downloading.note, theme.panel)
     end
-    fill(1, 6, width, 1, theme.background)
-    center(6, entry and installPath(entry.path) or "", theme.ink)
-    fill(1, 8, width, 1, theme.background)
-    center(8, math.floor(done / 1024) .. " / " .. math.floor(total / 1024) .. " KiB",
-        theme.muted)
-    fill(4, barY, math.floor(barWidth * done / math.max(1, total)), 2, theme.accent)
-    fill(1, barY + 3, width, 1, theme.background)
-    center(barY + 3, "file " .. index .. " of " .. count, theme.accent)
+    local filled = math.floor(width * downloading.fraction + 0.5)
+    if filled > 0 then fill(1, height, filled, 1, theme.panel) end
+end
+
+local function progress(program, entry, done, total, index, count)
+    downloading.fraction = math.min(1, done / math.max(1, total))
+    downloading.note = string.upper(program.name)
+    downloadFrame()
+end
+
+-- Runs `work` with FOXY blinking twice a second, where the computer can run
+-- two things at once.
+local function blinking(work)
+    if type(parallel) ~= "table" or type(parallel.waitForAny) ~= "function" then
+        return work()
+    end
+    local results = { n = 0 }
+    parallel.waitForAny(function() results = table.pack(work()) end, function()
+        while true do
+            sleep(0.5)
+            downloading.lit = not downloading.lit
+            downloadFrame()
+        end
+    end)
+    return table.unpack(results, 1, results.n)
 end
 
 -- Downloads a program's files into `root`, checks every one against the
@@ -563,30 +582,34 @@ local function install(program, root, manifest)
     for _, stale in ipairs({ staging, backup }) do
         if fs.exists(stale) then fs.delete(stale) end
     end
-    progressDrawn = nil
-    local done = 0
-    for index, entry in ipairs(entries) do
-        progress(program, entry, done, total, index, #entries)
-        local body, err = download(entry, manifest.version)
-        if body and entry.path == "startup.lua" and body:sub(1, #HEADER) ~= HEADER then
-            body, err = nil, "The release's installer is not Easy Deployment"
+    downloading.lit = true
+    local fetched, fetchError = blinking(function()
+        local done = 0
+        for index, entry in ipairs(entries) do
+            progress(program, entry, done, total, index, #entries)
+            local body, err = download(entry, manifest.version)
+            if body and entry.path == "startup.lua" and body:sub(1, #HEADER) ~= HEADER then
+                body, err = nil, "The release's installer is not Easy Deployment"
+            end
+            if body and entry.path == "config.lua" then
+                body = configFor(program, body, fs.combine(root, "config.lua"),
+                    manifest.version)
+            end
+            local written, writeError = false, err
+            if body then
+                written, writeError = writeFile(fs.combine(staging,
+                    installPath(entry.path)), body)
+            end
+            if not written then
+                if fs.exists(staging) then fs.delete(staging) end
+                return nil, tostring(writeError or "Download failed")
+            end
+            done = done + entry.size
         end
-        if body and entry.path == "config.lua" then
-            body = configFor(program, body, fs.combine(root, "config.lua"),
-                manifest.version)
-        end
-        local written, writeError = false, err
-        if body then
-            written, writeError = writeFile(fs.combine(staging, installPath(entry.path)),
-                body)
-        end
-        if not written then
-            if fs.exists(staging) then fs.delete(staging) end
-            return nil, tostring(writeError or "Download failed")
-        end
-        done = done + entry.size
-    end
-    progress(program, nil, done, total, #entries, #entries)
+        progress(program, nil, done, total, #entries, #entries)
+        return true
+    end)
+    if not fetched then return nil, fetchError end
 
     local moved = {}
     local ok, err = pcall(function()

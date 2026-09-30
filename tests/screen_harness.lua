@@ -28,13 +28,13 @@ keys = keys or { enter = 257, backspace = 259, escape = 256, up = 265, down = 26
     ["end"] = 269 }
 
 function screen.terminal(width, height)
-    local grid = {}
+    local grid, backs = {}, {}
     local cursorX, cursorY = 1, 1
     local text, back = colors.white, colors.black
     local function wipe()
         for y = 1, height do
-            grid[y] = {}
-            for x = 1, width do grid[y][x] = " " end
+            grid[y], backs[y] = {}, {}
+            for x = 1, width do grid[y][x], backs[y][x] = " ", back end
         end
     end
     wipe()
@@ -58,7 +58,7 @@ function screen.terminal(width, height)
     t.clear = wipe
     t.clearLine = function()
         if grid[cursorY] then
-            for x = 1, width do grid[cursorY][x] = " " end
+            for x = 1, width do grid[cursorY][x], backs[cursorY][x] = " ", back end
         end
     end
     t.write = function(value)
@@ -67,6 +67,7 @@ function screen.terminal(width, height)
             local x = cursorX + index - 1
             if grid[cursorY] and x >= 1 and x <= width then
                 grid[cursorY][x] = value:sub(index, index)
+                backs[cursorY][x] = back
             end
         end
         cursorX = cursorX + #value
@@ -75,9 +76,10 @@ function screen.terminal(width, height)
     t.scroll = function(lines)
         for _ = 1, lines do
             table.remove(grid, 1)
-            local row = {}
-            for x = 1, width do row[x] = " " end
-            grid[#grid + 1] = row
+            table.remove(backs, 1)
+            local row, colours = {}, {}
+            for x = 1, width do row[x], colours[x] = " ", back end
+            grid[#grid + 1], backs[#backs + 1] = row, colours
         end
     end
     -- For the test: what is on the screen now.
@@ -93,6 +95,14 @@ function screen.terminal(width, height)
         return false
     end
     t.dump = function() return table.concat(t.lines(), "\n") end
+    -- The background colour of one cell, and how many cells of a row are
+    -- a colour: what a wordmark or a bar is made of.
+    t.backAt = function(x, y) return backs[y] and backs[y][x] end
+    t.count = function(y, colour)
+        local total = 0
+        for x = 1, width do if backs[y] and backs[y][x] == colour then total = total + 1 end end
+        return total
+    end
     return t
 end
 
