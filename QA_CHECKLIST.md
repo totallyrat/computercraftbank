@@ -7,6 +7,37 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## 12.0 Final (12.0.0)
+
+### CCG console and the Game Browser
+
+- [ ] A console that showed "CCG COULD NOT START" before this update starts on a menu with **HOME MODE** and **BET PLAY**, and says whether it found the CCG Server and the Bank. A brand-new console asks for its colour and Home PIN first.
+- [ ] With the CCG Server off, **BET PLAY** says what is missing and **HOME MODE** still works.
+- [ ] Pair a PUMPE in Home Mode, open **Game Browser** on the phone, **Get it** on Brick Breaker. It appears on the console beside the four; play it (A launches the ball); remove it again.
+- [ ] Publish a small game from Dev Mode on a Service Kiosk as **GAME**; it shows in the Game Browser and not in the PUMPE's App Browser. Publish an app as **APP**: the reverse.
+
+### Tabs
+
+- [ ] No app, kiosk, terminal or server shows **More**. FoxMail has Me on the bar; Company has Items, Store, Deals, with **Pickup points** on the Store tab; Settings has Close PUMPE on Account.
+- [ ] Service Kiosk **Kiosk** tab, Delivery Terminal **Setup** tab, Admin Terminal **System** tab, Event Kiosk's Home: each control that used to be in More is there and works.
+- [ ] Foxy's bank list shows most of its buttons without scrolling.
+
+### Apps update themselves
+
+- [ ] With the App Server on this release, open a PUMPE that had Foxy and Shop from before: within a few seconds on the Home Screen a banner says they were updated, and their data (Shop places, Internet bookmarks) is still there.
+
+### Pickup points
+
+- [ ] The counter has **Collect**, **Store** and **Me** tabs and a **STAFF** button. Codes still collect and deliver.
+- [ ] Put the company on a sale in the Company app's **Deals**: the counter's Store shows the sale price. Buy with **I HAVE A DISCOUNT CODE** and a code: it charges the discounted price, and the code's uses go up.
+- [ ] **Me**: type your name; your PUMPE asks *Is this you?*; say yes with your PIN. Take a parcel that has arrived; make one on its way **ready**, and when it arrives its code opens it without asking. Walk away for a minute: the counter signs you out.
+- [ ] Type somebody else's name: their phone asks; a second try within a minute is refused.
+
+### New world and the guide
+
+- [ ] On a fresh computer with a modem and no Bank on the network, Easy Deployment opens on **Welcome to Foxy**. **GET THE BANK SERVER** asks for the code and installs the Bank. With a Bank running, it opens on the PUMPE as before.
+- [ ] Create a new account: the guide is three steps with no Skip and ends on **Welcome to Foxy**.
+
 ## 12.0 Part 1 (11.9.1)
 
 ### The Vault updates

@@ -1,5 +1,56 @@
 # Changelog
 
+## 12.0.0
+
+12.0 Final. The CCG console always starts and gets games from the App
+Server, every program has only the tabs it needs, apps update themselves,
+pickup points get a Me tab and discounts, and a new world starts with Foxy.
+
+**The CCG console always starts.** It opens on a menu -- HOME MODE and BET
+PLAY -- with what it found on the network. Home Mode needs no server; Bet
+Play signs in when opened and says exactly what is missing. A new console
+asks for its colour and Home PIN first. A console still showing "CCG COULD
+NOT START" is on a release from before 12.0: let it update.
+
+**The Game Browser.** In Home Mode, the CCG app's Game Browser lists the App
+Server's games; the console fetches one, checks it, and keeps it beside the
+four. Games run in a box: no disk, no network, no monitor. The App Server
+ships Brick Breaker.
+
+**App or game.** Dev Mode asks the first time a file goes out: an app goes
+to the PUMPE's App Browser, a game to the CCG's Game Browser.
+
+**Only the tabs each program needs.** No More anywhere. FoxMail shows all
+four; Company is Items, Store, Deals (pickup points open from Store);
+Settings puts Close PUMPE on Account; kiosks and terminals got a Kiosk,
+Setup or System tab for what More held; servers are Status, Activity,
+Server.
+
+**Apps update themselves.** From the Home Screen, every ten minutes, the
+PUMPE fetches new versions of its apps, keeping what each one saved. A
+failed download leaves the app as it was.
+
+**Pickup points: Collect, Store and Me.** The counter has tabs. Me: type
+your name, say yes on your PUMPE, and see your orders for that point --
+take what has arrived, get ready for what is coming.
+
+**Discounts at the pickup counter.** The Store shows the company's sale
+and takes discount codes, priced by the Bank exactly as the Shop app is.
+
+**Welcome to Foxy.** On a new computer in a world with no Bank, Easy
+Deployment opens on Welcome to Foxy and fetches the Bank Server from GitHub.
+
+**A shorter guide.** Three steps, no Skip, ending on Welcome to Foxy.
+
+**Internet suggests as you type.** The address box offers the sites you
+saved and visited.
+
+**Foxy's bank list is denser.** One line per action, so most of it fits
+without scrolling.
+
+**Kiosk mail's Next address works.** It was behind a More that never
+answered; it is on the bar now.
+
 ## 11.9.1
 
 12.0 Part 1. A new look in every program, Home Mode on the CCG, discounts in

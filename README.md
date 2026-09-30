@@ -32,10 +32,10 @@ All screens support touch. Physical keyboard input also works.
 PUMPE now behaves like a small phone rather than a list of bank buttons:
 
 - **Since 12.0 a PUMPE belongs to its Foxy Account.** It starts on the lock screen of the account it was set up with — a big clock and the account's name — and the PIN is all it asks. There is no sign-in screen to reach from there; **Remove account** in Settings is how a phone changes hands.
-- **Every device has a main colour** (12.0). Orange like the fox out of the box; the PUMPE asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it in More; the Bank Server and Vault keep the Bank's colours.
+- **Every device has a main colour** (12.0). Orange like the fox out of the box; the PUMPE asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it on one of their tabs (a kiosk's **Kiosk** tab, a terminal's **Setup** or **System**, a server's **Server**); the Bank Server and Vault keep the Bank's colours.
 
 - Start-up spells **PUMPE** one letter at a time, then holds **Small yet Mighty** for two seconds. Installing a release is the opposite: since 10.0 the wordmark sits over a bar that fills for twenty seconds whether or not it needs to, because a release lands in about two and a phone that goes dark and comes back subtly different reads as a glitch rather than an update.
-- Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a six-step guide to the phone. **How PUMPE Works** in Settings re-opens the same guide at any time.
+- Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How PUMPE Works** in Settings → Account re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
 - Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
@@ -63,7 +63,7 @@ An app declares its own in its first lines, the same way a bank app declares its
 The phone reads that off the file rather than asking the app at runtime, because search has to know what an app does without running it. An app opened at an action receives it from `api.action()`, goes straight there, and closes when it is done.
 
 - **Search** has a slim bar of its own just above the dock, on every page (since 11.0 — it used to take a dock slot, so the dock is four favourites now). It finds apps, app actions and every setting, ranking a name that starts with what you typed above one that merely contains it. **Suggestions appear under the field as you type** — "fox" already offers Foxy, Foxy Cash and FoxMail — and tapping one goes straight there; DONE shows every match. What is not installed is one tap further on, in the App Browser with the same words already filled in.
-- **Settings** and the **App Browser** have their own search bars over the same lists.
+- The **App Browser** has its own search bar over the same list. (Settings' own search went with its More page in 12.0 Final; the home search finds every setting.)
 - **QuickActions** strings app actions together. Add steps, add a **Repeat** to multiply the step above it, then run it yourself or have it run every day at an hour you pick. A QuickAction can sit on the Home Screen as an icon that does something rather than opening something.
 - **Reminders** arrive as a banner or as a full screen alert, set in in-game hours from now.
 
@@ -73,22 +73,35 @@ Reminders and QuickActions are kept on the phone and fired by the Home Screen's 
 
 **Tabs along the bottom are the standard.** An app with more than one part puts its parts in a row on the bottom line, the way Shop did first, and **the mark at the top left (`<PUMPE`) goes home** from any of them.
 
-**Since 12.0 the tabs float.** They sit in a pill on the row above the bottom, clear of both sides and of the bottom row. Three parts go on it, and the fourth place is always **More**: every other page, a search box, and suggestions as you type. The same bar is on every kiosk, terminal and server — there without the home mark, because a kiosk has no home screen to go back to.
+**Since 12.0 the tabs float.** They sit in a pill on the row above the bottom, clear of both sides and of the bottom row. The same bar is on every kiosk, terminal and server — there without the home mark, because a kiosk has no home screen to go back to.
+
+**12.0 Final: only the tabs a program needs.** Two, three or four, all on the bar — no More page. Everything More used to hold is on a tab. (The bar still grows a **More** past four tabs, for an app somebody writes with more; nothing that ships has that many.)
 
 | App | Tabs |
 | --- | --- |
-| Foxy | Bank, Account |
+| Foxy | Bank, Security, Account |
 | FoxMail | Inbox, Sent, Write, Me |
 | Shop | Stores, Delivery, Places |
+| Internet | Go, Saved, Recent — the address box suggests sites you know as you type |
 | CCG | Home, Bet, Scores |
-| Company | Products, Store, Points; Discounts in More |
-| Settings | Phone, Apps, Account; every setting in More |
+| Company | Products, Store, Deals — pickup points open from Store |
+| Settings | Phone, Apps, Account — Close PUMPE is on Account |
 | Friends | Chats (with the unread count), Friends, Urgent |
 | Tickets | Events, My tickets |
 | Customs | Visas, Territories |
 | Revolution | Take, Pay, Account |
 | BuckApp | Money, Account |
 | Website Crafter | Sites, New |
+
+| Kiosk, terminal or server | Tabs |
+| --- | --- |
+| Service Kiosk | Sell, Products, Store, Kiosk (balance, withdraw, company mail, link company, display, Foxy Pay, Dev Mode, colour, close) |
+| Delivery Terminal | Open, Done, Setup (pickup point, link company, colour, close) |
+| Pickup point (a Delivery Terminal in Pickup mode) | Collect, Store, Me |
+| Event Kiosk | Home (with colour, log out and close), Events, Door |
+| Border Controller | Gate, Scan, Owner |
+| Admin Terminal | Tax, People, Inbox, System (controls, system, colour, lock) |
+| Every server | Status, Activity, Server |
 
 An app with one screen — Internet, Tax, Subs, Reminders, QuickActions, Settings — keeps its **< Home** button rather than tabs it has nothing to put in. An app opened at an action from search opens on that tab.
 
@@ -174,6 +187,12 @@ Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048*
 1. On the console, press **HOME MODE** and enter its **Home PIN**. The owner sets it on the console's first start; a console that was already running asks on its first start after 12.0 (never over an arena in Auto Mode, which has to come back by itself).
 2. The console shows a **six digit code**. Open **CCG → Home** on your PUMPE and type it.
 3. Your PUMPE shows the games, then a pad: arrows and **A** (arrow keys and Space work too). The game is on the big screen, the score on your phone.
+
+**Games from the Game Browser (12.0 Final).** Home Mode plays more than the four: **CCG → Home → Game Browser** on the paired PUMPE lists the App Server's games, and **Get it** has the console fetch one — in pieces, checked against what the App Server says it is — and keep it beside the four, with its own best score. Up to twelve; **Remove** takes one off. Only in Home Mode: Bet Play is untouched. The App Server ships **Brick Breaker**, and `brickbreaker.lua` is the example for writing one.
+
+A game is published from **Dev Mode** on a Service Kiosk: the first time a file goes out, it asks **APP or GAME**, and a game goes to the CCG's Game Browser instead of the PUMPE's App Browser. A game is a file that returns one table — `new(width, height, random)`, `input(state, key)`, `tick(state)`, `speed(state)`, `draw(state, screen)`; `state.score`, `state.over` and `state.status` are read from it — and it runs in a box on the console: it is handed maths, strings, tables, colours and a board to paint (`screen.fill`, `screen.text`, clipped to the board), and nothing that reaches the disk, the network or the monitor. A game that errors ends its round and the console carries on; the console only ever reads plain copies of the score, the end and the status.
+
+**The console always starts (12.0 Final).** A console opens on a menu — **HOME MODE** and **BET PLAY** — with what it found on the network: the CCG Server and the Bank. Home Mode needs neither. Bet Play signs the console in to its CCG Server when it is opened, and says exactly what is missing if there is none. A new console asks for its main colour and Home PIN before anything else.
 
 One controller at a time. Five wrong codes and the console shows a new one. **Unpair** on the phone, closing the app, or **EXIT** on the console lets it go, and it shows a new code for the next player. The best score at each game is kept on the console; **Scores** on the phone keeps yours. A console that cannot reach the CCG Server still offers Home Mode, and its main colour is changed with **COLOR** on the pairing screen, behind the PIN.
 
@@ -309,6 +328,8 @@ Savings are not a hiding place. While a tax demand is outstanding you cannot mov
 ### The App Browser
 
 **Apps** on the Home Screen lists everything the App Server is offering. That is whatever is on the App Server's own disk: it ships Foxy, BuckApp, Revolution, Website Crafter, Internet, Shop, FoxMail and Company, and since 11.1 an App Server that is up to date still checks it has every one of them and fetches any it is missing. (Before 11.1 an App Server only ever downloaded the files its old updater knew about, so apps added after it was set up — FoxMail among them — never reached its disk or the App Browser.) Installing one downloads it in verified chunks and puts it on your Home Screen beside the built-in apps; a download whose size or checksum does not match what was advertised is thrown away rather than run, and an app that crashes is caught and hands you back the phone.
+
+**Apps update themselves (12.0 Final).** Every ten minutes on the Home Screen, while on the network, the PUMPE asks the App Server for its apps' versions and quietly fetches any that changed — the apps a release ships, and apps whose author published a new version — with a banner saying which. An update keeps the app's place on the Home Screen and whatever it saved; the new file is written beside the old one first, so a full disk or a damaged download leaves the app as it was, to be tried again next time.
 
 Every byte comes from the App Server, never from the Bank — that is what the machine is for. The Bank is asked one question, once, when something is published: is this developer real.
 
@@ -467,7 +488,7 @@ The money for every order goes to the company owner's Foxy account, fee included
 
 ### Discounts (12.0)
 
-Set up in the Company app: the company, then **More → Discounts**.
+Set up in the Company app: the company, then **Deals**. Since 12.0 Final the sale and codes count at the company's pickup points too (see *Building a pickup point*).
 
 - **A sale** takes a percentage off everything in the store, up to 90%.
 - **Free delivery** on home deliveries — always, or when what is paid (after discounts) reaches an amount.
@@ -494,9 +515,8 @@ The **Delivery** tab lists your orders, open first, and follows each one live: i
 
 - **Companies** lists yours: products, whether the store is open. **+ Start a company** makes a new one.
 - Inside one, **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every kiosk of the company sells.
-- **Store** is the online store: open or closed, colour, tagline, home delivery and its fee, pickup points, cancelling, and the return window.
-- **Discounts**, in More (12.0): the sale, free delivery and discount codes — see *Discounts* above.
-- **Points** lists the company's pickup points and what each one sells on the spot (see below).
+- **Store** is the online store: open or closed, colour, tagline, home delivery and its fee, cancelling, and the return window — and **Pickup points**, which opens the company's points: the switch that lets buyers pick up, and what each point sells on the spot (see below).
+- **Deals** (12.0): the sale, free delivery and discount codes — see *Discounts* above.
 - **Delivery** — Delivery Mode — lists everything **Out for delivery** across your companies. A parcel for a pickup point shows its **delivery code** and the point; a home delivery shows its coordinates, how far and which way (it needs GPS anchors), and a **Delivered** button with an optional note.
 
 What stays on the kiosk is what belongs to that machine: linking it, withdrawals from it, Dev Mode. Only the Company app can run a company — every other app on a phone uses the same session — and the Bank checks on every request that the person asking owns the company named.
@@ -515,14 +535,16 @@ A pickup point is one Delivery Terminal, one chest customers can open — the **
 
 - Put a **wired modem on every chest**, the pickup chest included, and run **networking cable** from all of them to a wired modem on the computer. ComputerCraft's `pushItems` only moves items between inventories on one wired network. (Chests touching the computer directly also work — but not a mix of both.)
 - Give the computer a wireless or Ender modem as well, for the Bank.
-- Press **PICKUP** on the board: a name buyers see at checkout, a staff PIN, which chest is the pickup chest, and optionally a side to pulse redstone when a parcel comes out (a door, a lamp, a bell).
+- On the board's **Setup** tab, press **SET UP A PICKUP POINT**: a name buyers see at checkout, a staff PIN, which chest is the pickup chest, and optionally a side to pulse redstone when a parcel comes out (a door, a lamp, a bell).
 
 Then it runs itself:
 
+- **The counter (12.0 Final)** has three tabs: **Collect** (the code box), **Store** and **Me**, with **STAFF** under them.
 - **Delivering (11.1).** The courier taps **ENTER CODE** and types the parcel's **delivery code** — from the Delivery Terminal or Delivery Mode in the Company app — then puts it in the pickup chest and presses **STOCKED**. The terminal moves it into an empty locker and tells the Bank which; the buyer gets a notification with their code. No staff PIN: whoever has the parcel has its code, and the code opens nothing else.
 - **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. Then **Foxy Security**: their PUMPE asks *Is this you?* over whatever is open, and they answer **It's me** with their PIN — or **Not me**, and the parcel stays in and their code changes. The terminal waits up to two minutes, then moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
 - **Pre-confirming.** Foxy's **Security** tab lists every parcel waiting at a pickup point and any question waiting to be answered. Confirm one ahead of time and, for thirty minutes, its code opens it without asking. Tapping it again takes that back.
-- **Buying on the spot (11.1).** A pickup point can sell what it has: **STORE: BUY NOW** at the counter lists what is on sale and how many are left, the customer picks one and pays with **Foxy Pay** (needs GPS anchors) or **a code for another bank**, and it comes out into the pickup chest. What it sells — a name, the game item (`oak_log`, or `create:cogwheel` for a mod), how many a sale, the price — is set up per point in the Company app's **Points**. Stock is whatever is in the lockers that is not somebody's parcel; staff put it in through the pickup chest with **STAFF → RESTOCK STORE**, which fills lockers already in use first so empty ones stay free for parcels. The money goes to the owner like any kiosk sale. If a sale comes up short — a locker emptied by hand while the customer paid — the customer is told and the owner is notified who is owed what; that refund is the owner's to make.
+- **Me (12.0 Final).** No code to hand? **Me → TYPE YOUR NAME**, and your PUMPE asks *Is this you?* — **It's me** with your PIN shows the counter your orders for that point. One that has arrived comes out with a tap (you just said yes, so it does not ask again). One still on its way can be made **ready**: when it arrives its code opens it without asking. **< DONE** signs you out, and so does walking away for a minute. Only your own orders, only on that counter; **Not me** shows it nothing. A person's PUMPE is asked at most once a minute, and names nobody has count as wrong codes.
+- **Buying on the spot (11.1).** A pickup point can sell what it has: the counter's **Store** tab lists what is on sale and how many are left — at the company's sale price since 12.0 Final, with **I HAVE A DISCOUNT CODE** before paying (the Bank works the price out as the Shop app's checkout does, and a code used here counts its use) — the customer picks one and pays with **Foxy Pay** (needs GPS anchors) or **a code for another bank**, and it comes out into the pickup chest. What it sells — a name, the game item (`oak_log`, or `create:cogwheel` for a mod), how many a sale, the price — is set up per point in the Company app's **Store → Pickup points**. Stock is whatever is in the lockers that is not somebody's parcel; staff put it in through the pickup chest with **STAFF → RESTOCK STORE**, which fills lockers already in use first so empty ones stay free for parcels. The money goes to the owner like any kiosk sale. If a sale comes up short — a locker emptied by hand while the customer paid — the customer is told and the owner is notified who is owed what; that refund is the owner's to make.
 - **Five wrong codes** a minute per pickup point, then it waits. **Five wrong staff PINs** lock the staff door for five minutes; the count survives a reboot. The company owner can always sign in instead of using the PIN.
 - **Updates.** A pickup point updates itself after a minute with nobody at the counter, from the counter screen, so nobody is ever halfway through anything. (Pickup points on 11.0 never updated in Pickup mode; after 11.1 lands, they tell customers to fetch staff until staff leave Pickup mode once.)
 
@@ -541,7 +563,7 @@ Since 12.0 Easy Deployment is a downloader. One file, `startup.lua`, sets up any
    ```
 
 2. Run `startup` (or restart the computer).
-3. **The PUMPE has the first screen.** Tap **INSTALL PUMPE**, or press Enter.
+3. **The PUMPE has the first screen** — unless this is a new world. On a computer with nothing installed and a modem, Easy Deployment first asks the network for a Bank; if none answers, the first screen is **Welcome to Foxy** (12.0 Final), and **GET THE BANK SERVER** fetches it from GitHub (operator's code `4040`). **NOT NOW** goes to the PUMPE. Otherwise tap **INSTALL PUMPE**, or press Enter.
 4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Service Kiosk, `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the PUMPE.
 5. Every program gets the same full screen as the PUMPE, with one big **INSTALL** button. The **Bank Server** (Foxy's) and the **Admin Terminal** ask for the operator's code, `4040`. The 3rd Party Bank Server is its own entry and needs no code.
 6. It downloads the program, `config.lua`, the shared `lib/` files and its own copy as `/pumpe/installer.lua`, writes `/startup.lua` to boot through that copy, and restarts into the program.

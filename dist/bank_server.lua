@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "11.9.1"
+local PROGRAM_VERSION = "12.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
