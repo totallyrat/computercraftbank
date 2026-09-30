@@ -54,10 +54,27 @@ return function(api)
     end
 
     local function ask(initial)
-        return ui.input(target, "Go to", {
+        local typed, picked = ui.input(target, "Go to", {
             hint = "A domain, like foxden", initial = initial,
             maxLength = 20,
+            -- 12.0 Final: the sites you know, as you type.
+            suggest = function(value)
+                local found, seen = {}, {}
+                value = string.lower(value)
+                for _, list in ipairs({ bookmarks, history }) do
+                    for _, domain in ipairs(list) do
+                        if #found < 4 and not seen[domain]
+                            and string.lower(domain):find(value, 1, true) then
+                            seen[domain] = true
+                            found[#found + 1] = { label = domain,
+                                detail = list == bookmarks and "Saved" or "Visited" }
+                        end
+                    end
+                end
+                return found
+            end,
         })
+        return picked and picked.label or typed
     end
 
     local function isSaved(domain)
@@ -141,33 +158,15 @@ return function(api)
                 { background = ui.theme.panel })
         end
         local action = scene:wait({ tickRate = 5 })
-        if action == "tab:more" and type(ui.resolveTab) == "function" then
-            -- More searches every site in both lists.
-            local more, seen = {}, {}
-            for _, list in ipairs({ bookmarks, history }) do
-                for _, domain in ipairs(list) do
-                    if not seen[domain] then
-                        seen[domain] = true
-                        more[#more + 1] = { id = "visit:" .. domain, label = domain,
-                            hint = isSaved(domain) and "Saved" or "Visited" }
-                    end
-                end
-            end
-            action = ui.resolveTab(target, action, { list = TABS, active = tab,
-                more = more, title = "Internet", subtitle = "Your sites" })
-        end
         if action == "home" or action == "back" or action == "__terminate" then
             return
         end
         local picked = (action or ""):match("^tab:(.+)$")
-        local visitDomain = (action or ""):match("^visit:(.+)$")
         local again = tonumber(action and action:match("^again:(%d+)$"))
         local mark = tonumber(action and action:match("^mark:(%d+)$"))
         local unmark = tonumber(action and action:match("^unmark:(%d+)$"))
         if picked then
             tab = picked
-        elseif visitDomain then
-            visit(visitDomain)
         elseif action == "go" then
             local typed = ask()
             if typed then visit(typed) end

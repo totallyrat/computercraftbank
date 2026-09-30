@@ -44,9 +44,9 @@ local actions = {
     "markread",
     "prev",                                          -- back to the apps
     -- 12.0: Settings has tabs. The guide is on Account, the dock on Apps,
-    -- and Close PUMPE is in More.
+    -- and (12.0 Final, no More) Close PUMPE is on Account too.
     "open:settings", "tab:account", "guide", "next", "done",
-    "tab:apps", "dock", "back", "tab:more",
+    "tab:apps", "dock", "back", "tab:account", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
 ticketVisits = 0
@@ -780,7 +780,7 @@ do
     ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 end
 -- More, reached from Settings at the end of the run, is where Close is.
-function ui.moreMenu() return "set:close" end
+function ui.moreMenu() error("12.0 Final: no app on the PUMPE has a More page", 0) end
 dofile("ui_stub_fill.lua")(ui)
 -- 12.0: a phone with an account starts on its lock screen, which waits for
 -- a tap before asking for the PIN.

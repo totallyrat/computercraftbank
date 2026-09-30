@@ -763,8 +763,8 @@ local function messageInbox(spec)
     end
 end
 
--- 12.0: three tabs -- Tax, People, Inbox -- and More, which has every
--- control on this terminal.
+-- 12.0: Tax, People, Inbox and (12.0 Final) System, with every control on
+-- one of them -- no More.
 local function dashboard()
     local stats = request("GOVERNMENT_STATS")
     if not stats then return end
@@ -781,6 +781,9 @@ local function dashboard()
         controls = { "CONTROLS", "Approval and the key", function() controlsScreen() end },
         stats = { "BANK STATS", "Totals across the bank", function() statsScreen() end },
         system = { "SYSTEM", "This terminal", function() systemScreen() end },
+        color = { "MAIN COLOUR", "How this terminal looks",
+            function() ui.pickMainColor(target, ROOT, "Terminal colour") end },
+        lock = { "LOCK", "Sign the key out", function() governmentToken = nil end },
     }
     local function run(id)
         local entry = ACTIONS[id]
@@ -848,30 +851,17 @@ local function dashboard()
         end
     end
 
-    local more = {}
-    for _, id in ipairs({ "open", "rates", "close", "deposit", "revenue", "audit",
-        "accounts", "pending", "announce", "controls", "stats", "system" }) do
-        more[#more + 1] = { id = id, label = ACTIONS[id][1], hint = ACTIONS[id][2] }
-    end
-    more[#more + 1] = { id = "color", label = "Main colour", hint = "How this terminal looks" }
-    more[#more + 1] = { id = "lock", label = "Lock", hint = "Sign the key out" }
-    local actions = {
-        color = function() ui.pickMainColor(target, ROOT, "Terminal colour") end,
-        lock = function() governmentToken = nil end,
-    }
-    for id in pairs(ACTIONS) do actions[id] = function() run(id) end end
     ui.runTabs({
         target = target, title = "Admin", subtitle = "Every control",
         list = { { id = "tax", label = "Tax" }, { id = "people", label = "People" },
-            { id = "inbox", label = "Inbox" } },
+            { id = "inbox", label = "Inbox" }, { id = "system", label = "System" } },
         pages = {
             tax = grid("TAX", { "open", "rates", "close", "deposit", "revenue", "audit" },
                 true),
-            people = grid("PEOPLE", { "accounts", "pending", "announce", "controls",
-                "stats", "system" }),
+            people = grid("PEOPLE", { "accounts", "pending", "announce", "stats" }),
             inbox = messageInbox,
+            system = grid("SYSTEM", { "controls", "system", "color", "lock" }),
         },
-        more = more, actions = actions,
         running = function() return running and governmentToken ~= nil end,
     })
 end

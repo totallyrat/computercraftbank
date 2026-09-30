@@ -1,6 +1,7 @@
--- The Internet app, 12.0: Go, Saved and Recent along the bottom, and More,
--- which searches both lists. What you visit and save is kept on the phone;
--- until 12.0 it was forgotten every time the app closed.
+-- The Internet app, 12.0: Go, Saved and Recent along the bottom -- no More
+-- since 12.0 Final: the address box suggests the sites you know as you
+-- type. What you visit and save is kept on the phone; until 12.0 it was
+-- forgotten every time the app closed.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 
@@ -30,19 +31,22 @@ assert(visited[1] == "foxden", "the address is tidied before it is visited")
 assert(kept.value.history[1] == "foxden" and kept.value.bookmarks[1] == "shopland",
     "and both lists are kept on the phone")
 
--- Next time: both are still there, and More finds them.
+-- Next time: both are still there, and the address box suggests them.
 script = phone.script()
 phone.push(script.actions, function(seen)
     assert(phone.has(phone.last(seen), "foxden"), "Go still shows the last visit")
-    return "tab:more"
+    assert(not phone.has(phone.last(seen), "More"), "three tabs, and no More")
+    return "go"
 end)
-phone.push(script.more, function(seen)
-    local spec = seen.more[#seen.more]
-    local ids = {}
-    for _, entry in ipairs(spec.more) do ids[entry.id] = true end
-    assert(ids["visit:foxden"] and ids["visit:shopland"],
-        "More searches every saved and visited site")
-    return "visit:shopland"
+phone.push(script.inputs, function(seen)
+    local suggest = seen.inputs[#seen.inputs].suggest
+    local found = suggest("SHOP")
+    assert(#found == 1 and found[1].label == "shopland" and found[1].detail == "Saved",
+        "typing suggests the sites you saved")
+    found = suggest("o")
+    assert(#found == 2 and found[1].label == "shopland" and found[2].label == "foxden"
+        and found[2].detail == "Visited", "and the ones you visited, each once")
+    return { text = "o", picked = found[1] }
 end)
 phone.push(script.actions, "tab:saved", "unmark:1", function(seen)
     assert(phone.has(phone.last(seen), "Nothing saved yet"), "an x takes it off")
@@ -50,7 +54,7 @@ phone.push(script.actions, "tab:saved", "unmark:1", function(seen)
 end, "clear", "home")
 phone.push(script.confirms, true)
 phone.run({ file = "../internet.lua", script = script, kept = kept, browse = browse })
-assert(visited[2] == "shopland", "More opened the site")
+assert(visited[2] == "shopland", "a suggestion opens its site")
 assert(#kept.value.bookmarks == 0 and #kept.value.history == 0,
     "removed from Saved, and what was visited cleared")
 

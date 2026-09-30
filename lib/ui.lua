@@ -495,19 +495,26 @@ end
 -- Tabs, 12.0 ----------------------------------------------------------------------
 -- Every program with more than one part puts them in a floating bar along
 -- the bottom: a pill that stops short of both sides and of the bottom row.
--- It holds the first three parts and "More"; everything else, and anything
--- a program adds, is on the More page with a search. `tabs` is a list of
--- { id = , label = , short = , hint = }; tapping one returns "tab:<id>",
--- More returns "tab:more". The bar is always in the main colour: `accent`
--- is accepted from programs written before it and no longer used.
+-- 12.0 Final: a program has the tabs it needs -- two, three, four -- and the
+-- bar shows them all. Only past four does "More" appear, holding the rest on
+-- a page with a search. `tabs` is a list of { id = , label = , short = ,
+-- hint = }; tapping one returns "tab:<id>", More returns "tab:more". The
+-- bar is always in the main colour: `accent` is accepted from programs
+-- written before it and no longer used.
 --
 -- Home is the mark at the top left, drawn as "<PUMPE" over the phone's own
 -- status bar: it returns "home", which every app with tabs takes as "leave".
 --
 -- Only scene:hotspot and the target's size are used for the hit areas, so a
 -- test can run this exact function against a stub scene.
-ui.TAB_COUNT = 3
+ui.TAB_COUNT = 4
 local PILL_CAP = string.char(149)
+
+-- How many tabs the bar shows, and whether More is needed for the rest.
+local function tabsShown(tabs)
+    if #tabs <= ui.TAB_COUNT then return #tabs, false end
+    return ui.TAB_COUNT - 1, true
+end
 
 -- The row the bar sits on, and the last row a page can use above it.
 function ui.tabRow(target)
@@ -521,7 +528,7 @@ end
 
 -- Which tab lights up: the page's own, or More for anything behind it.
 local function litTab(tabs, active)
-    for index = 1, math.min(#tabs, ui.TAB_COUNT) do
+    for index = 1, (tabsShown(tabs)) do
         if tabs[index].id == active then return active end
     end
     return "more"
@@ -538,8 +545,9 @@ function ui.tabBar(scene, target, tabs, active, accent, options)
     local width, height = target.getSize()
     local y = height - 1
     local shown = {}
-    for index = 1, math.min(#tabs, ui.TAB_COUNT) do shown[index] = tabs[index] end
-    shown[#shown + 1] = { id = "more", label = "More", short = "..." }
+    local count, more = tabsShown(tabs)
+    for index = 1, count do shown[index] = tabs[index] end
+    if more then shown[#shown + 1] = { id = "more", label = "More", short = "..." } end
     local lit = litTab(tabs, active)
     local shade, ink = ui.theme.accent, ui.theme.accentInk or ui.inkOn(ui.theme.accent)
     -- Every screen in ComputerCraft can paint; a test's stand-in for one
@@ -555,7 +563,7 @@ function ui.tabBar(scene, target, tabs, active, accent, options)
     end
 
     local inner = math.max(#shown, width - 4)
-    local each, over = math.floor(inner / #shown), inner % #shown
+    local each, over = math.floor(inner / math.max(1, #shown)), inner % math.max(1, #shown)
     local x = 3
     for index, tab in ipairs(shown) do
         local slot = each + (index <= over and 1 or 0)
@@ -579,13 +587,14 @@ function ui.tabBar(scene, target, tabs, active, accent, options)
     end
 end
 
--- Everything More holds: the parts past the third, then whatever the
--- program adds (`spec.more`, each { id = , label = , hint = }).
+-- Everything More holds: the parts the bar has no room for, then whatever
+-- the program adds (`spec.more`, each { id = , label = , hint = }).
 local function moreEntries(spec)
     local entries = {}
+    local count = tabsShown(spec.list or {})
     for index, tab in ipairs(spec.list or {}) do
         entries[#entries + 1] = { id = "tab:" .. tab.id, label = tab.label,
-            hint = tab.hint, main = index <= ui.TAB_COUNT }
+            hint = tab.hint, main = index <= count }
     end
     for _, extra in ipairs(spec.more or {}) do
         entries[#entries + 1] = { id = extra.id, label = extra.label,
@@ -732,11 +741,14 @@ end
 -- Runs a program made of tab pages. `spec.pages[id]` draws its page with the
 -- tab bar -- it is handed `spec` itself, which carries `list`, `active` and
 -- `color` for ui.tabBar -- and returns what was tapped. "tab:<id>" moves to
--- that page; More opens the More page; anything else leaves and is returned.
+-- that page; More (only there past four tabs) opens the More page; anything
+-- else leaves and is returned.
 --
 -- A tab named in `spec.once` is a thing to do rather than a place to be --
 -- write a message, place a call. It runs, and the tab before it comes back.
--- So is an entry of `spec.more` with a function in `spec.actions`.
+-- So is an entry of `spec.more` with a function in `spec.actions`, which
+-- only More reaches: a program with four tabs or fewer puts its actions on
+-- its pages.
 function ui.runTabs(spec)
     local first = spec.list[1].id
     local tab, previous = spec.start or first, nil
@@ -765,8 +777,7 @@ end
 
 -- A server's dashboard, 12.0. Every server shows the same three tabs --
 -- Status (its numbers and state), Activity (everything it logged) and
--- Server (what can be done to it) -- with More listing every action. A
--- server describes itself; this draws it.
+-- Server (what can be done to it). A server describes itself; this draws it.
 --
 -- spec: target, title, subtitle (string or function), cards() -> list of
 -- { label, value, color }, lines() -> list of { text, color }, activity
@@ -886,16 +897,6 @@ function ui.serverTabs(spec)
             short = "Log" }, { id = "server", label = spec.serverLabel or "Server" } },
         pages = { status = status, activity = activity, server = server },
         running = spec.running,
-        -- More lists what the Server tab has, as it is now.
-        refresh = function(tabSpec)
-            tabSpec.more, tabSpec.actions = {}, {}
-            for _, entry in ipairs(actionList()) do
-                tabSpec.more[#tabSpec.more + 1] = { id = entry.id,
-                    label = entry.label:sub(1, 1) .. entry.label:sub(2):lower(),
-                    hint = entry.hint }
-                tabSpec.actions[entry.id] = function() run(entry.id) end
-            end
-        end,
     })
 end
 

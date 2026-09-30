@@ -22,7 +22,7 @@ local device = util.loadTable(deviceFile, { last_name = "" })
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 
 -- 12.0: the bar every page ends with. A kiosk has no home screen to go
--- back to, so it is only the three tabs and More.
+-- back to, so it is only its three tabs.
 local function tabBar(scene, spec)
     ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
 end
@@ -490,7 +490,7 @@ local function proximityScan()
     stop()
 end
 
--- 12.0: three tabs -- Home, Events, Door -- and More, which has all of it.
+-- 12.0: three tabs -- Home, Events, Door -- with everything on one of them.
 local function dashboard()
     local stats = request("EVENT_DASHBOARD")
     if not stats then return end
@@ -514,9 +514,22 @@ local function dashboard()
                     ui.theme.panel, cardWidth - 3)
             end
             local scene = ui.scene(target)
-            scene:button("create", 2, 11, width - 2, 3, "CREATE EVENT",
+            -- 12.0 Final: the kiosk itself sits under Create, rather than
+            -- behind More. A short screen gets one-row buttons.
+            local bottom = ui.contentBottom(target)
+            local roomy = bottom >= 16
+            scene:button("create", 2, roomy and 11 or bottom - 2, width - 2,
+                roomy and 3 or 1, "CREATE EVENT",
                 { background = ui.theme.accent, foreground = ui.theme.accentInk,
-                  shadow = true })
+                  shadow = roomy })
+            local third = math.floor((width - 4) / 3)
+            local rowY, rowH = roomy and bottom - 1 or bottom, roomy and 2 or 1
+            scene:button("color", 2, rowY, third, rowH, "COLOUR",
+                { background = ui.theme.panel })
+            scene:button("logout", 3 + third, rowY, third, rowH, "LOG OUT",
+                { background = ui.theme.panel })
+            scene:button("exit", 4 + third * 2, rowY, width - 3 - third * 2, rowH, "CLOSE",
+                { background = ui.theme.danger, foreground = ui.inkOn(ui.theme.danger) })
             tabBar(scene, spec)
             local action = scene:wait({ tickRate = 0.5 })
             tick = tick + 1
@@ -532,6 +545,17 @@ local function dashboard()
             elseif action == "create" then
                 createEvent()
                 refresh = true
+            elseif action == "color" then
+                ui.pickMainColor(target, ROOT, "Kiosk colour")
+            elseif action == "logout" then
+                if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT",
+                    "BACK") then
+                    sessionToken, organizer = nil, nil
+                    return nil
+                end
+            elseif action == "exit" then
+                running = false
+                return nil
             end
             if refresh and sessionToken then
                 stats = request("EVENT_DASHBOARD", {}, true) or stats
@@ -573,30 +597,6 @@ local function dashboard()
         list = { { id = "home", label = "Home" }, { id = "events", label = "Events" },
             { id = "door", label = "Door" } },
         pages = { home = homePage, events = myEvents, door = doorPage },
-        more = {
-            { id = "create", label = "Create event", hint = "Title, day, tickets" },
-            { id = "verify", label = "Verify ticket", hint = "By its entry code" },
-            { id = "scan", label = "Proximity scan", hint = "At the door" },
-            { id = "color", label = "Main colour", hint = "How this kiosk looks" },
-            { id = "logout", label = "Log out", hint = "End the organizer session" },
-            { id = "exit", label = "Close kiosk", hint = "Stop this program" },
-        },
-        actions = {
-            create = function()
-                createEvent()
-                stats = request("EVENT_DASHBOARD", {}, true) or stats
-            end,
-            verify = verifyTicket,
-            scan = function() ui.wipe(target) proximityScan() end,
-            color = function() ui.pickMainColor(target, ROOT, "Kiosk colour") end,
-            logout = function()
-                if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT",
-                    "BACK") then
-                    sessionToken, organizer = nil, nil
-                end
-            end,
-            exit = function() running = false end,
-        },
         running = function() return running and sessionToken ~= nil end,
     })
 end

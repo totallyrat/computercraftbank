@@ -1180,8 +1180,9 @@ local function setupPickup()
 end
 
 -- The board ------------------------------------------------------------------------
--- 12.0: three tabs -- Open, Done, Pickup -- and More. Pickup mode faces the
--- public, so it has no tabs: a customer at the counter sees the counter.
+-- 12.0: three tabs -- Open, Done and (12.0 Final) Setup, which has the
+-- pickup point and the terminal itself. Pickup mode faces the public, so it
+-- has its own tabs, for customers.
 
 local function bar(scene, spec)
     ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
@@ -1270,12 +1271,13 @@ local function ordersPage(open)
     end
 end
 
-local function pickupPage(spec)
+local function setupPage(spec)
     while running and device.mode ~= "pickup" do
         local width = target.getSize()
         ui.clear(target)
-        ui.header(target, "PICKUP POINT", ui.truncate(device.pickup
-            and device.pickup.name or "Not set up", width - 3), util.formatClock())
+        ui.header(target, "SETUP", ui.truncate(device.pickup
+            and ("Pickup point: " .. device.pickup.name) or "No pickup point",
+            width - 3), util.formatClock())
         local scene = ui.scene(target)
         if device.pickup then
             scene:button("start", 2, 5, width - 2, 3, "START PICKUP MODE",
@@ -1290,6 +1292,22 @@ local function pickupPage(spec)
             scene:button("setup", 2, 10, width - 2, 3, "SET UP A PICKUP POINT",
                 { background = ui.theme.accent, foreground = ui.theme.accentInk })
         end
+        -- The terminal itself: three across on a computer, one under the
+        -- other on anything narrower.
+        local controls = { { "link", "LINK COMPANY", ui.theme.panel },
+            { "color", "MAIN COLOUR", ui.theme.panel },
+            { "close", "CLOSE", ui.theme.danger } }
+        local wide = width >= 40
+        local third = math.floor((width - 4) / 3)
+        for index, entry in ipairs(controls) do
+            local x = wide and 2 + (index - 1) * (third + 1) or 2
+            local w = wide and (index == 3 and width - x or third) or width - 2
+            local y = wide and 14 or 12 + index * 2
+            if y + (wide and 1 or 0) <= ui.contentBottom(target) then
+                scene:button(entry[1], x, y, w, wide and 2 or 1, entry[2],
+                    { background = entry[3], foreground = ui.inkOn(entry[3]) })
+            end
+        end
         bar(scene, spec)
         local action = scene:wait()
         local passed = passOn(action)
@@ -1300,6 +1318,14 @@ local function pickupPage(spec)
             saveDevice()
         elseif action == "setup" then
             setupPickup()
+        elseif action == "link" then
+            linkCompany()
+        elseif action == "color" then
+            ui.pickMainColor(target, ROOT, "Terminal colour")
+        elseif action == "close" and ui.confirm(target, "CLOSE",
+            "Stop the Delivery Terminal?", "CLOSE", "BACK") then
+            running = false
+            return nil
         end
     end
 end
@@ -1312,24 +1338,9 @@ local function board()
             ui.runTabs({
                 target = target, title = "Deliveries", subtitle = "Everything here",
                 list = { { id = "open", label = "Open" }, { id = "done", label = "Done" },
-                    { id = "pickup", label = "Pickup" } },
+                    { id = "setup", label = "Setup" } },
                 pages = { open = ordersPage(true), done = ordersPage(false),
-                    pickup = pickupPage },
-                more = {
-                    { id = "color", label = "Main colour", hint = "How this terminal looks" },
-                    { id = "link", label = "Link a company", hint = "Owner sign in" },
-                    { id = "close", label = "Close terminal", hint = "Stop this program" },
-                },
-                actions = {
-                    color = function() ui.pickMainColor(target, ROOT, "Terminal colour") end,
-                    link = function() linkCompany() end,
-                    close = function()
-                        if ui.confirm(target, "CLOSE", "Stop the Delivery Terminal?",
-                            "CLOSE", "BACK") then
-                            running = false
-                        end
-                    end,
-                },
+                    setup = setupPage },
                 running = function() return running and device.mode ~= "pickup" end,
             })
         end

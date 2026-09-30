@@ -60,12 +60,14 @@ function phone.run(options)
 
     local ui = { theme = realUi.theme, wrap = realUi.wrap }
     -- 12.0: the bar paints its labels rather than putting them on buttons,
-    -- so the first three and More are written into the frame here.
+    -- so the tabs it shows -- and More, past four -- are written into the
+    -- frame here.
     function ui.tabBar(scene, target, tabs, active, ...)
+        local more = #tabs > realUi.TAB_COUNT
         for index, tab in ipairs(tabs) do
-            if index <= realUi.TAB_COUNT then draw(tab.label) end
+            if not more or index < realUi.TAB_COUNT then draw(tab.label) end
         end
-        draw("More")
+        if more then draw("More") end
         return realUi.tabBar(scene, target, tabs, active, ...)
     end
     function ui.clear()
@@ -104,8 +106,12 @@ function phone.run(options)
     function ui.input(_, title, spec)
         draw("input:" .. title)
         seen.inputs[#seen.inputs + 1] = { title = title,
-            mode = spec and spec.mode, initial = spec and spec.initial }
-        return take(script.inputs, "text box: " .. title)
+            mode = spec and spec.mode, initial = spec and spec.initial,
+            suggest = spec and spec.suggest }
+        -- { text = , picked = } is a tap on one of the box's suggestions.
+        local entry = take(script.inputs, "text box: " .. title)
+        if type(entry) == "table" then return entry.text, entry.picked end
+        return entry
     end
     ui.inkOn, ui.searchEntries = realUi.inkOn, realUi.searchEntries
     ui.MAIN_COLORS, ui.mainColor = realUi.MAIN_COLORS, "orange"

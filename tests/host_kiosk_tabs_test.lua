@@ -1,10 +1,11 @@
--- 12.0: every kiosk on three tabs and More, run whole on an Advanced
--- Computer against a scripted Bank. The Event Kiosk has its own test; this
--- one has the Admin Terminal and the Border Controller.
+-- 12.0: every kiosk on its tabs, run whole on an Advanced Computer against a
+-- scripted Bank. 12.0 Final: as many tabs as each needs, and no More --
+-- every control is on a tab. The Event Kiosk has its own test; this one has
+-- the Admin Terminal, the Border Controller and the Delivery Terminal.
 
 local kiosk = require("kiosk_harness")
 
--- Admin Terminal: Tax, People, Inbox ------------------------------------------------
+-- Admin Terminal: Tax, People, Inbox, System ----------------------------------------
 
 local function government(action, payload)
     if action == "GOVERNMENT_LOGIN" then
@@ -31,7 +32,8 @@ kiosk.push(script.actions, function(seen)
     assert(kiosk.has(frame, "TAX REVENUE") and kiosk.has(frame, "OPEN PERIOD")
         and kiosk.has(frame, "CLOSE PERIOD"), "Tax has the period controls")
     assert(kiosk.has(frame, "Tax") and kiosk.has(frame, "People")
-        and kiosk.has(frame, "Inbox") and kiosk.has(frame, "More"))
+        and kiosk.has(frame, "Inbox") and kiosk.has(frame, "System")
+        and not kiosk.has(frame, "More"), "four tabs, and no More")
     return "tab:people"
 end, function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "FIND ACCOUNT"))
@@ -43,16 +45,11 @@ end, "pending", function(seen)
     return "back"
 end, "tab:inbox", function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "Ana Fox"), "the Inbox tab has the threads")
-    return "tab:more"
-end)
-kiosk.push(script.more, function(seen)
-    local ids = {}
-    for _, entry in ipairs(seen.more[#seen.more].more) do ids[entry.id] = true end
-    for _, id in ipairs({ "open", "rates", "close", "deposit", "revenue", "audit",
-        "accounts", "pending", "announce", "controls", "stats", "system", "color",
-        "lock" }) do
-        assert(ids[id], "More has " .. id)
-    end
+    return "tab:system"
+end, function(seen)
+    local frame = seen.frames[#seen.frames]
+    assert(kiosk.has(frame, "CONTROLS") and kiosk.has(frame, "MAIN COLOUR")
+        and kiosk.has(frame, "LOCK"), "System has the terminal's own controls")
     return "lock"
 end)
 kiosk.push(script.actions, "exit")
@@ -83,18 +80,18 @@ kiosk.push(script.actions, function(seen)
     return "tab:owner"
 end, "color", "color", "tab:scan", function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "TURN ON"))
-    return "tab:more"
-end)
+    assert(not kiosk.has(seen.frames[#seen.frames], "More"), "three tabs, and no More")
+    return "tab:owner"
+end, "stop")
 kiosk.push(script.pins, "0000", "1234")
-kiosk.push(script.more, "stop")
 kiosk.push(script.pins, "1234")
 seen = kiosk.run({ file = "border_controller.lua", bank = border, script = script,
     device = device, color = { color = "blue" } })
 assert(kiosk.said(seen, "LOCKED"), "the colour is the owner's: a wrong PIN is refused")
 assert(seen.picked == 1, "and the right one opens the picker")
-assert(#pinTries == 3, "closing from More asks for the PIN too")
+assert(#pinTries == 3, "closing asks for the PIN too")
 
--- Delivery Terminal: Open, Done, Pickup ---------------------------------------------
+-- Delivery Terminal: Open, Done, Setup ----------------------------------------------
 
 local function deliveries(action)
     if action == "KIOSK_REGISTER" then
@@ -115,21 +112,23 @@ script = kiosk.script()
 kiosk.push(script.actions, function(seen)
     local frame = seen.frames[#seen.frames]
     assert(kiosk.has(frame, "ORD1") and not kiosk.has(frame, "ORD2"), "Open is what is open")
-    assert(kiosk.has(frame, "Open") and kiosk.has(frame, "Done") and kiosk.has(frame, "Pickup"))
+    assert(kiosk.has(frame, "Open") and kiosk.has(frame, "Done") and kiosk.has(frame, "Setup")
+        and not kiosk.has(frame, "More"))
     return "tab:done"
 end, function(seen)
     local frame = seen.frames[#seen.frames]
     assert(kiosk.has(frame, "ORD2") and not kiosk.has(frame, "ORD1"), "and Done is the rest")
-    return "tab:pickup"
+    return "tab:setup"
 end, function(seen)
-    assert(kiosk.has(seen.frames[#seen.frames], "SET UP A PICKUP POINT"))
-    return "tab:more"
-end, "tab:more")
-kiosk.push(script.more, "color", "close")
+    local frame = seen.frames[#seen.frames]
+    assert(kiosk.has(frame, "SET UP A PICKUP POINT") and kiosk.has(frame, "LINK COMPANY"),
+        "Setup has the pickup point and the terminal itself")
+    return "color"
+end, "close")
 kiosk.push(script.confirms, true)
 seen = kiosk.run({ file = "delivery_terminal.lua", bank = deliveries, script = script,
     device = { terminal_id = "T9", terminal_token = "K", name = "Warehouse",
         mode = "board" }, color = { color = "green" } })
-assert(seen.picked == 1, "the colour is in More")
+assert(seen.picked == 1, "the colour is on Setup")
 
 print("host_kiosk_tabs_test: OK")

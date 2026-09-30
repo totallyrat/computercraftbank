@@ -3821,12 +3821,14 @@ local SETTINGS_ACTIONS = {
     { id = "guide", label = "How PUMPE Works", hint = "The tour", tab = "account" },
     { id = "logout", label = "Remove account", hint = "Take it off this PUMPE",
       tab = "account" },
-    { id = "close", label = "Close PUMPE", hint = "Stop the program" },
+    { id = "close", label = "Close PUMPE", hint = "Stop the program",
+      tab = "account" },
 }
 
--- Settings, 12.0: three tabs -- the phone, its apps, the account -- and More,
--- whose search finds any setting. A deep link (search, a QuickAction) still
--- opens one setting and comes straight back out.
+-- Settings, 12.0: three tabs -- the phone, its apps, the account -- with
+-- every setting on one of them (12.0 Final: no More; the home screen's
+-- search still finds any setting). A deep link (search, a QuickAction)
+-- still opens one setting and comes straight back out.
 local function settingsScreen(wanted)
     local function settingValue(id)
         if id == "network" then
@@ -3942,14 +3944,6 @@ local function settingsScreen(wanted)
         end
     end
 
-    local more, actions = {}, {}
-    for _, item in ipairs(SETTINGS_ACTIONS) do
-        more[#more + 1] = { id = "set:" .. item.id, label = item.label,
-            hint = item.hint }
-        actions["set:" .. item.id] = function()
-            if openSetting(item.id) == "exit" then closed = true end
-        end
-    end
     ui.runTabs({
         title = "Settings",
         list = { { id = "phone", label = "Phone" },
@@ -3957,8 +3951,6 @@ local function settingsScreen(wanted)
             { id = "account", label = "Account", short = "Me" } },
         pages = { phone = page("phone", "Settings"), apps = page("apps", "Apps"),
             account = page("account", "Account") },
-        more = more,
-        actions = actions,
         running = function()
             return running and (sessionToken or offline()) and not closed
         end,

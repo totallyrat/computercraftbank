@@ -95,7 +95,12 @@ bank.request("COMPANY_SHOP_SETUP", bank.as(ana, {
     company_id = company.company_id, pickup = true }))
 
 script = phone.script()
-phone.push(script.actions, "company:1", "tab:points", function(seen)
+-- 12.0 Final: pickup points open from the Store tab, beside their switch.
+phone.push(script.actions, "company:1", "tab:store", function(seen)
+    assert(phone.has(phone.last(seen), "Pickup points: on  >"))
+    return "points"
+end, function(seen)
+    assert(phone.has(phone.last(seen), "Buyers pick up: on"))
     assert(phone.has(phone.last(seen), "North Point"))
     assert(phone.has(phone.last(seen), "Parcels only"))
     return "point:1"
@@ -120,6 +125,12 @@ phone.push(script.inputs, function(seen)
 end, "3", "16")
 phone.push(script.actions, "back", function(seen)
     assert(phone.has(phone.last(seen), "Selling 1 things"))
+    return "pickup"
+end, function(seen)
+    assert(phone.has(phone.last(seen), "Buyers pick up: off"), "the switch is here")
+    return "pickup"
+end, "back", function(seen)
+    assert(phone.has(phone.last(seen), "Pickup points: on  >"), "and back on")
     return "home"
 end, "home")
 seen = run(ana, script)
@@ -287,17 +298,14 @@ assert(#bank.request("DELIVERY_OUT", bank.as(ana,
     { company_id = second.company_id })).orders == 0,
     "one company's deliveries are not another's")
 
--- Discounts, 12.0: behind More, a sale, free delivery and codes ----------------------
+-- Discounts, 12.0: a sale, free delivery and codes -----------------------------------
+-- 12.0 Final: on the bar, the third of three.
 
 script = phone.script()
 -- Fox Goods is second now, after Ana Two.
-phone.push(script.actions, "company:2", "tab:more")
-phone.push(script.more, function(seen)
-    local listed = false
-    for _, tab in ipairs(seen.more[#seen.more].list) do
-        if tab.id == "discounts" then listed = true end
-    end
-    assert(listed, "Discounts is on the More page")
+phone.push(script.actions, "company:2", function(seen)
+    assert(phone.has(phone.last(seen), "Discounts") and not phone.has(phone.last(seen), "More"),
+        "three tabs, and no More")
     return "tab:discounts"
 end)
 phone.push(script.actions, "sale", "ship", "pick:3")

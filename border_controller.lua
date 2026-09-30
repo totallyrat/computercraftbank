@@ -398,8 +398,9 @@ local function ownerUnlock(reason)
     return false
 end
 
--- 12.0: three tabs -- Gate, Scan, Owner -- and More. Anything that
--- changes the controller asks for the territory owner's PIN first.
+-- 12.0: three tabs -- Gate, Scan, Owner -- with everything on one of them.
+-- Anything that changes the controller asks for the territory owner's PIN
+-- first.
 local function dashboard()
     local function bar(scene, spec)
         ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
@@ -531,20 +532,6 @@ local function dashboard()
         list = { { id = "gate", label = "Gate" }, { id = "scan", label = "Scan" },
             { id = "owner", label = "Owner" } },
         pages = { gate = gatePage, scan = scanPage, owner = ownerPage },
-        more = {
-            { id = "enter", label = "Enter territory", hint = "By visa code" },
-            { id = "exit", label = "Exit territory", hint = "Close a visit" },
-            { id = "proximity", label = "Proximity visa", hint = "Ask whoever walks up" },
-            { id = "setup", label = "Change territory", hint = "Owner PIN" },
-            { id = "color", label = "Main colour", hint = "Owner PIN" },
-            { id = "stop", label = "Close", hint = "Owner PIN" },
-        },
-        actions = {
-            enter = function() checkVisa("enter") end,
-            exit = function() checkVisa("exit") end,
-            proximity = function() ui.wipe(target, "PROXIMITY VISA") proximityVisaLoop() end,
-            setup = changeTerritory, color = pickColour, stop = close,
-        },
         running = function() return running and device.controller_id ~= nil end,
     })
 end

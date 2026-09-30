@@ -22,36 +22,6 @@ return function(api)
     local TABS = { { id = "bank", label = "Bank" },
         { id = "security", label = "Security", short = "Safe" },
         { id = "account", label = "Account", short = "Me" } }
-    -- 12.0: More is also the quick way to the bank's own screens. Each is
-    -- an action the bank page already answers.
-    local MORE = {
-        { id = "cash", label = "Foxy Cash", hint = "Pay a friend" },
-        { id = "activity", label = "Activity", hint = "What came and went" },
-        { id = "wallet", label = "Bet Wallet", hint = "Money for CCG" },
-        { id = "id", label = "Account ID + Transfer", hint = "Your sixteen digits" },
-        { id = "cashout", label = "Cash out with a code", hint = "At a kiosk" },
-        { id = "new", label = "New account", hint = "Savings, rent, holiday" },
-    }
-    local pending
-    -- A tap on More opens it. A page comes back as its tab; one of the bank's
-    -- screens goes to the bank page, which opens it first thing.
-    local function tabbed(action, active)
-        -- Only a tap on More is translated: the shortcuts share their ids
-        -- with the bank page's own buttons, which are answered as they are.
-        if action ~= "tab:more" or type(ui.resolveTab) ~= "function" then
-            return action
-        end
-        local chosen = ui.resolveTab(target, action, { list = TABS, more = MORE,
-            active = active, title = "Foxy", subtitle = "Everything in Foxy" })
-        for _, extra in ipairs(MORE) do
-            if chosen == extra.id then
-                if active == "bank" then return chosen end
-                pending = chosen
-                return "tab:bank"
-            end
-        end
-        return chosen
-    end
 
     local function running()
         return api.running()
@@ -865,7 +835,7 @@ return function(api)
                 closed:button("id", 2, height - 5, width - 2, 2,
                     "Show my Account ID", { background = ui.theme.panel })
                 ui.tabBar(closed, target, TABS, "bank", FOX)
-                local closedAction = tabbed(closed:wait({ tickRate = 5 }), "bank")
+                local closedAction = closed:wait({ tickRate = 5 })
                 if closedAction == "bringback" then
                     bringMoneyIn(here.moved_to_name)
                 elseif closedAction == "id" then accountIdScreen()
@@ -915,43 +885,51 @@ return function(api)
             if demand then
                 table.insert(rows, 1, { kind = "demand", demand = demand })
             end
-            local perView = 3
-            offset = math.max(0, math.min(offset, #rows - perView))
+            -- 12.0 Final: an account takes two lines, everything else one,
+            -- so most of the bank is on the screen without scrolling -- it
+            -- used to be behind More as well.
+            local bottom = type(ui.contentBottom) == "function"
+                and ui.contentBottom(target) or height - 2
+            offset = math.max(0, math.min(offset, #rows - 1))
             local scene = ui.scene(target)
-            for slot = 1, perView do
-                local row = rows[offset + slot]
-                if row then
-                    local y = 13 + (slot - 1) * 2
+            local y, lastShown = 13, offset
+            for index = offset + 1, #rows do
+                local row = rows[index]
+                local tall = (row.kind == "main" or row.kind == "pot") and 2 or 1
+                if y + tall - 1 > bottom then break end
+                lastShown = index
+                local function line(text) return ui.truncate(text, width - 4) end
+                do
                     if row.kind == "new" then
-                        scene:button("new", 2, y, width - 2, 2,
+                        scene:button("new", 2, y, width - 2, 1,
                             "+  New account",
                             { background = ui.theme.panel })
                     elseif row.kind == "cash" then
-                        scene:button("cash", 2, y, width - 2, 2,
-                            "Foxy Cash  "
+                        scene:button("cash", 2, y, width - 2, 1,
+                            line("Foxy Cash  "
                                 .. math.floor(overview.fee_rate * 100)
-                                .. "%  friends",
+                                .. "%  friends"),
                             { background = FOX, foreground = colors.black })
                     elseif row.kind == "demand" then
-                        scene:button("demand", 2, y, width - 2, 2,
-                            "Tax demand  " .. money(row.demand.amount),
+                        scene:button("demand", 2, y, width - 2, 1,
+                            line("Tax demand  " .. money(row.demand.amount)),
                             { background = ui.theme.warning,
                               foreground = colors.black })
                     elseif row.kind == "wallet" then
-                        scene:button("wallet", 2, y, width - 2, 2,
+                        scene:button("wallet", 2, y, width - 2, 1,
                             "Bet Wallet", { background = colors.purple })
                     elseif row.kind == "activity" then
-                        scene:button("activity", 2, y, width - 2, 2,
+                        scene:button("activity", 2, y, width - 2, 1,
                             "Activity", { background = ui.theme.panel })
                     elseif row.kind == "cashout" then
-                        scene:button("cashout", 2, y, width - 2, 2,
+                        scene:button("cashout", 2, y, width - 2, 1,
                             "Cash out with a code",
                             { background = ui.theme.panel })
                     elseif row.kind == "bringin" then
-                        scene:button("bringin", 2, y, width - 2, 2,
+                        scene:button("bringin", 2, y, width - 2, 1,
                             "Bring money in", { background = ui.theme.panel })
                     elseif row.kind == "id" then
-                        scene:button("id", 2, y, width - 2, 2,
+                        scene:button("id", 2, y, width - 2, 1,
                             "Account ID + Transfer",
                             { background = ui.theme.accentDark })
                     else
@@ -963,20 +941,16 @@ return function(api)
                             { background = ui.theme.panel })
                     end
                 end
+                y = y + tall
             end
             -- 12.0: the scroll arrows sit beside BALANCE, clear of the bar.
             scene:button("up", width - 8, 11, 3, 1, "^",
                 { background = ui.theme.panel, disabled = offset <= 0 })
             scene:button("down", width - 4, 11, 3, 1, "v",
                 { background = ui.theme.panel,
-                  disabled = offset + perView >= #rows })
+                  disabled = lastShown >= #rows })
             ui.tabBar(scene, target, TABS, "bank", FOX)
-            local action
-            if pending then
-                action, pending = pending, nil
-            else
-                action = tabbed(scene:wait({ tickRate = 5 }), "bank")
-            end
+            local action = scene:wait({ tickRate = 5 })
             if action == "home" or action == "__terminate"
                 or (action or ""):match("^tab:") then
                 return action
@@ -1107,7 +1081,7 @@ return function(api)
                       foreground = status and colors.black or colors.white })
             end
             ui.tabBar(scene, target, TABS, "security", FOX)
-            local action = tabbed(scene:wait({ tickRate = 3 }), "security")
+            local action = scene:wait({ tickRate = 3 })
             if action == "home" or action == "__terminate"
                 or (action or ""):match("^tab:") then
                 return action
@@ -1143,7 +1117,7 @@ return function(api)
             ui.wrappedText(target, 2, 17, "More coming to your account soon.",
                 width - 2, 2, ui.theme.muted)
             ui.tabBar(scene, target, TABS, "account", FOX)
-            local action = tabbed(scene:wait({ tickRate = 5 }), "account")
+            local action = scene:wait({ tickRate = 5 })
             if action == "home" or action == "__terminate"
                 or (action or ""):match("^tab:") then
                 return action

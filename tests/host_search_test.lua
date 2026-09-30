@@ -201,14 +201,16 @@ function ui.confirm()
     return answer
 end
 filterAt = 0
-suggested = {}
+suggested, suggestedFor = {}, {}
 function ui.input(_, _, spec)
     local value = table.remove(inputs, 1)
     -- 11.0: an entry can name a suggestion to tap. The phone's own suggest
     -- function is asked, exactly as the real field asks it on every key.
     if type(value) == "table" then
         local items = spec.suggest(value.typed)
-        suggested = items
+        -- The first search's suggestions are the ones checked below.
+        suggested = suggested[1] and suggested or items
+        suggestedFor[value.typed] = items
         for _, item in ipairs(items) do
             if item.label == value.choose then return value.typed, item end
         end
@@ -257,26 +259,9 @@ function ui.scene()
     end
     return scene
 end
--- 12.0: Settings is searched from its More page. The real search runs over
--- exactly what Settings hands More, and what it finds is recorded the way
--- the old filtered list was.
-do
-    local realUi = dofile("real_ui.lua")
-    function ui.moreMenu(_, spec)
-        local query = table.remove(inputs, 1)
-        filterAt = #buttonLabels
-        buttonLabels[#buttonLabels + 1] = "Q  " .. tostring(query)
-        local entries = {}
-        for _, tab in ipairs(spec.list or {}) do
-            entries[#entries + 1] = { id = "tab:" .. tab.id, label = tab.label }
-        end
-        for _, extra in ipairs(spec.more or {}) do entries[#entries + 1] = extra end
-        for _, found in ipairs(realUi.searchEntries(entries, query)) do
-            buttonLabels[#buttonLabels + 1] = found.label
-        end
-        return "tab:" .. tostring(spec.active)
-    end
-end
+-- 12.0 Final: Settings has no More. Every setting is on one of its three
+-- tabs, and the home screen's search finds any of them.
+function ui.moreMenu() error("Settings opened a More page", 0) end
 dofile("ui_stub_fill.lua")(ui)
 -- 12.0: a phone with an account starts on its lock screen, which waits for
 -- a tap before asking for the PIN.
@@ -290,11 +275,11 @@ actions = {
     "back",
     "search",                          -- 11.0: tap a suggestion instead
     "open:quick:1",                    -- a QuickAction living on the grid
-    "open:settings", "tab:more", "home",   -- searching Settings
+    "search",                          -- a setting, found by what it does
     "__terminate",
 }
 inputs = { "cash", { typed = "activ", choose = "Activity" },
-    "modem" }
+    { typed = "modem", choose = "Network" } }
 
 -- showBanner draws straight onto the screen rather than through ui.message,
 -- so the banner text lands in `drawn` like anything else.
@@ -344,13 +329,12 @@ assert(pressed("Look in the App Browser"),
 
 -- Settings search ------------------------------------------------------------------
 
-assert(pressed("Q  modem") or drew("Q  modem"),
-    "Settings keeps the search it was given")
-assert(pressedAfterFilter("Network"),
-    "and Network survives a search for 'modem'")
-assert(not pressedAfterFilter("How PUMPE Works"),
-    "while everything that does not match is gone, which is the point of"
-        .. " searching a list rather than paging through it")
+local names = {}
+for _, item in ipairs(suggestedFor.modem or {}) do names[item.label] = item end
+assert(names.Network and names.Network.detail == "Settings",
+    "a search for 'modem' finds the Network setting, by what it does")
+assert(not names["How PUMPE Works"],
+    "while everything that does not match is left out")
 
 -- Things that fire on their own -------------------------------------------------
 

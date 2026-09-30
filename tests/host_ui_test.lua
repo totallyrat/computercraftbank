@@ -40,10 +40,12 @@ term = { current = function() return mockTerminal(51, 19) end }
 local ui = require("lib.ui")
 
 -- The floating tab bar, 12.0: a pill on the row above the bottom, clear of
--- both sides and of the bottom row, holding three parts and More.
+-- both sides and of the bottom row. 12.0 Final: it shows every tab up to
+-- four; past four it shows three and More.
 local four = { { id = "stores", label = "Stores" },
     { id = "delivery", label = "Delivery", short = "Deliv" },
-    { id = "places", label = "Places" }, { id = "orders", label = "Orders" } }
+    { id = "places", label = "Places" }, { id = "orders", label = "Orders" },
+    { id = "saved", label = "Saved" } }
 for _, size in ipairs({ { 26, 20 }, { 51, 19 }, { 39, 13 } }) do
     local width, height = size[1], size[2]
     local display = mockTerminal(width, height)
@@ -57,11 +59,11 @@ for _, size in ipairs({ { 26, 20 }, { 51, 19 }, { 39, 13 } }) do
     assert(seen[1] == "gap" and seen[2] == "gap" and seen[width] == "gap"
         and seen[width - 1] == "gap", "it stops short of both sides")
     assert(seen[3] == "tab:stores" and seen[width - 2] == "tab:more",
-        "three parts, then More: " .. table.concat(seen, ","))
+        "five parts: three, then More: " .. table.concat(seen, ","))
     local found = {}
     for _, id in ipairs(seen) do found[id] = true end
     assert(found["tab:delivery"] and found["tab:places"] and not found["tab:orders"],
-        "the fourth part is behind More")
+        "the fourth and fifth parts are behind More")
     for x = 1, width do
         assert(bar:hit(x, height) == nil, "the bottom row is left clear")
     end
@@ -74,7 +76,7 @@ for _, size in ipairs({ { 26, 20 }, { 51, 19 }, { 39, 13 } }) do
     ui.usePhoneStyle(false)
 end
 
--- Two parts still get More, for what a program adds and for search.
+-- 12.0 Final: two parts are two tabs, four are four, and neither has More.
 do
     local display = mockTerminal(26, 20)
     local bar = ui.scene(display)
@@ -82,7 +84,15 @@ do
         { id = "b", label = "Pay" } }, "a")
     local ids = {}
     for x = 1, 26 do local id = bar:hit(x, 19) if id then ids[id] = true end end
-    assert(ids["tab:a"] and ids["tab:b"] and ids["tab:more"])
+    assert(ids["tab:a"] and ids["tab:b"] and not ids["tab:more"], "two tabs, no More")
+    bar = ui.scene(display)
+    ui.tabBar(bar, display, { four[1], four[2], four[3], four[4] }, "orders")
+    ids = {}
+    for x = 1, 26 do local id = bar:hit(x, 19) if id then ids[id] = true end end
+    assert(ids["tab:stores"] and ids["tab:orders"] and not ids["tab:more"],
+        "four tabs, all on the bar")
+    -- And nothing at all is not an error.
+    ui.tabBar(ui.scene(display), display, {}, nil)
 end
 
 -- What the bar draws: every label inside its slot, the lit one in the main
@@ -295,17 +305,16 @@ do
     os.pullEvent = function() return "key", 28 end
     local left = ui.runTabs({
         list = { { id = "a", label = "A" }, { id = "b", label = "B" },
-            { id = "c", label = "C" }, { id = "d", label = "D" } },
+            { id = "c", label = "C" }, { id = "d", label = "D" }, { id = "e", label = "E" } },
         more = { { id = "about", label = "About" } },
         actions = { about = function() ran = ran + 1 end },
         pages = {
             a = function(spec) visited[#visited + 1] = "a" return table.remove(script, 1) end,
             d = function(spec)
                 visited[#visited + 1] = "d"
-                -- Enter picks the first suggestion again: now "about" is
-                -- first, since "d" is the page this is opened from.
+                -- Behind More: d, e, then the extra. Down twice to it.
                 os.pullEvent = (function()
-                    local events = { { "key", 208 }, { "key", 28 } }
+                    local events = { { "key", 208 }, { "key", 208 }, { "key", 28 } }
                     return function() return table.unpack(table.remove(events, 1)) end
                 end)()
                 return table.remove(script, 1)
@@ -525,8 +534,8 @@ assert(blinked > slept,
 sleep = function() end
 
 -- 12.0: a server's dashboard. Status, Activity and Server tabs over the
--- floating bar, More listing every action, and an action that returns true
--- stopping the whole thing.
+-- floating bar (12.0 Final: and no More -- every action is on Server), and
+-- an action that returns true stopping the whole thing.
 do
     local width, height = 51, 19
     local written = {}
@@ -549,11 +558,11 @@ do
         local id = probe:hit(x, height - 1)
         if id and not at[id] then at[id] = x end
     end
-    assert(at["tab:activity"] and at["tab:server"] and at["tab:more"],
-        "three tabs and More")
+    assert(at["tab:activity"] and at["tab:server"] and not at["tab:more"],
+        "three tabs, and no More")
     assert(probe:hit(1, 1) == nil, "and no home mark on a server")
 
-    local running, saves, offered = true, 0, nil
+    local running, saves = true, 0
     local clicks = {
         function() assert(shown("APPS") and shown("CATALOGUE") and shown("Fox App"),
             "Status: the cards and the lines") return at["tab:activity"], height - 1 end,
@@ -561,15 +570,10 @@ do
             "Activity: what it logged") return at["tab:server"], height - 1 end,
         function() assert(shown("SAVE") and shown("STOP") and shown("MAIN COLOUR"),
             "Server: every action, and the colour") return 3, 5 end,
-        function() assert(saves == 1, "an action runs") return at["tab:more"], height - 1 end,
-        function() return 30, 5 end,
+        function() assert(saves == 1, "an action runs") return 30, 5 end,
     }
     local realMore = ui.moreMenu
-    ui.moreMenu = function(_, spec)
-        offered = {}
-        for _, entry in ipairs(spec.more or {}) do offered[entry.id] = entry.label end
-        return "save"
-    end
+    ui.moreMenu = function() error("a server has no More", 0) end
     local realPull = os.pullEvent
     os.pullEvent = function()
         local click = table.remove(clicks, 1)
@@ -594,10 +598,7 @@ do
     })
     ui.moreMenu, os.pullEvent, ui.pickMainColor = realMore, realPull, realPick
     assert(#clicks == 0 and not running, "STOP stops it")
-    assert(saves == 2, "More ran SAVE as well")
-    assert(offered and offered.save == "Save" and offered.stop == "Stop"
-        and offered.__color == "Main colour", "More lists every action: "
-        .. tostring(offered and offered.__color))
+    assert(saves == 1, "SAVE ran once")
 end
 
 print("host_ui_test: OK")

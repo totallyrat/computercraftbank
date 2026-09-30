@@ -396,7 +396,7 @@ local function fullRun(WIDTH, HEIGHT)
 
     -- The Pickup tab (12.0): a new pickup point, with the first chest as
     -- the one customers open and a redstone pulse out of the back.
-    tap("tab:pickup", "setup", "pick:1", "pick:2")
+    tap("tab:setup", "setup", "pick:1", "pick:2")
     typed("North Point")
     pin("2468", "2468")
 
@@ -561,13 +561,13 @@ local function fullRun(WIDTH, HEIGHT)
         assert(os.pullEvent == terminatingPullEvent
             or os.pullEvent ~= os.pullEventRaw,
             "and Ctrl+T works again for staff")
-        return "tab:pickup"
+        return "tab:setup"
     end, "start", "code")
     typed({ crash = "boom" })
     pin("1357")
 
     -- Retiring the point, and closing the board.
-    tap("tab:pickup", "start", "staff", "pin", "retire", "__terminate")
+    tap("tab:setup", "start", "staff", "pin", "retire", "__terminate")
     pin("1357")
     confirm(true)
 

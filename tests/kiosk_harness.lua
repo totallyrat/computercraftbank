@@ -153,12 +153,14 @@ function kiosk.run(options)
         draw("confirm:" .. title .. " " .. tostring(body))
         return take(script.confirms, "confirmation: " .. title)
     end
-    -- The bar paints its labels; here they are written into the frame.
+    -- The bar paints its labels; here they are written into the frame --
+    -- every tab, and More only past four.
     function ui.tabBar(scene, target, tabs, active, accent, barOptions)
+        local more = #tabs > realUi.TAB_COUNT
         for index, tab in ipairs(tabs) do
-            if index <= realUi.TAB_COUNT then draw(tab.label) end
+            if not more or index < realUi.TAB_COUNT then draw(tab.label) end
         end
-        draw("More")
+        if more then draw("More") end
         return realUi.tabBar(scene, target, tabs, active, accent, barOptions)
     end
     function ui.scene()

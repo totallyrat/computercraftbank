@@ -270,8 +270,9 @@ actions = {
     -- 9.4: the bet wallet, activity, cash out and the Account ID all moved
     -- into this list from the PUMPE's Bank tab, so scrolling to the bottom
     -- is what proves they are reachable from inside Foxy. 9.5 added Bring
-    -- money in below them.
-    "down", "down", "down", "down", "down",
+    -- money in below them. 12.0 Final: one line each, so two more scrolls
+    -- reach the bottom.
+    "down", "down",
     "tab:account",                       -- the Account tab
     "home",                              -- home, from the top-left mark
     "open:ext:MAIL",                     -- 11.0: installed at sign-in

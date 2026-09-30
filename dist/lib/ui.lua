@@ -506,8 +506,15 @@ end
 
 
 
-ui.TAB_COUNT = 3
+
+ui.TAB_COUNT = 4
 local PILL_CAP = string.char(149)
+
+
+local function tabsShown(tabs)
+if #tabs <= ui.TAB_COUNT then return #tabs, false end
+return ui.TAB_COUNT - 1, true
+end
 
 
 function ui.tabRow(target)
@@ -521,7 +528,7 @@ end
 
 
 local function litTab(tabs, active)
-for index = 1, math.min(#tabs, ui.TAB_COUNT) do
+for index = 1, (tabsShown(tabs)) do
 if tabs[index].id == active then return active end
 end
 return "more"
@@ -538,8 +545,9 @@ target = surface(target)
 local width, height = target.getSize()
 local y = height - 1
 local shown = {}
-for index = 1, math.min(#tabs, ui.TAB_COUNT) do shown[index] = tabs[index] end
-shown[#shown + 1] = { id = "more", label = "More", short = "..." }
+local count, more = tabsShown(tabs)
+for index = 1, count do shown[index] = tabs[index] end
+if more then shown[#shown + 1] = { id = "more", label = "More", short = "..." } end
 local lit = litTab(tabs, active)
 local shade, ink = ui.theme.accent, ui.theme.accentInk or ui.inkOn(ui.theme.accent)
 
@@ -555,7 +563,7 @@ ui.text(target, width - 1, y, PILL_CAP, ui.theme.panel, ui.theme.background)
 end
 
 local inner = math.max(#shown, width - 4)
-local each, over = math.floor(inner / #shown), inner % #shown
+local each, over = math.floor(inner / math.max(1, #shown)), inner % math.max(1, #shown)
 local x = 3
 for index, tab in ipairs(shown) do
 local slot = each + (index <= over and 1 or 0)
@@ -583,9 +591,10 @@ end
 
 local function moreEntries(spec)
 local entries = {}
+local count = tabsShown(spec.list or {})
 for index, tab in ipairs(spec.list or {}) do
 entries[#entries + 1] = { id = "tab:" .. tab.id, label = tab.label,
-hint = tab.hint, main = index <= ui.TAB_COUNT }
+hint = tab.hint, main = index <= count }
 end
 for _, extra in ipairs(spec.more or {}) do
 entries[#entries + 1] = { id = extra.id, label = extra.label,
@@ -737,6 +746,9 @@ end
 
 
 
+
+
+
 function ui.runTabs(spec)
 local first = spec.list[1].id
 local tab, previous = spec.start or first, nil
@@ -762,7 +774,6 @@ if not once then previous = tab end
 tab = nextTab
 end
 end
-
 
 
 
@@ -886,16 +897,6 @@ list = { { id = "status", label = "Status" }, { id = "activity", label = "Activi
 short = "Log" }, { id = "server", label = spec.serverLabel or "Server" } },
 pages = { status = status, activity = activity, server = server },
 running = spec.running,
-
-refresh = function(tabSpec)
-tabSpec.more, tabSpec.actions = {}, {}
-for _, entry in ipairs(actionList()) do
-tabSpec.more[#tabSpec.more + 1] = { id = entry.id,
-label = entry.label:sub(1, 1) .. entry.label:sub(2):lower(),
-hint = entry.hint }
-tabSpec.actions[entry.id] = function() run(entry.id) end
-end
-end,
 })
 end
 

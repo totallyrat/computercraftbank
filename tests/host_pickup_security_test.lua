@@ -217,21 +217,16 @@ assert(orders[fourthId].code ~= fourthCode)
 assert(phone.said(seen, "Pre-confirmed").body == "For 30 minutes")
 assert(bank.request("PICKUP_CODE", atDepot({ code = third.code })).confirmed)
 
--- More, 12.0 -------------------------------------------------------------------------------
+-- Tabs, 12.0 Final -------------------------------------------------------------------------
 sleep = sleep or function() end
--- Foxy's More also holds the bank's own screens. Picked from another tab, one
--- opens on the bank page, where it lives.
+-- Foxy's three tabs, and no More: the bank's own screens are on the Bank tab.
 
 script = phone.script()
-phone.push(script.actions, "tab:more")
-phone.push(script.more, function(seen)
-    local spec = seen.more[#seen.more]
-    assert(spec.active == "security", "More knows where it was opened from")
-    return "activity"
-end)
 phone.push(script.actions, function(seen)
-    assert(phone.has(phone.last(seen), "Activity"),
-        "the bank page opened Activity straight away")
+    assert(not phone.has(phone.last(seen), "More"), "three tabs, and no More")
+    return "tab:bank"
+end, "activity", function(seen)
+    assert(phone.has(phone.last(seen), "Activity"), "Activity is on the Bank tab")
     return "back"
 end, "home")
 phone.run({ bank = bank, who = kit, file = "../foxy.lua", script = script,

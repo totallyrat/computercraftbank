@@ -29,7 +29,7 @@ local customerView = { mode = "idle", data = {}, frame = 0 }
 -- 12.0: the owner's main colour, orange unless they chose one.
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
 -- 12.0: every page ends with the same bar. A kiosk has no home screen, so
--- it is three tabs and More; the cart lives out here so a trip to another
+-- it is only its four tabs; the cart lives out here so a trip to another
 -- tab does not empty it.
 local posCart = {}
 local function tabBar(scene, spec)
@@ -1408,8 +1408,8 @@ local function kioskMail()
     end
 end
 
--- 12.0: what the old settings screen did, one action at a time, for More.
--- Returns true when the kiosk should close.
+-- 12.0: what the old settings screen did, one action at a time, for the
+-- Kiosk tab. Returns true when the kiosk should close.
 local function settingAction(action)
     if action == "balance" then balanceScreen()
     elseif action == "withdraw" then directWithdrawal()
@@ -1743,41 +1743,60 @@ local function posPage(spec)
     end
 end
 
--- 12.0: Sell, Products, Store -- and More, with everything the settings
--- screen used to hold.
-local function posLoop()
-    local more, actions = {}, {}
-    for _, entry in ipairs({
-        { "balance", "Balance", "What the till holds" },
-        { "withdraw", "Withdraw", "A code for the cash" },
-        { "mail", "Company mail", "FoxMail, as the company" },
-        { "company", "Link company", "Owner sign in" },
-        { "display", "Rescan display", "Find the customer monitor" },
-        { "portable", kiosk.portable and "Foxy Pay: on" or "Foxy Pay: off",
-          "Find the customer first" },
-        { "dev", "Dev Mode", "Publish PUMPE apps" },
-        { "color", "Main colour", "How this kiosk looks" },
-        { "close", "Close kiosk", "End this session" },
-    }) do
-        more[#more + 1] = { id = entry[1], label = entry[2], hint = entry[3] }
-        actions[entry[1]] = function()
-            if settingAction(entry[1]) then running = false end
+-- 12.0 Final: the kiosk's own controls, on a tab of their own -- what the
+-- settings screen held, and More after it.
+local KIOSK_CONTROLS = { { "balance", "BALANCE" }, { "withdraw", "WITHDRAW" },
+    { "mail", "COMPANY MAIL" }, { "company", "LINK COMPANY" },
+    { "display", "RESCAN DISPLAY" }, { "portable", "FOXY PAY" },
+    { "dev", "DEV MODE" }, { "color", "MAIN COLOUR" }, { "close", "CLOSE KIOSK" } }
+
+local function controlsPage(spec)
+    while running do
+        local width = target.getSize()
+        ui.clear(target)
+        ui.header(target, "KIOSK", merchantName(), util.formatClock())
+        local scene = ui.scene(target)
+        local columns = width >= 45 and 3 or 2
+        local tall = columns == 3 and 2 or 1
+        local each = math.floor((width - 1 - columns) / columns)
+        for index, entry in ipairs(KIOSK_CONTROLS) do
+            local column = (index - 1) % columns
+            local y = 5 + math.floor((index - 1) / columns) * (tall + 1)
+            if y + tall - 1 <= ui.contentBottom(target) then
+                local label = entry[2]
+                if entry[1] == "portable" then
+                    -- Foxy Pay says what it is now.
+                    label = kiosk.portable and "FOXY PAY: ON" or "FOXY PAY: OFF"
+                end
+                local background = entry[1] == "close" and ui.theme.danger
+                    or entry[1] == "portable" and kiosk.portable and ui.theme.accent
+                    or ui.theme.panel
+                scene:button(entry[1], 2 + column * (each + 1), y,
+                    column == columns - 1 and width - 1 - column * (each + 1) or each,
+                    tall, label, { background = background,
+                        foreground = ui.inkOn(background) })
+            end
+        end
+        tabBar(scene, spec)
+        local action = scene:wait()
+        if action == "__terminate" then running = false return nil end
+        if action and action:match("^tab:") then return action end
+        if action and settingAction(action) then
+            running = false
+            return nil
         end
     end
+end
+
+-- 12.0: Sell, Products, Store and (12.0 Final) Kiosk.
+local function posLoop()
     ui.runTabs({
         target = target, title = "Service Kiosk", subtitle = merchantName(),
         list = { { id = "sell", label = "Sell" }, { id = "products", label = "Products",
-            short = "Items" }, { id = "store", label = "Store" } },
-        pages = { sell = posPage, products = productManager, store = onlineStore },
-        more = more, actions = actions,
-        -- Foxy Pay says what it is now, not what it was at the start.
-        refresh = function()
-            for _, entry in ipairs(more) do
-                if entry.id == "portable" then
-                    entry.label = kiosk.portable and "Foxy Pay: on" or "Foxy Pay: off"
-                end
-            end
-        end,
+            short = "Items" }, { id = "store", label = "Store" },
+            { id = "kiosk", label = "Kiosk" } },
+        pages = { sell = posPage, products = productManager, store = onlineStore,
+            kiosk = controlsPage },
         running = function() return running end,
     })
 end

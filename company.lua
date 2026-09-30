@@ -23,17 +23,11 @@ return function(api)
     local ACCENT = colors.cyan
     local TABS = { { id = "companies", label = "Companies" },
         { id = "delivery", label = "Delivery" } }
-    -- 12.0: Discounts is the fourth, so it lives behind More.
+    -- 12.0 Final: three, all on the bar. Pickup points are part of the
+    -- store, so they open from the Store tab.
     local COMPANY_TABS = { { id = "products", label = "Products", short = "Items" },
-        { id = "store", label = "Store" }, { id = "points", label = "Points" },
-        { id = "discounts", label = "Discounts", hint = "Sales and codes" } }
-
-    -- 12.0: a tap on More opens it, and comes back as the page chosen.
-    local function tabbed(action, list, active, title)
-        if type(ui.resolveTab) ~= "function" then return action end
-        return ui.resolveTab(target, action, { list = list, active = active,
-            title = title or "Company", subtitle = "Everything here" })
-    end
+        { id = "store", label = "Store" },
+        { id = "discounts", label = "Discounts", short = "Deals", hint = "Sales and codes" } }
     local STORE_COLORS = { "orange", "red", "lime", "green", "cyan",
         "lightBlue", "blue", "purple", "magenta", "pink", "yellow", "brown",
         "gray" }
@@ -211,7 +205,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, COMPANY_TABS, "products", ACCENT)
-            local action = tabbed(scene:wait(), COMPANY_TABS, "products", company.name)
+            local action = scene:wait()
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "add" then
@@ -228,6 +222,175 @@ return function(api)
             end
         end
         return "home"
+    end
+
+    -- Pickup points, and selling at them ------------------------------------------------
+
+    local function addOffer(company, point, offer)
+        local state = ask("COMPANY_STATE", { company_id = company.company_id })
+        local name, price = offer and offer.name, offer and offer.price
+        if not offer then
+            local choices = {}
+            for _, item in ipairs(state and state.products or {}) do
+                if item.kind ~= "subscription" then
+                    choices[#choices + 1] = { label = item.name .. "  "
+                        .. money(item.price), item = item }
+                end
+            end
+            choices[#choices + 1] = option("Something else", "other")
+            local chosen = choose("Sell what?", point.name, choices, labelOf)
+            if not chosen then return end
+            if chosen.item then
+                name, price = chosen.item.name, chosen.item.price
+            else
+                name = ui.input(target, "Its name", { mode = "text",
+                    maxLength = 20, allowSpace = true, minLength = 2 })
+                if not name then return end
+            end
+        end
+        local item = ui.input(target, "Game item", {
+            hint = "Like oak_log", mode = "email", maxLength = 48,
+            minLength = 2, initial = offer and offer.item })
+        if not item then return end
+        local count = ui.input(target, "How many a sale", { hint = name,
+            mode = "integer", maxLength = 3,
+            initial = plain(offer and offer.count or 1) })
+        if not count then return end
+        local cost = ui.input(target, "Price here", {
+            hint = "Often more than delivered", mode = "number", maxLength = 9,
+            initial = price and plain(price) or nil })
+        if not cost then return end
+        local saved, err = ask("STORE_OFFER_SET", {
+            company_id = company.company_id, point_id = point.point_id,
+            offer_id = offer and offer.offer_id, name = name, item = item,
+            count = tonumber(count), price = tonumber(cost) })
+        if not saved then return failed("Not saved", err) end
+        ui.message(target, "success", "On sale", saved.offer.count .. " "
+            .. saved.offer.name .. " for " .. money(saved.offer.price), 1.4)
+    end
+
+    local function pointScreen(company, pointId)
+        while running() do
+            local listed, err = ask("STORE_POINTS",
+                { company_id = company.company_id })
+            local point
+            for _, entry in ipairs(listed and listed.points or {}) do
+                if entry.point_id == pointId then point = entry end
+            end
+            if not point then return failed("Cannot open it", err) end
+            local width, height = target.getSize()
+            local offers = point.offers or {}
+            ui.clear(target)
+            ui.header(target, ui.truncate(point.name, width - 9),
+                point.open and "Store open" or "Store closed",
+                util.formatClock())
+            local scene = ui.scene(target)
+            scene:button("open", 2, 4, width - 2, 1, point.open
+                and "Close the store here" or "Open the store here",
+                { background = point.open and ui.theme.danger
+                    or ui.theme.success,
+                  foreground = point.open and colors.white or colors.black })
+            local per = math.max(1, height - 10)
+            for index = 1, math.min(per, #offers) do
+                local offer = offers[index]
+                scene:button("offer:" .. index, 2, 5 + index, width - 2, 1,
+                    ui.truncate(offer.count .. " " .. offer.name .. "  "
+                        .. money(offer.price), width - 4),
+                    { background = ui.theme.panel })
+            end
+            if #offers == 0 then
+                ui.wrappedText(target, 2, 6, "Nothing on sale. Add things"
+                    .. " people can buy here and take away at once, from"
+                    .. " what is in the lockers.", width - 2, 4,
+                    ui.theme.muted)
+            end
+            scene:button("add", 2, height - 2, width - 2, 1,
+                "+ Sell something here", { background = ui.theme.accentDark,
+                    disabled = #offers >= (listed.max_offers or 12) })
+            scene:button("back", 1, height, 8, 1, "< Back",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return end
+            if action == "open" then
+                local done, openError = ask("STORE_OPEN", {
+                    company_id = company.company_id, point_id = pointId,
+                    open = not point.open })
+                if not done then failed("Not changed", openError) end
+            elseif action == "add" then
+                addOffer(company, point)
+            else
+                local index = tonumber(action and action:match("^offer:(%d+)$"))
+                local offer = index and offers[index]
+                if offer then
+                    local chosen = choose(offer.name, offer.count .. " for "
+                        .. money(offer.price), { option("Change it", "edit"),
+                        option("Stop selling it", "remove") }, labelOf)
+                    if chosen and chosen.id == "edit" then
+                        addOffer(company, point, offer)
+                    elseif chosen and chosen.id == "remove" then
+                        local gone, goneError = ask("STORE_OFFER_REMOVE", {
+                            company_id = company.company_id,
+                            point_id = pointId, offer_id = offer.offer_id })
+                        if not gone then failed("Not removed", goneError) end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 12.0 Final: under the Store tab, beside the switch that lets buyers
+    -- choose them at checkout -- everything about pickup in one place.
+    local function pointsPage(company)
+        while running() do
+            local state, err = ask("COMPANY_STATE",
+                { company_id = company.company_id })
+            local listed, listError = ask("STORE_POINTS",
+                { company_id = company.company_id })
+            if not state or not listed then
+                failed("Cannot open it", err or listError)
+                return
+            end
+            local settings = state.settings
+            local points = listed.points or {}
+            local width, height = target.getSize()
+            local per = math.max(1, math.floor((height - 6) / 3))
+            ui.clear(target)
+            ui.header(target, "Pickup points", #points .. " of them",
+                util.formatClock())
+            local scene = ui.scene(target)
+            scene:button("pickup", 2, 4, width - 2, 1, settings.pickup
+                and "Buyers pick up: on" or "Buyers pick up: off",
+                { background = settings.pickup and ACCENT or ui.theme.panel,
+                  foreground = settings.pickup and colors.black or colors.white })
+            for slot = 1, math.min(per, #points) do
+                local point = points[slot]
+                scene:button("point:" .. slot, 2, 3 + slot * 3, width - 2, 2,
+                    ui.truncate(point.name, width - 4) .. "\n"
+                        .. ui.truncate(point.open and ("Selling "
+                            .. #point.offers .. " things") or "Parcels only",
+                            width - 4),
+                    { background = point.open and ACCENT or ui.theme.panel,
+                      foreground = point.open and colors.black or colors.white })
+            end
+            if #points == 0 then
+                ui.wrappedText(target, 2, 6, "No pickup points yet. Make one"
+                    .. " on a Delivery Terminal of this company: SETUP, on"
+                    .. " its board.", width - 2, 5, ui.theme.muted)
+            end
+            scene:button("back", 1, height, 9, 1, "< Store",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return end
+            if action == "pickup" then
+                local saved, saveError = ask("COMPANY_SHOP_SETUP", {
+                    company_id = company.company_id, pickup = not settings.pickup })
+                if not saved then failed("Not changed", saveError) end
+            end
+            local slot = tonumber(action and action:match("^point:(%d+)$"))
+            if slot and points[slot] then
+                pointScreen(company, points[slot].point_id)
+            end
+        end
     end
 
     -- The online store -------------------------------------------------------------
@@ -256,8 +419,8 @@ return function(api)
                     or "Home delivery: off", ui.theme.panel },
                 { "fee", "Delivery fee " .. money(settings.fee or 0),
                   ui.theme.panel },
-                { "pickup", settings.pickup and "Pickup points: on"
-                    or "Pickup points: off", ui.theme.panel },
+                { "points", (settings.pickup and "Pickup points: on"
+                    or "Pickup points: off") .. "  >", ui.theme.panel },
                 { "cancel", settings.cancel and "Cancelling: on"
                     or "Cancelling: off", ui.theme.panel },
                 { "returns", "Returns: " .. tostring(settings.return_days or 5)
@@ -276,7 +439,7 @@ return function(api)
                 end
             end
             ui.tabBar(scene, target, COMPANY_TABS, "store", ACCENT)
-            local action = tabbed(scene:wait(), COMPANY_TABS, "store", company.name)
+            local action = scene:wait()
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             local change
@@ -303,8 +466,8 @@ return function(api)
                     hint = "Added to every home delivery", mode = "number",
                     maxLength = 4, initial = plain(settings.fee) })
                 if typed then change = { fee = tonumber(typed) or 0 } end
-            elseif action == "pickup" then
-                change = { pickup = not settings.pickup }
+            elseif action == "points" then
+                pointsPage(company)
             elseif action == "cancel" then
                 if settings.cancel or ui.confirm(target, "Let buyers cancel?",
                     "For " .. tostring(state.store.confirm_hours or 2)
@@ -461,8 +624,7 @@ return function(api)
                         and colors.white or ui.theme.muted })
             end
             ui.tabBar(scene, target, COMPANY_TABS, "discounts", ACCENT)
-            local action = tabbed(scene:wait(), COMPANY_TABS, "discounts",
-                company.name)
+            local action = scene:wait()
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             local change
@@ -505,159 +667,6 @@ return function(api)
         return "home"
     end
 
-    -- Pickup points, and selling at them ------------------------------------------------
-
-    local function addOffer(company, point, offer)
-        local state = ask("COMPANY_STATE", { company_id = company.company_id })
-        local name, price = offer and offer.name, offer and offer.price
-        if not offer then
-            local choices = {}
-            for _, item in ipairs(state and state.products or {}) do
-                if item.kind ~= "subscription" then
-                    choices[#choices + 1] = { label = item.name .. "  "
-                        .. money(item.price), item = item }
-                end
-            end
-            choices[#choices + 1] = option("Something else", "other")
-            local chosen = choose("Sell what?", point.name, choices, labelOf)
-            if not chosen then return end
-            if chosen.item then
-                name, price = chosen.item.name, chosen.item.price
-            else
-                name = ui.input(target, "Its name", { mode = "text",
-                    maxLength = 20, allowSpace = true, minLength = 2 })
-                if not name then return end
-            end
-        end
-        local item = ui.input(target, "Game item", {
-            hint = "Like oak_log", mode = "email", maxLength = 48,
-            minLength = 2, initial = offer and offer.item })
-        if not item then return end
-        local count = ui.input(target, "How many a sale", { hint = name,
-            mode = "integer", maxLength = 3,
-            initial = plain(offer and offer.count or 1) })
-        if not count then return end
-        local cost = ui.input(target, "Price here", {
-            hint = "Often more than delivered", mode = "number", maxLength = 9,
-            initial = price and plain(price) or nil })
-        if not cost then return end
-        local saved, err = ask("STORE_OFFER_SET", {
-            company_id = company.company_id, point_id = point.point_id,
-            offer_id = offer and offer.offer_id, name = name, item = item,
-            count = tonumber(count), price = tonumber(cost) })
-        if not saved then return failed("Not saved", err) end
-        ui.message(target, "success", "On sale", saved.offer.count .. " "
-            .. saved.offer.name .. " for " .. money(saved.offer.price), 1.4)
-    end
-
-    local function pointScreen(company, pointId)
-        while running() do
-            local listed, err = ask("STORE_POINTS",
-                { company_id = company.company_id })
-            local point
-            for _, entry in ipairs(listed and listed.points or {}) do
-                if entry.point_id == pointId then point = entry end
-            end
-            if not point then return failed("Cannot open it", err) end
-            local width, height = target.getSize()
-            local offers = point.offers or {}
-            ui.clear(target)
-            ui.header(target, ui.truncate(point.name, width - 9),
-                point.open and "Store open" or "Store closed",
-                util.formatClock())
-            local scene = ui.scene(target)
-            scene:button("open", 2, 4, width - 2, 1, point.open
-                and "Close the store here" or "Open the store here",
-                { background = point.open and ui.theme.danger
-                    or ui.theme.success,
-                  foreground = point.open and colors.white or colors.black })
-            local per = math.max(1, height - 10)
-            for index = 1, math.min(per, #offers) do
-                local offer = offers[index]
-                scene:button("offer:" .. index, 2, 5 + index, width - 2, 1,
-                    ui.truncate(offer.count .. " " .. offer.name .. "  "
-                        .. money(offer.price), width - 4),
-                    { background = ui.theme.panel })
-            end
-            if #offers == 0 then
-                ui.wrappedText(target, 2, 6, "Nothing on sale. Add things"
-                    .. " people can buy here and take away at once, from"
-                    .. " what is in the lockers.", width - 2, 4,
-                    ui.theme.muted)
-            end
-            scene:button("add", 2, height - 2, width - 2, 1,
-                "+ Sell something here", { background = ui.theme.accentDark,
-                    disabled = #offers >= (listed.max_offers or 12) })
-            scene:button("back", 1, height, 8, 1, "< Back",
-                { background = ui.theme.panel })
-            local action = scene:wait()
-            if action == "back" or action == "__terminate" then return end
-            if action == "open" then
-                local done, openError = ask("STORE_OPEN", {
-                    company_id = company.company_id, point_id = pointId,
-                    open = not point.open })
-                if not done then failed("Not changed", openError) end
-            elseif action == "add" then
-                addOffer(company, point)
-            else
-                local index = tonumber(action and action:match("^offer:(%d+)$"))
-                local offer = index and offers[index]
-                if offer then
-                    local chosen = choose(offer.name, offer.count .. " for "
-                        .. money(offer.price), { option("Change it", "edit"),
-                        option("Stop selling it", "remove") }, labelOf)
-                    if chosen and chosen.id == "edit" then
-                        addOffer(company, point, offer)
-                    elseif chosen and chosen.id == "remove" then
-                        local gone, goneError = ask("STORE_OFFER_REMOVE", {
-                            company_id = company.company_id,
-                            point_id = pointId, offer_id = offer.offer_id })
-                        if not gone then failed("Not removed", goneError) end
-                    end
-                end
-            end
-        end
-    end
-
-    local function pointsPage(company)
-        while running() do
-            local listed, err = ask("STORE_POINTS",
-                { company_id = company.company_id })
-            if not listed then failed("Cannot open it", err) return "home" end
-            local points = listed.points or {}
-            local width, height = target.getSize()
-            local per = math.max(1, math.floor((height - 6) / 3))
-            ui.clear(target)
-            ui.header(target, "Pickup points", #points .. " of them",
-                util.formatClock())
-            local scene = ui.scene(target)
-            for slot = 1, math.min(per, #points) do
-                local point = points[slot]
-                scene:button("point:" .. slot, 2, 2 + slot * 3, width - 2, 2,
-                    ui.truncate(point.name, width - 4) .. "\n"
-                        .. ui.truncate(point.open and ("Selling "
-                            .. #point.offers .. " things") or "Parcels only",
-                            width - 4),
-                    { background = point.open and ACCENT or ui.theme.panel,
-                      foreground = point.open and colors.black or colors.white })
-            end
-            if #points == 0 then
-                ui.wrappedText(target, 2, 5, "No pickup points yet. Make one"
-                    .. " on a Delivery Terminal of this company: PICKUP, on"
-                    .. " its board.", width - 2, 5, ui.theme.muted)
-            end
-            ui.tabBar(scene, target, COMPANY_TABS, "points", ACCENT)
-            local action = tabbed(scene:wait(), COMPANY_TABS, "points", company.name)
-            if action == "home" or action == "__terminate" then return "home" end
-            if action and action:match("^tab:") then return action end
-            local slot = tonumber(action and action:match("^point:(%d+)$"))
-            if slot and points[slot] then
-                pointScreen(company, points[slot].point_id)
-            end
-        end
-        return "home"
-    end
-
     local function companyScreen(company)
         local tab = "products"
         while running() do
@@ -666,8 +675,6 @@ return function(api)
                 switched = storePage(company)
             elseif tab == "discounts" then
                 switched = discountsPage(company)
-            elseif tab == "points" then
-                switched = pointsPage(company)
             else
                 switched = productsPage(company)
             end
@@ -732,7 +739,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, TABS, "companies", ACCENT)
-            local action = tabbed(scene:wait(), TABS, "companies")
+            local action = scene:wait()
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "start" then
@@ -905,7 +912,7 @@ return function(api)
                     { background = ui.theme.panel, disabled = page >= pages })
             end
             ui.tabBar(scene, target, TABS, "delivery", ACCENT)
-            local action = tabbed(scene:wait({ tickRate = 5 }), TABS, "delivery")
+            local action = scene:wait({ tickRate = 5 })
             if action == "home" or action == "__terminate" then return "home" end
             if action and action:match("^tab:") then return action end
             if action == "prev" then

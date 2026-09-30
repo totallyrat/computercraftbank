@@ -531,17 +531,6 @@ return function(api)
         end
         ui.tabBar(scene, target, TABS, tab, REVO)
         local action = scene:wait({ tickRate = 5 })
-        -- 12.0: More, with every screen of the app one tap away.
-        if action == "tab:more" and type(ui.resolveTab) == "function" then
-            action = ui.resolveTab(target, action, { list = TABS, active = tab,
-                title = "Revolution", subtitle = "Everything in Revolution",
-                more = { { id = "clearing", label = "Clearing",
-                    hint = "Payments on their way" },
-                    { id = "code", label = "Pay kiosk by code", hint = "At a till" },
-                    { id = "id", label = "My Account ID", hint = "Sixteen digits" },
-                    { id = "bring", label = "Bring money in", hint = "From Foxy" },
-                    { id = "move", label = "Move money out", hint = "To another bank" } } })
-        end
         if action == "home" or action == "__terminate" then return end
         local picked = (action or ""):match("^tab:(.+)$")
         if picked then tab = picked

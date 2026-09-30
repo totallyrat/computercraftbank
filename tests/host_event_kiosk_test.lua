@@ -36,37 +36,29 @@ kiosk.push(script.actions, function(seen)
     local frame = seen.frames[#seen.frames]
     assert(kiosk.has(frame, "EVENT DASHBOARD") and kiosk.has(frame, "REVENUE"))
     assert(kiosk.has(frame, "Home") and kiosk.has(frame, "Events")
-        and kiosk.has(frame, "Door") and kiosk.has(frame, "More"),
-        "the three tabs and More")
+        and kiosk.has(frame, "Door") and not kiosk.has(frame, "More"),
+        "the three tabs, and no More")
+    assert(kiosk.has(frame, "COLOUR") and kiosk.has(frame, "LOG OUT")
+        and kiosk.has(frame, "CLOSE"), "the kiosk's own controls are on Home")
     return "tab:events"
 end, function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "Fox Fest"), "the Events tab lists them")
     return "tab:door"
 end, "verify")
 kiosk.push(script.inputs, "ABCD2345")
-kiosk.push(script.actions, "tab:more")
-kiosk.push(script.more, function(seen)
-    local ids = {}
-    for _, entry in ipairs(seen.more[#seen.more].more) do ids[entry.id] = true end
-    assert(ids.create and ids.verify and ids.scan and ids.color and ids.logout
-        and ids.exit, "More has all of it")
-    return "color"
-end)
-kiosk.push(script.actions, "tab:more")
-kiosk.push(script.more, "exit")
+kiosk.push(script.actions, "tab:home", "color", "exit")
 
 local seen = kiosk.run({ file = "event_kiosk.lua", bank = bank, script = script,
     device = { last_name = "" } })
-assert(seen.picked == 2, "the colour is picked when the kiosk is set up, and again from More")
+assert(seen.picked == 2, "the colour is picked when the kiosk is set up, and again from Home")
 assert(verified == "ABCD2345", "the Door verifies by entry code")
 assert(kiosk.said(seen, "TICKET REJECTED"))
 
 -- And on a pocket-sized screen nothing leaves it either.
 script = kiosk.script()
-kiosk.push(script.actions, "login", "tab:events", "tab:door", "tab:more")
+kiosk.push(script.actions, "login", "tab:events", "tab:door", "tab:home", "exit")
 kiosk.push(script.inputs, "Ana Fox")
 kiosk.push(script.pins, "1234")
-kiosk.push(script.more, "exit")
 kiosk.run({ file = "event_kiosk.lua", bank = bank, script = script, width = 39,
     height = 13, device = { last_name = "Ana Fox" }, color = { color = "orange" } })
 
