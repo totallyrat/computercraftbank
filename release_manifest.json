@@ -31,8 +31,8 @@
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 277161,
-      "checksum": "f56db0ae"
+      "size": 277301,
+      "checksum": "29424a34"
     },
     {
       "path": "service_kiosk.lua",
@@ -79,8 +79,8 @@
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 40894,
-      "checksum": "6d90b339"
+      "size": 41067,
+      "checksum": "5ea57571"
     },
     {
       "path": "lib/update.lua",

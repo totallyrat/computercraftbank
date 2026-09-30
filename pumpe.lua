@@ -407,74 +407,64 @@ local function login()
 end
 
 -- The tour that closes sign-up. Settings re-opens the same screens, so there
--- is only ever one description of how the phone works.
+-- is only ever one description of how the phone works. 12.0 Final: three
+-- steps, no way to skip them, and it ends where everything on a PUMPE
+-- starts -- Foxy.
 local GUIDE = {
-    {
-        "Your home screen",
-        "Apps sit in the grid. The four in the dock follow you onto"
-            .. " every page.",
-    },
-    {
-        "BuckApp",
-        "Balance, code payments, sending money and the Bet Wallet all"
-            .. " live in BuckApp.",
-    },
-    {
-        "Friends",
-        "Add a friend by name, chat, split a bill, or reach one fast"
-            .. " with Urgent Contact.",
-    },
-    {
-        "Tickets and Customs",
-        "Tickets keeps what you paid for. Customs holds your visas and"
-            .. " your territories.",
-    },
-    {
-        "Notifications",
-        "The last home page is your alerts. Some of them stay up until"
-            .. " you press Continue.",
-    },
-    {
-        "Staying safe",
-        "Your PIN locks the PUMPE when it sits idle. This guide lives"
-            .. " in Settings too.",
-    },
+    { "Your home screen",
+      "Apps in the grid, favourites in the dock. Search finds anything." },
+    { "Your money",
+      "Foxy is your bank: your balance, Foxy Cash and Foxy Pay." },
+    { "Your apps",
+      "Get more in the App Browser. They update themselves. Your PIN locks"
+          .. " the phone." },
 }
 
-local function guideScreen(fromSettings)
+local function guideScreen()
     local page = 1
     while running do
         local width, height = target.getSize()
-        local entry = GUIDE[page]
+        local scene
         ui.clear(target)
-        ui.header(target, "How PUMPE Works",
-            "Step " .. page .. " of " .. #GUIDE, util.formatClock())
-        ui.card(target, 2, 5, width - 2, 10, ui.theme.accent)
-        ui.text(target, 4, 6, entry[1], ui.theme.ink, ui.theme.panel)
-        ui.wrappedText(target, 4, 8, entry[2], width - 6, 6,
-            ui.theme.muted, ui.theme.panel)
-        local scene = ui.scene(target)
-        scene:button("next", 3, 15, width - 5, 3,
-            page < #GUIDE and "Next" or "Finish",
-            { background = ui.theme.accentDark, shadow = true })
-        local dots = {}
-        for index = 1, #GUIDE do
-            dots[index] = index == page and "o" or "."
+        if page > #GUIDE then
+            -- The end: Welcome to Foxy.
+            local top = math.max(2, math.floor(height / 2) - 6)
+            local drawn = ui.wordmark(target, top, "FOXY", nil, ui.theme.accent)
+            local y = drawn and top + 7 or top + 2
+            ui.center(target, y, "Welcome to Foxy", ui.theme.ink)
+            ui.center(target, y + 2, ui.truncate(account and account.name
+                or "Your PUMPE is ready", width - 2), ui.theme.muted)
+            scene = ui.scene(target)
+            scene:button("next", 3, height - 4, width - 5, 3, "Start",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk,
+                  shadow = true })
+        else
+            local entry = GUIDE[page]
+            ui.header(target, "How PUMPE Works",
+                "Step " .. page .. " of " .. #GUIDE, util.formatClock())
+            ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
+            ui.text(target, 4, 6, entry[1], ui.theme.ink, ui.theme.panel)
+            ui.wrappedText(target, 4, 8, entry[2], width - 6, 5,
+                ui.theme.muted, ui.theme.panel)
+            scene = ui.scene(target)
+            scene:button("next", 3, 15, width - 5, 3, "Next",
+                { background = ui.theme.accentDark, shadow = true })
+            local dots = {}
+            for index = 1, #GUIDE + 1 do
+                dots[index] = index == page and "o" or "."
+            end
+            ui.center(target, height - 1, table.concat(dots, " "),
+                ui.theme.muted, ui.theme.background)
+            scene:button("back", 1, height, 8, 1, "< Back",
+                { background = ui.theme.panel, disabled = page == 1 })
         end
-        ui.center(target, height - 1, table.concat(dots, " "),
-            ui.theme.muted, ui.theme.background)
-        scene:button("back", 1, height, 8, 1, "< Back",
-            { background = ui.theme.panel, disabled = page == 1 })
-        scene:button("done", width - 6, height, 7, 1,
-            fromSettings and "Done" or "Skip",
-            { background = ui.theme.panel })
         local action = scene:wait()
         if action == "next" then
-            if page == #GUIDE then return end
+            if page > #GUIDE then return end
             page = page + 1
         elseif action == "back" then
             page = math.max(1, page - 1)
-        elseif action == "done" or action == "__terminate" then
+        elseif action == "__terminate" then
             return
         end
     end
@@ -506,7 +496,7 @@ local function createAccount()
     device.onboarding_complete = true
     saveDevice()
     preparationAnimation(true)
-    guideScreen(false)
+    guideScreen()
     enableDeviceLock()
     return true
 end
@@ -3876,7 +3866,7 @@ local function settingsScreen(wanted)
         elseif id == "updates" then updatesScreen()
         elseif id == "apps" then appSettingsScreen()
         elseif id == "connected" then connectedApps()
-        elseif id == "guide" then guideScreen(true)
+        elseif id == "guide" then guideScreen()
         elseif id == "dock" then favouritesPicker()
         elseif id == "logout" then
             -- 12.0: a PUMPE opens on its account's lock screen, so leaving

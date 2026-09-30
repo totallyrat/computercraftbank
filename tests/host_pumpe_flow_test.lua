@@ -5,7 +5,8 @@
 -- page, with every screen bounds-checked at 26x20.
 local actions = {
     "create",                                        -- new account
-    "next", "next", "next", "next", "next", "next",  -- the six guide steps
+    -- 12.0 Final: three guide steps and Welcome to Foxy, with no Skip.
+    "next", "next", "next", "next",
     "edit", "pick:tickets", "pick:friends", "back",  -- fill the dock
     "open:tickets", "home",                          -- an app from the dock
     -- 9.4: there is no Bank tab. Payments, the bet wallet and activity all
@@ -45,7 +46,7 @@ local actions = {
     "prev",                                          -- back to the apps
     -- 12.0: Settings has tabs. The guide is on Account, the dock on Apps,
     -- and (12.0 Final, no More) Close PUMPE is on Account too.
-    "open:settings", "tab:account", "guide", "next", "done",
+    "open:settings", "tab:account", "guide", "next", "next", "next", "next",
     "tab:apps", "dock", "back", "tab:account", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
@@ -802,12 +803,14 @@ local function find(items, expected)
 end
 
 assert(find(drawnText, "Setting up your"))
+assert(find(drawnText, "Welcome to Foxy"), "the guide ends with Welcome to Foxy")
+assert(find(buttonLabels, "Start") and not find(buttonLabels, "Skip"),
+    "and has no way to skip it")
 assert(find(drawnText, "Foxy Account"))
 assert(find(drawnText, "Preparing your PUMPE"))
 -- Sign-up ends in the guide, and Settings can re-open the same screens.
 assert(find(drawnText, "How PUMPE Works"))
-assert(find(drawnText, "Step 1 of 6"))
-assert(find(buttonLabels, "Finish"))
+assert(find(drawnText, "Step 1 of 3"), "three steps now, where there were six")
 -- 12.0: a Settings row is a label drawn on its button, as in the Foxy app.
 assert(find(drawnText, "How PUMPE Works"))
 assert(find(drawnText, "Edit Your Dock"))
