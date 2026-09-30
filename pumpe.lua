@@ -4993,7 +4993,7 @@ local function appServer()
     return appClient
 end
 
-local function storeRequest(action, payload, silent)
+local function storeRequest(action, payload, silent, timeout)
     -- Same leak as the bank bridge: appServer() builds a client, and building
     -- a client opens every modem on the device.
     if offline() then
@@ -5003,12 +5003,69 @@ local function storeRequest(action, payload, silent)
         end
         return nil, "Modem is off", "MODEM_OFF"
     end
-    local result, err, code = appServer():request(action, payload or {})
+    local result, err, code = appServer():request(action, payload or {}, timeout)
     if not result and not silent then
         ui.message(target, "error", "App Server offline",
             err or "Nobody is hosting apps", 1.8)
     end
     return result, err, code
+end
+
+-- One app's file, fetched in pieces and checked against what the App Server
+-- says it is. `progress(done, size)` hears about each piece. The body, or
+-- nil and why.
+local function fetchApp(app, progress)
+    local chunks, offset = {}, 0
+    local size = tonumber(app.size) or 0
+    while offset < size do
+        local chunk, err = storeRequest("APP_CHUNK", {
+            app_id = app.app_id, offset = offset,
+            limit = config.app_chunk_size,
+        }, true)
+        if not chunk or type(chunk.data) ~= "string" or #chunk.data == 0 then
+            return nil, err or "The App Server went quiet", "DOWNLOAD"
+        end
+        chunks[#chunks + 1] = chunk.data
+        offset = chunk.next_offset
+        if progress then progress(offset, size) end
+        util.cooperativeYield()
+    end
+    local body = table.concat(chunks)
+    if #body ~= size or util.checksum(body) ~= app.checksum then
+        return nil, "The download was damaged", "DAMAGED"
+    end
+    return body
+end
+
+-- Puts a fetched app in place. The new file is written beside the old one
+-- first, which proves there is room for it, so a full disk leaves the app
+-- as it was. An app already here keeps its place and whatever it saved.
+local function keepApp(app, body)
+    if not fs.exists(appsDir) then fs.makeDir(appsDir) end
+    local path = appPath(app.app_id)
+    local fresh = path .. ".new"
+    local roomy = pcall(util.writeFile, fresh, body)
+    pcall(fs.delete, fresh)
+    if not roomy or not pcall(util.writeFile, path, body) then return false end
+    local record = {
+        app_id = app.app_id, name = app.name, version = app.version,
+        author = app.author, description = app.description,
+        -- Kept so Fast Bank Transfer can list this app as a bank without
+        -- opening its file. Apps installed before 9.5 have none, and are
+        -- read off disk instead.
+        bank_name = app.bank_name,
+        actions = declaredActions(app.app_id),
+    }
+    for index, entry in ipairs(installed.list) do
+        if entry.app_id == app.app_id then
+            installed.list[index] = record
+            saveApps()
+            return true
+        end
+    end
+    installed.list[#installed.list + 1] = record
+    saveApps()
+    return true
 end
 
 -- A bar that fills as the chunks land, then a tick that draws itself.
@@ -5020,53 +5077,30 @@ local function installApp(app)
             "Remove an app first", 1.8)
         return false
     end
-    if not fs.exists(appsDir) then fs.makeDir(appsDir) end
-    local chunks, offset = {}, 0
     ui.clear(target)
     ui.header(target, "Installing", app.name, util.formatClock())
     local barWidth = width - 6
-    while offset < app.size do
-        local chunk, err = storeRequest("APP_CHUNK", {
-            app_id = app.app_id, offset = offset,
-            limit = config.app_chunk_size,
-        }, true)
-        if not chunk or type(chunk.data) ~= "string" or #chunk.data == 0 then
-            ui.message(target, "error", "Download stopped",
-                err or "The App Server went quiet", 1.8)
-            return false
-        end
-        chunks[#chunks + 1] = chunk.data
-        offset = chunk.next_offset
-        local filled = math.floor(barWidth * offset / math.max(1, app.size))
+    local body, err, code = fetchApp(app, function(offset, size)
+        local filled = math.floor(barWidth * offset / math.max(1, size))
         ui.fill(target, 4, 11, barWidth, 1, ui.theme.panel)
         ui.fill(target, 4, 11, math.max(0, filled), 1, ui.theme.accent)
-        ui.center(target, 9, math.floor(offset / math.max(1, app.size) * 100)
+        ui.center(target, 9, math.floor(offset / math.max(1, size) * 100)
             .. "%", ui.theme.ink)
-        util.cooperativeYield()
-    end
-    local body = table.concat(chunks)
-    if #body ~= app.size or util.checksum(body) ~= app.checksum then
-        ui.message(target, "error", "Download was damaged",
-            "Nothing was installed", 1.8)
+    end)
+    if not body then
+        if code == "DAMAGED" then
+            ui.message(target, "error", "Download was damaged",
+                "Nothing was installed", 1.8)
+        else
+            ui.message(target, "error", "Download stopped", err, 1.8)
+        end
         return false
     end
-    local wrote = pcall(util.writeFile, appPath(app.app_id), body)
-    if not wrote then
+    if not keepApp(app, body) then
         ui.message(target, "error", "No room on this PUMPE",
             "Remove something first", 1.8)
         return false
     end
-    forgetApp(app.app_id)
-    installed.list[#installed.list + 1] = {
-        app_id = app.app_id, name = app.name, version = app.version,
-        author = app.author, description = app.description,
-        -- Kept so Fast Bank Transfer can list this app as a bank without
-        -- opening its file. Apps installed before 9.5 have none, and are
-        -- read off disk instead.
-        bank_name = app.bank_name,
-        actions = declaredActions(app.app_id),
-    }
-    saveApps()
     -- The tick draws itself, one stroke at a time.
     ui.clear(target)
     ui.header(target, "Installed", app.name, util.formatClock())
@@ -5611,6 +5645,40 @@ local function ensureFoxy()
             if installApp(app) then room = room - 1 end
         end
     end
+end
+
+-- 12.0 Final: apps keep themselves up to date. A release puts new versions
+-- of the apps it ships on the App Server, and an author publishes new
+-- versions of theirs; either way the phone notices from the Home Screen and
+-- fetches them quietly, in place, keeping what each app saved. A failed
+-- download leaves the app as it was, to be tried again next time.
+local APP_CHECK_MS = 10 * 60 * 1000
+local appsCheckedAt
+local function updateApps(force)
+    if offline() or #installed.list == 0 then return {} end
+    local now = os.clock() * 1000
+    if not force and appsCheckedAt and now - appsCheckedAt < APP_CHECK_MS then
+        return {}
+    end
+    appsCheckedAt = now
+    -- A short wait: this runs from the Home Screen, which should not hang
+    -- on an App Server that is not there.
+    local listed = storeRequest("APP_LIST", {}, true, 2)
+    local updated = {}
+    for _, app in ipairs(listed and listed.apps or {}) do
+        local here = installedApp(app.app_id)
+        if here and app.kind ~= "game" and here.version ~= app.version then
+            local width = target.getSize()
+            ui.fill(target, 1, 1, width, 1, ui.theme.accent)
+            ui.text(target, 2, 1, ui.truncate("Updating " .. tostring(app.name),
+                width - 2), ui.theme.accentInk or colors.black, ui.theme.accent)
+            local body = fetchApp(app)
+            if body and keepApp(app, body) then
+                updated[#updated + 1] = tostring(app.name)
+            end
+        end
+    end
+    return updated
 end
 
 -- Finding things --------------------------------------------------------------
@@ -6251,6 +6319,13 @@ local function mainMenu()
             tick = tick + 1
             agenda.tick()
             checkForUpdate(false)
+            local updated = updateApps(false)
+            if #updated > 0 then
+                refreshInstalledApps()
+                showBanner({ title = #updated == 1 and "App updated"
+                    or (#updated .. " apps updated"),
+                    body = table.concat(updated, ", ") })
+            end
         end
         -- The OS poll drives the badges, the balance and the alert dot.
         if tick % 6 == 0 or (action ~= "__tick" and action ~= "__idle") then

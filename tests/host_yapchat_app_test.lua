@@ -221,8 +221,19 @@ local client = {
         return { ok = true }
     end,
 }
+-- 12.0 Final: the phone asks the App Server whether its apps have new
+-- versions. That is the App Server, not the Bank: its own stub, with
+-- nothing new.
+local appStore = { discover = function() return true end,
+    request = function(_, action)
+        requests[#requests + 1] = "APPS:" .. action
+        return { apps = {} }
+    end }
 package.loaded["lib.net"] = {
-    client = function() return client end,
+    client = function(spec)
+        if spec and spec.protocol == "PUMPE_APPS_V1" then return appStore end
+        return client
+    end,
     autoUpdate = function() end,
     locate = function() return nil end,
 }

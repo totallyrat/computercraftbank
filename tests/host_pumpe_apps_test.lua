@@ -146,19 +146,29 @@ APP.size = #BODY
 local ROTTEN = { app_id = "ROTTEN", name = "Rotten", version = 1,
     author = "Shop Owner", description = "Arrives damaged",
     size = #BODY, checksum = "deadbeef" }
+-- 12.0 Final: once Notes is installed, its author publishes version 2, and
+-- Foxy gets a version 2 that arrives damaged. The phone picks up the first
+-- by itself and keeps Foxy as it was.
+local BODY2 = "return function() NOTES_V2 = true end\n"
+local APP2 = { app_id = "NOTES", name = "Notes", version = 2,
+    author = "Shop Owner", description = "Jot things down", size = #BODY2 }
+local notesDownloads = 0
 local storeClient = {
     discover = function() return true end,
     request = function(_, action, payload)
         storeCalls[#storeCalls + 1] = action
         if action == "APP_LIST" then
+            local published = notesDownloads > 0
             return { apps = {
-                { app_id = "FOXY", name = "Foxy", version = 1,
+                { app_id = "FOXY", name = "Foxy", version = published and 2 or 1,
                   author = "PUMPE", description = "Your Foxy Account",
-                  size = 10, checksum = "0" },
-                APP, ROTTEN, MAIL_APP,
+                  size = #BODY, checksum = "0" },
+                published and APP2 or APP, ROTTEN, MAIL_APP,
             } }
         elseif action == "APP_CHUNK" then
-            local body = payload.app_id == "MAIL" and MAIL_BODY or BODY
+            if payload.app_id == "NOTES" then notesDownloads = notesDownloads + 1 end
+            local body = payload.app_id == "MAIL" and MAIL_BODY
+                or payload.app_id == "NOTES" and notesDownloads > 1 and BODY2 or BODY
             return { app_id = payload.app_id, offset = 0, data = body,
                 next_offset = #body, total_size = #body, done = true }
         end
@@ -166,6 +176,7 @@ local storeClient = {
     end,
 }
 APP.checksum = package.loaded["lib.util"].checksum(BODY)
+APP2.checksum = package.loaded["lib.util"].checksum(BODY2)
 MAIL_APP.checksum = package.loaded["lib.util"].checksum(MAIL_BODY)
 package.loaded["lib.net"] = {
     client = function(config)
@@ -261,6 +272,7 @@ actions = {
     "open:NOTES", "get",                 -- install one; that closes it
     "open:ROTTEN", "get", "back",        -- one that arrives damaged
     "back",                              -- leave the browser
+    "__tick",                            -- 12.0 Final: apps update themselves
     "open:ext:FOXY",                     -- 11.0: opens on its Bank tab
     "new",                               -- open another account
     "down", "up",                        -- scroll the account column
@@ -349,8 +361,13 @@ assert(mailSent.from == "news@notes.com" and mailSent.to == "kit@foxy.com"
 assert(MAILED and MAILED.id == "MAIL00000001", "and the app hears it was sent")
 assert(not asked(requests, "APP_LIST") and not asked(requests, "APP_CHUNK"),
     "app downloads must not touch the Bank")
-assert(written["/pumpe/apps/NOTES.lua"] == BODY,
-    "the downloaded app lands on disk verified")
+assert(notesDownloads == 2 and written["/pumpe/apps/NOTES.lua"] == BODY2,
+    "the downloaded app lands on disk verified, and its new version replaces it"
+        .. " by itself from the Home Screen")
+assert(drew("App updated") and drew("Notes"), "which the phone says, once")
+assert(written["/pumpe/apps/FOXY.lua"] == nil,
+    "a new version that arrives damaged is not kept: the app stays as it was")
+assert(not written["/pumpe/apps/NOTES.lua.new"], "and nothing is left beside it")
 -- A download whose checksum does not match what was advertised is thrown
 -- away rather than run.
 assert(drew("Download was damaged"), "a bad download is refused")
