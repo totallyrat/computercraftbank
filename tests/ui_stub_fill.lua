@@ -25,6 +25,10 @@ return function(stub)
     stub.updateFrame = stub.updateFrame or function() end
     stub.updating = stub.updating or function(_, work) return work(function() end) end
     stub.updateReady = stub.updateReady or function() return false end
+    stub.myIdVerifier = stub.myIdVerifier or function(_, ask)
+        stub.verified = stub.verified or {}
+        stub.verified[#stub.verified + 1] = ask(stub.myIdCode or "MY7K2M9QPA")
+    end
     stub.moreMenu = stub.moreMenu or function(_, spec)
         return "tab:" .. tostring(spec and spec.active or "more")
     end

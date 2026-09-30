@@ -1411,7 +1411,12 @@ end
 -- 12.0: what the old settings screen did, one action at a time, for the
 -- Kiosk tab. Returns true when the kiosk should close.
 local function settingAction(action)
-    if action == "balance" then balanceScreen()
+    if action == "myid" then
+        -- FoxyOS 12: somebody says their MyID Code; is it theirs?
+        ui.myIdVerifier(target, function(code)
+            return request("MYID_VERIFY", { code = code }, true)
+        end)
+    elseif action == "balance" then balanceScreen()
     elseif action == "withdraw" then directWithdrawal()
     elseif action == "mail" then kioskMail()
     elseif action == "company" then companyOnboarding(true)
@@ -1748,7 +1753,8 @@ end
 local KIOSK_CONTROLS = { { "balance", "BALANCE" }, { "withdraw", "WITHDRAW" },
     { "mail", "COMPANY MAIL" }, { "company", "LINK COMPANY" },
     { "display", "RESCAN DISPLAY" }, { "portable", "FOXY PAY" },
-    { "dev", "DEV MODE" }, { "color", "MAIN COLOUR" }, { "close", "CLOSE KIOSK" } }
+    { "dev", "DEV MODE" }, { "color", "MAIN COLOUR" },
+    { "myid", "MYID VERIFIER" }, { "close", "CLOSE KIOSK" } }
 
 local function controlsPage(spec)
     while running do

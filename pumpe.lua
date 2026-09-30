@@ -38,12 +38,26 @@ device.reminders = device.reminders or {}
 device.shortcuts = device.shortcuts or {}
 -- 12.0: the Bet app is CCG now. A favourite or a QuickAction that opened
 -- Bet opens CCG on its Bet tab.
-for index, id in ipairs(device.favorites or {}) do
-    if id == "bet" then device.favorites[index] = "ccg" end
+-- FoxyOS 12: Tax and Customs are MyID. The same goes for them, and a dock
+-- that held both keeps MyID once.
+do
+    local renamed, seen = { bet = "ccg", tax = "myid", customs = "myid" }, {}
+    for index = #(device.favorites or {}), 1, -1 do
+        local id = renamed[device.favorites[index]] or device.favorites[index]
+        if seen[id] then table.remove(device.favorites, index)
+        else seen[id], device.favorites[index] = true, id end
+    end
 end
 for _, item in pairs(device.shortcuts) do
     for _, step in ipairs(type(item) == "table" and item.steps or {}) do
-        if step.app == "bet" then step.app, step.action = "ccg", "bet" end
+        if step.app == "bet" then
+            step.app, step.action = "ccg", "bet"
+        elseif step.app == "tax" then
+            step.app, step.action = "myid", "tax"
+        elseif step.app == "customs" then
+            step.app = "myid"
+            step.action = step.action == "territories" and "countries" or "visas"
+        end
     end
 end
 
@@ -1410,12 +1424,12 @@ local function customsFreeRoamScreen(territoryId)
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "Free Roam",
-            #territories == 0 and "No partner territories"
+            #territories == 0 and "No partner countries"
                 or (page .. " of " .. #territories), util.formatClock())
         local scene = ui.scene(target)
         if not partner then
             ui.card(target, 2, 6, width - 2, 7, ui.theme.accent)
-            ui.center(target, 8, "NO OTHER TERRITORIES", ui.theme.ink)
+            ui.center(target, 8, "NO OTHER COUNTRIES", ui.theme.ink)
             ui.center(target, 10, "A partner must register",
                 ui.theme.muted)
         else
@@ -1523,7 +1537,7 @@ local function customsTerritoryScreen(territoryId)
 end
 
 local function createTerritory()
-    local name = ui.input(target, "Create Territory", {
+    local name = ui.input(target, "Create Country", {
         hint = "3-24 letters or numbers",
         maxLength = 24,
         minLength = 3,
@@ -1537,8 +1551,8 @@ local function createTerritory()
         pin = pin,
     })
     if result then
-        phoneTransition("Territory Ready", colors.lightBlue)
-        ui.message(target, "success", "TERRITORY CREATED",
+        phoneTransition("Country Ready", colors.lightBlue)
+        ui.message(target, "success", "COUNTRY CREATED",
             result.territory.name, 1.2)
     end
 end
@@ -1549,15 +1563,15 @@ local function customsScreen(tabs)
         if not overview then return end
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "Customs", "Territory control", util.formatClock())
+        ui.header(target, "Countries", "The countries you run", util.formatClock())
         local scene = ui.scene(target)
         if #overview.territories == 0 then
             ui.card(target, 2, 5, width - 2, 7, colors.lightBlue)
-            ui.center(target, 7, "CREATE A TERRITORY", ui.theme.ink)
+            ui.center(target, 7, "CREATE A COUNTRY", ui.theme.ink)
             ui.center(target, 9, "Manage borders and VISAs",
                 ui.theme.muted)
             scene:button("create", 2, 14, width - 2, 3,
-                "Create Territory", {
+                "Create Country", {
                     background = ui.theme.accentDark,
                     shadow = true,
                 })
@@ -1577,7 +1591,7 @@ local function customsScreen(tabs)
             end
             if #overview.territories < overview.maximum_territories then
                 scene:button("create", 2, 17, width - 2, 2,
-                    "+ New Territory", { background = ui.theme.panel })
+                    "+ New Country", { background = ui.theme.panel })
             end
         end
         if tabs then
@@ -3928,15 +3942,191 @@ local function ticketsApp(action)
     })
 end
 
-local function customsApp(action)
-    ui.runTabs({
-        list = { { id = "visas", label = "Visas" },
-            { id = "territories", label = "Territories", short = "Land" } },
-        color = colors.lightBlue,
-        start = action == "territories" and "territories" or "visas",
-        pages = { visas = visasScreen, territories = customsScreen },
-        running = function() return running and sessionToken ~= nil end,
-    })
+-- MyID, FoxyOS 12 --------------------------------------------------------------
+-- The home for everything the government has to do with you: your Digital
+-- ID, your visas, your tax and tax demands, and the countries you run. It
+-- took over from Tax and Customs.
+local myIdApp
+do
+    local ID_BLUE = colors.lightBlue
+
+    local function signUp(current)
+        local name = ui.input(target, "Name on your ID", {
+            hint = "As people know you", initial = current and current.name
+                or (account and account.name), allowSpace = true,
+            maxLength = 24, minLength = 2 })
+        if not name then return end
+        local pin = ui.pin(target, "Your PIN", true)
+        if not pin then return end
+        local asked, err = request("MYID_APPLY", { name = name, pin = pin }, true)
+        if asked then
+            ui.message(target, "success", "Asked for",
+                "The government confirms it at an Admin Terminal", 1.8)
+        else
+            ui.message(target, "error", "Not asked for", err, 1.8)
+        end
+    end
+
+    -- The code, big, for somebody at a till or a door to read.
+    local function showCode(id)
+        while running do
+            local width, height = target.getSize()
+            local middle = math.floor(height / 2)
+            ui.clear(target)
+            ui.fill(target, 1, middle - 3, width, 7, ID_BLUE)
+            ui.center(target, middle - 2, "MYID CODE", colors.black, ID_BLUE)
+            ui.center(target, middle, id.code, colors.black, ID_BLUE)
+            ui.center(target, middle + 2, ui.truncate(id.name, width - 2),
+                colors.black, ID_BLUE)
+            local scene = ui.scene(target)
+            scene:button("done", 2, height - 2, width - 2, 2, "Done",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "done" or action == "__terminate" then return end
+        end
+    end
+
+    local function idPage(spec)
+        while running and sessionToken do
+            local status, err = request("MYID_STATUS", {}, true)
+            local id = status and status.myid
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Digital ID", account and account.name or "",
+                util.formatClock())
+            local scene = ui.scene(target)
+            if not status then
+                ui.wrappedText(target, 2, 5, tostring(err or "The Bank is not answering"),
+                    width - 2, 3, ui.theme.muted)
+            elseif not id then
+                ui.card(target, 2, 5, width - 2, 6, ID_BLUE)
+                ui.text(target, 4, 5, "NO DIGITAL ID YET", ui.theme.muted,
+                    ui.theme.panel)
+                ui.wrappedText(target, 4, 6, "It proves who you are, at a till"
+                    .. " or a door. Visas need one.", width - 6, 4, ui.theme.ink,
+                    ui.theme.panel)
+                scene:button("signup", 2, 12, width - 2, 3, "Get a Digital ID",
+                    { background = ID_BLUE, foreground = colors.black, shadow = true })
+            else
+                local active = id.status == "active"
+                local color = active and ui.theme.success
+                    or id.status == "pending" and ui.theme.warning or ui.theme.danger
+                ui.card(target, 2, 5, width - 2, 7, color)
+                ui.text(target, 4, 5, "DIGITAL ID", ui.theme.muted, ui.theme.panel)
+                ui.text(target, 4, 6, ui.truncate(id.name, width - 6), ui.theme.ink,
+                    ui.theme.panel)
+                ui.text(target, 4, 8, "MYID CODE", ui.theme.muted, ui.theme.panel)
+                ui.text(target, 4, 9, id.code, ui.theme.ink, ui.theme.panel)
+                ui.text(target, 4, 10, ui.truncate(active
+                    and ("Confirmed, day " .. tostring(id.confirmed_day))
+                    or id.status == "pending" and "Waiting for the government"
+                    or ("Refused: " .. tostring(id.reason or "")), width - 6),
+                    color, ui.theme.panel)
+                if active then
+                    scene:button("show", 2, 13, width - 2, 3, "Show my MyID Code",
+                        { background = ID_BLUE, foreground = colors.black,
+                          shadow = true })
+                elseif id.status == "pending" then
+                    ui.wrappedText(target, 2, 13, "The government confirms it at"
+                        .. " an Admin Terminal. You are told when it is.",
+                        width - 2, 3, ui.theme.muted)
+                else
+                    scene:button("signup", 2, 13, width - 2, 3, "Ask again",
+                        { background = ID_BLUE, foreground = colors.black })
+                end
+            end
+            ui.tabBar(scene, target, spec.list, spec.active, spec.color)
+            local action = scene:wait({ tickRate = 10 })
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
+            end
+            if action == "signup" then
+                signUp(id)
+            elseif action == "show" and id then
+                showCode(id)
+            end
+        end
+        return "home"
+    end
+
+    -- What you owe the government: a demand first, then this period's tax.
+    local function taxPage(spec)
+        while running and sessionToken do
+            local filing = request("DECLARATION_STATUS", {}, true)
+            local demand = request("TAX_DEMAND_STATUS", {}, true)
+            demand = demand and demand.demand
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Tax", filing and filing.period
+                and ("Period " .. tostring(filing.period.period_id))
+                or "No open period", util.formatClock())
+            local scene = ui.scene(target)
+            local y = 5
+            if demand then
+                ui.card(target, 2, y, width - 2, 4, ui.theme.warning)
+                ui.text(target, 4, y, "TAX DEMAND", ui.theme.muted, ui.theme.panel)
+                ui.text(target, 4, y + 1, money(demand.amount), ui.theme.ink,
+                    ui.theme.panel)
+                ui.text(target, 4, y + 2, ui.truncate(tostring(demand.reason or ""),
+                    width - 6), ui.theme.muted, ui.theme.panel)
+                scene:button("demand", 2, y + 5, width - 2, 2, "Pay "
+                    .. money(demand.amount), { background = ui.theme.success,
+                        foreground = colors.black })
+                y = y + 8
+            end
+            local period = filing and filing.period
+            local filed = filing and filing.declaration
+                and filing.declaration.status == "submitted"
+            ui.card(target, 2, y, width - 2, 3, ID_BLUE)
+            ui.text(target, 4, y, "THIS PERIOD", ui.theme.muted, ui.theme.panel)
+            ui.text(target, 4, y + 1, ui.truncate(not period and "Nothing to file"
+                or filed and "Filed" or ("Due by day " .. tostring(period.end_day)),
+                width - 6), ui.theme.ink, ui.theme.panel)
+            if period then
+                scene:button("file", 2, y + 4, width - 2, 2,
+                    filed and "My declaration" or "File my tax",
+                    { background = ui.theme.accentDark })
+            end
+            ui.tabBar(scene, target, spec.list, spec.active, spec.color)
+            local action = scene:wait({ tickRate = 10 })
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
+            end
+            if action == "file" then
+                taxScreen()
+            elseif action == "demand" and demand then
+                local pin = ui.pin(target, "Confirm tax payment", true)
+                if pin then
+                    local paid, err = request("PAY_TAX_DEMAND", { pin = pin }, true)
+                    if paid then
+                        if account then account.balance = paid.balance end
+                        ui.message(target, "success", "Tax settled",
+                            money(demand.amount), 1.4)
+                    else
+                        ui.message(target, "error", "Not paid", err, 1.6)
+                    end
+                end
+            end
+        end
+        return "home"
+    end
+
+    local PAGES = { id = true, visas = true, tax = true, countries = true }
+    function myIdApp(action)
+        ui.runTabs({
+            list = { { id = "id", label = "ID" },
+                { id = "visas", label = "Visas" },
+                { id = "tax", label = "Tax" },
+                { id = "countries", label = "Countries", short = "Land" } },
+            color = ID_BLUE,
+            start = PAGES[action] and action or "id",
+            pages = { id = idPage, visas = visasScreen, tax = taxPage,
+                countries = customsScreen },
+            running = function() return running and sessionToken ~= nil end,
+        })
+    end
 end
 
 -- Optional apps ---------------------------------------------------------------
@@ -5215,11 +5405,13 @@ local APPS = {
             { id = "events", label = "Browse Events", hint = "What is on" },
             { id = "mine", label = "My Tickets", hint = "What you hold" },
         } },
-    customs = { name = "Customs", glyph = "=", color = colors.lightBlue,
-        open = customsApp, actions = {
+    -- FoxyOS 12: MyID took over from Tax and Customs.
+    myid = { name = "MyID", glyph = "I", color = colors.lightBlue,
+        open = myIdApp, actions = {
+            { id = "id", label = "Digital ID", hint = "Your MyID Code" },
             { id = "visas", label = "My Visas", hint = "Travel papers" },
-            { id = "territories", label = "Territories",
-              hint = "Land you own" },
+            { id = "tax", label = "Tax", hint = "File tax, pay a demand" },
+            { id = "countries", label = "Countries", hint = "Land you run" },
         } },
     -- 12.0: Bet grew into CCG, with Home Mode.
     ccg = { name = "CCG", glyph = "?", color = colors.magenta, actions = {
@@ -5227,7 +5419,6 @@ local APPS = {
         { id = "bet", label = "Bet Play", hint = "Join a lobby" },
         { id = "scores", label = "CCG scores", hint = "Your best at home" },
     } },
-    tax = { name = "Tax", glyph = "%", color = colors.orange },
     subs = { name = "Subs", glyph = "~", color = colors.magenta },
     browser = { name = "Apps", glyph = "+", color = colors.blue, actions = {
         { id = "search", label = "Search apps", hint = "Find something new" },
@@ -5242,7 +5433,7 @@ local APPS = {
     settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
-    "friends", "tickets", "customs", "ccg", "tax", "subs",
+    "friends", "tickets", "myid", "ccg", "subs",
     "reminders", "quick", "browser", "settings",
 }
 
@@ -6110,7 +6301,6 @@ end
 local function mainMenu()
     -- The apps that are not hubs are wired here, where their screens exist.
     APPS.ccg.open = ccgApp
-    APPS.tax.open = taxScreen
     APPS.subs.open = subscriptionsScreen
     APPS.settings.open = settingsScreen
     APPS.browser.open = appBrowser

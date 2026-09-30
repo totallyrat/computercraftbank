@@ -24,6 +24,10 @@ local function bank(action, payload)
     elseif action == "VERIFY_TICKET" then
         verified = payload.code
         return nil, "No such ticket", "NOT_FOUND"
+    elseif action == "MYID_VERIFY" then
+        -- FoxyOS 12: asked as the organizer signed in at the kiosk.
+        assert(payload.session_token == "S1")
+        return { valid = true, name = "Kit Wolf", code = payload.code }
     end
     error("unexpected request " .. action)
 end
@@ -46,6 +50,9 @@ end, function(seen)
     return "tab:door"
 end, "verify")
 kiosk.push(script.inputs, "ABCD2345")
+-- FoxyOS 12: the MyID Verifier, at the door.
+kiosk.push(script.actions, "myid")
+kiosk.push(script.inputs, "MY7K2M9QPA")
 kiosk.push(script.actions, "tab:home", "color", "exit")
 
 local seen = kiosk.run({ file = "event_kiosk.lua", bank = bank, script = script,
@@ -53,12 +60,15 @@ local seen = kiosk.run({ file = "event_kiosk.lua", bank = bank, script = script,
 assert(seen.picked == 2, "the colour is picked when the kiosk is set up, and again from Home")
 assert(verified == "ABCD2345", "the Door verifies by entry code")
 assert(kiosk.said(seen, "TICKET REJECTED"))
+assert(seen.verified and seen.verified[1].name == "Kit Wolf",
+    "the Door checks a MyID Code with the Bank")
 
 -- And on a pocket-sized screen nothing leaves it either.
 script = kiosk.script()
-kiosk.push(script.actions, "login", "tab:events", "tab:door", "tab:home", "exit")
+kiosk.push(script.actions, "login", "tab:events", "tab:door", "myid", "tab:home", "exit")
 kiosk.push(script.inputs, "Ana Fox")
 kiosk.push(script.pins, "1234")
+kiosk.push(script.inputs, "MY7K2M9QPA")
 kiosk.run({ file = "event_kiosk.lua", bank = bank, script = script, width = 39,
     height = 13, device = { last_name = "Ana Fox" }, color = { color = "orange" } })
 

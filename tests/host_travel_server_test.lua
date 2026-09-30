@@ -138,6 +138,14 @@ local freeCooldownOk, freeCooldown = pcall(actions.BORDER_CHECK, {
 })
 assert(not freeCooldownOk and freeCooldown.code == "VISA_COOLDOWN")
 
+-- FoxyOS 12: a visa is applied for with a confirmed Digital ID.
+local noId, refused = pcall(actions.VISA_APPLY, {
+    session_token = applicant.session_token,
+    territory_id = alpha.territory.territory_id,
+    requested_days = 5,
+})
+assert(not noId and refused.code == "NEEDS_MYID", "no Digital ID, no visa")
+bank.digitalId(applicant.session_token, applicant.account.account_id, "1234", "Applicant")
 local application = actions.VISA_APPLY({
     session_token = applicant.session_token,
     territory_id = alpha.territory.territory_id,

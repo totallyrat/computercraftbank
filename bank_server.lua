@@ -367,6 +367,8 @@ local function blankState()
         tax_revenue = 0,
         processing_fee_revenue = 0,
         last_subscription_day = -1,
+        -- FoxyOS 12: MyID Code -> account, for the verifier.
+        myid_codes = {},
     }
 end
 
@@ -3379,6 +3381,157 @@ function actions.TAX_DEMAND_STATUS(payload)
     return { demand = account.tax_demand and util.copy(account.tax_demand) or nil }
 end
 
+-- MyID, FoxyOS 12 ------------------------------------------------------------------
+-- A Digital ID: the name a person is known by and a MyID Code they can say
+-- out loud. They sign up with their PIN in the MyID app on their Pocket; the
+-- government confirms it at an Admin Terminal before it counts for anything.
+-- A Service Kiosk or an event's door types a code into the MyID Verifier and
+-- is told whether it is a confirmed ID, and whose. Visas are applied for
+-- with one.
+--
+-- A code is eight characters from 32 that cannot be mistaken for each other
+-- -- a million million of them -- and a kiosk that keeps typing codes that
+-- are nobody's waits a minute after five, so a name cannot be fished for.
+do
+    local ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    local TRIES, LOCK_MS = 5, 60 * 1000
+    local misses = {}
+
+    -- "my-7k2m-9qpa", "7K2M9QPA" and "MY 7K2M 9QPA" are the same code.
+    local function keyOf(raw)
+        local key = string.upper(tostring(raw or "")):gsub("[^A-Z0-9]", "")
+        if #key == 10 and key:sub(1, 2) == "MY" then key = key:sub(3) end
+        return key
+    end
+    local function shown(key)
+        return "MY-" .. key:sub(1, 4) .. "-" .. key:sub(5, 8)
+    end
+    local function newKey()
+        local key
+        repeat
+            local chars = {}
+            for index = 1, 8 do
+                local at = math.random(1, #ALPHABET)
+                chars[index] = ALPHABET:sub(at, at)
+            end
+            key = table.concat(chars)
+        until not state.myid_codes[key]
+        return key
+    end
+    local function public(account)
+        local id = account.myid
+        if not id then return nil end
+        return { code = shown(id.key), name = id.name, status = id.status,
+            applied_day = id.applied_day, confirmed_day = id.confirmed_day,
+            reason = id.reason }
+    end
+    -- The Pocket itself, never an app on it: an ID is the person's.
+    local function owner(payload)
+        local account = requireSession(payload)
+        need(payload.app_id == nil, "WRONG_APP", "Only MyID can do that")
+        return account
+    end
+
+    function actions.MYID_STATUS(payload)
+        return { myid = public(owner(payload)) }
+    end
+
+    function actions.MYID_APPLY(payload)
+        local account = owner(payload)
+        local current = account.myid
+        need(not current or current.status == "rejected",
+            current and current.status == "active" and "HAVE_ONE" or "WAITING",
+            current and current.status == "active" and "You have a Digital ID"
+                or "Yours is waiting for the government")
+        local name = util.safeText(util.trim(tostring(payload.name or "")), 24)
+        need(#name >= 2, "BAD_NAME", "The name on your ID: 2 to 24 characters")
+        need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+        local key = current and current.key or newKey()
+        account.myid = { key = key, name = name, status = "pending",
+            applied_day = util.ingameDay() }
+        state.myid_codes[key] = account.account_id
+        save()
+        logActivity("Digital ID asked for: " .. account.name, colors.cyan)
+        return { myid = public(account) }
+    end
+
+    function actions.ADMIN_MYID_LIST(payload)
+        requireGovernment(payload)
+        local list = {}
+        for _, account in pairs(state.accounts) do
+            if account.myid and (payload.all == true
+                or account.myid.status == "pending") then
+                local entry = public(account)
+                entry.account_id, entry.account_name = account.account_id, account.name
+                list[#list + 1] = entry
+            end
+        end
+        table.sort(list, function(a, b)
+            if (a.applied_day or 0) ~= (b.applied_day or 0) then
+                return (a.applied_day or 0) < (b.applied_day or 0)
+            end
+            return a.account_name < b.account_name
+        end)
+        while #list > 40 do table.remove(list) end
+        return { ids = list }
+    end
+
+    function actions.ADMIN_MYID_DECIDE(payload)
+        requireGovernment(payload)
+        local account = requireAccountId(payload)
+        local id = account.myid
+        need(id and id.status == "pending", "NOT_WAITING",
+            "That ID is not waiting to be confirmed")
+        if payload.approve == false then
+            local reason = util.safeText(util.trim(tostring(payload.reason or "")), 60)
+            need(#reason >= 2, "NO_REASON", "Say why")
+            id.status, id.reason = "rejected", reason
+            notification(account, "Digital ID refused", reason, "warning")
+        else
+            id.status, id.confirmed_day, id.reason = "active", util.ingameDay(), nil
+            notification(account, "Digital ID confirmed", "Your MyID Code is "
+                .. shown(id.key) .. ".", "success")
+        end
+        save()
+        logActivity("Digital ID " .. id.status .. ": " .. account.name, colors.cyan)
+        return { myid = public(account) }
+    end
+
+    -- The MyID Verifier. A Service Kiosk asks as itself; an Event Kiosk asks
+    -- as the organizer signed in at it.
+    function actions.MYID_VERIFY(payload)
+        local who
+        if payload.terminal_id then
+            who = "T:" .. requireTerminal(payload).terminal_id
+        else
+            who = "A:" .. requireSession(payload).account_id
+        end
+        local tries = misses[who] or { count = 0, until_at = 0 }
+        misses[who] = tries
+        need(util.nowMs() >= tries.until_at, "TRY_LATER",
+            "Too many codes that are nobody's. Wait a minute")
+        local key = keyOf(payload.code)
+        local account = state.accounts[state.myid_codes[key] or ""]
+        local id = account and account.myid
+        if #key ~= 8 or not id or id.key ~= key then
+            tries.count = tries.count + 1
+            if tries.count >= TRIES then
+                tries.count, tries.until_at = 0, util.nowMs() + LOCK_MS
+            end
+            return { valid = false, status = "unknown" }
+        end
+        tries.count = 0
+        if account.banned or account.frozen then
+            return { valid = false, status = "suspended", code = shown(key) }
+        end
+        if id.status ~= "active" then
+            return { valid = false, status = id.status, code = shown(key) }
+        end
+        return { valid = true, status = "active", code = shown(key), name = id.name,
+            confirmed_day = id.confirmed_day }
+    end
+end
+
 function actions.PAY_TAX_DEMAND(payload)
     local account = requireSession(payload)
     need(account.tax_demand, "NOT_FOUND", "You have no tax demand")
@@ -5576,7 +5729,8 @@ pair.routes = {
     CUSTOMS_SET_FREE_ROAM = { auth = "session", pin = true },
     CUSTOMS_REVIEW_APPLICATION = { auth = "session", pin = true },
     VISA_OVERVIEW = { auth = "session" },
-    VISA_APPLY = { auth = "spender" },
+    -- FoxyOS 12: only with a confirmed Digital ID.
+    VISA_APPLY = { auth = "spender", myid = true },
     BORDER_REGISTER = { auth = "session" },
     BORDER_STATUS = { auth = "device" },
     BORDER_OWNER_PIN = { auth = "device" },
@@ -5728,6 +5882,10 @@ local function routeToVault(action, spec, payload)
         or requireSession(payload)
     if spec.pin then
         need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    end
+    if spec.myid then
+        need(account.myid and account.myid.status == "active", "NEEDS_MYID",
+            "Visas need a confirmed Digital ID. Sign up in MyID")
     end
     local extra = {}
     -- FoxMail: which companies this person owns, and so which company

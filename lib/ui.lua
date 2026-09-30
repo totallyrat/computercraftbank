@@ -1188,6 +1188,55 @@ function ui.updateReady(target, info)
     end
 end
 
+-- The MyID Verifier, FoxyOS 12 ------------------------------------------------------
+-- A kiosk types the MyID Code somebody says out loud and is told whether it
+-- is a confirmed Digital ID, and whose. `ask(code)` puts it to the Bank and
+-- returns its answer, or nil and why.
+local VERIFY_WHY = {
+    unknown = "No Digital ID has that code",
+    pending = "The government has not confirmed it yet",
+    rejected = "The government refused it",
+    suspended = "Its account is suspended",
+}
+
+function ui.myIdVerifier(target, ask)
+    target = surface(target)
+    while true do
+        local code = ui.input(target, "MYID CODE", { hint = "They say it: MY-....-....",
+            mode = "code", maxLength = 10, minLength = 8 })
+        if not code then return end
+        local answer, err = ask(code)
+        if not answer then
+            ui.message(target, "error", "NOT CHECKED", err, 2)
+        else
+            local width, height = target.getSize()
+            local color = answer.valid and ui.theme.success or ui.theme.danger
+            local middle = math.max(5, math.floor(height / 2) - 2)
+            ui.clear(target)
+            ui.header(target, "MYID VERIFIER", tostring(answer.code or code),
+                util.formatClock())
+            ui.fill(target, 1, middle - 2, width, 5, color)
+            ui.center(target, middle - 1, answer.valid and "VALID" or "NOT VALID",
+                ui.inkOn(color), color)
+            ui.center(target, middle + 1, ui.truncate(answer.valid
+                and tostring(answer.name) or (VERIFY_WHY[answer.status]
+                or "Not a Digital ID"), width - 2), ui.inkOn(color), color)
+            if answer.valid and answer.confirmed_day then
+                ui.center(target, middle + 4, "Confirmed on day "
+                    .. tostring(answer.confirmed_day), ui.theme.muted)
+            end
+            local scene = ui.scene(target)
+            local half = math.floor((width - 3) / 2)
+            scene:button("again", 2, height - 2, half, 2, "CHECK ANOTHER",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk })
+            scene:button("done", 3 + half, height - 2, width - 3 - half, 2, "DONE",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action ~= "again" then return end
+        end
+    end
+end
+
 function ui.boot(target, product, subtitle)
     target = surface(target)
     local width, height = target.getSize()

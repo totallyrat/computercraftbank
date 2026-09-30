@@ -349,7 +349,7 @@ actions = {
     "network", "toggle",               -- turn the modem off
     "tab:account",                     -- still signed in: the account tab
     "home",                            -- Settings still answers offline
-    "open:tax",                        -- something that needs a server
+    "open:myid", "home",               -- something that needs a server
     "open:browser", "back",            -- and something that builds a client
     "open:ext:TESTBANK",               -- including an app reaching its bank
     "open:settings", "network", "toggle", "back",  -- and back on again

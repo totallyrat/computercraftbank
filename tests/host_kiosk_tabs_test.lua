@@ -7,6 +7,7 @@ local kiosk = require("kiosk_harness")
 
 -- Admin Terminal: Tax, People, Inbox, System ----------------------------------------
 
+local decided = false
 local function government(action, payload)
     if action == "GOVERNMENT_LOGIN" then
         assert(payload.key == "Government1234")
@@ -16,6 +17,13 @@ local function government(action, payload)
     elseif action == "ADMIN_MESSAGE_THREADS" then
         return { threads = { { account_id = "A1", name = "Ana Fox",
             last_body = "About my tax", waiting = true } } }
+    elseif action == "ADMIN_MYID_LIST" then
+        return { ids = decided and {} or { { account_id = "A2", account_name = "Kit Wolf",
+            name = "Kit Wolf", code = "MY-7K2M-9QPA", applied_day = 3, status = "pending" } } }
+    elseif action == "ADMIN_MYID_DECIDE" then
+        assert(payload.account_id == "A2" and payload.approve == nil)
+        decided = true
+        return { myid = { status = "active" } }
     elseif action == "ADMIN_ACCOUNTS" then
         assert(payload.pending_only == true)
         return { accounts = { { account_id = "A2", name = "Kit Wolf", balance = 10,
@@ -27,6 +35,7 @@ end
 local script = kiosk.script()
 kiosk.push(script.actions, "login")
 kiosk.push(script.inputs, "Government1234", false)
+kiosk.push(script.confirms, true)
 kiosk.push(script.actions, function(seen)
     local frame = seen.frames[#seen.frames]
     assert(kiosk.has(frame, "TAX REVENUE") and kiosk.has(frame, "OPEN PERIOD")
@@ -42,6 +51,13 @@ end, function(seen)
 end, "pending", function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "Kit Wolf"),
         "pending approval lists who is waiting")
+    return "back"
+end, "myid", function(seen)
+    -- FoxyOS 12: Digital IDs wait here to be confirmed.
+    assert(kiosk.has(seen.frames[#seen.frames], "DIGITAL IDS"))
+    return "open:A2"
+end, function(seen)
+    assert(decided, "confirmed")
     return "back"
 end, "tab:inbox", function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "Ana Fox"), "the Inbox tab has the threads")

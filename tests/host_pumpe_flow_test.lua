@@ -12,17 +12,20 @@ local actions = {
     -- 9.4: there is no Bank tab. Payments, the bet wallet and activity all
     -- live in the Foxy app now, and host_pumpe_apps_test walks them there,
     -- with the app actually installed.
-    -- 11.0: no hubs. Tickets opens on Events with My tickets as a tab;
-    -- Customs on Visas with Territories as a tab; home leaves either.
+    -- 11.0: no hubs. Tickets opens on Events with My tickets as a tab; home
+    -- leaves it. FoxyOS 12: MyID holds the Digital ID, visas, tax and the
+    -- countries you run.
     "open:tickets", "event:EVT000001", "back",
     "tab:mine", "home",
     -- No tickets now. The tab says so and stays; leaving it closes nothing.
     "open:tickets", "tab:mine", "tab:events", "home",
-    "open:customs",
-    "documents", "back", "applications", "back",
-    "tab:territories", "territory:TER000001", "citizens", "back",
+    "open:myid", "signup",                           -- ask for a Digital ID
+    "show", "done",                                  -- confirmed: the code, big
+    "tab:visas", "documents", "back", "applications", "back",
+    "tab:countries", "territory:TER000001", "citizens", "back",
     "applications", "back", "roam", "back", "back",
-    "home",                                          -- leave Customs
+    "tab:tax", "demand", "file", "back",             -- a demand paid, then filing
+    "home",                                          -- leave MyID
     -- 12.0: Bet is CCG. Bet Play is a tab; Home Mode pairs with a console
     -- (the real one, below) and plays Snake into a wall.
     "open:ccg", "tab:bet", "join", "pick:heads", "__tick", "done",
@@ -38,7 +41,6 @@ local actions = {
     -- Paired again, then out of the app without unpairing: the app lets
     -- the console go on its way out.
     "pair", "tab:scores", "home",
-    "open:tax",                                      -- returns on its own
     "open:subs", "back",
     "next",                                          -- the notification centre
     "note:1", "back",                                -- read one in full
@@ -50,6 +52,7 @@ local actions = {
     "tab:apps", "dock", "back", "tab:account", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
+local myid, taxDemand = nil, { amount = 10, reason = "Unpaid tax, period 3" }
 ticketVisits = 0
 local savedDevice
 local lockSeconds
@@ -358,6 +361,23 @@ local client = {
                 visa_min_days = 1,
                 visa_max_days = 30,
             }
+        -- FoxyOS 12: MyID. Asked for, then (as if the government had
+        -- confirmed it straight away) confirmed.
+        elseif action == "MYID_STATUS" then
+            return { myid = myid }
+        elseif action == "MYID_APPLY" then
+            assert(payload.pin == "1234" and payload.name == "Foxy Person")
+            myid = { code = "MY-7K2M-9QPA", name = payload.name,
+                status = "active", confirmed_day = 3 }
+            return { myid = myid }
+        elseif action == "DECLARATION_STATUS" then
+            return { period = { period_id = "P3", end_day = 9, personal_rate = 5 } }
+        elseif action == "TAX_DEMAND_STATUS" then
+            return { demand = taxDemand }
+        elseif action == "PAY_TAX_DEMAND" then
+            assert(payload.pin == "1234")
+            taxDemand = nil
+            return { balance = 90 }
         elseif action == "CUSTOMS_OVERVIEW" then
             return {
                 territories = {
@@ -718,6 +738,7 @@ function ui.truncate(value, maximum)
 end
 function ui.input(_, title, options)
     if title == "Create Foxy Account" then return "FoxyUser" end
+    if title == "Name on your ID" then return "Foxy Person" end
     if title == "PAY A CODE" then return "ABC123" end
     if title == "Send Money" then return "FoxyFriend" end
     if title == "They Receive" then return "100" end
@@ -830,13 +851,19 @@ assert(find(buttonLabels, "Cancel Subscription"),
     "the Subs app still lists what is billing daily")
 -- The 8.0 home screen: small glyph icons with the app name drawn beneath
 -- them, so every app fits on one page instead of two-per-row tiles.
-for _, glyph in ipairs({ "@", "#", "=", "?", "%", "~", "*" }) do
+for _, glyph in ipairs({ "@", "#", "I", "?", "~", "*" }) do
     assert(find(buttonLabels, glyph), "missing app icon " .. glyph)
 end
-for _, name in ipairs({ "Friends", "Tickets", "Customs",
-    "CCG", "Tax", "Subs", "Settings" }) do
+for _, name in ipairs({ "Friends", "Tickets", "MyID",
+    "CCG", "Subs", "Settings" }) do
     assert(find(drawnText, name), "missing app caption " .. name)
 end
+-- FoxyOS 12: MyID took over from Tax and Customs.
+assert(not find(buttonLabels, "=") and not find(buttonLabels, "%"),
+    "no Customs or Tax icons")
+assert(find(drawnText, "MY-7K2M-9QPA"), "the Digital ID shows its MyID Code")
+assert(find(requests, "MYID_APPLY") and find(requests, "PAY_TAX_DEMAND"),
+    "asked for from MyID, and the tax demand paid there")
 assert(not find(drawnText, "Bank"),
     "9.4: there is no Bank app on the Home Screen -- Foxy is the bank")
 assert(not find(buttonLabels, "Bet\nWallet"),

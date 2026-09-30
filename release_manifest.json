@@ -22,26 +22,26 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 199915,
-      "checksum": "e5bc09a4"
+      "size": 204465,
+      "checksum": "155af113"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 273128,
-      "checksum": "afe12667"
+      "size": 282394,
+      "checksum": "cebc40ff"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
-      "size": 76364,
-      "checksum": "968d3d9e"
+      "size": 76622,
+      "checksum": "335b6127"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
-      "size": 25865,
-      "checksum": "abf8857f"
+      "size": 26368,
+      "checksum": "9e6d0cfb"
     },
     {
       "path": "tax_controller.lua",
@@ -76,8 +76,8 @@
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 43898,
-      "checksum": "612231d2"
+      "size": 45553,
+      "checksum": "c936ca11"
     },
     {
       "path": "lib/update.lua",
@@ -116,8 +116,8 @@
     {
       "path": "admin_terminal.lua",
       "source": "admin_terminal.lua",
-      "size": 37624,
-      "checksum": "17eea025"
+      "size": 40704,
+      "checksum": "af0c023e"
     },
     {
       "path": "app_server.lua",
@@ -128,8 +128,8 @@
     {
       "path": "foxy.lua",
       "source": "foxy.lua",
-      "size": 56923,
-      "checksum": "7a949c85"
+      "size": 55657,
+      "checksum": "376babf7"
     },
     {
       "path": "bank_app_server.lua",

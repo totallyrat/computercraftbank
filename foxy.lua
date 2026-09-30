@@ -608,40 +608,6 @@ return function(api)
         end
     end
 
-    local function taxDemandScreen(demand)
-        while running() do
-            local width, height = target.getSize()
-            ui.clear(target)
-            ui.header(target, "Tax demand", money(demand.amount),
-                util.formatClock())
-            ui.card(target, 2, 5, width - 2, 4, ui.theme.warning)
-            ui.text(target, 4, 6, "OWED", ui.theme.muted, ui.theme.panel)
-            ui.text(target, 4, 7, money(demand.amount), ui.theme.ink, ui.theme.panel)
-            ui.wrappedText(target, 2, 10, demand.reason or "", width - 2, 4,
-                ui.theme.muted)
-            local scene = ui.scene(target)
-            scene:button("pay", 2, height - 5, width - 2, 2,
-                "Pay " .. money(demand.amount),
-                { background = ui.theme.success, foreground = colors.black })
-            scene:button("back", 2, height - 2, width - 2, 2, "Later",
-                { background = ui.theme.panel })
-            local action = scene:wait({ tickRate = 1 })
-            if action == "back" or action == "__terminate" then return end
-            if action == "pay" then
-                local pin = ui.pin(target, "Confirm tax payment", true)
-                if pin then
-                    local paid = request("PAY_TAX_DEMAND", { pin = pin })
-                    if paid then
-                        api.refresh()
-                        ui.message(target, "success", "Tax settled",
-                            money(demand.amount), 1.4)
-                        return
-                    end
-                end
-            end
-        end
-    end
-
     local function bankTransferScreen(identity)
         local typed = ui.input(target, "Their Account ID", {
             hint = "16 digits from the other bank",
@@ -912,7 +878,7 @@ return function(api)
                             { background = FOX, foreground = colors.black })
                     elseif row.kind == "demand" then
                         scene:button("demand", 2, y, width - 2, 1,
-                            line("Tax demand  " .. money(row.demand.amount)),
+                            line("Tax demand " .. money(row.demand.amount) .. ": MyID"),
                             { background = ui.theme.warning,
                               foreground = colors.black })
                     elseif row.kind == "wallet" then
@@ -957,7 +923,12 @@ return function(api)
             elseif action == "up" then offset = offset - 1
             elseif action == "down" then offset = offset + 1
             elseif action == "cash" then foxyCash(overview)
-            elseif action == "demand" then taxDemandScreen(demand)
+            elseif action == "demand" then
+                -- FoxyOS 12: tax demands are MyID's, with the rest of what
+                -- the government asks of you.
+                ui.message(target, "warning", "Pay it in MyID",
+                    "Tax demands are in MyID on your Pocket now. Until it is"
+                        .. " paid, this account cannot spend.", 3)
             elseif action == "wallet" then betWalletScreen()
             elseif action == "activity" then historyScreen()
             elseif action == "cashout" then withdrawScreen()

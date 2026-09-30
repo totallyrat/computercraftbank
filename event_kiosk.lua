@@ -570,7 +570,7 @@ local function dashboard()
             local scene = ui.scene(target)
             -- Two big buttons, as tall as the screen allows.
             local tall = math.max(2, math.min(4,
-                math.floor((ui.contentBottom(target) - 5) / 2)))
+                math.floor((ui.contentBottom(target) - 7) / 2)))
             scene:button("verify", 2, 5, width - 2, tall,
                 "VERIFY TICKET\nType the guest's entry code",
                 { background = ui.theme.success, foreground = colors.black,
@@ -578,6 +578,11 @@ local function dashboard()
             scene:button("scan", 2, 6 + tall, width - 2, tall,
                 "PROXIMITY SCAN\nAsk whoever walks up",
                 { background = colors.purple, shadow = true })
+            -- FoxyOS 12: somebody says their MyID Code at the door.
+            if 7 + tall * 2 <= ui.contentBottom(target) then
+                scene:button("myid", 2, 7 + tall * 2, width - 2, 1, "MYID VERIFIER",
+                    { background = colors.lightBlue, foreground = colors.black })
+            end
             tabBar(scene, spec)
             local action = scene:wait({ tickRate = 1 })
             if action == "__terminate" then running = false return nil end
@@ -587,6 +592,10 @@ local function dashboard()
             elseif action == "scan" then
                 ui.wipe(target)
                 proximityScan()
+            elseif action == "myid" then
+                ui.myIdVerifier(target, function(code)
+                    return request("MYID_VERIFY", { code = code }, true)
+                end)
             elseif action == "__tick" then
                 net.autoUpdate(config, "event", ROOT, client)
             end

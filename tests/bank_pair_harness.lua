@@ -195,6 +195,19 @@ function harness.pair(options)
         return session.government_token
     end
 
+    -- FoxyOS 12: a confirmed Digital ID, the way a person gets one --
+    -- asked for in MyID with their PIN, confirmed at an Admin Terminal.
+    -- Returns its MyID Code.
+    function bank.digitalId(sessionToken, accountId, pin, name)
+        local asked = bank.request("MYID_APPLY", { session_token = sessionToken,
+            pin = pin, name = name or "Test Person" })
+        core.state.government_key = "TESTKEY"
+        local session = bank.request("GOVERNMENT_LOGIN", { key = "TESTKEY" })
+        bank.request("ADMIN_MYID_DECIDE", { government_token = session.government_token,
+            account_id = accountId })
+        return asked.myid.code
+    end
+
     -- An account's notifications, newest first, the way its phone reads
     -- them: since 11.2 they live on the Vault, with anything not yet sent
     -- down the cable on top. Takes a harness account or an account id.

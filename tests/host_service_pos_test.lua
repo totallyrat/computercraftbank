@@ -13,6 +13,8 @@ local actions = {
     -- came in, look at Sent, move on to the company's other address, and
     -- leave by the top-left mark -- back on the Kiosk tab, to close.
     "tab:kiosk", "mail", "open:1", "reply", "tab:sent", "tab:switch", "home",
+    -- FoxyOS 12: the MyID Verifier, on the Kiosk tab too.
+    "myid",
     "close",
 }
 local buttonLabels, requests = {}, {}
@@ -173,6 +175,10 @@ local client = {
                 end
             end
             error("no such product " .. tostring(payload.item_id))
+        elseif action == "MYID_VERIFY" then
+            assert(payload.terminal_id and payload.code == "MY7K2M9QPA",
+                "the kiosk asks as itself, with the code as typed")
+            return { valid = true, name = "Kit Wolf", code = "MY-7K2M-9QPA" }
         elseif action == "KIOSK_MAIL_ME" then
             return { addresses = { { address = "hello@foxcafe.com", unread = 1 },
                 { address = "orders@foxcafe.com", unread = 0 } } }
@@ -334,6 +340,8 @@ for _, label in ipairs({ "BALANCE", "WITHDRAW", "COMPANY MAIL", "LINK COMPANY",
     assert(contains(buttonLabels, label), "the Kiosk tab has " .. label)
 end
 assert(contains(buttonLabels, "FOXY PAY: ON"), "and says whether Foxy Pay is on")
+assert(contains(buttonLabels, "MYID VERIFIER") and ui.verified
+    and ui.verified[1].name == "Kit Wolf", "and checks a MyID Code with the Bank")
 assert(#mailSent == 1 and mailSent[1].from == "hello@foxcafe.com"
     and mailSent[1].to == "kit@foxy.com" and mailSent[1].reply_to == "MAIL00000001",
     "a reply goes out from the company address, marked as a reply")

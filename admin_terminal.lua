@@ -649,6 +649,66 @@ local function announceScreen()
     sendAnnouncement(nil)
 end
 
+-- Digital IDs, FoxyOS 12. Somebody asked for one in MyID; it counts for
+-- nothing -- no visas, nothing at a till -- until it is confirmed here.
+local function myIdScreen()
+    local page = 1
+    while running and governmentToken do
+        local listed = adminRequest("ADMIN_MYID_LIST")
+        if not listed then return end
+        local ids = listed.ids or {}
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "DIGITAL IDS", #ids .. " waiting to be confirmed",
+            util.formatClock())
+        if #ids == 0 then
+            ui.center(target, 9, "Nobody is waiting", ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        local pageItems, actualPage, pages = util.page(ids, page, 5)
+        page = actualPage
+        for index, id in ipairs(pageItems) do
+            scene:button("open:" .. id.account_id, 2, 4 + (index - 1) * 3, width - 2, 2,
+                ui.truncate(id.name .. "  " .. id.code, width - 4) .. "\n"
+                    .. ui.truncate("Account " .. id.account_name .. ", day "
+                        .. tostring(id.applied_day), width - 4),
+                { background = ui.theme.panel })
+        end
+        scene:button("back", 1, height, 8, 1, "< BACK", { background = ui.theme.panel })
+        if pages > 1 then
+            scene:button("prev", width - 15, height, 4, 1, "<",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            scene:button("next", width - 4, height, 4, 1, ">",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "__terminate" then return
+        elseif action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        else
+            local accountId = action and action:match("^open:(.+)$")
+            for _, id in ipairs(ids) do
+                if id.account_id == accountId then
+                    if ui.confirm(target, "CONFIRM THIS ID?", id.name .. " ("
+                        .. id.account_name .. ") as " .. id.code, "CONFIRM", "REFUSE") then
+                        if adminRequest("ADMIN_MYID_DECIDE", { account_id = accountId }) then
+                            ui.message(target, "success", "CONFIRMED", id.name, 1)
+                        end
+                    else
+                        local reason = ui.input(target, "WHY REFUSE IT?", {
+                            hint = "They are told this", maxLength = 60,
+                            allowSpace = true, minLength = 2 })
+                        if reason and adminRequest("ADMIN_MYID_DECIDE", {
+                            account_id = accountId, approve = false, reason = reason }) then
+                            ui.message(target, "warning", "REFUSED", id.name, 1)
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+
 local function controlsScreen()
     while running and governmentToken do
         local settings = adminRequest("ADMIN_SETTINGS")
@@ -781,6 +841,7 @@ local function dashboard()
         controls = { "CONTROLS", "Approval and the key", function() controlsScreen() end },
         stats = { "BANK STATS", "Totals across the bank", function() statsScreen() end },
         system = { "SYSTEM", "This terminal", function() systemScreen() end },
+        myid = { "DIGITAL IDS", "Confirm or refuse", function() myIdScreen() end },
         color = { "MAIN COLOUR", "How this terminal looks",
             function() ui.pickMainColor(target, ROOT, "Terminal colour") end },
         lock = { "LOCK", "Sign the key out", function() governmentToken = nil end },
@@ -858,7 +919,8 @@ local function dashboard()
         pages = {
             tax = grid("TAX", { "open", "rates", "close", "deposit", "revenue", "audit" },
                 true),
-            people = grid("PEOPLE", { "accounts", "pending", "announce", "stats" }),
+            people = grid("PEOPLE", { "accounts", "pending", "myid", "announce",
+                "stats" }),
             inbox = messageInbox,
             system = grid("SYSTEM", { "controls", "system", "color", "lock" }),
         },

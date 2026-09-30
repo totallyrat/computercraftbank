@@ -205,6 +205,14 @@ function kiosk.run(options)
     end
     realUi.moreMenu = function(target, spec) return ui.moreMenu(target, spec) end
     ui.runTabs = realUi.runTabs
+    -- FoxyOS 12: the MyID Verifier is drawn by lib/ui (its own test covers
+    -- that); here a kiosk only has to put the typed code to the Bank.
+    ui.myIdVerifier = function(_, ask)
+        draw("verifier")
+        local answer = ask(take(script.inputs, "MyID code"))
+        seen.verified = seen.verified or {}
+        seen.verified[#seen.verified + 1] = answer
+    end
     package.loaded["lib.ui"] = ui
 
     assert(loadfile("../" .. options.file))()
