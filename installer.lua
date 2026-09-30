@@ -221,6 +221,10 @@ local BIG_GLYPHS = {
     U = { "# #", "# #", "# #", "# #", "###" },
     M = { "# #", "###", "###", "# #", "# #" },
     E = { "###", "#  ", "###", "#  ", "###" },
+    F = { "###", "#  ", "## ", "#  ", "#  " },
+    O = { "###", "# #", "# #", "# #", "###" },
+    X = { "# #", "# #", " # ", "# #", "# #" },
+    Y = { "# #", "# #", " # ", " # ", " # " },
 }
 
 local function wordmark(y, word, color)
@@ -775,6 +779,66 @@ local function programScreen(program, installed, first)
     return action, typed
 end
 
+-- A new world, 12.0 Final ----------------------------------------------------------
+-- Nothing is installed here and nothing on the network answers as a Bank:
+-- before anybody can have a PUMPE, somebody has to be Foxy. So instead of
+-- the PUMPE, the first screen says so and fetches the Bank Server.
+
+local BANK_PROTOCOL = "PUMPE_BANK_V5"
+
+-- True when a Bank answers, false when none does, nil when this computer
+-- cannot tell -- no modem, so no network to ask.
+local function bankAnswers()
+    if type(rednet) ~= "table" or type(peripheral) ~= "table" then return nil end
+    local opened = false
+    for _, side in ipairs(peripheral.getNames()) do
+        if peripheral.getType(side) == "modem" and pcall(rednet.open, side) then
+            opened = true
+        end
+    end
+    if not opened then return nil end
+    local ok, found = pcall(rednet.lookup, BANK_PROTOCOL)
+    if not ok then return nil end
+    return found ~= nil
+end
+
+-- Returns "bank", "skip" or "exit".
+local function welcomeScreen()
+    local width, height = target.getSize()
+    clear()
+    local titleY = 3
+    if wordmark(2, "FOXY", theme.accent) then titleY = 8 end
+    center(titleY, "WELCOME TO FOXY", theme.ink)
+    local buttonY = height - 5
+    local about = wrapText("No Bank Server answers on this network: this is a"
+        .. " new world. Every PUMPE banks with Foxy, so start here -- make this"
+        .. " computer the Bank Server. Cable a second one to it as its Bank"
+        .. " Vault.", width - 4)
+    for index, line in ipairs(about) do
+        local y = titleY + 1 + index
+        if y <= buttonY - 2 then center(y, line, theme.muted) end
+    end
+    local buttons = {}
+    button(buttons, "bank", 2, buttonY, width - 2, 3, "GET THE BANK SERVER",
+        theme.success, colors.black)
+    local bank = programById("bank")
+    local manifest = release.manifest
+    local bytes = manifest and releaseBytes(bank, manifest)
+    center(height - 2, not httpReady() and "HTTP is off: nothing can download"
+        or manifest and ("From GitHub  -  v" .. manifest.version
+            .. (bytes and ("  -  " .. math.ceil(bytes / 1024) .. " KiB") or ""))
+        or "GitHub cannot be reached right now", theme.muted)
+    button(buttons, "skip", 2, height, 9, 1, "NOT NOW", theme.panel)
+    local bindings = {}
+    if type(keys) == "table" then
+        bindings[keys.enter] = "bank"
+        if keys.numPadEnter then bindings[keys.numPadEnter] = "bank" end
+    end
+    local action = waitForButton(buttons, bindings)
+    if action == "__terminate" then return "exit" end
+    return action
+end
+
 -- Every program whose name, description or keywords hold every word typed,
 -- best first: a name that starts with it, then a word in the name that does,
 -- then anywhere at all. Nothing typed is every program, in the usual order.
@@ -1005,10 +1069,25 @@ end
 
 local pumpe = programById("pumpe")
 local screen, chosen, searched = "pumpe", nil, nil
+if not installedProgram() then
+    local width, height = target.getSize()
+    clear()
+    center(math.floor(height / 2), "LOOKING FOR FOXY", theme.muted)
+    if bankAnswers() == false then screen = "welcome" end
+end
 while true do
     local installed = installedProgram()
     local action
-    if screen == "pumpe" then
+    if screen == "welcome" then
+        local answer = welcomeScreen()
+        if answer == "bank" then
+            chosen, action = programById("bank"), "install"
+        elseif answer == "exit" then
+            action = "exit"
+        else
+            screen = "pumpe"
+        end
+    elseif screen == "pumpe" then
         -- Whatever was typed here starts the search.
         action, searched = programScreen(pumpe, installed, true)
         chosen = pumpe

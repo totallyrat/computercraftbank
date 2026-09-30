@@ -55,8 +55,8 @@
     {
       "path": "startup.lua",
       "source": "startup.lua",
-      "size": 42908,
-      "checksum": "4de64f92"
+      "size": 46181,
+      "checksum": "75d5527c"
     },
     {
       "path": "launcher.lua",

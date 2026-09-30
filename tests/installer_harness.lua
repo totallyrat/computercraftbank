@@ -83,6 +83,9 @@ function harness.computer(options)
         served = options.served or {},
         free = options.free or 1000 * 1024,
         id = options.id or 7,
+        -- 12.0 Final: { bank = true/false } gives it a modem on a network
+        -- where a Bank does or does not answer. Nil: no modem at all.
+        network = options.network,
         fetched = {},
     }
 end
@@ -147,6 +150,17 @@ function harness.environment(computer, script, running)
     env.sleep = function() end
     env.rednet = nil
     env.peripheral = nil
+    if computer.network then
+        local network = computer.network
+        network.asked = network.asked or {}
+        env.peripheral = { getNames = function() return { "back" } end,
+            getType = function() return "modem" end }
+        env.rednet = { open = function() network.opened = true end,
+            lookup = function(protocol)
+                network.asked[#network.asked + 1] = protocol
+                return network.bank and 1 or nil
+            end }
+    end
 
     env.fs = {
         combine = function(a, b) return norm(tostring(a) .. "/" .. tostring(b)) end,

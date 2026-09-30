@@ -227,6 +227,48 @@ assert(config.government_key ~= "CLIENT-NO-GOVERNMENT-ACCESS")
 assert(bank.disk["pumpe/bank_server.lua"] == h.readRepo("dist/bank_server.lua"),
     "the Bank's published build")
 
+-- A new world, 12.0 Final ----------------------------------------------------------------
+-- Nothing installed, a modem, and no Bank answering: the first screen is
+-- Welcome to Foxy, and its button fetches the Bank Server from GitHub --
+-- still behind the operator's code.
+
+local newWorld = fresh({ network = { bank = false } })
+seen = h.run(newWorld, h.concat(
+    function(screen)
+        assert(h.has(screen, "WELCOME TO FOXY") and h.has(screen, "GET THE BANK SERVER"),
+            "a world with no Bank starts with one:\n" .. table.concat(screen, "\n"))
+        assert(select(2, h.where(screen, "WELCOME TO FOXY")) == 8, "under the FOXY wordmark")
+        assert(h.has(screen, "From GitHub"), "and says where it comes from")
+        return tap("GET THE BANK SERVER")(screen)
+    end,
+    expect("OPERATOR CODE", { "char", "4" }), typed("040")
+))
+assert(newWorld.network.asked[1] == "PUMPE_BANK_V5", "it asked the network for a Bank")
+assert(seen.rebooted, "installed, it restarts as the Bank")
+assertInstalled(newWorld, "bank", "bank_server.lua")
+
+-- Not now: the PUMPE's screen, as ever.
+local later = fresh({ network = { bank = false } })
+h.run(later, h.concat(
+    expect("WELCOME TO FOXY", tap("NOT NOW")),
+    expect("INSTALL PUMPE", { "terminate" })))
+
+-- A world with a Bank goes straight to the PUMPE, and so does a computer
+-- with no modem to ask with, or one that already runs something.
+local joining = fresh({ network = { bank = true } })
+h.run(joining, h.concat(expect("INSTALL PUMPE", { "terminate" })))
+assert(joining.network.asked[1] == "PUMPE_BANK_V5")
+local noModem = fresh()
+h.run(noModem, h.concat(expect("INSTALL PUMPE", { "terminate" })))
+local busy = fresh({ network = { bank = false } })
+busy.disk["startup.lua"] = bootEntry("service")
+busy.disk["pumpe/installer.lua"] = h.installer
+busy.disk["pumpe/service_kiosk.lua"] = "-- a kiosk"
+busy.disk["pumpe/config.lua"] = "return { version = \"11.0.0\" }"
+h.run(busy, h.concat(expect("This computer: SERVICE", { "terminate" })), nil,
+    "pumpe/installer.lua")
+assert(#busy.network.asked == 0, "a computer already set up is not a new world")
+
 -- Every program --------------------------------------------------------------------------
 -- Found by its name, installed, booted into. A program Easy Deployment can
 -- install and not start is a computer that stops on its next boot.
