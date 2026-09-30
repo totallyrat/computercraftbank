@@ -1415,9 +1415,9 @@ local function homeDraw(home)
     ui.clear(target, colors.black)
     local accent = ui.theme.accent
     if home.screen == "pair" then
-        arcadeHeader("HOME MODE", "PAIR A PUMPE", accent)
+        arcadeHeader("HOME MODE", "PAIR A POCKET", accent)
         local top = 5
-        ui.center(target, top, "OPEN CCG ON YOUR PUMPE", colors.white, colors.black)
+        ui.center(target, top, "OPEN CCG ON YOUR POCKET", colors.white, colors.black)
         ui.center(target, top + 1, "HOME > TYPE THIS CODE", colors.lightGray, colors.black)
         if not ui.wordmark(target, top + 3, home.code, nil, accent) then
             ui.center(target, top + 4, home.code, accent, colors.black)
@@ -1427,7 +1427,7 @@ local function homeDraw(home)
     elseif home.screen == "menu" then
         arcadeHeader("HOME MODE", ui.truncate(tostring(home.player), width - 4)
             .. " IS PLAYING", accent)
-        ui.center(target, 5, ui.truncate(home.busy or "PICK A GAME ON YOUR PUMPE",
+        ui.center(target, 5, ui.truncate(home.busy or "PICK A GAME ON YOUR POCKET",
             width), home.busy and colors.yellow or colors.white, colors.black)
         -- The four, then what was fetched, as many as fit.
         local games = {}

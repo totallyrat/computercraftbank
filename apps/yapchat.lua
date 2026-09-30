@@ -1,6 +1,6 @@
 -- PUMPE APP: Yap Chat
 -- Private messages between Foxy friends. Two things make it different from
--- the PUMPE's own Messages:
+-- the Pocket's own Messages:
 --
 --   * the whole app is behind your PIN, so a phone left on a desk is not an
 --     open inbox
@@ -238,7 +238,7 @@ return function(api)
         if #friends == 0 then
             ui.center(target, 9, "No friends yet", ui.theme.ink)
             ui.wrappedText(target, 2, 11,
-                "Add a friend in the PUMPE and they turn up here.",
+                "Add a friend in the Pocket and they turn up here.",
                 width - 2, 4, ui.theme.muted)
         end
         for slot = 1, perPage do

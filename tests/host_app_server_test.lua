@@ -214,8 +214,8 @@ assert(not listedId("COMPANY"), "nothing to offer without the file")
 files["/pumpe/company.lua"] = "return function(api) end\n"
 server.seed()
 local company = listedId("COMPANY")
-assert(company and company.name == "Company" and company.author == "PUMPE",
-    "the Company app is in the App Browser, from PUMPE")
+assert(company and company.name == "Company" and company.author == "FoxyOS",
+    "the Company app is in the App Browser, from FoxyOS")
 
 -- Games, 12.0 Final ------------------------------------------------------------------
 -- An app is for the PUMPE and a game is for a CCG in Home Mode. The App
@@ -234,7 +234,7 @@ local function listed(list, id)
     end
 end
 assert(not listed(actions.APP_LIST().apps, game.app_id),
-    "a PUMPE's App Browser never lists a game")
+    "a Pocket's App Browser never lists a game")
 assert(not listed(actions.APP_LIST({ kind = "app" }).apps, game.app_id))
 local games = actions.APP_LIST({ kind = "game" }).apps
 assert(listed(games, game.app_id), "the Game Browser lists it")
@@ -260,8 +260,8 @@ assert(plain.kind == "app" and listed(actions.APP_LIST().apps, plain.app_id))
 files["/pumpe/brickbreaker.lua"] = readFile("../brickbreaker.lua")
 server.seed()
 local bricks = listed(actions.APP_LIST({ kind = "game" }).apps, "BRICKS")
-assert(bricks and bricks.name == "Brick Breaker" and bricks.author == "PUMPE",
-    "Brick Breaker is in the Game Browser, from PUMPE")
+assert(bricks and bricks.name == "Brick Breaker" and bricks.author == "FoxyOS",
+    "Brick Breaker is in the Game Browser, from FoxyOS")
 assert(not listed(actions.APP_LIST().apps, "BRICKS"))
 
 print("host_app_server_test: OK")

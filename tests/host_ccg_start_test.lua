@@ -103,7 +103,7 @@ end, function(state)
         "Bet Play says what it is missing, and what to do about it")
     return "ok"
 end, "home", pin("1234"), function(state)
-    assert(state.display.has("PAIR A PUMPE"), "Home Mode opens, and shows a code")
+    assert(state.display.has("PAIR A POCKET"), "Home Mode opens, and shows a code")
     local width, height = state.display.getSize()
     return { raw = { "monitor_touch", "top", width - 5, height } }
 end, "close")

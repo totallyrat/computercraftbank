@@ -27,7 +27,7 @@ local function say(text, color)
     if term.isColor() then term.setTextColor(colors.white) end
 end
 
-say("PUMPE Bank rescue", colors.orange)
+say("FoxyOS Bank rescue", colors.orange)
 say("Free space: " .. kib(free()))
 
 -- 1. What can be fetched again.

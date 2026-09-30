@@ -708,7 +708,7 @@ return function(api)
     -- told what arrived.
     local function bringMoneyIn(preferredName)
         if type(api.banks) ~= "function" or type(api.handoff) ~= "function" then
-            ui.message(target, "info", "Not on this PUMPE",
+            ui.message(target, "info", "Not on this Pocket",
                 "This phone is on an older release", 1.8)
             return false
         end

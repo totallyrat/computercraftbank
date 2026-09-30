@@ -164,7 +164,7 @@ return function(api)
             ui.center(target, 6, money(amount), ui.theme.ink, ui.theme.panel)
             ui.center(target, 8, ("."):rep(frame % 4 + 1), ui.theme.muted,
                 ui.theme.panel)
-            ui.wrappedText(target, 2, 11, "Hold your PUMPE out. Whoever is"
+            ui.wrappedText(target, 2, 11, "Hold your Pocket out. Whoever is"
                 .. " standing next to you can pay it from Revolution.",
                 width - 2, 4, ui.theme.muted)
             ui.text(target, 2, 16, "0% fee", REVO)
@@ -395,7 +395,7 @@ return function(api)
             ui.header(target, "Bring it over", me.name, util.formatClock())
             if #banks == 0 then
                 ui.center(target, 9, "Nowhere to bring it", ui.theme.ink)
-                ui.wrappedText(target, 2, 11, "Nothing else on this PUMPE"
+                ui.wrappedText(target, 2, 11, "Nothing else on this Pocket"
                     .. " holds money for you.", width - 2, 3, ui.theme.muted)
             else
                 ui.wrappedText(target, 2, 5, "Move an account here in one go."

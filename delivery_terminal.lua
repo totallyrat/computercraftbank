@@ -778,7 +778,7 @@ local function waitForBuyer(found)
         ui.clear(target)
         ui.center(target, 2, ui.truncate(device.pickup.name, width - 2),
             ui.theme.accent)
-        ui.center(target, middle, "CHECK YOUR PUMPE", ui.theme.ink)
+        ui.center(target, middle, "CHECK YOUR POCKET", ui.theme.ink)
         ui.center(target, middle + 1, "Confirm with your PIN",
             ui.theme.muted)
         ui.center(target, middle + 3, string.format("%d:%02d",
@@ -917,7 +917,7 @@ local function payWithFoxy(offer)
         ui.center(target, 7, sale.status == "nobody_nearby" and "NOBODY NEARBY"
             or ui.truncate(tostring(sale.target_name or "Finding you"),
                 width - 2), ui.theme.ink)
-        ui.center(target, 9, "Confirm on your PUMPE", ui.theme.muted)
+        ui.center(target, 9, "Confirm on your Pocket", ui.theme.muted)
         local scene = ui.scene(target)
         scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL",
             { background = ui.theme.danger })
@@ -1074,7 +1074,7 @@ local function waitForLookup(asked)
         ui.clear(target)
         ui.header(target, ui.truncate(device.pickup.name, width - 3),
             ui.truncate(tostring(asked.name), width - 3))
-        ui.center(target, middle, "CHECK YOUR PUMPE", ui.theme.ink)
+        ui.center(target, middle, "CHECK YOUR POCKET", ui.theme.ink)
         ui.center(target, middle + 1, "Say yes with your PIN", ui.theme.muted)
         ui.center(target, middle + 3, string.format("%d:%02d",
             math.floor(seconds / 60), seconds % 60), ui.theme.muted)
@@ -1106,7 +1106,7 @@ end
 
 local function signIn()
     local name = ui.input(target, "YOUR NAME", {
-        hint = "As on your PUMPE", mode = "text", allowSpace = true,
+        hint = "As on your Pocket", mode = "text", allowSpace = true,
         maxLength = 20, minLength = 2 })
     if not name then return nil end
     local asked, err = request("PICKUP_ME_ASK", { name = name }, true)
@@ -1236,7 +1236,7 @@ local function pickupScreen()
         elseif not me then
             ui.text(target, 2, 5, "YOUR ORDERS HERE", ui.theme.muted)
             ui.wrappedText(target, 2, 6, "Type your name and say yes on your"
-                .. " PUMPE. You will see what is coming here and what is"
+                .. " Pocket. You will see what is coming here and what is"
                 .. " waiting, and take it.", width - 2, 3, ui.theme.ink)
             scene:button("signin", 2, 10, width - 2, 3, "TYPE YOUR NAME",
                 { background = ui.theme.accent, foreground = ui.theme.accentInk,
@@ -1565,7 +1565,7 @@ local function updateLoop()
     end
 end
 
-ui.boot(target, "PUMPE DELIVERY", "DELIVERY TERMINAL v" .. config.version)
+ui.boot(target, "DELIVERY TERMINAL", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 net.autoUpdate(config, "delivery", ROOT, client,
     { force = true, programVersion = PROGRAM_VERSION })
 if not register() then
@@ -1593,4 +1593,4 @@ if not (device.mode == "pickup" and device.pickup) then
 end
 parallel.waitForAny(board, updateLoop)
 ui.clear(target)
-print("PUMPE Delivery Terminal stopped.")
+print("Delivery Terminal stopped.")

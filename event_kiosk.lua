@@ -44,7 +44,7 @@ end
 
 local function login()
     local name = ui.input(target, "ORGANIZER LOGIN", {
-        hint = "Your PUMPE account name",
+        hint = "Your Foxy Account name",
         initial = device.last_name,
         maxLength = 20,
         allowSpace = true,
@@ -73,7 +73,7 @@ local function loginScreen()
     local width, height = target.getSize()
     while running and not sessionToken do
         ui.clear(target)
-        ui.header(target, "PUMPE EVENTS", "Organizer terminal", util.formatClock())
+        ui.header(target, "EVENT KIOSK", "Organizer terminal", util.formatClock())
         ui.center(target, 6, "CREATE. SELL. ADMIT.", ui.theme.accent)
         ui.center(target, 8, "One terminal for the whole venue", ui.theme.muted)
         local scene = ui.scene(target)
@@ -610,7 +610,7 @@ local function dashboard()
     })
 end
 
-ui.boot(target, "PUMPE EVENTS", "VENUE CONTROL v" .. config.version)
+ui.boot(target, "EVENT KIOSK", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "event", ROOT, client,

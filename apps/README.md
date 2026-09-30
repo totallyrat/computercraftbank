@@ -1,4 +1,4 @@
-# PUMPE apps
+# Pocket apps
 
 Apps in this folder are written here and published from inside the game. They
 are **not** part of a release: nothing here is in `release_manifest.json`, and
@@ -8,7 +8,7 @@ the App Server does not ship them. To put one on your network:
    creates.
 2. Open **POS Settings → DEV MODE**, tap the file, give it a name and a
    description, and launch it.
-3. It appears in every PUMPE's **App Browser**.
+3. It appears in every Pocket's **App Browser**.
 
 | App | What it is |
 | --- | --- |
@@ -17,7 +17,7 @@ the App Server does not ship them. To put one on your network:
 
 ## Writing one
 
-An app is one file that returns one function. The PUMPE calls it with an
+An app is one file that returns one function. The Pocket calls it with an
 `api` table and nothing else — no session token, no device file, no access to
 another app's data.
 
@@ -43,12 +43,12 @@ end
 | `api.money(value)` | Formats an amount in the network's currency |
 | `api.account()` | The signed-in account, as the phone sees it |
 | `api.refresh()` | Re-reads that account from the Bank |
-| `api.running()` | False once the PUMPE is shutting down — check it in every loop |
+| `api.running()` | False once the Pocket is shutting down — check it in every loop |
 | `api.request(action, payload, silent)` | A Bank request, made as the signed-in account |
 | `api.login(spec)` | FoxyLogin. See below |
 | `api.pin(reason)` | Ask for the owner's PIN. See **The Pin API** |
 | `api.notifications` | `.ask()`, `.allowed()`, `.send(spec)`. See **The Notification API** |
-| `api.call(spec)` | Raise the PUMPE's Urgent Contact ring. See **The Urgent Contact API** |
+| `api.call(spec)` | Raise the Pocket's Urgent Contact ring. See **The Urgent Contact API** |
 | `api.bank(action, payload)` | For a **bank app**: talk to the 3rd Party Bank Server hosting it. See below |
 | `api.position()` | Where the phone is, or nil when the network has no GPS anchors |
 | `api.purchase(spec)` | Sell something. See **In-app purchases** |
@@ -60,7 +60,7 @@ end
 `app_id` yourself — and cannot pass somebody else's.
 
 Return from the function to go back to the Home Screen. If your app errors,
-the phone catches it, says so, and hands the user back their PUMPE.
+the phone catches it, says so, and hands the user back their Pocket.
 
 ## FoxyLogin
 
@@ -182,7 +182,7 @@ app per sender.
 
 ## The Urgent Contact API
 
-The same fullscreen ring the PUMPE raises for Urgent Contact, from your app:
+The same fullscreen ring the Pocket raises for Urgent Contact, from your app:
 
 ```lua
 api.call({ account_id = friend.account_id, name = friend.name })
@@ -190,7 +190,7 @@ api.call({ account_id = friend.account_id, name = friend.name })
 
 Their screen says which app is calling and who is. Both labels come from the
 install and the Bank rather than from your code, so an app cannot pass its
-call off as the PUMPE's own.
+call off as the Pocket's own.
 
 ## In-app purchases
 
@@ -286,7 +286,7 @@ goes home. `buckapp.lua` in this repository is a complete worked example.
 
 ## Fitting the screen
 
-A PUMPE is **26x20 characters**. Every draw is bounds-checked in the host
+A Pocket is **26x20 characters**. Every draw is bounds-checked in the host
 tests, so a label that runs off the edge is a failure rather than a smudge.
 Use `ui.truncate`, `ui.wrap` and `ui.wrappedText`, and measure against the
 real width rather than assuming 26 — an app can also run on a wider screen.

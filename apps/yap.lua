@@ -181,7 +181,7 @@ return function(api)
                 ui.wrappedText(target, 4, 6, "Every yap you post is already"
                     .. " boosted.", width - 6, 3, ui.theme.ink, ui.theme.panel)
                 ui.wrappedText(target, 2, 10, "Cancel it under Settings ->"
-                    .. " App Settings on your PUMPE.", width - 2, 3,
+                    .. " App Settings on your Pocket.", width - 2, 3,
                     ui.theme.muted)
             elseif boostedPosts[post.id] then
                 ui.card(target, 2, 5, width - 2, 4, FRIEND)

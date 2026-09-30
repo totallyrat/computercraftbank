@@ -109,7 +109,7 @@ local function renderCustomerMonitor()
     ui.clear(monitor, theme.background)
 
     if mode == "idle" then
-        monitorTitle("PUMPE CHECKOUT", theme.accent)
+        monitorTitle("CHECKOUT", theme.accent)
         ui.center(monitor, math.min(height, compact and 3 or 4),
             ui.truncate(data.merchant or "SERVICE KIOSK",
                 math.max(1, width - 2)), theme.ink)
@@ -149,9 +149,9 @@ local function renderCustomerMonitor()
         ui.text(monitor, math.max(2, width - #totalText),
             math.min(height, dividerY + 1), totalText, theme.success)
     elseif mode == "code" then
-        monitorTitle(data.kind == "withdrawal" and "RECEIVE WITH PUMPE"
+        monitorTitle(data.kind == "withdrawal" and "RECEIVE WITH POCKET"
             or data.kind == "subscription" and "CONFIRM SUBSCRIPTION"
-            or "PAY WITH PUMPE", theme.accent)
+            or "PAY WITH POCKET", theme.accent)
         ui.center(monitor, math.min(height, 3), money(data.amount or 0)
             .. (data.kind == "subscription" and "/DAY" or ""), theme.ink)
         local code = tostring(data.code or "------")
@@ -169,7 +169,7 @@ local function renderCustomerMonitor()
             string.format("%d:%02d LEFT",
                 math.floor(seconds / 60), seconds % 60), theme.muted)
         if height >= 9 then
-            ui.center(monitor, height - 1, "PUMPE > PAY"
+            ui.center(monitor, height - 1, "POCKET > PAY"
                 .. string.rep(".", frame % 4), theme.accent)
         end
     elseif mode == "success" then
@@ -447,7 +447,7 @@ local function waitForCode(code, amount, kind)
         ui.fill(target, math.max(2, math.floor(width / 2) - 9),
             7, math.min(19, width - 2), 5, colors.white)
         ui.center(target, 8, kind == "subscription"
-            and "CONFIRM IN PUMPE" or "ENTER IN PUMPE",
+            and "CONFIRM IN POCKET" or "ENTER IN POCKET",
             colors.gray, colors.white)
         ui.center(target, 10, code:sub(1, 3) .. " " .. code:sub(4, 6),
             colors.black, colors.white)
@@ -622,7 +622,7 @@ local function portableBill(cart)
         local offer = portableOffer or {}
         ui.center(target, 7, offer.target_name or "Customer", ui.theme.ink)
         ui.center(target, 9,
-            offer.status == "paid" and "PAID" or "CONFIRMING ON THEIR PUMPE",
+            offer.status == "paid" and "PAID" or "CONFIRMING ON THEIR POCKET",
             offer.status == "paid" and ui.theme.success or ui.theme.accent)
         local scene = ui.scene(target)
         scene:button("cancel", 2, height - 3, width - 2, 2, "CANCEL SALE",
@@ -951,7 +951,7 @@ local function choosePublishKind()
         local scene = ui.scene(target)
         local half = math.floor((width - 3) / 2)
         scene:button("app", 2, 5, half, 6,
-            "APP\nFor the PUMPE.\nIn the App Browser", {
+            "APP\nFor the Pocket.\nIn the App Browser", {
                 background = ui.theme.accent, foreground = ui.theme.accentInk,
                 shadow = true })
         scene:button("game", 3 + half, 5, width - 3 - half, 6,
@@ -1032,7 +1032,7 @@ local function devMode()
         if not kiosk.developer_id then
             local width, height = target.getSize()
             ui.clear(target)
-            ui.header(target, "DEV MODE", "Write apps for the PUMPE",
+            ui.header(target, "DEV MODE", "Write apps for the Pocket",
                 util.formatClock())
             ui.card(target, 2, 5, width - 2, 8, colors.purple)
             ui.wrappedText(target, 4, 6,
@@ -1058,7 +1058,7 @@ local function devMode()
                 ui.center(target, 8, "NOTHING IN " .. devDir, ui.theme.warning)
                 ui.wrappedText(target, 2, 10,
                     "Put a .lua file there. An app returns one function, which"
-                        .. " the PUMPE calls with its api table; a game for a CCG"
+                        .. " the Pocket calls with its api table; a game for a CCG"
                         .. " returns a table -- see brickbreaker.lua.",
                     width - 2, 5, ui.theme.muted)
             end
@@ -1491,7 +1491,7 @@ local function posPage(spec)
 
         ui.clear(target, colors.white)
         ui.fill(target, 1, 1, width, 2, colors.black)
-        ui.text(target, 2, 1, "PUMPE POS", colors.white, colors.black)
+        ui.text(target, 2, 1, "FOXYOS POS", colors.white, colors.black)
         ui.text(target, 2, 2,
             ui.truncate(merchantName(), math.max(1, width - 15)),
             colors.lightGray, colors.black)
@@ -1815,7 +1815,7 @@ if rawget(_G, "PUMPE_SERVICE_TEST_MODE") == true then
     }
 end
 
-ui.boot(target, "SERVICE KIOSK", "SQUARE-STYLE POS v" .. config.version)
+ui.boot(target, "SERVICE KIOSK", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "service", ROOT, client,

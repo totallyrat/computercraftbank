@@ -81,7 +81,7 @@ end
 -- keeps no log, so Activity is how many it has answered.
 local function screenLoop()
     ui.serverTabs({
-        target = target, title = "PUMPE GPS ANCHOR", subtitle = "v" .. config.version,
+        target = target, title = "GPS ANCHOR", subtitle = "v" .. config.version,
         cards = function()
             return { { "POSITION", device.x .. ", " .. device.y .. ", " .. device.z,
                 ui.theme.success }, { "ANSWERED", served, ui.theme.accent } }
@@ -109,7 +109,7 @@ end
 
 -- 12.0: this anchor's main colour, orange unless its owner chose one.
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
-ui.boot(target, "GPS ANCHOR", "PUMPE POSITIONING v" .. config.version)
+ui.boot(target, "GPS ANCHOR", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 net.autoUpdate(config, "anchor", ROOT, nil,
     { force = true, programVersion = PROGRAM_VERSION })
 

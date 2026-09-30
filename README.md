@@ -1,6 +1,6 @@
-# PUMPE Ecosystem
+# FoxyOS
 
-A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. It includes personal banking, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
+A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. Every device runs **FoxyOS** — the phone is the **Pocket** — and it includes personal banking, a Digital ID, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
 ## What is included
 
@@ -8,47 +8,57 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | --- | --- | --- |
 | `bank_server.lua` | Advanced Computer + wireless/Ender modem + wired modem to its Vault | The Bank Core: balances, sessions, PINs, the inter-bank ledger, tax, CCG escrow, pay codes, companies, Easy Deployment. Everything else goes to its Vault |
 | `bank_vault.lua` | Advanced Computer + wired modem to its Core | The Bank Vault: friends and chat, travel, events and tickets, app records, the Shop's orders, FoxMail, and since 11.2 every account's history and notifications |
-| `pumpe.lua` | Advanced Pocket Computer + wireless modem | Personal phone, payments, the CCG app (Bet Play and Home Mode), Customs and Visas, events, tickets, tax, subscriptions |
-| `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track and Survivor arena; since 12.0 Home Mode, four free games for one player with a PUMPE as the controller |
+| `pumpe.lua` | Advanced Pocket Computer + wireless modem | The Pocket: personal phone, payments, the CCG app (Bet Play and Home Mode), MyID (Digital ID, visas, countries, tax), events, tickets, subscriptions |
+| `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track and Survivor arena; since 12.0 Home Mode, four free games for one player with a Pocket as the controller |
 | `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Square-style touch POS, favorites, products, receipts, payment codes, withdrawals, subscriptions |
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
 | `admin_terminal.lua` | Advanced Computer + wireless/Ender modem | Government-only tax controls, account approval, balances, bans, tax demands, announcements |
 | `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
-| `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional PUMPE apps and serves every download, so the Bank never carries one |
+| `app_server.lua` | Advanced Computer + wireless/Ender modem | Hosts optional Pocket apps and serves every download, so the Bank never carries one |
 | `internet_server.lua` | Advanced Computer + wireless/Ender modem | Holds and serves every website on the network. The Bank Vault keeps the names |
 | `delivery_terminal.lua` | Advanced Computer or Advanced Pocket Computer + wireless/Ender modem; chests on networking cable for a pickup point | A company's delivery board: every Shop order, its stages, and DONE. Becomes a self-service pickup point that can sell on the spot |
-| `shop.lua` | Downloaded to a PUMPE from the App Browser | Online stores: a basket, home delivery or pickup, Foxy or another bank, live delivery tracking, cancelling and returns |
-| `foxmail.lua` | Installed on every PUMPE at sign-in | Email: an address at foxy.com for everybody, company domains, mail from kiosks and apps |
-| `company.lua` | Downloaded to a PUMPE from the App Browser | Start and run companies from the phone: products, the online store, what pickup points sell, and Delivery Mode |
-| `foxy.lua` | Downloaded to a PUMPE from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
+| `shop.lua` | Downloaded to a Pocket from the App Browser | Online stores: a basket, home delivery or pickup, Foxy or another bank, live delivery tracking, cancelling and returns |
+| `foxmail.lua` | Installed on every Pocket at sign-in | Email: an address at foxy.com for everybody, company domains, mail from kiosks and apps |
+| `company.lua` | Downloaded to a Pocket from the App Browser | Start and run companies from the phone: products, the online store, what pickup points sell, and Delivery Mode |
+| `foxy.lua` | Downloaded to a Pocket from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.
 
-## PUMPE phone experience
+## The Pocket
 
-PUMPE now behaves like a small phone rather than a list of bank buttons:
+The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a list of bank buttons:
 
-- **Since 12.0 a PUMPE belongs to its Foxy Account.** It starts on the lock screen of the account it was set up with — a big clock and the account's name — and the PIN is all it asks. There is no sign-in screen to reach from there; **Remove account** in Settings is how a phone changes hands.
-- **Every device has a main colour** (12.0). Orange like the fox out of the box; the PUMPE asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it on one of their tabs (a kiosk's **Kiosk** tab, a terminal's **Setup** or **System**, a server's **Server**); the Bank Server and Vault keep the Bank's colours.
+- **Since 12.0 a Pocket belongs to its Foxy Account.** It starts on the lock screen of the account it was set up with — a big clock and the account's name — and the PIN is all it asks. There is no sign-in screen to reach from there; **Remove account** in Settings is how a phone changes hands.
+- **Every device has a main colour** (12.0). Orange like the fox out of the box; the Pocket asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it on one of their tabs (a kiosk's **Kiosk** tab, a terminal's **Setup** or **System**, a server's **Server**); the Bank Server and Vault keep the Bank's colours.
 
-- Start-up spells **PUMPE** one letter at a time, then holds **Small yet Mighty** for two seconds. Installing a release is the opposite: since 10.0 the wordmark sits over a bar that fills for twenty seconds whether or not it needs to, because a release lands in about two and a phone that goes dark and comes back subtly different reads as a glitch rather than an update.
-- Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How PUMPE Works** in Settings → Account re-opens the same guide at any time.
-- Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your PUMPE**.
+- Start-up spells **POCKET** one letter at a time, then holds **FoxyOS 12** for two seconds. Installing a release shows the FoxyOS update screen: see **Automatic Internet Updates**.
+- Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How Pocket Works** in Settings → Account re-opens the same guide at any time.
+- Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your Pocket**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
-- Every PUMPE screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
+- Every Pocket screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - The **dock** sits under every app page: search first, then up to three favourites. An empty slot opens the picker, and so does **Edit Your Dock** in Settings.
 - Unread counts appear as a badge in an icon's corner.
 - **Foxy** is the bank. Since 9.4 the balance, your accounts, Foxy Cash, the Bet Wallet, Activity, cashing out and the Account ID all live in its bank section; there is no Bank app on the Home Screen. (It was BuckApp until 9.0, then a built-in Bank tab until 9.4.)
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
-- **Tickets** holds events and your own tickets; **Customs** holds visas and territories.
+- **Tickets** holds events and your own tickets; **MyID** holds everything the government does: your Digital ID, visas, the countries you run, and tax.
 - Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
 - The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
 - **CCG** (the Bet app until 12.0) has three tabs: **Home** plays Home Mode on your own console, **Bet** joins a lobby and needs the Foxy Account PIN every time, and **Scores** keeps your best at home. The Bet Wallet is in Foxy.
-- After one minute without touch or keyboard activity, PUMPE opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
+- After one minute without touch or keyboard activity, the Pocket opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 - **Turning the modem off leaves you signed in.** Settings → Network takes the phone off the network; since 9.5 that is all it does. The Home Screen, Settings and everything already downloaded keep working, the header reads **Offline** where the balance goes, and anything needing a server says so instead of hanging. A phone that starts up with the modem off opens the same way, under the name it last signed in as — a label, not a session, and the first thing it can do back on the network is sign in properly. Off the network the Lock Screen opens on a tap, because the PIN is checked by the Bank and there is no Bank to check it.
+
+## MyID and the Digital ID (FoxyOS 12)
+
+**MyID** is the government's app on the Pocket: **ID**, **Visas**, **Tax** and **Countries**. Tax demands are paid here too (Foxy's bank section points to it).
+
+- **Get a Digital ID** on the ID tab: the name on your ID and your PIN. It waits for the government, and counts only once somebody confirms it at an **Admin Terminal** (People → **DIGITAL IDS**, CONFIRM or REFUSE with a reason). You are told either way; a refused ID can be asked for again, and keeps its code.
+- Your **MyID Code** looks like `MY-7K2M-9QPA` — no 0, 1, O or I, so it can be read out loud. **Show my MyID Code** puts it on the screen, big.
+- **Visas need a confirmed Digital ID.** The Bank refuses a visa application without one.
+- **The MyID Verifier** is on every Service Kiosk (Kiosk → **MYID VERIFIER**) and on the Event Kiosk's door. Type the code somebody says — dashes, case and the `MY` are optional — and it answers **VALID** with the registered name, or **NOT VALID** and why (waiting, refused, unknown, suspended). Nothing else about the account is shown.
+- A verifier that types five codes that are nobody's has to wait a minute before the next, so it cannot be used to fish for names.
 
 ## Search, App Actions and QuickActions
 
@@ -67,11 +77,11 @@ The phone reads that off the file rather than asking the app at runtime, because
 - **QuickActions** strings app actions together. Add steps, add a **Repeat** to multiply the step above it, then run it yourself or have it run every day at an hour you pick. A QuickAction can sit on the Home Screen as an icon that does something rather than opening something.
 - **Reminders** arrive as a banner or as a full screen alert, set in in-game hours from now.
 
-Reminders and QuickActions are kept on the phone and fired by the Home Screen's own tick. A PUMPE that is switched off, or sitting on its lock screen, is not reminding anybody — it catches up when the Home Screen is next open.
+Reminders and QuickActions are kept on the phone and fired by the Home Screen's own tick. A Pocket that is switched off, or sitting on its lock screen, is not reminding anybody — it catches up when the Home Screen is next open.
 
 ## How apps are laid out, since 11.0
 
-**Tabs along the bottom are the standard.** An app with more than one part puts its parts in a row on the bottom line, the way Shop did first, and **the mark at the top left (`<PUMPE`) goes home** from any of them.
+**Tabs along the bottom are the standard.** An app with more than one part puts its parts in a row on the bottom line, the way Shop did first, and **the mark at the top left (**Pocket**) goes home** from any of them.
 
 **Since 12.0 the tabs float.** They sit in a pill on the row above the bottom, clear of both sides and of the bottom row. The same bar is on every kiosk, terminal and server — there without the home mark, because a kiosk has no home screen to go back to.
 
@@ -85,10 +95,10 @@ Reminders and QuickActions are kept on the phone and fired by the Home Screen's 
 | Internet | Go, Saved, Recent — the address box suggests sites you know as you type |
 | CCG | Home, Bet, Scores |
 | Company | Products, Store, Deals — pickup points open from Store |
-| Settings | Phone, Apps, Account — Close PUMPE is on Account |
+| Settings | Phone, Apps, Account — Close Pocket is on Account |
 | Friends | Chats (with the unread count), Friends, Urgent |
 | Tickets | Events, My tickets |
-| Customs | Visas, Territories |
+| MyID | ID, Visas, Tax, Countries |
 | Revolution | Take, Pay, Account |
 | BuckApp | Money, Account |
 | Website Crafter | Sites, New |
@@ -111,7 +121,7 @@ For app authors, `ui.tabBar(scene, target, tabs, active, color)` draws the bar (
 
 ## FoxMail
 
-New in 11.0, and installed on every PUMPE at sign-in, like Foxy.
+New in 11.0, and installed on every Pocket at sign-in, like Foxy.
 
 - **Your address.** Everybody can claim one at `foxy.com` — 2 to 16 letters, numbers, dots, dashes or underscores. Anybody with an address can write to anybody else.
 - **Company email.** A company's owner registers a domain for it on FoxMail's **Me** tab — `revolution.com`, say — and up to five addresses on it (`hello@`, `support@`...). The owner reads and sends as them beside their own address: the Me tab switches between them. `foxy.com` is the Bank's own and cannot be taken.
@@ -141,7 +151,7 @@ Tapping a friend opens your chat with them. `X` removes them after a confirmatio
 
 **Urgent Contact** reaches a friend right now. They get a full-screen ring with **Accept** and **Decline** whatever app they had open, because the check runs in the shared wait loop rather than in any one screen.
 
-Once accepted, both sides poll a live transcript several times a second, so a typed line appears on the other screen straight away. Inside a call you can send money, ask for money, and pay a request, all under the same PIN and fee rules as PUMPE Pay.
+Once accepted, both sides poll a live transcript several times a second, so a typed line appears on the other screen straight away. Inside a call you can send money, ask for money, and pay a request, all under the same PIN and fee rules as any other payment.
 
 - **Hang up** at the bottom ends the call from either side.
 - **Save** at the top is a *vote*. The transcript is written into your normal chat only once both people have pressed it; one vote alone saves nothing.
@@ -151,7 +161,7 @@ Calls are never written to the database. A Bank Server restart drops a live call
 
 ### Paying, since 9.4
 
-The PUMPE itself no longer offers a way to pay. A Foxy account has two:
+The Pocket itself no longer offers a way to pay. A Foxy account has two:
 
 1. **Foxy Pay** — stand in front of a kiosk and it finds you. This is what Proximity Pay is called now, and it works the same way.
 2. **Foxy Cash** — inside the Foxy app, to a friend, at a flat fee and no daily ceiling. The ceiling is what the friendship replaces: you cannot reach a stranger.
@@ -164,33 +174,33 @@ Foxy Pay is a route of its own rather than a flag on the code route. An offer is
 
 ## ComputerCraftGaming Bet Play
 
-CCG is a shared big-screen gaming system. Create a lobby on `ccg.lua`, then players open **Bet** on their PUMPE, verify their PIN, enter the screen's alphanumeric lobby code, choose a display name, make their pick, and set a wager from their Bet Wallet.
+CCG is a shared big-screen gaming system. Create a lobby on `ccg.lua`, then players open **Bet** on their Pocket, verify their PIN, enter the screen's alphanumeric lobby code, choose a display name, make their pick, and set a wager from their Bet Wallet.
 
 Three games are included:
 
 1. **Heads or Tails** — pick a side. A correct pick pays `2×` the wager.
 2. **Race** — pick one of six red, orange, yellow, green, blue, or purple cars. The six-lane animated race has a server-random winner and pays `3×`.
-3. **Survivor** — use the PUMPE touch joystick to move and **PUSH** nearby players from a shrinking circular platform. The last player standing receives `3×` their wager.
+3. **Survivor** — use the Pocket touch joystick to move and **PUSH** nearby players from a shrinking circular platform. The last player standing receives `3×` their wager.
 
-Since 9.1 the games run on their own computer — a **CCG Server** — while the money stays on the Bank. The CCG Server generates chance-game outcomes, simulates Survivor, decides the winner and settles each lobby once; a modified PUMPE or CCG console still cannot submit its preferred result.
+Since 9.1 the games run on their own computer — a **CCG Server** — while the money stays on the Bank. The CCG Server generates chance-game outcomes, simulates Survivor, decides the winner and settles each lobby once; a modified Pocket or CCG console still cannot submit its preferred result.
 
 What it cannot do is touch money. A wager sits in **escrow on the Bank**, and a settle carries only the list of winners — the Bank multiplies the stake it is already holding by its own copy of the game's multiplier, so a CCG Server can pick the wrong winner but cannot invent a payout. It registers with the Bank once using the operator code before the Bank will settle for it at all.
 
 Waiting lobbies expire after five minutes and return every reserved wager, and a CCG Server restart during an active Survivor round refunds everyone rather than guessing a winner. If a CCG Server is switched off holding wagers, the Bank refunds that escrow itself after two hours.
 
-Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional PUMPE game currency only.
+Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional game currency only.
 
 ### Home Mode (12.0)
 
-Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048** — free: no lobby, no wager, and no CCG Server. The console runs them and your PUMPE is the controller.
+Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048** — free: no lobby, no wager, and no CCG Server. The console runs them and your Pocket is the controller.
 
 1. On the console, press **HOME MODE** and enter its **Home PIN**. The owner sets it on the console's first start; a console that was already running asks on its first start after 12.0 (never over an arena in Auto Mode, which has to come back by itself).
-2. The console shows a **six digit code**. Open **CCG → Home** on your PUMPE and type it.
-3. Your PUMPE shows the games, then a pad: arrows and **A** (arrow keys and Space work too). The game is on the big screen, the score on your phone.
+2. The console shows a **six digit code**. Open **CCG → Home** on your Pocket and type it.
+3. Your Pocket shows the games, then a pad: arrows and **A** (arrow keys and Space work too). The game is on the big screen, the score on your phone.
 
-**Games from the Game Browser (12.0 Final).** Home Mode plays more than the four: **CCG → Home → Game Browser** on the paired PUMPE lists the App Server's games, and **Get it** has the console fetch one — in pieces, checked against what the App Server says it is — and keep it beside the four, with its own best score. Up to twelve; **Remove** takes one off. Only in Home Mode: Bet Play is untouched. The App Server ships **Brick Breaker**, and `brickbreaker.lua` is the example for writing one.
+**Games from the Game Browser (12.0 Final).** Home Mode plays more than the four: **CCG → Home → Game Browser** on the paired Pocket lists the App Server's games, and **Get it** has the console fetch one — in pieces, checked against what the App Server says it is — and keep it beside the four, with its own best score. Up to twelve; **Remove** takes one off. Only in Home Mode: Bet Play is untouched. The App Server ships **Brick Breaker**, and `brickbreaker.lua` is the example for writing one.
 
-A game is published from **Dev Mode** on a Service Kiosk: the first time a file goes out, it asks **APP or GAME**, and a game goes to the CCG's Game Browser instead of the PUMPE's App Browser. A game is a file that returns one table — `new(width, height, random)`, `input(state, key)`, `tick(state)`, `speed(state)`, `draw(state, screen)`; `state.score`, `state.over` and `state.status` are read from it — and it runs in a box on the console: it is handed maths, strings, tables, colours and a board to paint (`screen.fill`, `screen.text`, clipped to the board), and nothing that reaches the disk, the network or the monitor. A game that errors ends its round and the console carries on; the console only ever reads plain copies of the score, the end and the status.
+A game is published from **Dev Mode** on a Service Kiosk: the first time a file goes out, it asks **APP or GAME**, and a game goes to the CCG's Game Browser instead of the Pocket's App Browser. A game is a file that returns one table — `new(width, height, random)`, `input(state, key)`, `tick(state)`, `speed(state)`, `draw(state, screen)`; `state.score`, `state.over` and `state.status` are read from it — and it runs in a box on the console: it is handed maths, strings, tables, colours and a board to paint (`screen.fill`, `screen.text`, clipped to the board), and nothing that reaches the disk, the network or the monitor. A game that errors ends its round and the console carries on; the console only ever reads plain copies of the score, the end and the status.
 
 **The console always starts (12.0 Final).** A console opens on a menu — **HOME MODE** and **BET PLAY** — with what it found on the network: the CCG Server and the Bank. Home Mode needs neither. Bet Play signs the console in to its CCG Server when it is opened, and says exactly what is missing if there is none. A new console asks for its main colour and Home PIN before anything else.
 
@@ -212,7 +222,7 @@ Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when t
 
 ## Foxy Pay
 
-A Service Kiosk offers the bill to whoever is standing closest. Tap **NEARBY** with a cart built, and the nearest PUMPE gets a full-screen offer showing the merchant, the amount and the distance. Since 9.4 this is how a Foxy account pays a shop, and **Portable Mode is on by default** — the basket is built on the customer's phone rather than on a second screen.
+A Service Kiosk offers the bill to whoever is standing closest. Tap **NEARBY** with a cart built, and the nearest Pocket gets a full-screen offer showing the merchant, the amount and the distance. Since 9.4 this is how a Foxy account pays a shop, and **Portable Mode is on by default** — the basket is built on the customer's phone rather than on a second screen.
 
 **Not mine** passes the bill to the next nearest person rather than cancelling the sale, so someone declining an offer meant for the person behind them costs the cashier nothing. PIN rules, daily limits and the transaction log are identical to every other payment, and nothing is ever charged without a tap.
 
@@ -227,28 +237,28 @@ ComputerCraft can only work out where something is by trilaterating **four** hos
 3. Give each one its exact block coordinates (press F3 in game). An anchor reads them from an existing constellation if one is already running.
 4. Every device then locates itself and reports its position to the Bank, which keeps the map.
 
-Anchors answer the same request ComputerCraft's own `gps host` answers, so ordinary GPS programs work against them too. Positions older than `position_max_age_ms` are ignored, so a PUMPE that has gone offline is never charged.
+Anchors answer the same request ComputerCraft's own `gps host` answers, so ordinary GPS programs work against them too. Positions older than `position_max_age_ms` are ignored, so a Pocket that has gone offline is never charged.
 
 ### Portable Mode
 
 A kiosk carried to the customer has no second screen to show them what they are buying, so **Portable Mode** (POS Settings) turns the sale around: the customer is found *first*.
 
-1. Tap **FIND**. The nearest PUMPE is asked "are you the customer?"
+1. Tap **FIND**. The nearest Pocket is asked "are you the customer?"
 2. They tap **That is me**, and their name appears at the top of the receipt.
 3. The operator rings up the items as normal.
-4. **PAY** sends the finished basket to that same PUMPE, itemised, and they confirm again with their PIN.
+4. **PAY** sends the finished basket to that same Pocket, itemised, and they confirm again with their PIN.
 
 Two confirmations replace the customer display: one to take the sale, one to pay it. A basket that has been rung up never changes hands — backing out ends the sale and kills its payment code, rather than offering somebody else's shopping to whoever is standing closest.
 
 ### Proximity Ticket Scanning
 
-**PROXIMITY SCAN** on the Event Kiosk asks whoever is nearest with a ticket for *that event* on their screen. They accept on their own PUMPE, the name lands on the organiser's screen, and the ticket is stamped used. A used ticket stops being held up, so it cannot be scanned twice.
+**PROXIMITY SCAN** on the Event Kiosk asks whoever is nearest with a ticket for *that event* on their screen. They accept on their own Pocket, the name lands on the organiser's screen, and the ticket is stamped used. A used ticket stops being held up, so it cannot be scanned twice.
 
 ### Proximity Visa
 
-**PROXIMITY VISA** on the Border Controller stays on once toggled, asking whoever is nearest with a travel document on screen. Accepting runs the ordinary border check, so entry rules, cooldowns, visits and Free Roam are identical to typing the code in; already being inside makes the crossing an exit. The gate pulses redstone for **two seconds**, which is why the PUMPE popup tells the traveller to stand close before accepting.
+**PROXIMITY VISA** on the Border Controller stays on once toggled, asking whoever is nearest with a travel document on screen. Accepting runs the ordinary border check, so entry rules, cooldowns, visits and Free Roam are identical to typing the code in; already being inside makes the crossing an exit. The gate pulses redstone for **two seconds**, which is why the Pocket popup tells the traveller to stand close before accepting.
 
-Opening a ticket or a travel document is what makes a PUMPE findable. The claim lapses `present_max_age_ms` after that screen last checked in, so closing it stops you being scanned.
+Opening a ticket or a travel document is what makes a Pocket findable. The claim lapses `present_max_age_ms` after that screen last checked in, so closing it stops you being scanned.
 
 ## Two computers, and banks that are not Foxy
 
@@ -267,7 +277,7 @@ The split is by what a thing **is**, not by how busy it is:
 
 Three rules make that safe. The Vault never touches a balance — when something it owns has to move money it asks the Core, under a move id that makes a lost reply harmless. The Vault never decides who is asking — the Core authenticates every request and passes down an identity, so session tokens and PINs never travel. And a Bank with no Vault still banks: the money keeps working, and the Vault's own features say so plainly until you pair one.
 
-Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever pressed the button. The one that becomes the Vault fetches `bank_vault.lua` over the cable and restarts into it by itself. Clients never learn any of this — a PUMPE asks the Bank, as it always has.
+Which half is which is decided by where the data already is: the server holding the accounts stays the Core, whoever pressed the button. The one that becomes the Vault fetches `bank_vault.lua` over the cable and restarts into it by itself. Clients never learn any of this — a Pocket asks the Bank, as it always has.
 
 If a Vault is destroyed or a cable is cut, the Bank Server's dashboard shows it, and its **PAIR** button pairs a replacement.
 
@@ -294,7 +304,7 @@ A 3rd Party Bank Server asks the App Server which apps declare themselves banks 
 
 Third-party banks have their own logins — a Foxy Account is not an account there — and mint no money: an account opens empty.
 
-Since 9.2 a bank also sets its own terms in the same header — `PUMPE BANK CLEARING` in in-game hours and `PUMPE BANK FEE` as a percentage — and its server enforces them. **Revolution** is the first to use them: no fee on anything, one hour to clear, and proximity pay built for taking money in person. Hold your PUMPE out and whoever is standing next to you pays from theirs.
+Since 9.2 a bank also sets its own terms in the same header — `PUMPE BANK CLEARING` in in-game hours and `PUMPE BANK FEE` as a percentage — and its server enforces them. **Revolution** is the first to use them: no fee on anything, one hour to clear, and proximity pay built for taking money in person. Hold your Pocket out and whoever is standing next to you pays from theirs.
 
 ### The Account ID
 
@@ -308,7 +318,7 @@ A transfer never gives money back on a guess. A bank that *refuses* answers with
 
 Nobody should have to read sixteen digits off one screen and type them into another. A bank app asks the phone where else its owner keeps money, and the phone answers — it is the phone, it knows what is installed and whose account it is signed into.
 
-- **Bringing money in.** Revolution offers this the moment you open an account, and keeps a Bring in button beside Move out. Pick Foxy and the PUMPE itself makes the two Bank calls, behind its own confirmation screen and its own PIN prompt. The app is told an amount arrived and nothing else — never the session token, never the PIN.
+- **Bringing money in.** Revolution offers this the moment you open an account, and keeps a Bring in button beside Move out. Pick Foxy and the Pocket itself makes the two Bank calls, behind its own confirmation screen and its own PIN prompt. The app is told an amount arrived and nothing else — never the session token, never the PIN.
 - **Going home.** Foxy cannot reach into Revolution and take money out: the bank holding money is the only one that can authorise it leaving. So Foxy asks the phone to open that bank with this account's own ID as the destination, and that bank pushes. Foxy's bank section offers this under **Bring money in**, and a closed account offers it as **Bring it back here** under the name of the bank the money went to.
 - A bank is never offered a transfer to itself, and an app the phone opened cannot open another one.
 
@@ -329,7 +339,7 @@ Savings are not a hiding place. While a tax demand is outstanding you cannot mov
 
 **Apps** on the Home Screen lists everything the App Server is offering. That is whatever is on the App Server's own disk: it ships Foxy, BuckApp, Revolution, Website Crafter, Internet, Shop, FoxMail and Company, and since 11.1 an App Server that is up to date still checks it has every one of them and fetches any it is missing. (Before 11.1 an App Server only ever downloaded the files its old updater knew about, so apps added after it was set up — FoxMail among them — never reached its disk or the App Browser.) Installing one downloads it in verified chunks and puts it on your Home Screen beside the built-in apps; a download whose size or checksum does not match what was advertised is thrown away rather than run, and an app that crashes is caught and hands you back the phone.
 
-**Apps update themselves (12.0 Final).** Every ten minutes on the Home Screen, while on the network, the PUMPE asks the App Server for its apps' versions and quietly fetches any that changed — the apps a release ships, and apps whose author published a new version — with a banner saying which. An update keeps the app's place on the Home Screen and whatever it saved; the new file is written beside the old one first, so a full disk or a damaged download leaves the app as it was, to be tried again next time.
+**Apps update themselves (12.0 Final).** Every ten minutes on the Home Screen, while on the network, the Pocket asks the App Server for its apps' versions and quietly fetches any that changed — the apps a release ships, and apps whose author published a new version — with a banner saying which. An update keeps the app's place on the Home Screen and whatever it saved; the new file is written beside the old one first, so a full disk or a damaged download leaves the app as it was, to be tried again next time.
 
 Every byte comes from the App Server, never from the Bank — that is what the machine is for. The Bank is asked one question, once, when something is published: is this developer real.
 
@@ -352,11 +362,11 @@ Signed-in apps also get a small store on the Bank for posts, comments or anythin
 
 Three more APIs, each a single call, and each one where the owner rather than the app has the last word.
 
-**The Pin API.** `api.pin("Unlock Yap Chat")` puts the PUMPE's own PIN pad up and hands the app back true or false. The app never sees the PIN.
+**The Pin API.** `api.pin("Unlock Yap Chat")` puts the Pocket's own PIN pad up and hands the app back true or false. The app never sees the PIN.
 
 **The Notification API.** `api.notifications.ask()` asks once and remembers the answer, a refusal included, so an app cannot put the question up every time it starts. `api.notifications.send{ ... }` then sends a banner — or a fullscreen alert, but only where the owner allowed one. Across accounts it works between friends only, with a daily budget.
 
-**The Urgent Contact API.** `api.call{ account_id = ..., name = ... }` raises the same fullscreen ring the PUMPE raises for Urgent Contact. The ring says which app is calling and who is, both labels coming from the install rather than the app.
+**The Urgent Contact API.** `api.call{ account_id = ..., name = ... }` raises the same fullscreen ring the Pocket raises for Urgent Contact. The ring says which app is calling and who is, both labels coming from the install rather than the app.
 
 **Settings → App Settings** lists every app that has ever asked for a permission, whatever the answer was, and is where you change your mind. **Fullscreen notifications are switched on there and nowhere else**: an app cannot ask for them, and blocking notifications takes fullscreen with it.
 
@@ -374,7 +384,7 @@ An app can sell things. The money goes to the account that published it, less **
 2. Put a `.lua` file in `/apps/`.
 3. Open **Dev Mode** again, tap the file, give it a name and a description, and launch it.
 
-It appears in every PUMPE's App Browser. Republishing the same file is an update rather than a second copy, and the app keeps its place and its download count. An app belongs to whoever published it: nobody else can overwrite or delete it, and a developer can delete their own from the App Browser.
+It appears in every Pocket's App Browser. Republishing the same file is an update rather than a second copy, and the app keeps its place and its download count. An app belongs to whoever published it: nobody else can overwrite or delete it, and a developer can delete their own from the App Browser.
 
 An app is one file returning one function:
 
@@ -406,7 +416,7 @@ The kiosk remains fully usable without the monitor. Attach one later and tap **S
 
 New in 10.0. Three pieces, deliberately separate.
 
-- **Website Crafter** (a PUMPE app) is where a website is written, as code. The draft is kept on the phone, so it works with no Internet Server anywhere on the network.
+- **Website Crafter** (a Pocket app) is where a website is written, as code. The draft is kept on the phone, so it works with no Internet Server anywhere on the network.
 - **The Bank Vault** keeps the register of names. Reserving a domain is what makes it yours, and a name means the same thing to everybody because there is one register. Two websites per account.
 - **The Internet Server** holds the pages and serves them. Install it from Easy Deployment: search for `internet`.
 
@@ -443,7 +453,7 @@ A new site takes **two in-game hours** to open. Until then, going to it in the I
 
 An Internet Server is a machine anybody can run. It never sees an account and never checks a PIN.
 
-1. The PUMPE asks the Bank for a **one-shot ticket** for a domain it owns.
+1. The Pocket asks the Bank for a **one-shot ticket** for a domain it owns.
 2. It hands the ticket to the Internet Server with the pages.
 3. The Internet Server takes the ticket back to the Bank, which burns it and says whose site it is.
 
@@ -511,7 +521,7 @@ The **Delivery** tab lists your orders, open first, and follows each one live: i
 
 ### The Company app (11.1)
 
-**Company** is in the App Browser, from PUMPE. It is where an owner starts companies, sees them and runs them without walking to a kiosk:
+**Company** is in the App Browser, from FoxyOS. It is where an owner starts companies, sees them and runs them without walking to a kiosk:
 
 - **Companies** lists yours: products, whether the store is open. **+ Start a company** makes a new one.
 - Inside one, **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every kiosk of the company sells.
@@ -541,9 +551,9 @@ Then it runs itself:
 
 - **The counter (12.0 Final)** has three tabs: **Collect** (the code box), **Store** and **Me**, with **STAFF** under them.
 - **Delivering (11.1).** The courier taps **ENTER CODE** and types the parcel's **delivery code** — from the Delivery Terminal or Delivery Mode in the Company app — then puts it in the pickup chest and presses **STOCKED**. The terminal moves it into an empty locker and tells the Bank which; the buyer gets a notification with their code. No staff PIN: whoever has the parcel has its code, and the code opens nothing else.
-- **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. Then **Foxy Security**: their PUMPE asks *Is this you?* over whatever is open, and they answer **It's me** with their PIN — or **Not me**, and the parcel stays in and their code changes. The terminal waits up to two minutes, then moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
+- **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. Then **Foxy Security**: their Pocket asks *Is this you?* over whatever is open, and they answer **It's me** with their PIN — or **Not me**, and the parcel stays in and their code changes. The terminal waits up to two minutes, then moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
 - **Pre-confirming.** Foxy's **Security** tab lists every parcel waiting at a pickup point and any question waiting to be answered. Confirm one ahead of time and, for thirty minutes, its code opens it without asking. Tapping it again takes that back.
-- **Me (12.0 Final).** No code to hand? **Me → TYPE YOUR NAME**, and your PUMPE asks *Is this you?* — **It's me** with your PIN shows the counter your orders for that point. One that has arrived comes out with a tap (you just said yes, so it does not ask again). One still on its way can be made **ready**: when it arrives its code opens it without asking. **< DONE** signs you out, and so does walking away for a minute. Only your own orders, only on that counter; **Not me** shows it nothing. A person's PUMPE is asked at most once a minute, and names nobody has count as wrong codes.
+- **Me (12.0 Final).** No code to hand? **Me → TYPE YOUR NAME**, and your Pocket asks *Is this you?* — **It's me** with your PIN shows the counter your orders for that point. One that has arrived comes out with a tap (you just said yes, so it does not ask again). One still on its way can be made **ready**: when it arrives its code opens it without asking. **< DONE** signs you out, and so does walking away for a minute. Only your own orders, only on that counter; **Not me** shows it nothing. A person's Pocket is asked at most once a minute, and names nobody has count as wrong codes.
 - **Buying on the spot (11.1).** A pickup point can sell what it has: the counter's **Store** tab lists what is on sale and how many are left — at the company's sale price since 12.0 Final, with **I HAVE A DISCOUNT CODE** before paying (the Bank works the price out as the Shop app's checkout does, and a code used here counts its use) — the customer picks one and pays with **Foxy Pay** (needs GPS anchors) or **a code for another bank**, and it comes out into the pickup chest. What it sells — a name, the game item (`oak_log`, or `create:cogwheel` for a mod), how many a sale, the price — is set up per point in the Company app's **Store → Pickup points**. Stock is whatever is in the lockers that is not somebody's parcel; staff put it in through the pickup chest with **STAFF → RESTOCK STORE**, which fills lockers already in use first so empty ones stay free for parcels. The money goes to the owner like any kiosk sale. If a sale comes up short — a locker emptied by hand while the customer paid — the customer is told and the owner is notified who is owed what; that refund is the owner's to make.
 - **Five wrong codes** a minute per pickup point, then it waits. **Five wrong staff PINs** lock the staff door for five minutes; the count survives a reboot. The company owner can always sign in instead of using the PIN.
 - **Updates.** A pickup point updates itself after a minute with nobody at the counter, from the counter screen, so nobody is ever halfway through anything. (Pickup points on 11.0 never updated in Pickup mode; after 11.1 lands, they tell customers to fetch staff until staff leave Pickup mode once.)
@@ -563,9 +573,9 @@ Since 12.0 Easy Deployment is a downloader. One file, `startup.lua`, sets up any
    ```
 
 2. Run `startup` (or restart the computer).
-3. **The PUMPE has the first screen** — unless this is a new world. On a computer with nothing installed and a modem, Easy Deployment first asks the network for a Bank; if none answers, the first screen is **Welcome to Foxy** (12.0 Final), and **GET THE BANK SERVER** fetches it from GitHub (operator's code `4040`). **NOT NOW** goes to the PUMPE. Otherwise tap **INSTALL PUMPE**, or press Enter.
-4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Service Kiosk, `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the PUMPE.
-5. Every program gets the same full screen as the PUMPE, with one big **INSTALL** button. The **Bank Server** (Foxy's) and the **Admin Terminal** ask for the operator's code, `4040`. The 3rd Party Bank Server is its own entry and needs no code.
+3. **The Pocket has the first screen** — unless this is a new world. On a computer with nothing installed and a modem, Easy Deployment first asks the network for a Bank; if none answers, the first screen is **Welcome to Foxy** (12.0 Final), and **GET THE BANK SERVER** fetches it from GitHub (operator's code `4040`). **NOT NOW** goes to the Pocket. Otherwise tap **INSTALL POCKET**, or press Enter.
+4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Service Kiosk, `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the Pocket.
+5. Every program gets the same full screen as the Pocket, with one big **INSTALL** button. The **Bank Server** (Foxy's) and the **Admin Terminal** ask for the operator's code, `4040`. The 3rd Party Bank Server is its own entry and needs no code.
 6. It downloads the program, `config.lua`, the shared `lib/` files and its own copy as `/pumpe/installer.lua`, writes `/startup.lua` to boot through that copy, and restarts into the program.
 
 A computer that already has a program shows it: **OPEN** starts it and **REINSTALL** downloads it again. A reinstall keeps the computer's own `config.lua` settings. Only the Bank Server ever gets the government key: every other program's config has it removed. Data files are never touched, and a `/startup.lua` that is your own program is kept — the installed program then starts straight away instead.
@@ -591,7 +601,7 @@ reboot
 
 ## Automatic Internet Updates
 
-The Bank Server watches an HTTPS release folder for new PUMPE versions. It checks the small `release_manifest.json` every few seconds. When the manifest contains a newer semantic version, the server:
+The Bank Server watches an HTTPS release folder for new FoxyOS versions. It checks the small `release_manifest.json` every few seconds. When the manifest contains a newer semantic version, the server:
 
 1. Downloads every required script into a private staging folder.
 2. Rejects missing, unexpected, oversized, or path-traversing files.
@@ -601,11 +611,13 @@ The Bank Server watches an HTTPS release folder for new PUMPE versions. It check
 6. Refreshes `/pumpe/installer.lua`, writes a direct Bank boot entry, saves the database, and restarts immediately.
 7. Detects the restart marker, bypasses every menu, clears any `/updates/` an older release left behind, and launches the Bank Server normally.
 
-Every role updates itself. A PUMPE, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
+Every role updates itself. A Pocket, CCG console, kiosk, controller or Bank checks the public manifest when it starts and every `client_update_check_seconds` (default 30), then downloads **only the files that role needs** — its own program, Easy Deployment and the shared libraries. Nothing downloads another role's program.
 
-**Since 11.1, up to date also means complete.** Which files a role installs is decided by the updater that is running, and a release that adds a file to a role is installed by the updater from before it, which has never heard of that file. So an unattended device that is already current checks it has every file its role needs and downloads only the missing ones. A PUMPE is not asked about this: nothing is new.
+**Since 11.1, up to date also means complete.** Which files a role installs is decided by the updater that is running, and a release that adds a file to a role is installed by the updater from before it, which has never heard of that file. So an unattended device that is already current checks it has every file its role needs and downloads only the missing ones. A Pocket is not asked about this: nothing is new.
 
-**Since 9.5, the PUMPE asks first.** When a release lands the phone fills the screen with what changed and waits for an answer: Update now, or Later. Later holds until the phone restarts, and Settings → Updates has a Check now button in the meantime. The same screen switches the phone to Automatic for anyone who prefers the old behaviour. Every other role is unattended — there is nobody in front of a Bank Server to tap Update — so everything except the PUMPE still updates itself silently.
+**The FoxyOS update screen (FoxyOS 12).** Every device downloads the same way, Easy Deployment included: **FOXY** blinks in the middle of the screen, and a thin bar along the bottom edge fills as the files arrive.
+
+**The Pocket downloads first, then asks.** The release is downloaded and checked into a staging folder under the update screen, then the screen slides up into the question: the release's name, its version, what it is, and two buttons — **Install** and **Cancel & Delete**. Install swaps the files in and restarts; Cancel & Delete throws the download away and leaves the phone as it was, and it asks again next time it starts. Settings → Updates has a Check now button and the Automatic switch for anyone who wants no question. Every other role is unattended — there is nobody in front of a Bank Server to tap Install — so everything except the Pocket still updates itself without asking, under the same screen.
 
 What the phone shows comes from the manifest: a `label` naming the release and a `changes` array of headlines. Both are derived by the release builder from files in this repository — the label from `release_name` in `config.lua`, the headlines from the top section of `CHANGELOG.md` — so they cannot drift from the release they describe. `release_name` is the one config value an update replaces rather than preserves; every other local setting still survives.
 
@@ -615,7 +627,7 @@ The Bank Server still answers installers from before 12.0 over Rednet, which onl
 
 **Published without comments (11.2).** The Core, the Vault and the shared libraries are downloaded from `dist/`: the same files built by `tools/build_release_manifest.js` with their comments and indentation taken out — a third of every one of them was prose for whoever reads this repository. Every line stays on the line it came from, so an error a computer reports still names the right line here, and `tests/host_dist_build_test.lua` proves each one compiles to exactly the same bytecode as its source. Programs whose comments are read by code (the installer's `-- PUMPE EASY DEPLOYMENT`, the apps' `-- PUMPE APP:` lines) are published as they are. Edit the source, never `dist/`; the builder rewrites it.
 
-Because each device stages only its own role, the worst-case update peaks at about 739 KiB of ComputerCraft's 1000 KiB computer — a PUMPE — and the Bank Core's at about 623 KiB, leaving it roughly 377 KiB for its data (the release builder prints the current figures). And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
+Because each device stages only its own role, the worst-case update peaks at about 739 KiB of ComputerCraft's 1000 KiB computer — a Pocket — and the Bank Core's at about 623 KiB, leaving it roughly 377 KiB for its data (the release builder prints the current figures). And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
 
 ### Manifest layout
 
@@ -682,7 +694,7 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - Data is saved atomically to `bank_data_v5.dat` beside the program.
 - Back up that file. It contains the full economy.
 
-### PUMPE
+### Pocket
 
 - Use an Advanced Pocket Computer with a wireless modem.
 - The header clock uses ComputerCraft's in-game clock.
@@ -695,7 +707,7 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - Lobby codes, ready states, coin flips, six race lanes, the shrinking Survivor ring, players, and results all render on the monitor.
 - Touch **Start** only after every displayed player is ready. Heads or Tails and Race support one or more players; Survivor requires at least two.
 - **Auto Mode** does that waiting for you and keeps opening the next lobby. It stops only for the code entered when it was started.
-- The console stores only its server-issued ID/token. It never stores PUMPE PINs or decides payouts.
+- The console stores only its server-issued ID/token. It never stores Pocket PINs or decides payouts.
 
 ### Service Kiosk
 
@@ -703,11 +715,11 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - Attach an Advanced Monitor directly or through a wired peripheral network.
 - Products and favorites belong to the linked company and therefore appear on every linked kiosk.
 - The cashier always opens on the receipt-and-products POS. Use the top tabs for **Favorited**, **All Products**, and **Subscriptions**, `+` to add a product, and `S` for settings.
-- A linked kiosk settles sales into the company owner's PUMPE balance. An unlinked kiosk uses its own local merchant balance.
+- A linked kiosk settles sales into the company owner's Pocket balance. An unlinked kiosk uses its own local merchant balance.
 
 ### Event Kiosk
 
-- Signs in with an ordinary PUMPE account.
+- Signs in with an ordinary Foxy Account.
 - Event day is the in-game day number.
 - Event time is entered as four digits (`1830` becomes `18:30`).
 
@@ -717,10 +729,10 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - The government key starts as `Government1234` and is changed from inside the terminal. The live key is kept in the Bank database, so it never needs a file edited on the Bank. A Bank that reached 7.1 by updating kept the old `CHANGE-ME-GOVERNMENT-KEY` placeholder in its config and rejected the documented key; from 8.0 a retired placeholder means "unset" and `Government1234` works.
 - **Controls** holds account approval and the key. With approval on, every new Foxy Account waits until it is approved; accounts that already exist are never held.
 - **Accounts** finds any account and can add money, remove money, issue a tax demand, ban or unban, and approve it.
-- A tax demand is owed rather than seized. It appears in the holder's BuckApp and is paid with their own PIN, so money never moves without them. **While one is outstanding, that account's payment features are switched off** — code payments, sending money, ticket purchases, visa fees, the Bet Wallet and Bet all refuse — so a fine cannot be dodged by spending the balance first. Being paid still works, and so does settling the demand.
+- A tax demand is owed rather than seized. It appears in the holder's MyID app (Tax) and is paid with their own PIN, so money never moves without them. **While one is outstanding, that account's payment features are switched off** — code payments, sending money, ticket purchases, visa fees, the Bet Wallet and Bet all refuse — so a fine cannot be dodged by spending the balance first. Being paid still works, and so does settling the demand.
 - An announcement can be aimed at **one account** as well as at everyone: banner, full screen, or a **text message**.
 - A text message opens a thread between the state and that account. They can answer, the terminal answers back, and **MESSAGES** lists every thread with the ones waiting on a reply highlighted. Only the government moves money there — it can ask for money or send it, and the holder can settle what is asked, but cannot bill the state. That is what makes it usable as a speeding ticket.
-- **Announce** sends every PUMPE either a banner or a full screen notice that stays until **Continue** is pressed. Either way it also arrives as an ordinary alert.
+- **Announce** sends every Pocket either a banner or a full screen notice that stays until **Continue** is pressed. Either way it also arrives as an ordinary alert.
 - Government sessions expire automatically, and every movement is written to the bank transaction log.
 
 The Tax Controller was retired in 7.1.0. Install **Admin Terminal** on that computer instead; running the old program now says so.
@@ -729,7 +741,7 @@ The Tax Controller was retired in 7.1.0. Install **Admin Terminal** on that comp
 
 - Use an Advanced Computer with a wireless or Ender modem.
 - During setup, sign into the Foxy Account that owns the destination territory and choose that territory.
-- Travelers enter the eight-character code shown in their Visas app.
+- Travelers enter the eight-character code shown in MyID → Visas.
 - The operator explicitly chooses **Enter Territory** or **Exit Territory** before entering the travel code. Every approved action powers the back redstone side for exactly five seconds.
 - A temporary visa permits one entry and its matching exit. That exit closes the visit and locks the visa even when approved days remain.
 - Citizenship and Free Roam remain reusable, but a server-enforced cooldown prevents rapid code sharing. Changing territory or closing a configured controller requires the territory owner's PIN.
@@ -740,21 +752,21 @@ The Tax Controller was retired in 7.1.0. Install **Admin Terminal** on that comp
 
 Start it once and leave it running. The touch dashboard shows account and transaction counts, recent activity, manual save, and safe shutdown.
 
-### Personal PUMPE
+### Pocket
 
-Complete the animated introduction, choose **Set Up New Account**, set a four-digit PIN, and choose how PUMPE should address you. The resulting identity is called a **Foxy Account**, and new accounts receive the configured starting balance.
+Complete the animated introduction, choose **Set Up New Account**, set a four-digit PIN, and choose how the Pocket should address you. The resulting identity is called a **Foxy Account**, and new accounts receive the configured starting balance.
 
-### Customs and Visas
+### MyID: countries and visas
 
-Open **Customs** to create a territory. Its owner automatically receives citizenship and can grant permanent citizenship to other Foxy Accounts, review visa applications, and allow citizens of selected territories permanent Free Roam into the destination.
+Open **MyID → Countries** to create a country. Its owner automatically receives citizenship and can grant permanent citizenship to other Foxy Accounts, review visa applications, and allow citizens of selected territories permanent Free Roam into the destination.
 
-Open **Visas** to see citizenship and visa codes, active visits and departure days, Free Roam access, application history, or request a 1–30 in-game-day visa. The destination territory owner approves or declines each request in Customs.
+Open **MyID → Visas** to see citizenship and visa codes, active visits and departure days, Free Roam access, application history, or request a 1–30 in-game-day visa. The destination country's owner approves or declines each request in MyID → Countries. Asking for a visa needs a confirmed Digital ID.
 
 ### Service Kiosk
 
 The kiosk registers itself, asks for its public name, then offers to link a company:
 
-- Sign in with the company owner's PUMPE account.
+- Sign in with the company owner's Pocket account.
 - Select an owned company or create one.
 - Press `+`, enter a product and price, then choose **One Time** or **Subscription**.
 - Favorite products with the `F` control. Tap products to build the receipt on the left and use the side buttons to page through larger catalogs.
@@ -764,11 +776,11 @@ Skipping company setup is safe. You can link later under **S → Link Company**.
 
 ### Events
 
-Sign in, create the event, then add one or more ticket types. Customers immediately see active future events in their PUMPE.
+Sign in, create the event, then add one or more ticket types. Customers immediately see active future events in their Pocket.
 
 ### CCG
 
-Install **CCG Bet Console**, attach the monitor and modem, and select a game. Players fund **Bet Wallet** from their PUMPE, open the PIN-gated **Bet** app, enter the lobby code and a player name, then choose their wager. The big-screen operator starts the round when everyone shows **READY**.
+Install **CCG Bet Console**, attach the monitor and modem, and select a game. Players fund **Bet Wallet** from their Pocket, open the PIN-gated **Bet** app, enter the lobby code and a player name, then choose their wager. The big-screen operator starts the round when everyone shows **READY**.
 
 ## Important behavior
 
@@ -777,13 +789,13 @@ Install **CCG Bet Console**, attach the monitor and modem, and select a game. Pl
 - Money sent inside Messages or Urgent Contact goes through the Bank's one transfer path, so the server-calculated 10% fee, the `$2,000` daily limit and the transaction log are identical everywhere. Foxy Cash is the only way to start one from the phone since 9.4, and it reaches friends only.
 - You can only message or reach someone who is already a friend.
 - A conversation keeps its most recent 60 messages.
-- PUMPE locks after 60 seconds of inactivity and begins requiring a PIN after 120 seconds.
+- The Pocket locks after 60 seconds of inactivity and begins requiring a PIN after 120 seconds.
 - Ticket purchases always require a PIN and are limited to the configured quantity per purchase.
 - A ticket code becomes invalid immediately after **Mark Used + Admit**.
-- Subscription codes are confirmed with the customer's PIN inside PUMPE. The first charge settles immediately; later charges run once per in-game day. Failed charges notify the customer and retry the next day.
+- Subscription codes are confirmed with the customer's PIN inside the Pocket. The first charge settles immediately; later charges run once per in-game day. Failed charges notify the customer and retry the next day.
 - Sessions are kept in memory and expire after 12 hours by default. Restarting the Bank Server signs clients out without changing their data.
-- The PUMPE stores only the last account name locally, never the PIN and never a session token.
-- A PUMPE asks before it installs a release, and lists what changed. Every unattended role still updates itself.
+- The Pocket stores only the last account name locally, never the PIN and never a session token.
+- A Pocket asks before it installs a release, and lists what changed. Every unattended role still updates itself.
 - Citizenship codes grant permanent entry to their own territory. They also grant permanent entry wherever that citizenship has active Free Roam.
 - Temporary visa departure days are calculated by the Bank Server on entry, and the document locks permanently after its recorded exit.
 - CCG wagers leave Bet Wallet when they are marked ready. Leaving or expiring before a round starts returns the full wager.
@@ -874,7 +886,7 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 - Event scheduling intentionally uses the Minecraft in-game day and time, not real-world time.
 - Check the current day shown in the event creation flow.
 
-**A PUMPE fails to start with a `nil value` error**
+**A Pocket fails to start with a `nil value` error**
 
 - Its program and the shared `lib/` are from different releases. Run Easy Deployment on that computer and reinstall the role; it downloads the program and every library together.
 - Reinstalling from Easy Deployment downloads the program and every library from the same release.
@@ -888,7 +900,7 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 - Every listed player must show **READY** after selecting a pick and reserving a wager.
 - Survivor requires at least two ready players.
-- Confirm the PUMPE has available Bet Wallet funds, not only funds still in Holding.
+- Confirm the Pocket has available Bet Wallet funds, not only funds still in Holding.
 - In Auto Mode the countdown only begins once every joined player is ready; a single player still picking holds the round.
 
 **Auto Mode will not turn off**
@@ -898,4 +910,4 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 ## Version
 
-PUMPE Ecosystem `11.9.0` — 12.0 Pre.
+FoxyOS 12 — release `12.1.0`.

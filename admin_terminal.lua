@@ -179,7 +179,7 @@ end
 
 local function stateDeposit()
     local recipient = ui.input(target, "STATE DEPOSIT", {
-        hint = "Recipient PUMPE account",
+        hint = "Their Foxy Account name",
         maxLength = 20,
         allowSpace = true,
     })
@@ -837,7 +837,7 @@ local function dashboard()
         audit = { "AUDIT CO.", "One company's books", function() auditCompany() end },
         accounts = { "FIND ACCOUNT", "Search every account", function() accountBrowser(false) end },
         pending = { "PENDING", "Waiting for approval", function() accountBrowser(true) end },
-        announce = { "ANNOUNCE", "To every PUMPE", function() announceScreen() end },
+        announce = { "ANNOUNCE", "To every Pocket", function() announceScreen() end },
         controls = { "CONTROLS", "Approval and the key", function() controlsScreen() end },
         stats = { "BANK STATS", "Totals across the bank", function() statsScreen() end },
         system = { "SYSTEM", "This terminal", function() systemScreen() end },
@@ -928,7 +928,7 @@ local function dashboard()
     })
 end
 
-ui.boot(target, "ADMIN TERMINAL", "GOVERNMENT CORE v" .. config.version)
+ui.boot(target, "ADMIN TERMINAL", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "admin", ROOT, client,

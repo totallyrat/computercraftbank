@@ -487,7 +487,7 @@ end
 end
 merged.version = version or defaults.version
 local written = pcall(util.writeFile, stagedPath,
-"-- PUMPE configuration. Local settings are preserved during updates.\n"
+"-- FoxyOS configuration. Local settings are preserved during updates.\n"
 .. "return " .. textutils.serialize(merged, { compact = false }) .. "\n")
 if not written then return nil, "Could not write the merged config" end
 return true

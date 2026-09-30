@@ -445,7 +445,7 @@ assert(not drew("stopped"), "the PUMPE must not have crashed")
 -- 20-row screen. The list pages instead, and every entry keeps its name on
 -- its own button rather than being drawn over a blank one.
 for _, label in ipairs({ "Main colour", "Network", "Storage", "Updates",
-    "App Settings", "Connected Apps", "How PUMPE Works", "Edit Your Dock",
+    "App Settings", "Connected Apps", "How Pocket Works", "Edit Your Dock",
     "Remove account" }) do
     assert(drew(label), "Settings is missing " .. label)
 end
@@ -457,7 +457,7 @@ assert(not pressed("Account ID"),
 -- Storage ------------------------------------------------------------------------
 
 assert(drew("FREE SPACE"), "storage says what is free")
-assert(drew("WHAT IS ON THIS PUMPE"), "and what the phone is holding")
+assert(drew("WHAT IS ON THIS POCKET"), "and what the phone is holding")
 
 -- Updates ------------------------------------------------------------------------
 

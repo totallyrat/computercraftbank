@@ -76,7 +76,7 @@ if offline() then pcall(net.closeModems) end
 -- can do back on the network is sign in properly.
 local function cachedProfile()
     return {
-        name = device.last_name ~= "" and device.last_name or "PUMPE",
+        name = device.last_name ~= "" and device.last_name or "Pocket",
         offline = true,
     }
 end
@@ -184,7 +184,7 @@ local function phoneTransition(title, color)
         sleep(0.015)
     end
     ui.clear(target)
-    ui.center(target, math.floor(height / 2), title or "PUMPE", ui.theme.ink)
+    ui.center(target, math.floor(height / 2), title or "Pocket", ui.theme.ink)
     sleep(0.08)
 end
 
@@ -202,7 +202,7 @@ local function preparationAnimation(newAccount)
             work = function() refreshSummary(true) end,
         },
         {
-            title = "Preparing your PUMPE",
+            title = "Preparing your Pocket",
             detail = "Installing your apps",
             work = function() client:discover() end,
         },
@@ -215,7 +215,7 @@ local function preparationAnimation(newAccount)
         if stage.work then pcall(stage.work) end
         for frame = 1, 4 do
             ui.clear(target)
-            ui.center(target, 5, "PUMPE", ui.theme.ink)
+            ui.center(target, 5, "Pocket", ui.theme.ink)
             ui.center(target, 8, stage.title, ui.theme.ink)
             ui.center(target, 9, stage.detail, ui.theme.muted)
             local dots = string.rep(".", (frame - 1) % 4)
@@ -243,7 +243,7 @@ end
 local function drawLockScreen(name, blink, prompt, promptColor)
     local width, height = target.getSize()
     ui.clear(target)
-    ui.text(target, 2, 1, "PUMPE", ui.theme.muted, ui.theme.background)
+    ui.text(target, 2, 1, "Pocket", ui.theme.muted, ui.theme.background)
     ui.text(target, width - 2, 1, "[]", ui.theme.success, ui.theme.background)
     local clock = util.formatClock(blink)
     if not ui.wordmark(target, 4, clock, nil, ui.theme.accent) then
@@ -287,7 +287,7 @@ local function lockScreen(forcePin)
                 or ui.idleForMs()
                     >= (tonumber(config.pumpe_pin_seconds) or 120) * 1000)
             if mustUsePin then
-                local pin = ui.pin(target, "Unlock PUMPE", true)
+                local pin = ui.pin(target, "Unlock Pocket", true)
                 if pin then
                     local result, err = client:request("LOGIN", {
                         name = account.name,
@@ -300,7 +300,7 @@ local function lockScreen(forcePin)
                         unlockAnimation()
                         return
                     end
-                    ui.message(target, "error", "PUMPE Locked",
+                    ui.message(target, "error", "Pocket Locked",
                         err or "Incorrect PIN", 0.8)
                 end
             else
@@ -329,7 +329,7 @@ local function lockedStart()
             return false
         elseif event[1] == "mouse_click" or event[1] == "monitor_touch"
             or event[1] == "key" or event[1] == "char" then
-            local pin = ui.pin(target, "Unlock PUMPE", true)
+            local pin = ui.pin(target, "Unlock Pocket", true)
             if pin then
                 local result, err = client:request("LOGIN", {
                     name = device.last_name, pin = pin })
@@ -340,7 +340,7 @@ local function lockedStart()
                     unlockAnimation()
                     return true
                 end
-                ui.message(target, "error", "PUMPE Locked",
+                ui.message(target, "error", "Pocket Locked",
                     err or "Incorrect PIN", 0.8)
             end
         end
@@ -447,14 +447,14 @@ local function guideScreen()
             local y = drawn and top + 7 or top + 2
             ui.center(target, y, "Welcome to Foxy", ui.theme.ink)
             ui.center(target, y + 2, ui.truncate(account and account.name
-                or "Your PUMPE is ready", width - 2), ui.theme.muted)
+                or "Your Pocket is ready", width - 2), ui.theme.muted)
             scene = ui.scene(target)
             scene:button("next", 3, height - 4, width - 5, 3, "Start",
                 { background = ui.theme.accent, foreground = ui.theme.accentInk,
                   shadow = true })
         else
             local entry = GUIDE[page]
-            ui.header(target, "How PUMPE Works",
+            ui.header(target, "How Pocket Works",
                 "Step " .. page .. " of " .. #GUIDE, util.formatClock())
             ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
             ui.text(target, 4, 6, entry[1], ui.theme.ink, ui.theme.panel)
@@ -524,7 +524,7 @@ local function welcomeScreen()
         ui.header(target, "Welcome", "Let us get you started",
             util.formatClock(blink))
         ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
-        ui.text(target, 4, 6, "PUMPE", ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 6, "Pocket", ui.theme.ink, ui.theme.panel)
         ui.wrappedText(target, 4, 7,
             "Your money, your friends and your tickets, in one pocket.",
             width - 6, 4, ui.theme.muted, ui.theme.panel)
@@ -1209,7 +1209,7 @@ local function visaApplyScreen(overview)
                     if result then
                         phoneTransition("Application Sent", colors.purple)
                         ui.message(target, "success", "APPLICATION SENT",
-                            "Customs will review it", 1.1)
+                            "The country's owner will review it", 1.1)
                         return
                     end
                 end
@@ -2159,7 +2159,7 @@ do
                         util.formatClock())
                     ui.wrappedText(target, 2, 5, "On the CCG, press HOME MODE and"
                         .. " enter its PIN. Type the code it shows here: this"
-                        .. " PUMPE is its controller.", width - 2, 5, ui.theme.muted)
+                        .. " Pocket is its controller.", width - 2, 5, ui.theme.muted)
                     scene:button("pair", 2, 11, width - 2, 3, "Enter pairing code",
                         { background = ui.theme.accent, foreground = ui.theme.accentInk })
                 elseif state.screen == "menu" then
@@ -3608,7 +3608,7 @@ local function storageScreen()
             and (math.floor(free / 10240) .. "% of a computer free")
             or "Not reported here", width - 6),
             ui.theme.muted, ui.theme.panel, width - 6)
-        ui.text(target, 2, 10, "WHAT IS ON THIS PUMPE", ui.theme.muted)
+        ui.text(target, 2, 10, "WHAT IS ON THIS POCKET", ui.theme.muted)
         ui.text(target, 2, 11, #installed.list .. " installed app"
             .. (#installed.list == 1 and "" or "s") .. "   " .. kb(appBytes),
             ui.theme.ink)
@@ -3695,11 +3695,11 @@ local function updatesScreen()
             and "New releases install themselves."
             or "You choose each time.", width - 6, 2,
             ui.theme.muted, ui.theme.panel)
-        ui.text(target, 2, 11, "THIS PUMPE", ui.theme.muted)
+        ui.text(target, 2, 11, "THIS POCKET", ui.theme.muted)
         ui.text(target, 2, 12, ui.truncate(tostring(config.release_name
             or ("v" .. tostring(config.version))), width - 2), ui.theme.ink)
         ui.wrappedText(target, 2, 14, device.modem_on == false
-            and "The modem is off, so this PUMPE is not looking for releases."
+            and "The modem is off, so this Pocket is not looking for releases."
             or (updateDeferred and ("Version " .. updateDeferred
                 .. " is waiting. Check now to see it again.")
             or "Checked every half minute while you are on the network."),
@@ -3728,7 +3728,7 @@ local function updatesScreen()
             -- than staying hidden because they said Later once.
             if not checkForUpdate(true) then
                 ui.message(target, "info", "Up to date",
-                    "This PUMPE is on the newest release", 1.2)
+                    "This Pocket is on the newest release", 1.2)
             end
         end
     end
@@ -3738,21 +3738,21 @@ end
 -- searches it, and a QuickAction can name one -- off one table rather than
 -- three that drift apart.
 local SETTINGS_ACTIONS = {
-    { id = "color", label = "Main colour", hint = "How your PUMPE looks",
+    { id = "color", label = "Main colour", hint = "How your Pocket looks",
       tab = "phone" },
     { id = "network", label = "Network", hint = "Modem on or off", tab = "phone" },
     { id = "updates", label = "Updates", hint = "Ask first, or automatic",
       tab = "phone" },
-    { id = "storage", label = "Storage", hint = "What is on this PUMPE",
+    { id = "storage", label = "Storage", hint = "What is on this Pocket",
       tab = "phone" },
     { id = "apps", label = "App Settings", hint = "What apps may do", tab = "apps" },
     { id = "connected", label = "Connected Apps", hint = "Who you signed in",
       tab = "apps" },
     { id = "dock", label = "Edit Your Dock", hint = "Your favourites", tab = "apps" },
-    { id = "guide", label = "How PUMPE Works", hint = "The tour", tab = "account" },
-    { id = "logout", label = "Remove account", hint = "Take it off this PUMPE",
+    { id = "guide", label = "How Pocket Works", hint = "The tour", tab = "account" },
+    { id = "logout", label = "Remove account", hint = "Take it off this Pocket",
       tab = "account" },
-    { id = "close", label = "Close PUMPE", hint = "Stop the program",
+    { id = "close", label = "Close Pocket", hint = "Stop the program",
       tab = "account" },
 }
 
@@ -3794,7 +3794,7 @@ local function settingsScreen(wanted)
             -- the account, and the next start asks who it belongs to.
             if ui.confirm(target, "Remove account",
                 "Take " .. (account and account.name or "this account")
-                    .. " off this PUMPE? It will ask who it belongs to next.",
+                    .. " off this Pocket? It will ask who it belongs to next.",
                 "Remove", "Back") then
                 sessionToken, betAccessToken, account = nil, nil, nil
                 device.last_name = ""
@@ -3804,7 +3804,7 @@ local function settingsScreen(wanted)
                 return "exit"
             end
         elseif id == "close" then
-            if ui.confirm(target, "Close PUMPE", "Shut down the PUMPE app?",
+            if ui.confirm(target, "Close Pocket", "Shut down the Pocket app?",
                 "CLOSE", "BACK") then
                 running = false
                 return "exit"
@@ -4833,7 +4833,7 @@ function webpage.run(domain, source)
     if not fs.exists(webDir) then fs.makeDir(webDir) end
     if not pcall(util.writeFile, path, source) then
         ui.message(target, "error", "No room for it",
-            "This PUMPE has no space to open a page", 2)
+            "This Pocket has no space to open a page", 2)
         return
     end
     local body = util.readFile(path)
@@ -4917,7 +4917,7 @@ local function runInstalledApp(entry, wantedAction)
     local built, factory = pcall(loader)
     if not built or type(factory) ~= "function" then
         ui.message(target, "error", entry.name .. " will not start",
-            "That app is not built for this PUMPE", 2)
+            "That app is not built for this Pocket", 2)
         return
     end
     local ok, err = pcall(factory, {
@@ -5204,7 +5204,7 @@ local function installApp(app)
         return false
     end
     if not keepApp(app, body) then
-        ui.message(target, "error", "No room on this PUMPE",
+        ui.message(target, "error", "No room on this Pocket",
             "Remove something first", 1.8)
         return false
     end
@@ -5245,7 +5245,7 @@ local function appDetail(app, mine)
             scene:button("open", 2, 14, width - 2, 2, "Open",
                 { background = ui.theme.success,
                     foreground = colors.black })
-            scene:button("remove", 2, 16, width - 2, 2, "Remove from PUMPE",
+            scene:button("remove", 2, 16, width - 2, 2, "Remove from Pocket",
                 { background = ui.theme.panel })
         else
             scene:button("get", 2, 14, width - 2, 3,
@@ -6453,10 +6453,11 @@ end
 pcall(webpage.sweep)
 
 if type(ui.splash) == "function" then
-    ui.splash(target, "PUMPE", "Small yet Mighty",
+    -- FoxyOS 12: the Pocket, on FoxyOS.
+    ui.splash(target, "POCKET", ui.osLabel and ui.osLabel(config) or "FoxyOS",
         { footnote = "v" .. config.version, blinks = 0, hold = 2 })
 else
-    ui.boot(target, "PUMPE", "POCKET ECONOMY v" .. config.version)
+    ui.boot(target, "POCKET", "FoxyOS")
 end
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
@@ -6488,4 +6489,4 @@ while running do
 end
 
 ui.clear(target)
-print("PUMPE closed.")
+print("Pocket closed.")

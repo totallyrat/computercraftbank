@@ -320,7 +320,7 @@ return function(api)
 
     local function publish(draft, live)
         if type(api.web) ~= "function" then
-            ui.message(target, "info", "Not on this PUMPE",
+            ui.message(target, "info", "Not on this Pocket",
                 "This phone is on an older release", 2)
             return false
         end

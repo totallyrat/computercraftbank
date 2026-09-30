@@ -212,7 +212,7 @@ const manifest = {
   channel: "stable",
   version: versionMatch[1],
   label: releaseLabel,
-  notes: "PUMPE + ComputerCraftGaming automatic internet release",
+  notes: "FoxyOS automatic internet release",
   changes: releaseChanges,
   files: releaseFiles.map(describe),
   extra_files: extraReleaseFiles.map(describe),
@@ -258,7 +258,7 @@ if (worstPeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
 }
 
 console.log(
-  `Built release_manifest.json for PUMPE v${manifest.version} (${releaseLabel}), `
+  `Built release_manifest.json for FoxyOS v${manifest.version} (${releaseLabel}), `
     + `${releaseChanges.length} change headlines`,
 );
 console.log(

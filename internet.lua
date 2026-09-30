@@ -40,7 +40,7 @@ return function(api)
         domain = clean(domain)
         if domain == "" then return end
         if type(api.browse) ~= "function" then
-            ui.message(target, "info", "Not on this PUMPE",
+            ui.message(target, "info", "Not on this Pocket",
                 "This phone is on an older release", 2)
             return
         end

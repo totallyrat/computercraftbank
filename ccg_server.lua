@@ -783,7 +783,7 @@ end
 -- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
     ui.serverTabs({
-        target = target, title = "PUMPE CCG SERVER", subtitle = "v" .. PROGRAM_VERSION,
+        target = target, title = "CCG SERVER", subtitle = "v" .. PROGRAM_VERSION,
         cards = function()
             local open, running_count, players = 0, 0, 0
             for _, lobby in pairs(state.lobbies) do
@@ -828,7 +828,7 @@ if TEST_MODE then
 end
 
 ui.usePhoneStyle(false)
-ui.boot(target, "PUMPE CCG", "COMPUTERCRAFTGAMING")
+ui.boot(target, "CCG SERVER", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 net.openModems()
 
 -- Registering with the Bank once. A CCG Server pays out of the Bank's
@@ -869,4 +869,4 @@ parallel.waitForAny(serverLoop, gameLoop, updateLoop, dashboardLoop)
 pcall(rednet.unhost, config.ccg_protocol or "PUMPE_CCG_V1")
 save()
 ui.clear(target)
-print("PUMPE CCG Server stopped safely.")
+print("CCG Server stopped safely.")

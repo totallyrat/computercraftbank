@@ -268,7 +268,7 @@ target = surface(target)
 local width = target.getSize()
 if phoneStyle then
 ui.fill(target, 1, 1, width, 3, ui.theme.background)
-ui.text(target, 2, 1, "PUMPE", ui.theme.muted, ui.theme.background)
+ui.text(target, 2, 1, "Pocket", ui.theme.muted, ui.theme.background)
 local clock = clockText or util.formatClock()
 ui.center(target, 1, clock, ui.theme.ink, ui.theme.background)
 ui.text(target, math.max(1, width - 2), 1, "[]",
@@ -583,7 +583,7 @@ if not (options and options.home == false) then
 scene:button("home", 1, 1, 1, 1, "<", {
 background = shade, foreground = ink, flash = false,
 })
-scene:hotspot("home", 2, 1, 5, 1)
+scene:hotspot("home", 2, 1, 6, 1)
 end
 end
 
@@ -1001,6 +1001,10 @@ M = { "# #", "###", "###", "# #", "# #" },
 E = { "###", "#  ", "###", "#  ", "###" },
 
 F = { "###", "#  ", "## ", "#  ", "#  " },
+
+C = { "###", "#  ", "#  ", "#  ", "###" },
+K = { "# #", "# #", "## ", "# #", "# #" },
+T = { "###", " # ", " # ", " # ", " # " },
 O = { "###", "# #", "# #", "# #", "###" },
 X = { "# #", "# #", " # ", "# #", "# #" },
 Y = { "# #", "# #", " # ", " # ", " # " },
@@ -1237,6 +1241,15 @@ end
 end
 end
 
+
+
+function ui.osLabel(config)
+local name = type(config) == "table" and config.release_name or nil
+if type(name) == "string" and name:find("FoxyOS", 1, true) then return name end
+local major = type(config) == "table" and tostring(config.version or ""):match("^(%d+)")
+return "FoxyOS" .. (major and (" " .. major) or "")
+end
+
 function ui.boot(target, product, subtitle)
 target = surface(target)
 local width, height = target.getSize()
@@ -1245,7 +1258,7 @@ local centerY = math.max(3, math.floor(height / 2) - 1)
 for step = 1, 4 do
 ui.clear(target)
 ui.center(target, centerY, product, ui.theme.ink)
-ui.center(target, centerY + 1, subtitle or "PUMPE ECOSYSTEM",
+ui.center(target, centerY + 1, subtitle or "FoxyOS",
 ui.theme.muted)
 local barWidth = math.max(8, math.min(width - 6, 28))
 ui.progress(target, math.floor((width - barWidth) / 2) + 1,

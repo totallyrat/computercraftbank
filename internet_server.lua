@@ -269,7 +269,7 @@ end
 -- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
     ui.serverTabs({
-        target = target, title = "PUMPE INTERNET",
+        target = target, title = "INTERNET SERVER",
         subtitle = "#" .. os.getComputerID() .. "  v" .. config.version,
         cards = function()
             return { { "SITES", #state.order, ui.theme.accent },
@@ -286,7 +286,7 @@ local function dashboardLoop()
             if #state.order == 0 then
                 lines[#lines + 1] = { "Nothing published yet. Websites are written in",
                     ui.theme.muted }
-                lines[#lines + 1] = { "Website Crafter on a PUMPE.", ui.theme.muted }
+                lines[#lines + 1] = { "Website Crafter on a Pocket.", ui.theme.muted }
             end
             return lines
         end,
@@ -310,7 +310,7 @@ end
 
 -- 12.0: this server's main colour, orange unless its owner chose one.
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
-ui.boot(target, "PUMPE INTERNET", "INTERNET SERVER v" .. config.version)
+ui.boot(target, "INTERNET SERVER", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 net.autoUpdate(config, "internet", ROOT, nil,
     { force = true, programVersion = PROGRAM_VERSION })
 net.host(PROTOCOL, HOSTNAME)
@@ -321,4 +321,4 @@ save()
 parallel.waitForAny(serverLoop, updateLoop, dashboardLoop)
 pcall(rednet.unhost, PROTOCOL)
 ui.clear(target)
-print("PUMPE Internet Server stopped.")
+print("Internet Server stopped.")

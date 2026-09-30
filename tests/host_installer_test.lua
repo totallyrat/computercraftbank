@@ -95,15 +95,15 @@ end
 local phone = fresh()
 local seen = h.run(phone, {
     function(screen)
-        assert(h.has(screen, "PERSONAL PUMPE") and h.has(screen, "INSTALL PUMPE")
+        assert(h.has(screen, "POCKET") and h.has(screen, "INSTALL POCKET")
             and h.has(screen, "SEARCH ALL PROGRAMS"),
-            "the first screen is the PUMPE's:\n" .. table.concat(screen, "\n"))
-        assert(select(2, h.where(screen, "PERSONAL PUMPE")) == 8,
+            "the first screen is the Pocket's:\n" .. table.concat(screen, "\n"))
+        assert(select(2, h.where(screen, "POCKET")) == 8,
             "under the big wordmark")
         return key("enter")
     end,
 })
-assert(seen.rebooted, "installed, it restarts into the PUMPE")
+assert(seen.rebooted, "installed, it restarts into the Pocket")
 local config = assertInstalled(phone, "pumpe", "pumpe.lua")
 assert(config.government_key == "CLIENT-NO-GOVERNMENT-ACCESS",
     "a phone never carries the government key")
@@ -120,7 +120,7 @@ end
 
 -- A tap does the same.
 phone = fresh()
-seen = h.run(phone, { tap("INSTALL PUMPE") })
+seen = h.run(phone, { tap("INSTALL POCKET") })
 assert(seen.rebooted)
 assertInstalled(phone, "pumpe", "pumpe.lua")
 
@@ -130,7 +130,7 @@ local before = snapshot(phone.disk)
 phone.fetched = {}
 seen = h.run(phone, {}, { "--boot", "pumpe" }, "pumpe/installer.lua")
 assert(#seen.launched == 1 and seen.launched[1] == "pumpe/pumpe.lua",
-    "it starts the PUMPE: " .. table.concat(seen.launched, ", "))
+    "it starts the Pocket: " .. table.concat(seen.launched, ", "))
 assert(sameDisk(before, phone.disk), "and changes nothing")
 assert(#phone.fetched == 1 and phone.fetched[1] == "release_manifest.json",
     "one look at the release, no downloads")
@@ -189,10 +189,10 @@ h.run(nothing, h.concat(key("down"), typed("zebra"),
 for _, back in ipairs({
     { key("down"), key("up") },
     { key("down"), { "char", "x" }, key("backspace"), key("backspace") },
-    { key("down"), tap("^ PUMPE") },
+    { key("down"), tap("^ POCKET") },
 }) do
     local computer = fresh()
-    local script = h.concat(back, expect("INSTALL PUMPE", { "terminate" }))
+    local script = h.concat(back, expect("INSTALL POCKET", { "terminate" }))
     seen = h.run(computer, script)
     assert(seen.ok, "back on the first screen, then out")
 end
@@ -251,15 +251,15 @@ assertInstalled(newWorld, "bank", "bank_server.lua")
 local later = fresh({ network = { bank = false } })
 h.run(later, h.concat(
     expect("WELCOME TO FOXY", tap("NOT NOW")),
-    expect("INSTALL PUMPE", { "terminate" })))
+    expect("INSTALL POCKET", { "terminate" })))
 
 -- A world with a Bank goes straight to the PUMPE, and so does a computer
 -- with no modem to ask with, or one that already runs something.
 local joining = fresh({ network = { bank = true } })
-h.run(joining, h.concat(expect("INSTALL PUMPE", { "terminate" })))
+h.run(joining, h.concat(expect("INSTALL POCKET", { "terminate" })))
 assert(joining.network.asked[1] == "PUMPE_BANK_V5")
 local noModem = fresh()
-h.run(noModem, h.concat(expect("INSTALL PUMPE", { "terminate" })))
+h.run(noModem, h.concat(expect("INSTALL POCKET", { "terminate" })))
 local busy = fresh({ network = { bank = false } })
 busy.disk["startup.lua"] = bootEntry("service")
 busy.disk["pumpe/installer.lua"] = h.installer
@@ -321,7 +321,7 @@ local kept = fresh({ disk = {
         .. ' currency = "E", government_key = "Government1234" }\n',
 } })
 seen = h.run(kept, {
-    expect("OPEN PUMPE", tap("REINSTALL")),
+    expect("OPEN POCKET", tap("REINSTALL")),
 }, nil, "pumpe/installer.lua")
 assert(seen.rebooted)
 config = assertInstalled(kept, "pumpe", "pumpe.lua")
@@ -408,7 +408,7 @@ seen = h.run(stale, {}, { "--boot", "pumpe" }, "pumpe/installer.lua")
 assert(seen.launched[1] == "pumpe/pumpe.lua")
 
 -- A program it does not know opens the menu rather than stopping.
-seen = h.run(fresh(), { expect("INSTALL PUMPE", { "terminate" }) },
+seen = h.run(fresh(), { expect("INSTALL POCKET", { "terminate" }) },
     { "--boot", "nonsense" })
 assert(said(seen, "UNKNOWN PROGRAM"))
 

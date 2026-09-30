@@ -232,7 +232,7 @@ local client = {
                 latest = {
                     notification_id = "NOT00000001",
                     title = "Welcome",
-                    body = "Your PUMPE is ready",
+                    body = "Your Pocket is ready",
                     kind = "info",
                 },
             }
@@ -304,7 +304,7 @@ local client = {
                 notifications = {
                     {
                         title = "Welcome to your Foxy Account",
-                        body = "Your new PUMPE is ready for code payments,"
+                        body = "Your new Pocket is ready for code payments,"
                             .. " nearby requests and money transfers.",
                         kind = "info",
                         created_day = 42,
@@ -828,12 +828,12 @@ assert(find(drawnText, "Welcome to Foxy"), "the guide ends with Welcome to Foxy"
 assert(find(buttonLabels, "Start") and not find(buttonLabels, "Skip"),
     "and has no way to skip it")
 assert(find(drawnText, "Foxy Account"))
-assert(find(drawnText, "Preparing your PUMPE"))
+assert(find(drawnText, "Preparing your Pocket"))
 -- Sign-up ends in the guide, and Settings can re-open the same screens.
-assert(find(drawnText, "How PUMPE Works"))
+assert(find(drawnText, "How Pocket Works"))
 assert(find(drawnText, "Step 1 of 3"), "three steps now, where there were six")
 -- 12.0: a Settings row is a label drawn on its button, as in the Foxy app.
-assert(find(drawnText, "How PUMPE Works"))
+assert(find(drawnText, "How Pocket Works"))
 assert(find(drawnText, "Edit Your Dock"))
 
 -- 9.4: the PUMPE itself offers no way to pay. Foxy Cash and Foxy Pay are

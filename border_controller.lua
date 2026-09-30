@@ -43,7 +43,7 @@ local function chooseTerritory(territories)
         local visible, current, pages = util.page(territories, page, 3)
         page = current
         ui.clear(target)
-        ui.header(target, "BORDER SETUP", "Choose the territory")
+        ui.header(target, "BORDER SETUP", "Choose the country")
         local scene = ui.scene(target)
         for index, territory in ipairs(visible) do
             local y = 5 + (index - 1) * 4
@@ -94,7 +94,7 @@ end
 local function setupController()
     while running do
         local ownerName = ui.input(target, "BORDER SETUP", {
-            hint = "Territory owner Foxy Account",
+            hint = "Country owner Foxy Account",
             maxLength = 20,
             minLength = 2,
             allowSpace = true,
@@ -114,11 +114,11 @@ local function setupController()
                 session_token = login.session_token,
             }, true)
             if not overview then
-                ui.message(target, "error", "CUSTOMS UNAVAILABLE",
+                ui.message(target, "error", "COUNTRIES UNAVAILABLE",
                     overviewError or "Try again", 1.2)
             elseif #overview.territories == 0 then
-                ui.message(target, "warning", "NO TERRITORY",
-                    "Create one in the PUMPE Customs app first", 1.8)
+                ui.message(target, "warning", "NO COUNTRY",
+                    "Create one in MyID on a Pocket first", 1.8)
                 return false
             else
                 local territory = chooseTerritory(overview.territories)
@@ -260,8 +260,8 @@ end
 
 local function checkVisa(direction)
     local entering = direction == "enter"
-    local code = ui.input(target, entering and "ENTER TERRITORY"
-        or "EXIT TERRITORY", {
+    local code = ui.input(target, entering and "ENTER COUNTRY"
+        or "EXIT COUNTRY", {
         hint = "Eight characters",
         mode = "code",
         maxLength = 8,
@@ -326,7 +326,7 @@ local function proximityVisaLoop()
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, "PROXIMITY VISA",
-            device.territory_name or "Territory", util.formatClock(blink))
+            device.territory_name or "Country", util.formatClock(blink))
         local accent = status == "CROSSED" and ui.theme.success
             or status == "REFUSED" and ui.theme.danger
             or status == "ASKING" and ui.theme.accent
@@ -416,8 +416,8 @@ local function dashboard()
     end
     local function changeTerritory()
         if ownerUnlock("OWNER PIN TO CHANGE")
-            and ui.confirm(target, "CHANGE TERRITORY",
-            "Register this computer to a different territory?", "CHANGE", "BACK") then
+            and ui.confirm(target, "CHANGE COUNTRY",
+            "Register this computer to a different country?", "CHANGE", "BACK") then
             device = {}
             saveDevice()
         end
@@ -435,18 +435,18 @@ local function dashboard()
             local width = target.getSize()
             ui.clear(target)
             ui.header(target, "BORDER CONTROLLER",
-                device.territory_name or "Territory", util.formatClock(blink))
+                device.territory_name or "Country", util.formatClock(blink))
             ui.center(target, 4, "DAY " .. util.ingameDay(), ui.theme.muted)
             local tall = math.max(2, math.min(4,
                 math.floor((ui.contentBottom(target) - 5) / 2)))
             local scene = ui.scene(target)
             scene:button("enter", 3, 6, width - 5, tall,
-                "ENTER TERRITORY\nScan VISA or Citizenship Code", {
+                "ENTER COUNTRY\nScan VISA or Citizenship Code", {
                     background = ui.theme.accent, foreground = ui.theme.accentInk,
                     shadow = true,
                 })
             scene:button("exit", 3, 7 + tall, width - 5, tall,
-                "EXIT TERRITORY\nClose the active visit", {
+                "EXIT COUNTRY\nClose the active visit", {
                     background = ui.theme.success, foreground = colors.black,
                     shadow = true,
                 })
@@ -472,10 +472,10 @@ local function dashboard()
         while running and device.controller_id do
             local width = target.getSize()
             ui.clear(target)
-            ui.header(target, "PROXIMITY VISA", device.territory_name or "Territory",
+            ui.header(target, "PROXIMITY VISA", device.territory_name or "Country",
                 util.formatClock())
             ui.wrappedText(target, 2, 5, "The gate asks whoever walks up with a"
-                .. " visa or citizenship on their PUMPE, and opens for two"
+                .. " visa or citizenship on their Pocket, and opens for two"
                 .. " seconds once they confirm.", width - 2, 4, ui.theme.muted)
             local scene = ui.scene(target)
             scene:button("proximity", 2, 10, width - 2, 3, "TURN ON",
@@ -498,11 +498,11 @@ local function dashboard()
             local width = target.getSize()
             ui.clear(target)
             ui.header(target, "OWNER", device.label or "Border", util.formatClock())
-            ui.text(target, 2, 4, ui.truncate("Territory  " .. tostring(device.territory_name),
+            ui.text(target, 2, 4, ui.truncate("Country  " .. tostring(device.territory_name),
                 width - 2), ui.theme.muted)
             local scene = ui.scene(target)
             local entries = {
-                { "setup", "CHANGE TERRITORY", ui.theme.panel },
+                { "setup", "CHANGE COUNTRY", ui.theme.panel },
                 { "color", "MAIN COLOUR", ui.theme.accent },
                 { "stop", "CLOSE", ui.theme.danger },
             }
@@ -537,7 +537,7 @@ local function dashboard()
 end
 
 pcall(redstone.setOutput, "back", false)
-ui.boot(target, "PUMPE BORDER", "CUSTOMS GATE v" .. config.version)
+ui.boot(target, "BORDER CONTROLLER", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 -- Check for a new release at every restart, straight from the public
 -- manifest. The Bank Server no longer has to hold a copy for us.
 net.autoUpdate(config, "border", ROOT, client,

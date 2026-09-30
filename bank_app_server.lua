@@ -313,7 +313,7 @@ function actions.TPB_CHARGE_OPEN(payload)
     need(amount > 0, "BAD_AMOUNT", "Enter an amount")
     local position = positionOf(payload)
     need(position, "NO_POSITION",
-        "This PUMPE cannot find itself. GPS anchors are needed for that.")
+        "This Pocket cannot find itself. GPS anchors are needed for that.")
     for _, charge in pairs(charges()) do
         need(charge.to_account ~= account.account_id
             or charge.status ~= "open",
@@ -359,7 +359,7 @@ function actions.TPB_CHARGE_NEARBY(payload)
     sweepCharges()
     local position = positionOf(payload)
     need(position, "NO_POSITION",
-        "This PUMPE cannot find itself. GPS anchors are needed for that.")
+        "This Pocket cannot find itself. GPS anchors are needed for that.")
     local range = tonumber(config.tpb_charge_range) or 12
     local best, bestDistance
     for _, charge in pairs(charges()) do
@@ -995,7 +995,7 @@ end
 ui.usePhoneStyle(false)
 -- 12.0: this bank's main colour, orange unless its owner chose one.
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
-ui.boot(target, "3RD PARTY BANK", "INDEPENDENT ECONOMY")
+ui.boot(target, "3RD PARTY BANK", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 net.openModems()
 
 if not state.app_id then

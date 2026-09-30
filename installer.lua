@@ -52,7 +52,7 @@ if keyboardLocked() then os.pullEvent = os.pullEventRaw end
 -- turns up for "shop" and the CCG console for "casino". `code` asks for the
 -- operator's code first. `extra` files come with the program.
 local PROGRAMS = {
-    { id = "pumpe", name = "Personal PUMPE", file = "pumpe.lua",
+    { id = "pumpe", name = "Pocket", file = "pumpe.lua",
       detail = "The phone: money, friends, apps",
       about = "Money, friends, tickets and travel papers, all in one pocket computer.",
       words = "phone pocket foxy money wallet apps" },
@@ -71,7 +71,7 @@ local PROGRAMS = {
     { id = "border", name = "Border Controller", file = "border_controller.lua",
       detail = "The visa gate",
       about = "Checks visas and opens the gate.",
-      words = "visa passport gate travel territory" },
+      words = "visa passport gate travel territory country" },
     { id = "bank", name = "Bank Server", file = "bank_server.lua", code = true,
       detail = "Foxy: the economy itself",
       about = "Foxy's Bank Core: every balance in the world. Needs the operator's code.",
@@ -85,12 +85,12 @@ local PROGRAMS = {
       words = "vault records server pair cable" },
     { id = "tpbank", name = "3rd Party Bank Server", file = "bank_app_server.lua",
       detail = "Hosts somebody's own bank",
-      about = "Runs a bank of your own, with its own app on every PUMPE.",
+      about = "Runs a bank of your own, with its own app on every Pocket.",
       words = "third party bank app server" },
     { id = "admin", name = "Admin Terminal", file = "admin_terminal.lua", code = true,
       detail = "For the government",
-      about = "Taxes, territories and the government's tools. Needs the operator's code.",
-      words = "government tax admin" },
+      about = "Taxes, Digital IDs and the government's tools. Needs the operator's code.",
+      words = "government tax admin myid id" },
     { id = "ccg", name = "CCG Bet Console", file = "ccg.lua",
       detail = "ComputerCraftGaming",
       about = "Heads or tails and the rest, with a Bet Wallet.",
@@ -101,11 +101,11 @@ local PROGRAMS = {
       words = "casino bet game server" },
     { id = "anchor", name = "GPS Anchor", file = "gps_anchor.lua",
       detail = "A positioning beacon",
-      about = "One of the four beacons that tell a PUMPE where it is.",
+      about = "One of the four beacons that tell a Pocket where it is.",
       words = "gps location position beacon" },
     { id = "apps", name = "App Server", file = "app_server.lua",
       detail = "Hosts the App Browser",
-      about = "Serves the apps every PUMPE can download.",
+      about = "Serves the apps every Pocket can download.",
       words = "apps store browser server",
       extra = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
           "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
@@ -222,6 +222,9 @@ local BIG_GLYPHS = {
     M = { "# #", "###", "###", "# #", "# #" },
     E = { "###", "#  ", "###", "#  ", "###" },
     F = { "###", "#  ", "## ", "#  ", "#  " },
+    C = { "###", "#  ", "#  ", "#  ", "###" },
+    K = { "# #", "# #", "## ", "# #", "# #" },
+    T = { "###", " # ", " # ", " # ", " # " },
     O = { "###", "# #", "# #", "# #", "###" },
     X = { "# #", "# #", " # ", "# #", "# #" },
     Y = { "# #", "# #", " # ", " # ", " # " },
@@ -518,7 +521,7 @@ local function configFor(program, body, existingPath, version)
     end
     defaults.version = version
     if program.id ~= "bank" then defaults.government_key = "CLIENT-NO-GOVERNMENT-ACCESS" end
-    return "-- PUMPE configuration. Local settings are kept when it is reinstalled.\n"
+    return "-- FoxyOS configuration. Local settings are kept when it is reinstalled.\n"
         .. "return " .. textutils.serialize(defaults) .. "\n"
 end
 
@@ -738,7 +741,7 @@ local function programScreen(program, installed, first)
     local width, height = target.getSize()
     clear()
     local titleY = 3
-    if program.id == "pumpe" and wordmark(2, "PUMPE", theme.accent) then titleY = 8 end
+    if program.id == "pumpe" and wordmark(2, "POCKET", theme.accent) then titleY = 8 end
     center(titleY, string.upper(program.name), program.id == "pumpe" and theme.ink
         or theme.accent)
     local buttonY = height - 5
@@ -749,7 +752,7 @@ local function programScreen(program, installed, first)
     local mine = installed == program.id
     local buttons = {}
     button(buttons, mine and "open" or "install", 2, buttonY, width - 2, 3,
-        (mine and "OPEN" or "INSTALL") .. (program.id == "pumpe" and " PUMPE" or ""),
+        (mine and "OPEN" or "INSTALL") .. (program.id == "pumpe" and " POCKET" or ""),
         theme.success, colors.black)
 
     local manifest = release.manifest
@@ -834,7 +837,7 @@ local function welcomeScreen()
     center(titleY, "WELCOME TO FOXY", theme.ink)
     local buttonY = height - 5
     local about = wrapText("No Bank Server answers on this network: this is a"
-        .. " new world. Every PUMPE banks with Foxy, so start here -- make this"
+        .. " new world. Every Pocket banks with Foxy, so start here -- make this"
         .. " computer the Bank Server. Cable a second one to it as its Bank"
         .. " Vault.", width - 4)
     for index, line in ipairs(about) do
@@ -919,7 +922,7 @@ local function searchScreen(installed, query)
         fill(1, 1, width, 1, theme.panel)
         writeAt(2, 1, "FIND A PROGRAM", theme.ink, theme.panel)
         local hits = {}
-        button(hits, "back", width - 8, 1, 9, 1, "^ PUMPE", theme.accentDark)
+        button(hits, "back", width - 9, 1, 10, 1, "^ POCKET", theme.accentDark)
         fill(2, 3, width - 2, 1, theme.panelAlt)
         local room = width - 6
         local shown = #query > room and query:sub(-room) or query
@@ -1085,8 +1088,9 @@ end
 do
     local width, height = target.getSize()
     clear()
-    center(math.floor(height / 2) - 1, "PUMPE EASY DEPLOYMENT", theme.ink)
-    center(math.floor(height / 2) + 1, "v" .. INSTALLER_VERSION, theme.muted)
+    center(math.floor(height / 2) - 1, "EASY DEPLOYMENT", theme.ink)
+    center(math.floor(height / 2) + 1, "FoxyOS " .. (INSTALLER_VERSION:match("^(%d+)") or ""),
+        theme.muted)
     if httpReady() and readManifest() then updateSelf(release.manifest) end
 end
 
@@ -1141,4 +1145,4 @@ while true do
 end
 
 clear()
-print("PUMPE Easy Deployment closed.")
+print("Easy Deployment closed.")

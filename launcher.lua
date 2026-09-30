@@ -9,7 +9,7 @@ local valid = {
 }
 
 if not valid[role] then
-    print("PUMPE migration launcher")
+    print("FoxyOS migration launcher")
     print("Usage: launcher <bank|pumpe|service|event|tax|border>")
     return
 end
@@ -23,7 +23,7 @@ if root == "" then root = "." end
 local installer = fs.combine(root,
     role == "bank" and "startup.lua" or "installer.lua")
 if not fs.exists(installer) then
-    error("Missing PUMPE Easy Deployment: " .. installer)
+    error("Missing FoxyOS Easy Deployment: " .. installer)
 end
 
 shell.run(installer, "--boot", role)

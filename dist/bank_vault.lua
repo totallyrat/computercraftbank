@@ -511,7 +511,7 @@ local function appendMessage(conversation, senderId, kind, body, extra)
 local item = {
 seq = conversation.next_seq,
 sender_id = senderId,
-sender_name = senderId and nameOf(senderId) or "PUMPE",
+sender_name = senderId and nameOf(senderId) or "FoxyOS",
 kind = kind,
 body = util.safeText(body, SOCIAL.max_message),
 day = util.ingameDay(),
@@ -1046,7 +1046,7 @@ local function appendCallMessage(call, senderId, kind, body, extra)
 local item = {
 seq = call.next_seq,
 sender_id = senderId,
-sender_name = senderId and nameOf(senderId) or "PUMPE",
+sender_name = senderId and nameOf(senderId) or "FoxyOS",
 kind = kind,
 body = util.safeText(body, SOCIAL.max_message),
 time = util.formatClock(),
@@ -1385,9 +1385,9 @@ end
 local function territoryOwner(account, territoryId)
 local territory = state.territories[territoryId]
 need(territory and territory.status == "active",
-"TERRITORY_NOT_FOUND", "Territory not found")
+"TERRITORY_NOT_FOUND", "Country not found")
 need(territory.owner_account_id == account.account_id,
-"NOT_TERRITORY_OWNER", "You do not control that territory")
+"NOT_TERRITORY_OWNER", "You do not control that country")
 return territory
 end
 
@@ -1671,7 +1671,7 @@ need(#name >= 3 and name:match("^[%w _%-]+$"),
 "INVALID_TERRITORY",
 "Use 3-24 letters, numbers, spaces, _ or -")
 need(not state.territory_names[util.normalName(name)],
-"TERRITORY_TAKEN", "That territory name is already registered")
+"TERRITORY_TAKEN", "That country name is already registered")
 local owned = 0
 for _, territory in pairs(state.territories) do
 if territory.owner_account_id == account.account_id
@@ -1682,7 +1682,7 @@ end
 local maximum = math.max(1,
 math.floor(tonumber(config.max_territories_per_account) or 3))
 need(owned < maximum, "TERRITORY_LIMIT",
-"A Foxy Account can control up to " .. maximum .. " territories")
+"A Foxy Account can control up to " .. maximum .. " countries")
 
 local territoryId = nextId("territory")
 local territory = {
@@ -1700,10 +1700,10 @@ local citizenship = assert(issueDocument(
 account, territory, "citizenship", {
 issued_by_account_id = account.account_id,
 }))
-core.notify(account.account_id, "Territory created",
+core.notify(account.account_id, "Country created",
 name .. " citizenship code: " .. citizenship.code, "travel")
 save()
-logActivity("Territory created: " .. name, colors.lightBlue)
+logActivity("Country created: " .. name, colors.lightBlue)
 return {
 territory = {
 territory_id = territoryId,
@@ -1742,9 +1742,9 @@ local owner = whoIsAsking(caller)
 local territory = territoryOwner(owner, payload.territory_id)
 local source = state.territories[payload.source_territory_id]
 need(source and source.status == "active",
-"TERRITORY_NOT_FOUND", "Partner territory not found")
+"TERRITORY_NOT_FOUND", "Partner country not found")
 need(source.territory_id ~= territory.territory_id,
-"INVALID_TERRITORY", "A territory already accepts its own citizens")
+"INVALID_TERRITORY", "A country already accepts its own citizens")
 local enabled = payload.enabled == true
 territory.free_roam_territory_ids[source.territory_id] =
 enabled and true or nil
@@ -1856,7 +1856,7 @@ function actions.VISA_APPLY(payload, caller)
 local account = whoIsAsking(caller)
 local territory = state.territories[payload.territory_id]
 need(territory and territory.status == "active",
-"TERRITORY_NOT_FOUND", "Territory not found")
+"TERRITORY_NOT_FOUND", "Country not found")
 local minimum =
 math.max(1, math.floor(tonumber(config.visa_min_days) or 1))
 local maximum =
@@ -1867,7 +1867,7 @@ need(requestedDays >= minimum and requestedDays <= maximum,
 .. " to " .. maximum .. " days")
 local access = accessForAccount(account.account_id, territory)
 need(not access, "ACCESS_EXISTS",
-"You already have entry rights for this territory")
+"You already have entry rights for this country")
 need(not pendingApplication(account.account_id, territory.territory_id),
 "APPLICATION_PENDING", "You already have an application pending")
 
@@ -1927,7 +1927,7 @@ function actions.BORDER_STATUS(payload, caller)
 local controller = requireBorderController(payload)
 local territory = state.territories[controller.territory_id]
 need(territory and territory.status == "active",
-"TERRITORY_NOT_FOUND", "Configured territory is unavailable")
+"TERRITORY_NOT_FOUND", "Configured country is unavailable")
 return {
 controller_id = controller.controller_id,
 territory_id = territory.territory_id,
@@ -1953,11 +1953,11 @@ local controller = requireBorderController(payload)
 sweepTravel()
 local territory = state.territories[controller.territory_id]
 need(territory and territory.status == "active",
-"TERRITORY_NOT_FOUND", "Configured territory is unavailable")
+"TERRITORY_NOT_FOUND", "Configured country is unavailable")
 local code = string.upper(util.trim(payload.code))
 local direction = string.lower(util.trim(payload.direction))
 need(direction == "enter" or direction == "exit",
-"BORDER_DIRECTION", "Choose Enter Territory or Exit Territory")
+"BORDER_DIRECTION", "Choose Enter Country or Exit Country")
 need(code:match("^[A-Z2-9]+$") and #code == 8,
 "VISA_CODE_INVALID", "Enter the eight-character travel code")
 local documentId = state.visa_codes[code]
@@ -1991,7 +1991,7 @@ local actionLabel
 
 if direction == "enter" then
 need(not visit, "ALREADY_VISITING",
-"This traveler is already inside; choose Exit Territory")
+"This traveler is already inside; choose Exit Country")
 if not permanent then
 need(document.status == "issued",
 "VISA_ALREADY_USED", "This temporary visa has already been used")
@@ -2088,7 +2088,7 @@ function actions.VISA_SCAN(payload, caller)
 local controller = requireBorderController(payload)
 local territory = state.territories[controller.territory_id]
 need(territory and territory.status == "active",
-"TERRITORY_NOT_FOUND", "Configured territory is unavailable")
+"TERRITORY_NOT_FOUND", "Configured country is unavailable")
 local origin = scans.position(payload)
 local request = scans.new("visa", origin, "Border check",
 "Stand at the " .. territory.name .. " border to cross",
@@ -3845,7 +3845,7 @@ end
 misses.count = 0
 local now = util.nowMs()
 need(now - (lookupAsked[person.account_id] or -LOOKUP_GAP_MS) >= LOOKUP_GAP_MS,
-"TRY_LATER", "Their PUMPE was asked a moment ago. Try again in a minute")
+"TRY_LATER", "Their Pocket was asked a moment ago. Try again in a minute")
 lookupAsked[person.account_id] = now
 lookupSequence = lookupSequence + 1
 local lookup = { request_id = "ME" .. lookupSequence .. "-" .. now % 100000,
@@ -4880,12 +4880,12 @@ end
 
 local function dashboardLoop()
 ui.serverTabs({
-target = term.current(), title = "PUMPE BANK VAULT",
+target = term.current(), title = "BANK VAULT",
 subtitle = "v" .. PROGRAM_VERSION,
 cards = function()
 return { { "PEOPLE", mapCount(state.holders), colors.cyan },
 { "CHATS", mapCount(state.conversations), colors.magenta },
-{ "TERRITORIES", mapCount(state.territories), colors.lime } }
+{ "COUNTRIES", mapCount(state.territories), colors.lime } }
 end,
 lines = function()
 return { { "CORE  " .. dash.core, dash.core_color },
@@ -4919,7 +4919,7 @@ running = function() return running end,
 })
 end
 
-ui.boot(term.current(), "PUMPE VAULT", "BANK RECORDS")
+ui.boot(term.current(), "BANK VAULT", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 
 if not core.load() then
 
@@ -4950,4 +4950,4 @@ save()
 parallel.waitForAny(serverLoop, sweepLoop, updateLoop, dashboardLoop)
 pcall(rednet.unhost, PROTOCOL)
 ui.clear(term.current())
-print("PUMPE Bank Vault stopped safely.")
+print("Bank Vault stopped safely.")

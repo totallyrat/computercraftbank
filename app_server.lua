@@ -171,7 +171,7 @@ local function seedShippedApps()
                 kind = shipped.kind or "app",
                 name = shipped.name,
                 description = shipped.description,
-                author = "PUMPE",
+                author = "FoxyOS",
                 developer_id = "PUMPE",
                 version = (existing and (existing.version or 0) or 0) + 1,
                 size = #body,
@@ -364,7 +364,7 @@ end
 -- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
     ui.serverTabs({
-        target = target, title = "PUMPE APP SERVER", subtitle = "v" .. config.version,
+        target = target, title = "APP SERVER", subtitle = "v" .. config.version,
         cards = function()
             local downloads, games = 0, 0
             for _, app in pairs(state.apps) do
@@ -390,10 +390,10 @@ local function dashboardLoop()
             return lines
         end,
         activity = activity, root = ROOT, colorTitle = "Server colour",
-        actions = { { id = "stop", label = "STOP", hint = "PUMPEs stop downloading apps",
+        actions = { { id = "stop", label = "STOP", hint = "Pockets stop downloading apps",
             color = ui.theme.danger, run = function()
                 if ui.confirm(target, "STOP APP SERVER",
-                    "PUMPEs will not be able to download apps.", "STOP", "BACK") then
+                    "Pockets will not be able to download apps.", "STOP", "BACK") then
                     running = false
                     save()
                     return true
@@ -410,7 +410,7 @@ end
 
 -- 12.0: this server's main colour, orange unless its owner chose one.
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end
-ui.boot(target, "PUMPE APPS", "APP SERVER v" .. config.version)
+ui.boot(target, "APP SERVER", (ui.osLabel and ui.osLabel(config) or "FoxyOS"))
 net.autoUpdate(config, "apps", ROOT, nil,
     { force = true, programVersion = PROGRAM_VERSION })
 net.host(config.app_protocol, config.app_hostname)
@@ -423,4 +423,4 @@ save()
 parallel.waitForAny(serverLoop, updateLoop, dashboardLoop)
 pcall(rednet.unhost, config.app_protocol)
 ui.clear(target)
-print("PUMPE App Server stopped.")
+print("App Server stopped.")

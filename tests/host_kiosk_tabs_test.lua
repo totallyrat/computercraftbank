@@ -91,7 +91,7 @@ local device = { controller_id = "B1", controller_token = "T", territory_id = "T
 script = kiosk.script()
 kiosk.push(script.actions, function(seen)
     local frame = seen.frames[#seen.frames]
-    assert(kiosk.has(frame, "ENTER TERRITORY") and kiosk.has(frame, "Gate")
+    assert(kiosk.has(frame, "ENTER COUNTRY") and kiosk.has(frame, "Gate")
         and kiosk.has(frame, "Owner"))
     return "tab:owner"
 end, "color", "color", "tab:scan", function(seen)

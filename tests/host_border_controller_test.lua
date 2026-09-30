@@ -165,7 +165,7 @@ function ui.progress(_, x, y, width)
     assertBox("progress", x, y, width, 1)
 end
 function ui.input(_, title)
-    assert(title == "ENTER TERRITORY" or title == "EXIT TERRITORY")
+    assert(title == "ENTER COUNTRY" or title == "EXIT COUNTRY")
     return "ABCD2345"
 end
 function ui.pin() return "1234" end
