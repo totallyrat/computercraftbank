@@ -21,7 +21,7 @@ local function lines(body)
     return count
 end
 
-local STRIPPED = { "bank_server.lua", "bank_vault.lua", "lib/net.lua",
+local STRIPPED = { "bank_server.lua", "bank_vault.lua", "pumpe.lua", "lib/net.lua",
     "lib/ui.lua", "lib/update.lua", "lib/util.lua" }
 
 local saved, total = 0, 0

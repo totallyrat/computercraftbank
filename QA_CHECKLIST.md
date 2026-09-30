@@ -7,6 +7,39 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 12 (12.1.0)
+
+Update the Bank Server (Core and Vault) first: MyID lives on the Bank.
+
+### FoxyOS and the Pocket
+
+- [ ] Restart each kind of device: its boot screen names the device and **FoxyOS 12**. The phone starts spelling **POCKET**, then holds **FoxyOS 12**.
+- [ ] The Pocket's header mark reads **Pocket** and a tap on it goes home. Settings → Account has **How Pocket Works** and **Close Pocket**.
+- [ ] Easy Deployment's first screen shows the big **POCKET** wordmark and **INSTALL POCKET**; search's back button reads **^ POCKET**.
+- [ ] Nothing a person reads says PUMPE, Customs or territory. (Protocol names, `/pumpe` and file names still do, on purpose.)
+
+### MyID and the Digital ID
+
+- [ ] The Home Screen has **MyID** and no Tax or Customs. A dock favourite or QuickAction that opened Tax or Customs opens MyID.
+- [ ] MyID → ID: **Get a Digital ID** with a name and the PIN. It shows **Waiting for the government**.
+- [ ] Try to apply for a visa: the Bank refuses until the ID is confirmed.
+- [ ] Admin Terminal → People → **DIGITAL IDS**: the request is listed with its code. **REFUSE** with a reason: the Pocket is told, and **Ask again** keeps the same code. **CONFIRM**: the Pocket is told the code, and the ID tab shows **Confirmed, day N** and **Show my MyID Code**.
+- [ ] MyID → Tax files the period's declaration and pays a tax demand. Foxy's demand row says to pay it in MyID.
+- [ ] MyID → Countries creates a country and manages citizens, applications and Free Roam as Customs did.
+
+### The MyID Verifier
+
+- [ ] Service Kiosk → Kiosk → **MYID VERIFIER**: type the confirmed code in lower case without dashes. It answers **VALID** and the name.
+- [ ] A pending, refused or made-up code answers **NOT VALID** with the reason and no name.
+- [ ] Five made-up codes in a row: the sixth check says to try later; a minute later it works.
+- [ ] The Event Kiosk's door has the verifier too, signed in as the organizer.
+
+### The update screen
+
+- [ ] Publish the next release after this one. A Pocket shows **FOXY** blinking with a thin bar filling along the bottom, then slides up into the version, what it is, **Install** and **Cancel & Delete**.
+- [ ] **Cancel & Delete**: the phone carries on as it was, no staged files are left, and it asks again after a restart. **Install**: it restarts on the new release.
+- [ ] A kiosk or server updates under the same FOXY screen without asking. Easy Deployment installs a program under it.
+
 ## 12.0 Final (12.0.0)
 
 ### CCG console and the Game Browser

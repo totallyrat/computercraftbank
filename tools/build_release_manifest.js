@@ -172,9 +172,12 @@ fs.copyFileSync(startupPath, path.join(projectRoot, "installer.lua"));
 // ever reads comments from: the installer's and the apps' marker comments
 // ("-- PUMPE EASY DEPLOYMENT", "-- PUMPE APP:") are read by programs.
 // tests/host_dist_build_test.lua proves each one compiles to the same code.
+// FoxyOS 12 adds the Pocket's own program: a phone holds its apps too, and
+// with every app installed a staged update no longer fitted beside them.
 const strippedFiles = [
   "bank_server.lua",
   "bank_vault.lua",
+  "pumpe.lua",
   "lib/net.lua",
   "lib/ui.lua",
   "lib/update.lua",
@@ -238,8 +241,9 @@ const depotOnlyFiles = [
 // Every role updates itself and downloads only its own files, and since 11.2
 // the Bank keeps other roles' programs in memory rather than on its disk. The
 // peak that matters is therefore the largest single role: its installed files
-// plus a staged copy of the same set, inside a 1000 KiB computer.
-const COMPUTER_LIMIT = 1000 * 1024;
+// plus a staged copy of the same set, inside a computer of 1,000,000 bytes.
+// ComputerCraft's computer_space_limit: 1,000,000 bytes, not 1000 KiB.
+const COMPUTER_LIMIT = 1000 * 1000;
 const DATABASE_HEADROOM = 150 * 1024;
 const sharedFiles = ["config.lua", "startup.lua", "lib/net.lua", "lib/ui.lua",
   "lib/update.lua", "lib/util.lua"];
@@ -253,7 +257,7 @@ if (worstPeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
   throw new Error(
     `Updating ${worstRole} would peak at ${Math.ceil(worstPeak / 1024)} KiB, `
       + `leaving under ${Math.ceil(DATABASE_HEADROOM / 1024)} KiB for data `
-      + `inside ComputerCraft's ${COMPUTER_LIMIT / 1024} KiB computer`,
+      + `inside ComputerCraft's ${Math.floor(COMPUTER_LIMIT / 1024)} KiB computer`,
   );
 }
 
@@ -277,6 +281,6 @@ console.log(
 );
 console.log(
   `Worst self-update (${worstRole}): ${Math.ceil(worstPeak / 1024)} KiB of `
-    + `${COMPUTER_LIMIT / 1024} KiB, leaving `
+    + `${Math.floor(COMPUTER_LIMIT / 1024)} KiB, leaving `
     + `${Math.floor((COMPUTER_LIMIT - worstPeak) / 1024)} KiB for data`,
 );

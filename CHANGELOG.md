@@ -1,5 +1,49 @@
 # Changelog
 
+## 12.1.0
+
+FoxyOS 12. Every device runs FoxyOS and the phone is the Pocket; MyID is
+the government's app and holds the new Digital ID; and every device
+updates under the new FoxyOS update screen.
+
+**FoxyOS 12.** Every device names FoxyOS 12 on its boot screen -- the
+Pocket, kiosks, terminals, consoles and servers. Protocols, file names and
+saved data keep their old names, so nothing needs reinstalling.
+
+**The Pocket.** The phone is the Pocket everywhere a person reads it: its
+start-up, its header, Settings, the guide and Easy Deployment.
+
+**MyID.** One app for the government: ID, Visas, Tax and Countries. Tax
+and Customs are gone from the Home Screen; favourites and QuickActions
+that opened them open MyID. Foxy's tax demand row points to MyID.
+
+**The Digital ID.** Get one in MyID with your name and PIN. It counts once
+the government confirms it at an Admin Terminal (People, DIGITAL IDS).
+Show your MyID Code to prove who you are.
+
+**Visas need a Digital ID.** The Bank refuses a visa application from an
+account without a confirmed one.
+
+**The MyID Verifier.** On every Service Kiosk (Kiosk tab) and at the Event
+Kiosk's door: type the code somebody says, and it answers VALID and their
+name, or NOT VALID and why. Five unknown codes, and it waits a minute.
+
+**The FoxyOS update screen.** FOXY blinks in the middle while a release
+downloads, over a thin bar along the bottom edge. Easy Deployment
+downloads under it too.
+
+**Install, or Cancel & Delete.** The Pocket downloads a release first,
+then the screen slides up into the question: the version, what it is,
+and two buttons. Cancel & Delete throws the download away. This release
+still arrives under the old screen; the next one uses the new.
+
+**Countries.** The Pocket, the Border Controller and the Bank's messages
+say country where they said territory.
+
+**Room to update.** The Pocket's program now downloads without its
+comments, a third smaller, so a phone with every app installed has room
+to stage the next release beside them.
+
 ## 12.0.0
 
 12.0 Final. The CCG console always starts and gets games from the App
