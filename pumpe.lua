@@ -2347,7 +2347,11 @@ local function showFullscreenAlert(item)
     -- is answered right here, over whatever was open. A question stays up
     -- for as long as the pickup point waits for it.
     local asking = item.security_order
-    while running and shown < (asking and 120 or 8) do
+    -- 12.0 Final: or somebody at a pickup point typed this person's name to
+    -- see their orders there.
+    local lookup = item.security_lookup
+    local question = asking or lookup
+    while running and shown < (question and 120 or 8) do
         local width, height = target.getSize()
         ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
         ui.center(target, 3, ui.truncate(
@@ -2359,9 +2363,9 @@ local function showFullscreenAlert(item)
         -- few columns per line, so give it every row down to the button
         -- rather than the five that fit only if nothing wraps badly.
         ui.wrappedText(target, 2, 8, item.body, width - 2,
-            height - (asking and 14 or 11), colors.white, ui.theme.accentDark)
+            height - (question and 14 or 11), colors.white, ui.theme.accentDark)
         local scene = ui.scene(target)
-        if asking then
+        if question then
             local half = math.floor((width - 3) / 2)
             scene:button("mine", 2, height - 5, half, 2, "It's me",
                 { background = ui.theme.success, foreground = colors.black })
@@ -2369,12 +2373,29 @@ local function showFullscreenAlert(item)
                 "Not me", { background = ui.theme.danger })
         end
         scene:button("ok", 2, height - 2, width - 2, 2,
-            asking and "Later, in Foxy" or "Got it",
+            asking and "Later, in Foxy" or lookup and "Not now" or "Got it",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 1 })
         shown = shown + 1
         if action == "ok" or action == "__terminate" then return end
-        if action == "mine" then
+        if action == "mine" and lookup then
+            local pin = ui.pin(target, "Your PIN", true)
+            if pin then
+                local done, err = request("SECURITY_LOOKUP_CONFIRM",
+                    { request_id = lookup, pin = pin }, true)
+                ui.message(target, done and "success" or "error",
+                    done and "Confirmed" or "Not confirmed",
+                    done and "Your orders are on the counter's screen" or err, 1.6)
+                if done then return end
+            end
+        elseif action == "notme" and lookup then
+            local denied, err = request("SECURITY_LOOKUP_DENY",
+                { request_id = lookup }, true)
+            ui.message(target, denied and "warning" or "error",
+                denied and "Kept private" or "Not done", denied
+                    and "The counter shows nothing" or err, 2)
+            if denied then return end
+        elseif action == "mine" then
             local pin = ui.pin(target, "Your PIN", true)
             if pin then
                 local done, err = request("SECURITY_CONFIRM",

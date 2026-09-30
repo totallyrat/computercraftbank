@@ -25,14 +25,14 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 197745,
-      "checksum": "e27aecc5"
+      "size": 199413,
+      "checksum": "00290121"
     },
     {
       "path": "pumpe.lua",
       "source": "pumpe.lua",
-      "size": 276029,
-      "checksum": "3569800a"
+      "size": 277161,
+      "checksum": "f56db0ae"
     },
     {
       "path": "service_kiosk.lua",
@@ -161,8 +161,8 @@
     {
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
-      "size": 142117,
-      "checksum": "b3a226d7"
+      "size": 147848,
+      "checksum": "b6d5e526"
     },
     {
       "path": "internet_server.lua",
@@ -185,8 +185,8 @@
     {
       "path": "delivery_terminal.lua",
       "source": "delivery_terminal.lua",
-      "size": 57736,
-      "checksum": "24bc8498"
+      "size": 67178,
+      "checksum": "3083c2c1"
     },
     {
       "path": "shop.lua",
@@ -203,8 +203,8 @@
     {
       "path": "company.lua",
       "source": "company.lua",
-      "size": 46374,
-      "checksum": "742e1697"
+      "size": 46450,
+      "checksum": "404ee6c1"
     },
     {
       "path": "brickbreaker.lua",

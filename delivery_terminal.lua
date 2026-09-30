@@ -806,17 +806,10 @@ local function waitForBuyer(found)
     return "cancelled"
 end
 
-local function collectParcel(found)
-    if not found.confirmed and waitForBuyer(found) ~= "confirmed" then
-        return
-    end
-    if not clearHatch() then return end
+-- A parcel the Bank has let go of: out of its locker, into the pickup
+-- chest.
+local function giveOut(handed)
     local hatch = hatchName()
-    local handed, err = request("PICKUP_RELEASE",
-        { order_id = found.order_id }, true)
-    if not handed then
-        return ui.message(target, "error", "NOT HERE", err, 2)
-    end
     ui.clear(target)
     local _, height = target.getSize()
     ui.center(target, math.floor(height / 2), "ONE MOMENT", ui.theme.ink)
@@ -828,6 +821,19 @@ local function collectParcel(found)
     end
     return ui.message(target, "warning", "ASK A MEMBER OF STAFF",
         "Your parcel is in " .. ui.truncate(tostring(handed.locker), 24), 4)
+end
+
+local function collectParcel(found)
+    if not found.confirmed and waitForBuyer(found) ~= "confirmed" then
+        return
+    end
+    if not clearHatch() then return end
+    local handed, err = request("PICKUP_RELEASE",
+        { order_id = found.order_id }, true)
+    if not handed then
+        return ui.message(target, "error", "NOT HERE", err, 2)
+    end
+    return giveOut(handed)
 end
 
 -- One box for everybody with a code: a buyer's collects, a courier's
@@ -969,6 +975,18 @@ local function payWithCode(offer)
     return false
 end
 
+-- 12.0 Final: the price the Bank works out -- the store's sale, and a
+-- discount code if there is one -- the same way the Shop app's is.
+local function priceOf(offer, code)
+    return request("STORE_PRICE", { price = offer.price, code = code }, true)
+end
+
+-- What the list shows before anybody types a code.
+local function salePrice(price, sale)
+    if (sale or 0) <= 0 then return price end
+    return util.roundMoney(price - util.roundMoney(price * sale / 100))
+end
+
 local function buyOffer(offer)
     if not clearHatch() then return end
     local taken = takenLockers()
@@ -979,19 +997,47 @@ local function buyOffer(offer)
     if inStock(offer.item, taken) < offer.count then
         return ui.message(target, "warning", "SOLD OUT", offer.name, 1.6)
     end
-    local how = pick(ui.truncate(string.upper(offer.name), 20),
-        offer.count .. " for " .. money(offer.price), {
-            { id = "foxy", label = "PAY WITH FOXY PAY" },
-            { id = "code", label = "ANOTHER BANK: CODE" } },
-        function(item) return item.label end)
-    if not how then return end
+    local priced = priceOf(offer) or { total = offer.price, discount = 0 }
+    local promo, method
+    while not method do
+        local was = (priced.discount or 0) > 0 and ("  was " .. money(offer.price)) or ""
+        local how = pick(ui.truncate(string.upper(offer.name), 20),
+            offer.count .. " for " .. money(priced.total) .. was, {
+                { id = "foxy", label = "PAY WITH FOXY PAY" },
+                { id = "code", label = "ANOTHER BANK: CODE" },
+                { id = "promo", label = promo and ("DISCOUNT: " .. promo)
+                    or "I HAVE A DISCOUNT CODE" } },
+            function(item) return item.label end)
+        if not how then return end
+        if how.id == "promo" then
+            local typed = ui.input(target, "DISCOUNT CODE", {
+                hint = "The store's code", mode = "text", maxLength = 16 })
+            if typed then
+                local withCode, err = priceOf(offer, typed)
+                if withCode then
+                    priced, promo = withCode, withCode.promo
+                    ui.message(target, "success", "CODE TAKEN",
+                        "Now " .. money(withCode.total), 1.4)
+                else
+                    ui.message(target, "error", "CODE NOT TAKEN", err, 1.8)
+                end
+            end
+        else
+            method = how.id
+        end
+    end
+    local charged = { name = offer.name, price = priced.total }
     local paid, payer
-    if how.id == "foxy" then
-        paid, payer = payWithFoxy(offer)
+    if priced.total <= 0 then
+        -- A code that makes it free: nothing to pay, and nothing moves.
+        paid, payer = true, "A customer"
+    elseif method == "foxy" then
+        paid, payer = payWithFoxy(charged)
     else
-        paid, payer = payWithCode(offer)
+        paid, payer = payWithCode(charged)
     end
     if not paid then return end
+    if promo then request("STORE_PROMO_USED", { code = promo }, true) end
     ui.clear(target)
     local _, height = target.getSize()
     ui.center(target, math.floor(height / 2), "ONE MOMENT", ui.theme.ink)
@@ -1003,7 +1049,7 @@ local function buyOffer(offer)
     end
     -- Paid, and the lockers came up short: somebody emptied one by hand
     -- between the check and now. The owner is told who is owed what.
-    local owed = util.roundMoney(offer.price * (offer.count - moved)
+    local owed = util.roundMoney(priced.total * (offer.count - moved)
         / offer.count)
     request("STORE_SHORT", { name = offer.name, count = offer.count,
         got = moved, owed = owed, payer = payer }, true)
@@ -1012,59 +1058,110 @@ local function buyOffer(offer)
             .. money(owed), 4)
 end
 
-local function storeScreen()
-    local page = 1
+-- Me, 12.0 Final --------------------------------------------------------------------
+-- Somebody types their name; their PUMPE asks whether it is them, and they
+-- say yes with their PIN. Then this counter shows everything of theirs that
+-- is coming here or waiting here. What has arrived comes out with a tap;
+-- what is on its way can be made ready, so their code opens it without
+-- asking again when it comes. Walk away and it signs itself out.
+
+local function waitForLookup(asked)
+    local deadline = util.nowMs() + (tonumber(asked.expires_in_ms) or 120000)
     while running do
-        local store = request("PICKUP_STORE", {}, true)
-        local taken = takenLockers()
-        if not store or not taken then
-            return ui.message(target, "error", "STORE UNAVAILABLE",
-                "The Bank is not answering", 1.6)
-        end
-        if not store.open or #store.offers == 0 then
-            return ui.message(target, "info", "STORE CLOSED",
-                "Nothing for sale right now", 1.6)
-        end
         local width, height = target.getSize()
-        local per = math.max(1, math.floor((height - 5) / 3))
-        local pages = math.max(1, math.ceil(#store.offers / per))
-        page = math.max(1, math.min(page, pages))
+        local middle = math.max(5, math.floor(height / 2) - 3)
+        local seconds = math.max(0, math.floor((deadline - util.nowMs()) / 1000))
         ui.clear(target)
-        ui.header(target, "STORE", ui.truncate(device.pickup.name, width - 3))
+        ui.header(target, ui.truncate(device.pickup.name, width - 3),
+            ui.truncate(tostring(asked.name), width - 3))
+        ui.center(target, middle, "CHECK YOUR PUMPE", ui.theme.ink)
+        ui.center(target, middle + 1, "Say yes with your PIN", ui.theme.muted)
+        ui.center(target, middle + 3, string.format("%d:%02d",
+            math.floor(seconds / 60), seconds % 60), ui.theme.muted)
         local scene = ui.scene(target)
-        for slot = 1, per do
-            local index = (page - 1) * per + slot
-            local offer = store.offers[index]
-            if not offer then break end
-            local left = math.floor(inStock(offer.item, taken) / offer.count)
-            scene:button("offer:" .. index, 2, 1 + slot * 3, width - 2, 2,
-                ui.truncate(offer.name .. "  " .. money(offer.price),
-                    width - 4) .. "\n" .. ui.truncate(left > 0
-                    and (offer.count .. " each, " .. left .. " left")
-                    or "Sold out", width - 4),
-                { background = left > 0 and ui.theme.accentDark
-                    or ui.theme.panel, disabled = left <= 0 })
-        end
-        if pages > 1 then
-            scene:button("prev", width - 8, height, 3, 1, "^",
-                { background = ui.theme.panel, disabled = page <= 1 })
-            scene:button("next", width - 4, height, 3, 1, "v",
-                { background = ui.theme.panel, disabled = page >= pages })
-        end
-        scene:button("back", 1, height, 8, 1, "< BACK",
+        scene:button("cancel", 3, height - 3, width - 4, 2, "CANCEL",
             { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 10 })
-        if action == "back" then return end
-        if action == "prev" then
-            page = page - 1
-        elseif action == "next" then
-            page = page + 1
-        else
-            local index = tonumber(action and action:match("^offer:(%d+)$"))
-            if index and store.offers[index] then buyOffer(store.offers[index]) end
+        local action = scene:wait({ tickRate = 2 })
+        if action == "cancel" then
+            request("PICKUP_ME_END", {}, true)
+            return nil
+        end
+        local polled = request("PICKUP_ME_WAIT", { request_id = asked.request_id }, true)
+        local status = polled and polled.status
+        if status == "confirmed" then
+            return { token = polled.me_token, name = polled.name,
+                orders = polled.orders or {} }
+        elseif status == "denied" then
+            ui.message(target, "error", "NOT CONFIRMED",
+                "They said it is not them", 2.4)
+            return nil
+        elseif status == "expired" or util.nowMs() > deadline + 10000 then
+            ui.message(target, "warning", "NOT CONFIRMED",
+                "Nobody answered in time", 2.4)
+            return nil
         end
     end
+    return nil
 end
+
+local function signIn()
+    local name = ui.input(target, "YOUR NAME", {
+        hint = "As on your PUMPE", mode = "text", allowSpace = true,
+        maxLength = 20, minLength = 2 })
+    if not name then return nil end
+    local asked, err = request("PICKUP_ME_ASK", { name = name }, true)
+    if not asked then
+        ui.message(target, "error", "NOT ASKED", err, 2)
+        return nil
+    end
+    return waitForLookup(asked)
+end
+
+local function refreshMe(me)
+    local listed = request("PICKUP_ME_ORDERS", { me_token = me.token }, true)
+    if not listed then return nil end
+    me.orders = listed.orders or {}
+    return me
+end
+
+-- One of theirs, tapped: out it comes, or ready for when it does.
+local function openMine(me, entry)
+    local what = ui.truncate(tostring(entry.company_name) .. ": "
+        .. linesText(entry), 60)
+    if entry.arrived then
+        if not ui.confirm(target, "PICK IT UP", what, "PICK UP", "BACK") then
+            return me
+        end
+        if not clearHatch() then return me end
+        local handed, err = request("PICKUP_ME_RELEASE",
+            { order_id = entry.order_id, me_token = me.token }, true)
+        if not handed then
+            ui.message(target, "error", "NOT HERE", err, 2)
+            return refreshMe(me)
+        end
+        giveOut(handed)
+        return refreshMe(me)
+    end
+    if entry.ready then
+        ui.message(target, "info", "READY FOR IT",
+            "When it comes, your code opens it without asking", 2.4)
+        return me
+    end
+    if not ui.confirm(target, "GET READY FOR IT", what .. ". When it comes, your"
+        .. " code opens it without asking you again.", "READY", "BACK") then
+        return me
+    end
+    local done, err = request("PICKUP_ME_READY",
+        { order_id = entry.order_id, me_token = me.token }, true)
+    ui.message(target, done and "success" or "error",
+        done and "READY" or "NOT DONE", done and "We will have it waiting" or err, 1.6)
+    return refreshMe(me)
+end
+
+-- The counter, 12.0 Final: Collect, Store and Me along the bottom, and
+-- STAFF under them.
+local PICKUP_TABS = { { id = "code", label = "Collect" },
+    { id = "store", label = "Store" }, { id = "me", label = "Me" } }
 
 -- Pickup points update themselves since 11.1, when nobody has touched them
 -- for a minute -- from the counter screen, so nobody can be halfway through
@@ -1073,30 +1170,112 @@ local lastTouch = util.nowMs()
 
 local function pickupScreen()
     local store = request("PICKUP_STORE", {}, true)
+    local deals = request("STORE_DEALS", {}, true) or {}
+    local tab, page, me = "code", 1, nil
+    local function signOut()
+        if me then request("PICKUP_ME_END", {}, true) end
+        me = nil
+    end
     while running and device.mode == "pickup" do
         local width, height = target.getSize()
+        local bottom = ui.contentBottom(target)
+        local open = store and store.open and #(store.offers or {}) > 0
         ui.clear(target)
-        local middle = math.max(4, math.floor(height / 2) - 4)
-        ui.center(target, 2, ui.truncate(device.pickup.name, width - 2),
-            ui.theme.accent)
-        ui.center(target, middle, "COLLECT OR DELIVER", ui.theme.ink)
-        ui.center(target, middle + 1, "Shop or delivery code",
-            ui.theme.muted)
+        local subtitle = tab == "store" and ((deals.sale or 0) > 0
+            and (deals.sale .. "% off everything") or "Buy it here, take it now")
+            or tab == "me" and (me and ("Hi, " .. me.name) or "Your orders here")
+            or "Pickup point"
+        ui.header(target, ui.truncate(device.pickup.name, width - 9),
+            ui.truncate(subtitle, width - 3), util.formatClock())
         local scene = ui.scene(target)
-        scene:button("code", 3, middle + 3, width - 4, 3, "ENTER CODE",
-            { background = ui.theme.accentDark, shadow = true })
-        if store and store.open and #(store.offers or {}) > 0 then
-            scene:button("store", 3, middle + 7, width - 4, 2,
-                "STORE: BUY NOW", { background = colors.purple })
+        local taken, offers
+        if tab == "code" then
+            ui.text(target, 2, 5, "COLLECT OR DELIVER", ui.theme.muted)
+            ui.wrappedText(target, 2, 6, "Your pickup code from the Shop app,"
+                .. " or a courier's delivery code.", width - 2, 2, ui.theme.ink)
+            scene:button("code", 2, 9, width - 2, 3, "ENTER CODE",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk,
+                  shadow = true })
+            if bottom >= 14 then
+                ui.wrappedText(target, 2, 13, "No code? Me shows your orders"
+                    .. " here by your name.", width - 2, 2, ui.theme.muted)
+            end
+        elseif tab == "store" then
+            offers = open and store.offers or {}
+            taken = open and takenLockers() or nil
+            if not open or not taken then
+                ui.wrappedText(target, 2, 5, not open and "The store here is"
+                    .. " closed. Parcels still come and go on Collect."
+                    or "The Bank is not answering.", width - 2, 3, ui.theme.muted)
+                offers = {}
+            end
+            local per = math.max(1, math.floor((bottom - 3) / 3))
+            local pages = math.max(1, math.ceil(#offers / per))
+            page = math.max(1, math.min(page, pages))
+            for slot = 1, per do
+                local index = (page - 1) * per + slot
+                local offer = offers[index]
+                if not offer then break end
+                local left = math.floor(inStock(offer.item, taken) / offer.count)
+                local now = salePrice(offer.price, deals.sale)
+                local price = money(now) .. (now < offer.price
+                    and ("  was " .. money(offer.price)) or "")
+                scene:button("offer:" .. index, 2, 1 + slot * 3, width - 2, 2,
+                    ui.truncate(offer.name .. "  " .. price, width - 4) .. "\n"
+                        .. ui.truncate(left > 0 and (offer.count .. " each, "
+                            .. left .. " left") or "Sold out", width - 4),
+                    { background = left > 0 and ui.theme.accentDark
+                        or ui.theme.panel, disabled = left <= 0 })
+            end
+            if pages > 1 then
+                scene:button("prev", 1, height, 3, 1, "^",
+                    { background = ui.theme.panel, disabled = page <= 1 })
+                scene:button("next", 5, height, 3, 1, "v",
+                    { background = ui.theme.panel, disabled = page >= pages })
+            end
+        elseif not me then
+            ui.text(target, 2, 5, "YOUR ORDERS HERE", ui.theme.muted)
+            ui.wrappedText(target, 2, 6, "Type your name and say yes on your"
+                .. " PUMPE. You will see what is coming here and what is"
+                .. " waiting, and take it.", width - 2, 3, ui.theme.ink)
+            scene:button("signin", 2, 10, width - 2, 3, "TYPE YOUR NAME",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk,
+                  shadow = true })
+        else
+            local per = math.max(1, math.floor((bottom - 3) / 3))
+            if #me.orders == 0 then
+                ui.wrappedText(target, 2, 5, "Nothing of yours is coming here"
+                    .. " or waiting here.", width - 2, 2, ui.theme.muted)
+            end
+            for slot = 1, math.min(per, #me.orders) do
+                local entry = me.orders[slot]
+                local status = entry.arrived and "HERE: TAP TO TAKE"
+                    or entry.ready and "ON ITS WAY, READY"
+                    or ("ON ITS WAY: " .. tostring(entry.stage or "Packing"))
+                scene:button("mine:" .. slot, 2, 1 + slot * 3, width - 2, 2,
+                    ui.truncate(tostring(entry.company_name) .. "  "
+                        .. linesText(entry), width - 4) .. "\n"
+                        .. ui.truncate(status, width - 4),
+                    { background = entry.arrived and ui.theme.success
+                        or ui.theme.panel,
+                      foreground = entry.arrived and colors.black or colors.white })
+            end
+            scene:button("signout", 1, height, 8, 1, "< DONE",
+                { background = ui.theme.panel })
         end
-        scene:button("staff", width - 7, height, 7, 1, "STAFF",
+        scene:button("staff", width - 6, height, 7, 1, "STAFF",
             { background = ui.theme.panel })
+        ui.tabBar(scene, target, PICKUP_TABS, tab, nil, { home = false })
         -- "__terminate" lands here now, and like every other stray event
         -- it just redraws the screen.
         local action = scene:wait({ tickRate = 20 })
         if action == "__tick" then
             store = request("PICKUP_STORE", {}, true) or store
+            deals = request("STORE_DEALS", {}, true) or deals
             if util.nowMs() - lastTouch >= 60000 then
+                -- Walked away: Me signs itself out, and back to the start.
+                if me then signOut() end
+                tab = "code"
                 net.autoUpdate(config, "delivery", ROOT, client, {
                     programVersion = PROGRAM_VERSION,
                     onProgress = function()
@@ -1106,12 +1285,34 @@ local function pickupScreen()
                     end })
             end
         end
-        if action == "staff" then
+        local picked = (action or ""):match("^tab:(.+)$")
+        if picked then
+            tab, page = picked, 1
+        elseif action == "staff" then
+            signOut()
             if staffMenu() == "leave" then return end
         elseif action == "code" then
             enterCode()
-        elseif action == "store" then
-            storeScreen()
+        elseif action == "prev" then
+            page = page - 1
+        elseif action == "next" then
+            page = page + 1
+        elseif action == "signin" then
+            me = signIn()
+        elseif action == "signout" then
+            signOut()
+        else
+            local index = tonumber(action and action:match("^offer:(%d+)$"))
+            local mine = tonumber(action and action:match("^mine:(%d+)$"))
+            if index and offers and offers[index] then
+                buyOffer(offers[index])
+            elseif mine and me and me.orders[mine] then
+                me = openMine(me, me.orders[mine])
+                if not me then
+                    ui.message(target, "info", "SIGNED OUT",
+                        "Type your name again", 1.4)
+                end
+            end
         end
         if action ~= "__tick" and action ~= "__terminate" then
             lastTouch = util.nowMs()

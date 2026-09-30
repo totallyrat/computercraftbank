@@ -608,8 +608,9 @@ return function(api)
             end
             if #codes == 0 then
                 ui.wrappedText(target, 2, 10, "No codes yet. A code is typed"
-                    .. " at checkout in the Shop app: a percentage or an"
-                    .. " amount off, or free delivery.", width - 2,
+                    .. " at checkout in the Shop app or at your pickup"
+                    .. " points: a percentage or an amount off, or free"
+                    .. " delivery. The sale counts at both.", width - 2,
                     math.max(1, bottom - 9), ui.theme.muted)
             end
             for slot = 1, per do

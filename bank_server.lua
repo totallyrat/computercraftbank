@@ -3586,6 +3586,8 @@ function actions.PUMPE_POLL(payload)
             style = latest.style,
             -- 11.1: "is this you?" from a pickup point, answered right there.
             security_order = latest.security_order,
+            -- 12.0 Final: the same, for somebody asking to see your orders.
+            security_lookup = latest.security_lookup,
         } or nil,
     }
 end
@@ -4440,33 +4442,45 @@ function shop.code(company, payload)
     return { codes = util.copy(settings.codes) }
 end
 
--- What a basket costs: the sale off everything, then a code, then delivery
--- -- free when the store says so or the code does. Never below zero. A code
--- that does not work is reported rather than quietly ignored.
-function shop.quote(company, items, kind, rawCode)
+-- The sale off an amount, then a code off what the sale left. 12.0 Final:
+-- a pickup point's counter works its prices out here too, so a store's
+-- sale and codes are the same online and at the counter. A code that does
+-- not work is reported rather than quietly ignored.
+function shop.discount(company, subtotal, rawCode)
     local settings = shop.settings(company)
-    local lines, subtotal = shop.price(company, items)
     local sale = util.roundMoney(subtotal * settings.sale / 100)
-    local promo, codeDiscount, codeError, freeByCode = nil, 0, nil, false
+    local out = { sale = sale, code_discount = 0, free_shipping = false }
     local key = shop.codeKey(rawCode)
     if #key > 0 then
         local code = settings.codes[key]
         if not code or not code.active then
-            codeError = "That code does not work at " .. company.name
+            out.code_error = "That code does not work at " .. company.name
         elseif (code.max_uses or 0) > 0 and (code.uses or 0) >= code.max_uses then
-            codeError = "That code has been used up"
+            out.code_error = "That code has been used up"
         else
-            promo = key
+            out.promo = key
             local left = subtotal - sale
             if (code.percent or 0) > 0 then
-                codeDiscount = util.roundMoney(left * code.percent / 100)
+                out.code_discount = util.roundMoney(left * code.percent / 100)
             elseif (code.amount or 0) > 0 then
-                codeDiscount = math.min(left, code.amount)
+                out.code_discount = math.min(left, code.amount)
             end
-            freeByCode = code.free_shipping == true
+            out.free_shipping = code.free_shipping == true
         end
     end
-    local discount = math.min(subtotal, util.roundMoney(sale + codeDiscount))
+    out.discount = math.min(subtotal, util.roundMoney(sale + out.code_discount))
+    return out
+end
+
+-- What a basket costs: the sale off everything, then a code, then delivery
+-- -- free when the store says so or the code does. Never below zero.
+function shop.quote(company, items, kind, rawCode)
+    local settings = shop.settings(company)
+    local lines, subtotal = shop.price(company, items)
+    local off = shop.discount(company, subtotal, rawCode)
+    local sale, codeDiscount, promo = off.sale, off.code_discount, off.promo
+    local codeError, freeByCode = off.code_error, off.free_shipping
+    local discount = off.discount
     local fee, waived = 0, false
     if kind == "home" then
         fee = settings.fee or 0
@@ -4958,6 +4972,35 @@ end
 function actions.COMPANY_SHOP_SETUP(payload)
     local _, company = shop.owned(payload)
     return shop.setup(company, payload)
+end
+
+-- A pickup point's Store, 12.0 Final: the sale its company is running, so
+-- the counter can show sale prices, and the price of one thing with a code.
+-- The counter charges what this says.
+function actions.STORE_DEALS(payload)
+    local _, company = requireStoreTerminal(payload)
+    return { sale = shop.settings(company).sale }
+end
+
+function actions.STORE_PRICE(payload)
+    local _, company = requireStoreTerminal(payload)
+    local price = validateAmount(payload.price, 1000000)
+    local off = shop.discount(company, price, payload.code)
+    need(not off.code_error, "BAD_CODE", off.code_error)
+    return { price = price, sale = off.sale, code_discount = off.code_discount,
+        discount = off.discount, promo = off.promo,
+        total = util.roundMoney(math.max(0, price - off.discount)) }
+end
+
+-- A code was used at the counter and the sale went through: it counts, as
+-- it would have online.
+function actions.STORE_PROMO_USED(payload)
+    local _, company = requireStoreTerminal(payload)
+    local code = shop.settings(company).codes[shop.codeKey(payload.code)]
+    need(code, "NO_SUCH_CODE", "That code is not one of this store's")
+    code.uses = (code.uses or 0) + 1
+    save()
+    return { uses = code.uses }
 end
 
 -- A pickup point sold something and could not hand all of it over -- a
@@ -5592,6 +5635,15 @@ pair.routes = {
     PICKUP_WAIT = { auth = "terminal" },
     PICKUP_RELEASE = { auth = "terminal" },
     PICKUP_STORE = { auth = "terminal" },
+    -- 12.0 Final: Me, at the counter -- a name typed, a yes on its PUMPE.
+    PICKUP_ME_ASK = { auth = "terminal" },
+    PICKUP_ME_WAIT = { auth = "terminal" },
+    PICKUP_ME_ORDERS = { auth = "terminal" },
+    PICKUP_ME_RELEASE = { auth = "terminal" },
+    PICKUP_ME_READY = { auth = "terminal" },
+    PICKUP_ME_END = { auth = "terminal" },
+    SECURITY_LOOKUP_CONFIRM = { auth = "session", pin = true, from = "FOXY" },
+    SECURITY_LOOKUP_DENY = { auth = "session", from = "FOXY" },
     SECURITY_LIST = { auth = "session", from = "FOXY" },
     SECURITY_CONFIRM = { auth = "session", pin = true, from = "FOXY" },
     SECURITY_DENY = { auth = "session", from = "FOXY" },

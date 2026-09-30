@@ -3631,10 +3631,19 @@ function actions.PICKUP_STOCK(payload, caller)
     end
     order.locker = locker
     orderStamp(order, "Ready for pickup")
+    -- 12.0 Final: its buyer said yes ahead of time, at this counter's Me
+    -- tab. Their code opens it without asking them again, for a while.
+    local ready = order.ready_here
+    if ready then
+        order.ready_here = nil
+        order.security = { status = "confirmed", point_id = order.delivery.point_id,
+            until_at = util.nowMs() + SHOP.preconfirm_ms }
+    end
     save()
     core.notify(order.buyer_account_id, "Ready to collect",
         "At " .. tostring(order.delivery.point_name) .. ". Your code is "
-            .. order.code .. ".", "success", { order_id = order.order_id })
+            .. order.code .. (ready and ". It opens without asking you." or "."),
+        "success", { order_id = order.order_id })
     return { order = publicOrder(order, false) }
 end
 
@@ -3746,13 +3755,8 @@ function actions.PICKUP_WAIT(payload, caller)
     return { status = "expired" }
 end
 
--- A yes, and the pickup chest is empty: the parcel is theirs.
-function actions.PICKUP_RELEASE(payload, caller)
-    local terminal = pickupPoint(caller)
-    local order = askedHere(terminal, payload.order_id)
-    local held = securityState(order)
-    need(held and held.status == "confirmed", "NOT_CONFIRMED",
-        "The buyer has not confirmed it is them")
+-- The parcel leaves its locker: collected.
+local function handOver(order)
     local locker = order.locker
     order.status = "collected"
     order.done_day = util.ingameDay()
@@ -3765,6 +3769,179 @@ function actions.PICKUP_RELEASE(payload, caller)
         "success", { order_id = order.order_id })
     return { order_id = order.order_id, locker = locker,
         lines = util.copy(order.lines) }
+end
+
+-- A yes, and the pickup chest is empty: the parcel is theirs.
+function actions.PICKUP_RELEASE(payload, caller)
+    local terminal = pickupPoint(caller)
+    local order = askedHere(terminal, payload.order_id)
+    local held = securityState(order)
+    need(held and held.status == "confirmed", "NOT_CONFIRMED",
+        "The buyer has not confirmed it is them")
+    return handOver(order)
+end
+
+-- Me, at a pickup point, 12.0 Final ------------------------------------------------
+-- Somebody types their name at the counter. Their PUMPE asks "is this you?"
+-- and they answer with their PIN; then the counter shows what of theirs is
+-- coming here or waiting here. What has arrived comes out. What is still
+-- on its way can be made ready: a yes now, so that when it comes their code
+-- opens it without asking again.
+--
+-- A question is short-lived and one counter asks one at a time, so these
+-- are kept in memory. Asking by name is asking somebody's phone to light
+-- up, so a person is asked at most once a minute, and a name nobody has
+-- counts as a wrong code does.
+local lookups, lookupAsked, lookupSequence = {}, {}, 0
+local LOOKUP_MS = 5 * 60 * 1000
+local LOOKUP_GAP_MS = 60 * 1000
+
+local function lookupOrders(terminal, accountId)
+    local list = {}
+    for _, order in pairs(state.orders) do
+        if order.buyer_account_id == accountId and order.status == "open"
+            and order.delivery.kind == "pickup"
+            and order.delivery.point_id == terminal.terminal_id then
+            list[#list + 1] = { order_id = order.order_id,
+                company_name = order.company_name, lines = util.copy(order.lines),
+                stage = order.stage, arrived = order.locker ~= nil,
+                ready = order.ready_here == true
+                    or (order.locker ~= nil and securityState(order) ~= nil
+                        and securityState(order).status == "confirmed") }
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.arrived ~= b.arrived then return a.arrived end
+        return a.order_id < b.order_id
+    end)
+    return list
+end
+
+-- The counter's confirmed lookup, kept alive while it is used.
+local function lookupHere(terminal, payload)
+    local lookup = lookups[terminal.terminal_id]
+    need(lookup and lookup.status == "confirmed" and lookup.token
+        and payload.me_token == lookup.token and util.nowMs() < lookup.until_at,
+        "NOT_CONFIRMED", "Type your name again")
+    lookup.until_at = util.nowMs() + LOOKUP_MS
+    return lookup
+end
+
+function actions.PICKUP_ME_ASK(payload, caller)
+    local terminal = pickupPoint(caller)
+    local point = state.pickup_points[terminal.terminal_id]
+    need(point, "NOT_A_POINT", "This terminal is not a pickup point")
+    local misses = pointMisses(terminal.terminal_id)
+    local name = util.trim(tostring(payload.name or ""))
+    local person = #name >= 2 and core.byName(name) or nil
+    if not person then
+        misses.count = (misses.count or 0) + 1
+        if misses.count >= SHOP.code_tries then
+            misses.count, misses.until_at = 0, util.nowMs() + SHOP.code_lock_ms
+        end
+        save()
+        reject("NO_SUCH_PERSON", "Nobody by that name banks here")
+    end
+    misses.count = 0
+    local now = util.nowMs()
+    need(now - (lookupAsked[person.account_id] or -LOOKUP_GAP_MS) >= LOOKUP_GAP_MS,
+        "TRY_LATER", "Their PUMPE was asked a moment ago. Try again in a minute")
+    lookupAsked[person.account_id] = now
+    lookupSequence = lookupSequence + 1
+    local lookup = { request_id = "ME" .. lookupSequence .. "-" .. now % 100000,
+        account_id = person.account_id, name = person.name, status = "asked",
+        point_name = point.name, expires_at = now + SHOP.ask_ms }
+    lookups[terminal.terminal_id] = lookup
+    core.notify(person.account_id, "Is this you?",
+        "Somebody at " .. tostring(point.name) .. " wants to see your orders"
+            .. " there. Confirm with your PIN.", "warning",
+        { security_lookup = lookup.request_id, style = "fullscreen",
+          app_name = "Foxy Security" })
+    return { request_id = lookup.request_id, name = person.name,
+        expires_in_ms = SHOP.ask_ms }
+end
+
+-- The counter, waiting on the answer. A yes comes back with the orders and
+-- the token the counter shows them with.
+function actions.PICKUP_ME_WAIT(payload, caller)
+    local terminal = pickupPoint(caller)
+    local lookup = lookups[terminal.terminal_id]
+    need(lookup and lookup.request_id == payload.request_id, "NO_SUCH_REQUEST",
+        "Type your name again")
+    local now = util.nowMs()
+    if lookup.status == "confirmed" and now < lookup.until_at then
+        return { status = "confirmed", me_token = lookup.token, name = lookup.name,
+            orders = lookupOrders(terminal, lookup.account_id) }
+    end
+    if lookup.status == "asked" and now < lookup.expires_at then
+        return { status = "asked", expires_in_ms = lookup.expires_at - now }
+    end
+    lookups[terminal.terminal_id] = nil
+    return { status = lookup.status == "denied" and "denied" or "expired" }
+end
+
+function actions.PICKUP_ME_ORDERS(payload, caller)
+    local terminal = pickupPoint(caller)
+    local lookup = lookupHere(terminal, payload)
+    return { name = lookup.name, orders = lookupOrders(terminal, lookup.account_id) }
+end
+
+-- Theirs, here, and in a locker: it comes out. They said yes on their
+-- PUMPE a moment ago, so it is not asked again.
+function actions.PICKUP_ME_RELEASE(payload, caller)
+    local terminal = pickupPoint(caller)
+    local lookup = lookupHere(terminal, payload)
+    local order = askedHere(terminal, payload.order_id)
+    need(order.buyer_account_id == lookup.account_id, "NO_SUCH_ORDER",
+        "That parcel is not waiting here")
+    return handOver(order)
+end
+
+-- Theirs, coming here, not arrived: ready for when it does.
+function actions.PICKUP_ME_READY(payload, caller)
+    local terminal = pickupPoint(caller)
+    local lookup = lookupHere(terminal, payload)
+    local order = state.orders[tostring(payload.order_id or "")]
+    need(order and order.buyer_account_id == lookup.account_id
+        and order.status == "open" and order.delivery.kind == "pickup"
+        and order.delivery.point_id == terminal.terminal_id, "NO_SUCH_ORDER",
+        "That order is not coming here")
+    need(not order.locker, "ALREADY_HERE", "It is here already: pick it up")
+    order.ready_here = true
+    save()
+    return { order_id = order.order_id, ready = true }
+end
+
+function actions.PICKUP_ME_END(payload, caller)
+    local terminal = pickupPoint(caller)
+    lookups[terminal.terminal_id] = nil
+    return { ended = true }
+end
+
+-- The person's side: yes with their PIN -- the Core has checked it -- or no.
+local function lookupFor(caller, requestId)
+    local person = whoIsAsking(caller)
+    for _, lookup in pairs(lookups) do
+        if lookup.request_id == requestId and lookup.account_id == person.account_id then
+            need(lookup.status == "asked" and util.nowMs() < lookup.expires_at,
+                "EXPIRED", "That question has gone")
+            return lookup
+        end
+    end
+    reject("EXPIRED", "That question has gone")
+end
+
+function actions.SECURITY_LOOKUP_CONFIRM(payload, caller)
+    local lookup = lookupFor(caller, payload.request_id)
+    lookup.status, lookup.token = "confirmed", util.token("ME")
+    lookup.until_at = util.nowMs() + LOOKUP_MS
+    return { confirmed = true, point_name = lookup.point_name }
+end
+
+function actions.SECURITY_LOOKUP_DENY(payload, caller)
+    local lookup = lookupFor(caller, payload.request_id)
+    lookup.status = "denied"
+    return { denied = true }
 end
 
 -- Foxy Security, the buyer's side --------------------------------------------------

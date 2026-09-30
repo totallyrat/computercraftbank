@@ -62,6 +62,7 @@ package.loaded["lib.util"] = {
 local pending = {}
 local scanAccepted, scanDeclined, claimed, paid
 local confirmedOrder, confirmedWith, deniedOrder
+local lookedUp, lookedUpWith, lookupDenied
 local client = {
     discover = function() return true end,
     request = function(_, action, payload)
@@ -96,6 +97,13 @@ local client = {
             deniedOrder = payload.order_id
             return { order_id = payload.order_id, denied = true,
                 code = "654321" }
+        elseif action == "SECURITY_LOOKUP_CONFIRM" then
+            assert(payload.app_id == nil)
+            lookedUp, lookedUpWith = payload.request_id, payload.pin
+            return { confirmed = true, point_name = "North Point" }
+        elseif action == "SECURITY_LOOKUP_DENY" then
+            lookupDenied = payload.request_id
+            return { denied = true }
         elseif action == "PAY_CODE_PREVIEW"
             or action == "PAY_CODE_CONFIRM" then
             -- Since 9.4 the Bank refuses these for a Foxy account. A phone
@@ -197,6 +205,10 @@ actions = {
     -- it is not.
     "__wake:security", "mine",
     "__wake:stranger", "notme",
+    -- 12.0 Final: somebody at a pickup point typed their name to see their
+    -- orders there. Yes once, no once.
+    "__wake:lookup", "mine",
+    "__wake:snoop", "notme",
     "__terminate",
 }
 local index = 0
@@ -263,6 +275,15 @@ local function securityPoll(id, order)
         security_order = order } }
 end
 polls.security = securityPoll("N1", "ORD00000007")
+local function lookupPoll(id, request)
+    return { latest = { notification_id = id, title = "Is this you?",
+        body = "Somebody at North Point wants to see your orders there."
+            .. " Confirm with your PIN.", kind = "warning",
+        style = "fullscreen", app_name = "Foxy Security",
+        security_lookup = request } }
+end
+polls.lookup = lookupPoll("N3", "ME1-100")
+polls.snoop = lookupPoll("N4", "ME2-200")
 polls.stranger = securityPoll("N2", "ORD00000008")
 polls.ticket, polls.visa = TICKET_SCAN, VISA_SCAN
 polls.claim, polls.basket = CLAIM, BASKET
@@ -318,5 +339,10 @@ assert(confirmedOrder == "ORD00000007" and confirmedWith == "1234",
     "it's me takes the PIN and confirms that order")
 assert(deniedOrder == "ORD00000008", "not me keeps the other parcel in")
 assert(drew("Kept it in"))
+assert(lookedUp == "ME1-100" and lookedUpWith == "1234",
+    "a counter asking to see this person's orders is answered with their PIN")
+assert(lookupDenied == "ME2-200" and drew("Kept private"),
+    "and a no shows the counter nothing")
+assert(pressed("Not now"), "a counter's question has no Foxy to answer it later in")
 
 print("host_pumpe_proximity_test: OK")

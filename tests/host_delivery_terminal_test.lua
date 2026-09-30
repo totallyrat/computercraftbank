@@ -223,18 +223,30 @@ local function runTerminal(bank, files, WIDTH, HEIGHT, script, offline)
         return take(script.confirms, "confirmation: " .. title)
     end
     function ui.scene()
-        local scene = {}
-        function scene:button(_, x, y, width, height, label)
+        -- 12.0 Final: a tap has to land on something that is there, or a
+        -- script that has drifted skips whole screens without a word.
+        local scene, tappable = {}, {}
+        function scene:button(id, x, y, width, height, label, options)
             box("button " .. tostring(label), x, y, width, height)
             assert(#wrap(label, math.max(1, width - 2)) <= height,
                 "button label clipped: " .. tostring(label))
             seen.labels[#seen.labels + 1] = tostring(label)
+            if not (options and options.disabled) then tappable[id] = true end
         end
-        function scene:hotspot(_, x, y, width, height)
+        function scene:hotspot(id, x, y, width, height)
             box("hotspot", x, y, width, height)
+            tappable[id] = true
         end
         function scene:wait()
-            return take(script.actions, "tap")
+            local action = take(script.actions, "tap")
+            if type(action) == "string" and action:sub(1, 2) ~= "__" then
+                local shown = {}
+                for id in pairs(tappable) do shown[#shown + 1] = tostring(id) end
+                table.sort(shown)
+                assert(tappable[action], "tapped " .. action
+                    .. ", which is not on the screen: " .. table.concat(shown, " "))
+            end
+            return action
         end
         return scene
     end
@@ -494,7 +506,7 @@ local function fullRun(WIDTH, HEIGHT)
             { position = { x = 11, y = 64, z = -20 } }))
         ownApples = bank.balanceOf(ana)
         return "__tick"
-    end, "store", "offer:1", "pick:1", function()
+    end, "tab:store", "offer:1", "pick:1", function()
         local id = openOffer()
         assert(bank.state.proximity_offers[id].target_account_id == kit.id,
             "Foxy Pay found the customer standing there")
@@ -537,7 +549,88 @@ local function fullRun(WIDTH, HEIGHT)
             and told.body:find("3.75", 1, true), "the owner knows who is owed "
                 .. "what: " .. tostring(told.body))
         chests[HATCH].slots = {}
-        return "back"
+        return "tab:code"
+    end)
+
+    -- 12.0 Final: the store's sale shows at the counter, and a discount
+    -- code takes its share of what the sale left: apples at 6, half off,
+    -- then HALF takes half of the 3 left. Then Me: Kit has a parcel waiting
+    -- here and one on its way. They type their name, say yes on their
+    -- PUMPE, take the first and get ready for the second.
+    local meWaiting, meComing, halfPaid
+    tap(function()
+        bank.request("COMPANY_SHOP_SETUP", bank.as(ana, { app_id = "COMPANY",
+            company_id = company.company_id, sale = 50 }))
+        bank.request("COMPANY_SHOP_CODE", bank.as(ana, { app_id = "COMPANY",
+            company_id = company.company_id, code = "HALF", percent = 50 }))
+        put(JUNK, "minecraft:apple", 8)
+        local here = device()
+        local function buy()
+            return bank.request("SHOP_CHECKOUT", bank.as(kit, {
+                company_id = company.company_id, pin = "5678",
+                items = { { item_id = bread.item_id, quantity = 2 } },
+                delivery = { kind = "pickup", point_id = here.terminal_id } })).order_id
+        end
+        meWaiting, meComing = buy(), buy()
+        put(LOCKER_A, "minecraft:bread", 2)
+        bank.request("PICKUP_STOCK", { terminal_id = here.terminal_id,
+            terminal_token = here.terminal_token, order_id = meWaiting,
+            locker = LOCKER_A, code = orders[meWaiting].delivery_code })
+        halfPaid = bank.balanceOf(ana)
+        return "__tick"
+    end, "tab:store", "offer:1", "pick:3")
+    typed("half")
+    tap("pick:1", function()
+        local id = openOffer()
+        assert(bank.state.proximity_offers[id].amount == 1.5,
+            "the sale, then the code: " .. tostring(bank.state.proximity_offers[id].amount))
+        bank.request("FOXY_PAY_CONFIRM", bank.as(kit, { offer_id = id, pin = "5678" }))
+        return "__tick"
+    end, function()
+        assert(count(HATCH, "minecraft:apple") == 8, "the apples came out")
+        assert(bank.balanceOf(ana) == halfPaid + 1.5, "and the store was paid what it said")
+        local codes = bank.request("COMPANY_STATE", bank.as(ana, { app_id = "COMPANY",
+            company_id = company.company_id })).settings.codes
+        assert(codes.HALF.uses == 1, "a code used at the counter counts")
+        chests[HATCH].slots = {}
+        return "tab:me"
+    end, "signin")
+    typed("Kit Wolf")
+    tap(function()
+        local asked = bank.notifications(kit)[1]
+        assert(asked.security_lookup and asked.style == "fullscreen",
+            "their PUMPE asks whether it is them")
+        bank.request("SECURITY_LOOKUP_CONFIRM", bank.as(kit, {
+            request_id = asked.security_lookup, pin = "5678" }))
+        bank.request("COMPANY_SHOP_SETUP", bank.as(ana, { app_id = "COMPANY",
+            company_id = company.company_id, sale = 0 }))
+        return "__tick"
+    end, "mine:1")
+    confirm(true)
+    tap(function()
+        assert(count(HATCH, "minecraft:bread") == 2, "the parcel that was here came out")
+        assert(orders[meWaiting].status == "collected")
+        chests[HATCH].slots = {}
+        return "mine:1"
+    end)
+    confirm(true)
+    tap(function()
+        assert(orders[meComing].ready_here, "the one on its way is ready for when it comes")
+        -- It comes, and its code opens it without a question. Collected,
+        -- so nothing is headed here when the point is retired below.
+        local here = device()
+        local function at(extra)
+            extra.terminal_id, extra.terminal_token = here.terminal_id, here.terminal_token
+            return extra
+        end
+        put(LOCKER_A, "minecraft:bread", 2)
+        bank.request("PICKUP_STOCK", at({ order_id = meComing, locker = LOCKER_A,
+            code = orders[meComing].delivery_code }))
+        assert(bank.request("PICKUP_CODE", at({ code = orders[meComing].code })).confirmed,
+            "made ready, it opens to its code without asking")
+        bank.request("PICKUP_RELEASE", at({ order_id = meComing }))
+        chests[LOCKER_A].slots = {}
+        return "signout"
     end)
 
     -- Five wrong staff PINs lock the staff door, even to the right PIN.
@@ -573,6 +666,14 @@ local function fullRun(WIDTH, HEIGHT)
 
     local seen = runTerminal(bank, files, WIDTH, HEIGHT, script)
     local shown = titles(seen)
+    local onSale, mine = false, {}
+    for _, label in ipairs(seen.labels) do
+        if label:find("$3  was $6", 1, true) then onSale = true end
+        if label:find("HERE: TAP TO TAKE", 1, true) then mine.here = true end
+        if label:find("ON ITS WAY", 1, true) then mine.coming = true end
+    end
+    assert(onSale, "the Store shows the sale price, and what it was")
+    assert(mine.here and mine.coming, "Me shows what is here and what is coming")
 
     -- The home order, all the way through.
     local home = orders[homeOrder.order_id]
@@ -602,9 +703,10 @@ local function fullRun(WIDTH, HEIGHT)
     assert(contains(shown, "PIN CHANGED"))
     assert(contains(shown, "PICKUP PAUSED"), "an error pauses Pickup mode")
     assert(table.concat(outputs, ",") == "back=true,back=false,"
-        .. "back=true,back=false,back=true,back=false",
-        "a pulse out of the back each time something came out: the parcel"
-            .. " and two sales")
+        .. "back=true,back=false,back=true,back=false,back=true,back=false,"
+        .. "back=true,back=false",
+        "a pulse out of the back each time something came out: the parcel,"
+            .. " three sales and the parcel taken from Me")
     assert(count(HATCH, "minecraft:dirt") == 1,
         "staff emptied the dirt's locker into the pickup chest")
     assert(count(JUNK, "minecraft:stick") == 5, "and never touched the sticks")
