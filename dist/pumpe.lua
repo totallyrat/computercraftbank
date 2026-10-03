@@ -188,6 +188,213 @@ ui.center(target, math.floor(height / 2), title or "Pocket", ui.theme.ink)
 sleep(0.08)
 end
 
+
+
+
+
+
+
+
+local opening = { spots = {} }
+do
+
+local function hash(x, y, seed)
+local value = math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453
+return value - math.floor(value)
+end
+
+
+
+
+
+local STYLES = {}
+local function near(c, x, y, ox, oy)
+local dx, dy = x - ox, (y - oy) * 1.5
+return math.sqrt(dx * dx + dy * dy)
+end
+local function reach(c) return math.sqrt(c.w * c.w + (c.h * 1.5) ^ 2) end
+local function front(value, limit, width)
+if value <= limit - (width or 1.5) then return 1 end
+if value <= limit then return 2 end
+return nil
+end
+
+
+function STYLES.ripple(c, x, y, t)
+local d, r = near(c, x, y, c.ox, c.oy), t * reach(c)
+if t < 1 and math.abs(d - r * 0.55) < 0.8 then return 2 end
+return front(d, r, 2)
+end
+
+function STYLES.tear(c, x, y, t)
+local half = t * (c.h / 2 + 1)
+if t > 0.5 and t < 1 and math.abs(y - (c.h + 1) / 2) < 1 then
+return x % 2 == 0 and 2 or 1
+end
+if y <= half or y > c.h - half then return 1 end
+end
+
+function STYLES.scan(c, x, y, t)
+local edge = t * (c.w + 2)
+if t < 1 and x <= edge and y == math.floor(t * c.h) + 1 then return 2 end
+return front(x, edge, 1)
+end
+
+function STYLES.arcade(c, x, y, t)
+local r = hash(math.floor((x - 1) / 2), y, c.seed)
+if r < t - 0.18 then return 1 end
+if r < t then return 2 end
+end
+
+function STYLES.wave(c, x, y, t)
+local level = c.h - t * (c.h + 3) + math.sin(x / 2.5 + t * 8) * 1.5
+if y > level + 1 then return 1 end
+if y > level then return 2 end
+end
+
+function STYLES.shake(c, x, y, t)
+local jitter = (c.frame % 2 == 0 and 1 or -1) * math.floor((1 - t) * 3)
+return front(math.abs(x - c.ox + jitter), t * (c.w + 1), 1)
+end
+
+function STYLES.bolt(c, x, y, t)
+local zig = ({ 0, 2, 4, 2 })[y % 4 + 1]
+return front(x + zig + y * 0.5, t * (c.w + c.h * 0.5 + 6), 2)
+end
+
+function STYLES.tiles(c, x, y, t)
+local columns = math.ceil(c.w / 6)
+local rows = math.ceil(c.h / 4)
+if (x - 1) % 6 == 5 or (y - 1) % 4 == 3 then
+return t >= 1 and 1 or nil
+end
+local index = math.floor((y - 1) / 4) * columns + math.floor((x - 1) / 6)
+local at = index / (columns * rows)
+if at < t - 1 / (columns * rows) then return 1 end
+if at < t then return 2 end
+end
+
+function STYLES.shutter(c, x, y, t)
+local edge = math.min(x - 1, c.w - x, (y - 1) * 1.5, (c.h - y) * 1.5)
+return front(edge, t * (c.w / 2 + 1), 1)
+end
+
+function STYLES.sweep(c, x, y, t)
+return front(x / c.w + (c.h - y + 1) / c.h, t * 2.1, 0.2)
+end
+
+function STYLES.envelope(c, x, y, t)
+return front(y + math.abs(x - c.w / 2) * 0.6, t * (c.h + c.w / 3 + 1), 1.5)
+end
+
+function STYLES.awning(c, x, y, t)
+local stripe = math.floor((x - 1) / 3) % 2
+return front(c.h - y + 1 + stripe * 2, t * (c.h + 3), 1)
+end
+
+function STYLES.blinds(c, x, y, t)
+return front((y - 1) % 3, t * 3.2, 0.5)
+end
+
+function STYLES.radar(c, x, y, t)
+local d = near(c, x, y, c.w / 2, c.h / 2)
+local r = t * reach(c) / 2 + 1
+if d <= r and (y % 2 == 1 or t > 0.5) then
+return d > r - 1.5 and 2 or 1
+end
+end
+
+function STYLES.typewriter(c, x, y, t)
+return front((y - 1) * c.w + x, t * c.w * c.h * 1.05, c.w)
+end
+
+function STYLES.coin(c, x, y, t)
+return front(math.abs(x - c.w / 2), t * (c.w / 2 + 1), 1)
+end
+
+function STYLES.spin(c, x, y, t)
+local band = ((x + y * 2) % 8) / 8
+if band < t - 0.125 then return 1 end
+if band < t then return 2 end
+end
+
+function STYLES.diamond(c, x, y, t)
+return front(math.abs(x - c.ox) + math.abs(y - c.oy) * 1.5,
+t * (c.w + c.h * 1.5), 2)
+end
+function STYLES.iris(c, x, y, t)
+return front(near(c, x, y, c.w / 2, c.h / 2), t * reach(c) / 2 + 1, 1.5)
+end
+function STYLES.doors(c, x, y, t)
+local half = t * (c.w / 2 + 1)
+if x <= half - 1 or x > c.w - half + 1 then return 1 end
+if x <= half or x > c.w - half then return 2 end
+end
+function STYLES.rise(c, x, y, t)
+return front(c.h - y + 1, t * (c.h + 1), 1)
+end
+function STYLES.diagonal(c, x, y, t)
+return front(x + y * 1.5, t * (c.w + c.h * 1.5 + 2), 2)
+end
+
+local BUILT_IN = { friends = "ripple", tickets = "tear", myid = "scan",
+ccg = "arcade", subs = "wave", reminders = "shake", quick = "bolt",
+browser = "tiles", settings = "shutter" }
+local SHIPPED = { FOXY = "sweep", MAIL = "envelope", SHOP = "awning",
+COMPANY = "blinds", NET = "radar", WC = "typewriter", BUCK = "coin",
+REVO = "spin" }
+local OTHERS = { "diamond", "iris", "doors", "rise", "diagonal" }
+
+function opening.style(id)
+id = tostring(id or "")
+if BUILT_IN[id] then return BUILT_IN[id] end
+local appId = id:match("^ext:(.+)$")
+if appId and SHIPPED[appId] then return SHIPPED[appId] end
+local sum = 0
+for index = 1, #id do sum = sum + id:byte(index) * index end
+return OTHERS[sum % #OTHERS + 1]
+end
+
+function opening.play(id, app)
+local width, height = target.getSize()
+local color = app.color or ui.theme.accentDark
+local edge = color == colors.white and colors.lightGray or colors.white
+local spot = opening.spots[id]
+or { math.floor(width / 2), math.floor(height / 2) }
+local c = { w = width, h = height, ox = spot[1], oy = spot[2],
+seed = #tostring(id), frame = 0 }
+local paint = STYLES[opening.style(id)]
+for frame = 1, 6 do
+c.frame = frame
+local t = frame / 6
+for y = 1, height do
+local start, kind = 1, nil
+for x = 1, width + 1 do
+local now = x <= width and paint(c, x, y, t) or nil
+if now ~= kind then
+if kind then
+ui.fill(target, start, y, x - start, 1,
+kind == 2 and edge or color)
+end
+start, kind = x, now
+end
+end
+end
+sleep(0.05)
+end
+
+local middle = math.floor(height / 2)
+ui.fill(target, 1, 1, width, height, color)
+ui.fill(target, math.floor(width / 2) - 2, middle - 3, 5, 3, edge)
+ui.center(target, middle - 2, tostring(app.glyph or "?"), color, edge)
+ui.center(target, middle + 1, ui.truncate(app.name or "", width - 2),
+ui.inkOn(color), color)
+sleep(0.15)
+end
+end
+
+if rawget(_G, "PUMPE_OPENING_TEST") == true then return opening end
+
 local function preparationAnimation(newAccount)
 local width, height = target.getSize()
 local stages = {
@@ -6058,6 +6265,8 @@ end
 local function drawIcon(scene, action, app, x, y, layout, badge)
 scene:button(action, x, y, layout.iconWidth, 2, app.glyph,
 { background = app.color, foreground = colors.white })
+opening.spots[action:match("^open:(.+)$") or ""] =
+{ x + math.floor(layout.iconWidth / 2), y + 1 }
 if badge then
 ui.text(target, x + layout.iconWidth - 2, y, badgeText(badge),
 colors.white, ui.theme.danger)
@@ -6093,6 +6302,8 @@ if id then
 scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
 APPS[id].glyph, { background = APPS[id].color,
 corner = ui.theme.panel })
+opening.spots[id] = opening.spots[id]
+or { x + math.floor(slotWidth / 2), layout.dockY + 1 }
 local badge = appBadge(id, poll)
 if badge then
 ui.text(target, x + slotWidth - 2, layout.dockY,
@@ -6248,7 +6459,7 @@ end
 local function openApp(id, action)
 local app = APPS[id]
 if not app or not app.open then return false end
-phoneTransition(app.name, app.color)
+opening.play(id, app)
 app.open(action)
 refreshInstalledApps()
 refreshSummary(true)
@@ -6804,6 +7015,8 @@ if onAlerts then
 perView = drawAlertsPage(scene, alerts, alertOffset, width, layout)
 else
 local first = (page - 1) * layout.perPage
+
+opening.spots = {}
 for slot = 1, layout.perPage do
 local id = APP_ORDER[first + slot]
 if id then
@@ -6865,7 +7078,7 @@ local id = action and action:match("^open:(.+)$")
 if note and alerts[note] then
 notificationDetail(alerts[note])
 elseif id and APPS[id] and APPS[id].open then
-phoneTransition(APPS[id].name, APPS[id].color)
+opening.play(id, APPS[id])
 APPS[id].open()
 refreshInstalledApps()
 refreshSummary(true)

@@ -26,8 +26,8 @@
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 205988,
-      "checksum": "87650418"
+      "size": 211837,
+      "checksum": "0e4ce394"
     },
     {
       "path": "service_kiosk.lua",
