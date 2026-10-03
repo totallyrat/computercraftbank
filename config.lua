@@ -56,6 +56,12 @@ return {
     payment_code_ttl_ms = 5 * 60 * 1000,
     session_ttl_ms = 12 * 60 * 60 * 1000,
     max_ticket_quantity = 5,
+    -- FoxyOS 13: the ticket queue. How long a turn to choose lasts, how many
+    -- people choose at once, and how long somebody who stopped checking in
+    -- keeps their place.
+    ticket_turn_ms = 2 * 60 * 1000,
+    ticket_queue_shoppers = 3,
+    ticket_queue_stale_ms = 30 * 1000,
     max_territories_per_account = 3,
     visa_min_days = 1,
     visa_max_days = 30,

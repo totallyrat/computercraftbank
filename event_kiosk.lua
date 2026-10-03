@@ -126,6 +126,35 @@ local function addTicketType(event)
     return false
 end
 
+-- A day and a time, typed as two boxes. Comes back as the day and "HH:MM",
+-- or nil if either was cancelled.
+local function askMoment(title, what)
+    local dayText = ui.input(target, title .. " DAY", {
+        hint = what .. " - today is day " .. util.ingameDay(),
+        mode = "number", maxLength = 8,
+    })
+    if not dayText then return nil end
+    local timeText = ui.input(target, title .. " TIME", {
+        hint = "Four digits, example 1830",
+        mode = "number", maxLength = 5,
+    })
+    if not timeText then return nil end
+    if not timeText:match("^%d%d?:%d%d$") then
+        local raw = timeText:gsub("[^%d]", "")
+        if #raw == 4 then timeText = raw:sub(1, 2) .. ":" .. raw:sub(3, 4) end
+    end
+    return tonumber(dayText), timeText
+end
+
+-- FoxyOS 13: how many tickets one person may buy, 1 to 10.
+local function askLimit(current)
+    local text = ui.input(target, "PER PERSON", {
+        hint = "Most tickets one person may buy, 1-10",
+        mode = "number", maxLength = 2, initial = tostring(current or 5),
+    })
+    return text and tonumber(text) or nil
+end
+
 local function createEvent()
     local title = ui.input(target, "CREATE EVENT", {
         hint = "Public event title",
@@ -160,6 +189,16 @@ local function createEvent()
         if #raw == 4 then timeText = raw:sub(1, 2) .. ":" .. raw:sub(3, 4) end
     end
 
+    -- FoxyOS 13: when the tickets go on sale, and how many each.
+    local releaseDay, releaseTime
+    if not ui.confirm(target, "TICKETS ON SALE", "Straight away, or at a set"
+        .. " time with a queue and a waiting room?", "NOW", "LATER") then
+        releaseDay, releaseTime = askMoment("ON SALE", "When the sale opens")
+        if not releaseDay then return end
+    end
+    local limit = askLimit(config.max_ticket_quantity)
+    if not limit then return end
+
     local countdown = util.eventCountdown(tonumber(dayText), timeText)
     if not ui.confirm(target, "CREATE EVENT",
         title .. " - in " .. countdown, "CREATE", "BACK") then return end
@@ -169,6 +208,9 @@ local function createEvent()
         location = location,
         event_day = tonumber(dayText),
         event_time = timeText,
+        release_day = releaseDay,
+        release_time = releaseTime,
+        limit = limit,
     }, true)
     if not result then
         ui.message(target, "error", "CREATE FAILED", err, 1.2)
@@ -181,8 +223,134 @@ local function createEvent()
     end
 end
 
+-- FoxyOS 13: changing when tickets go on sale, and how many each.
+local function saleScreen(event)
+    local changes = {}
+    if ui.confirm(target, "SALE OPENS", event.release_day
+        and ("Day " .. event.release_day .. " " .. event.release_time
+            .. ". Change it?") or "On sale now. Set a time?", "CHANGE", "KEEP") then
+        changes.release_day, changes.release_time = askMoment("ON SALE",
+            "When the sale opens")
+        if not changes.release_day then return event end
+    end
+    changes.limit = askLimit(event.limit)
+    if not changes.limit then return event end
+    changes.event_id = event.event_id
+    local result, err = request("EVENT_SALE", changes, true)
+    if not result then
+        ui.message(target, "error", "NOT CHANGED", err, 1.6)
+        return event
+    end
+    ui.message(target, "success", "SALE UPDATED", event.title, 0.9)
+    for key, value in pairs(result.event) do event[key] = value end
+    return event
+end
+
+-- The presale and who is invited. Invites go out as FoxMail from the
+-- organizer's own address; a tap on a name takes the invite back.
+local function presaleScreen(event)
+    if not event.presale_day then
+        if not event.release_day then
+            ui.message(target, "warning", "SET THE SALE FIRST",
+                "A presale opens before the general sale", 1.8)
+            return event
+        end
+        local day, time = askMoment("PRESALE", "When the presale opens")
+        if not day then return event end
+        local result, err = request("EVENT_SALE", { event_id = event.event_id,
+            presale_day = day, presale_time = time }, true)
+        if not result then
+            ui.message(target, "error", "NO PRESALE", err, 1.8)
+            return event
+        end
+        for key, value in pairs(result.event) do event[key] = value end
+    end
+    local listed = request("EVENT_INVITES", { event_id = event.event_id }, true)
+    local invites, page = listed and listed.invites or {}, 1
+    while running and sessionToken do
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "PRESALE", "Day " .. event.presale_day .. " "
+            .. event.presale_time .. "  -  " .. #invites .. " invited",
+            util.formatClock())
+        local scene = ui.scene(target)
+        local per = math.max(1, height - 8)
+        local pageItems, actualPage, pages = util.page(invites, page, per)
+        page = actualPage
+        if #invites == 0 then
+            ui.center(target, 7, "Nobody invited yet", ui.theme.muted)
+            ui.center(target, 9, "Invite people by FoxMail address or name",
+                ui.theme.muted, nil, width - 2)
+        end
+        for index, invite in ipairs(pageItems) do
+            local slot = (page - 1) * per + index
+            scene:button("invite:" .. slot, 2, 3 + index, width - 2, 1,
+                ui.truncate(invite.name .. "  " .. (invite.address
+                    or "no FoxMail, told on their Pocket"), width - 4),
+                { background = ui.theme.panel })
+        end
+        if pages > 1 then
+            scene:button("prev", width - 12, height - 2, 4, 1, "<",
+                { background = ui.theme.panel, disabled = page <= 1 })
+            scene:button("next", width - 4, height - 2, 4, 1, ">",
+                { background = ui.theme.panel, disabled = page >= pages })
+        end
+        scene:button("add", 10, height, 10, 1, "+ INVITE",
+            { background = ui.theme.accentDark })
+        scene:button("remove", 21, height, 16, 1, "REMOVE PRESALE",
+            { background = ui.theme.danger })
+        scene:button("back", 1, height, 8, 1, "< BACK",
+            { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "back" or action == "__terminate" then return event end
+        if action == "prev" then page = page - 1
+        elseif action == "next" then page = page + 1
+        elseif action == "add" then
+            local who = ui.input(target, "INVITE", {
+                hint = "FoxMail address, or their name",
+                maxLength = 32, allowSpace = true, minLength = 2,
+            })
+            if who then
+                local sent, err = request("EVENT_INVITE", { event_id = event.event_id,
+                    who = who }, true)
+                if sent then
+                    invites = sent.invites
+                    ui.message(target, "success", sent.invite.mailed
+                        and "INVITE MAILED" or "INVITED", sent.invite.name, 1)
+                else
+                    ui.message(target, "error", "NOT INVITED", err, 1.8)
+                end
+            end
+        elseif action == "remove" then
+            if ui.confirm(target, "REMOVE PRESALE", "Everybody buys at the"
+                .. " general sale then", "REMOVE", "KEEP") then
+                local result, err = request("EVENT_SALE", { event_id = event.event_id,
+                    presale = false }, true)
+                if result then
+                    for key in pairs(event) do
+                        if key:match("^presale") then event[key] = nil end
+                    end
+                    return event
+                end
+                ui.message(target, "error", "NOT REMOVED", err, 1.6)
+            end
+        else
+            local slot = tonumber(action and action:match("^invite:(%d+)$"))
+            local invite = slot and invites[slot]
+            if invite and ui.confirm(target, "TAKE BACK INVITE",
+                invite.name .. " loses their presale place", "TAKE BACK", "KEEP") then
+                local result, err = request("EVENT_UNINVITE", { event_id = event.event_id,
+                    account_id = invite.account_id }, true)
+                if result then invites = result.invites
+                else ui.message(target, "error", "NOT CHANGED", err, 1.4) end
+            end
+        end
+    end
+    return event
+end
+
 local function analyticsScreen(event)
-    local blink = true
+    local blink, ticks = true, 0
     while true do
         local width, height = target.getSize()
         ui.clear(target)
@@ -202,12 +370,28 @@ local function analyticsScreen(event)
             ui.theme.success, ui.theme.panel)
         ui.progress(target, 4, 7, width - 6, sold, math.max(1, capacity),
             ui.theme.success, colors.gray)
+        -- FoxyOS 13: where the sale stands, and the queue.
+        local phase = event.phase or "general"
+        local saleLine = phase == "general" and "ON SALE"
+            or phase == "presale" and "PRESALE OPEN"
+            or ("ON SALE DAY " .. tostring(event.release_day) .. " "
+                .. tostring(event.release_time))
+        if event.presale_day and phase == "soon" then
+            saleLine = saleLine .. "  PRESALE DAY " .. event.presale_day
+                .. " " .. event.presale_time
+        end
+        ui.text(target, 2, 9, ui.truncate(saleLine, width - 2),
+            phase == "soon" and colors.yellow or ui.theme.success)
+        ui.text(target, 2, 10, ui.truncate((event.waiting or 0) .. " in line  "
+            .. (event.shopping or 0) .. " choosing  " .. (event.limit or "?")
+            .. " per person  " .. (event.invited_count or 0) .. " invited",
+            width - 2), ui.theme.muted)
 
         local scene = ui.scene(target)
-        local visible = math.max(1, height - 12)
+        local visible = math.max(1, height - 14)
         for index = 1, math.min(#(event.ticket_types or {}), visible) do
             local ticketType = event.ticket_types[index]
-            local y = 9 + index - 1
+            local y = 12 + index - 1
             local percentage = ticketType.total_quantity > 0
                 and math.floor(ticketType.sold_quantity / ticketType.total_quantity * 100)
                 or 0
@@ -219,22 +403,40 @@ local function analyticsScreen(event)
             ui.text(target, width - #detail, y, detail,
                 soldOut and ui.theme.danger or ui.theme.muted)
         end
-        scene:button("add", 9, height, 14, 1, "+ TICKET TYPE",
+        local addWidth = width >= 45 and 15 or 8
+        scene:button("add", 10, height, addWidth, 1,
+            width >= 45 and "+ TICKET TYPE" or "+ TYPE",
             { background = ui.theme.accentDark })
-        scene:button("back", 1, height, 7, 1, "< BACK",
+        scene:button("sale", 11 + addWidth, height, 6, 1, "SALE",
+            { background = ui.theme.panel })
+        scene:button("presale", 18 + addWidth, height, 9, 1, "PRESALE",
+            { background = colors.magenta })
+        scene:button("back", 1, height, 8, 1, "< BACK",
             { background = ui.theme.panel })
         local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
-        if action == "back" or action == "__terminate" then return
-        elseif action == "add" then
-            if addTicketType(event) then
-                local refreshed = request("MY_EVENTS", {}, true)
-                if refreshed then
-                    for _, candidate in ipairs(refreshed.events) do
-                        if candidate.event_id == event.event_id then
-                            event = candidate
-                            break
-                        end
+        if action == "back" or action == "__terminate" then return end
+        local changed = false
+        if action == "add" then
+            changed = addTicketType(event)
+        elseif action == "sale" then
+            saleScreen(event)
+            changed = true
+        elseif action == "presale" then
+            presaleScreen(event)
+            changed = true
+        elseif action == "__tick" then
+            -- The queue moves on its own; a look every few seconds.
+            ticks = ticks + 1
+            changed = ticks % 10 == 0
+        end
+        if changed then
+            local refreshed = request("MY_EVENTS", {}, true)
+            if refreshed then
+                for _, candidate in ipairs(refreshed.events) do
+                    if candidate.event_id == event.event_id then
+                        event = candidate
+                        break
                     end
                 end
             end
@@ -324,7 +526,7 @@ local function ticketResultScreen(result)
             ticket.used and "ALREADY USED - BACK" or "INVALID - BACK",
             { background = ui.theme.danger })
     end
-    scene:button("cancel", 1, height, 7, 1, "< BACK",
+    scene:button("cancel", 1, height, 8, 1, "< BACK",
         { background = ui.theme.panel })
     local action = scene:wait()
     if action == "admit" then
@@ -379,7 +581,7 @@ local function pickScanEvent()
                 width - 2, 2, ui.truncate(event.title, width - 6),
                 { background = ui.theme.panel })
         end
-        scene:button("back", 1, height, 7, 1, "< BACK",
+        scene:button("back", 1, height, 8, 1, "< BACK",
             { background = ui.theme.panel })
         if pages > 1 then
             scene:button("prev", width - 11, height, 4, 1, "<",

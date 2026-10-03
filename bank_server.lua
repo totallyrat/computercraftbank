@@ -5751,6 +5751,14 @@ pair.routes = {
     TICKET_SCAN = { auth = "session" },
     TICKET_SCAN_STATUS = { auth = "session" },
     TICKET_SCAN_CANCEL = { auth = "session" },
+    -- FoxyOS 13: release dates, presales and the queue.
+    QUEUE_JOIN = { auth = "session" },
+    QUEUE_STATUS = { auth = "session" },
+    QUEUE_LEAVE = { auth = "session" },
+    EVENT_SALE = { auth = "session" },
+    EVENT_INVITE = { auth = "session" },
+    EVENT_INVITES = { auth = "session" },
+    EVENT_UNINVITE = { auth = "session" },
     -- The web, new in 10.0. The Vault keeps the register of who owns which
     -- domain; the pages are on an Internet Server.
     WEB_MINE = { auth = "session" },

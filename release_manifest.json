@@ -20,14 +20,14 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 204484,
-      "checksum": "80d5ada4"
+      "size": 204742,
+      "checksum": "88145bb5"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 190475,
-      "checksum": "f3b783a5"
+      "size": 201105,
+      "checksum": "3b33951f"
     },
     {
       "path": "service_kiosk.lua",
@@ -38,8 +38,8 @@
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
-      "size": 26377,
-      "checksum": "fabc49b9"
+      "size": 35587,
+      "checksum": "7621e443"
     },
     {
       "path": "tax_controller.lua",
@@ -62,8 +62,8 @@
     {
       "path": "config.lua",
       "source": "config.lua",
-      "size": 7629,
-      "checksum": "c586aa97"
+      "size": 7915,
+      "checksum": "93bc37f5"
     },
     {
       "path": "lib/net.lua",
@@ -156,8 +156,8 @@
     {
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
-      "size": 147837,
-      "checksum": "db22e488"
+      "size": 160467,
+      "checksum": "2337d841"
     },
     {
       "path": "internet_server.lua",

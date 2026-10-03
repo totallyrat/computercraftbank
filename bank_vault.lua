@@ -2145,8 +2145,239 @@ function actions.VISA_SCAN_CANCEL(payload, caller)
 end
 
 -- Events and tickets ----------------------------------------------------------
+-- FoxyOS 13: tickets go on sale the way they do in real life. An event has a
+-- release -- the moment its general sale opens -- and can have a presale
+-- before that for the people its organizer invited. Buying goes through a
+-- queue: whoever is in the waiting room when a sale opens is put in a random
+-- order, everybody after joins at the back, and a few people at a time get a
+-- turn of a couple of minutes to choose. An event made before 13 has no
+-- release, so it is on sale and its queue is simply short.
+local sale = {
+    turn_ms = tonumber(config.ticket_turn_ms) or 120000,
+    shoppers = tonumber(config.ticket_queue_shoppers) or 3,
+    stale_ms = tonumber(config.ticket_queue_stale_ms) or 30000,
+}
+
+function sale.moment(day, time)
+    local minute = util.parseEventTime(time)
+    if day == nil or not minute then return nil end
+    return math.floor(tonumber(day) or 0) * 1440 + minute
+end
+
+function sale.reached(day, time)
+    if day == nil then return true end
+    local _, remaining = util.eventCountdown(day, time)
+    return remaining ~= nil and remaining <= 0
+end
+
+-- "soon", "presale" or "general".
+function sale.phase(event)
+    if sale.reached(event.release_day, event.release_time) then return "general" end
+    if event.presale_day and sale.reached(event.presale_day, event.presale_time) then
+        return "presale"
+    end
+    return "soon"
+end
+
+-- Tickets left across every type, and whether it has any types at all.
+function sale.left(event)
+    local left, any = 0, false
+    for _, id in ipairs(event.ticket_type_ids or {}) do
+        local ticketType = state.ticket_types[id]
+        if ticketType then
+            any = true
+            left = left + math.max(0,
+                ticketType.total_quantity - ticketType.sold_quantity)
+        end
+    end
+    return left, any
+end
+
+function sale.limit(event)
+    return math.max(1, math.min(10, math.floor(tonumber(event.limit)
+        or tonumber(config.max_ticket_quantity) or 5)))
+end
+
+function sale.invited(event, accountId)
+    return type(event.invites) == "table" and event.invites[accountId] ~= nil
+end
+
+function sale.queue(event)
+    if type(event.queue) ~= "table" then event.queue = {} end
+    event.queue.entries = event.queue.entries or {}
+    event.queue.seq = event.queue.seq or 0
+    return event.queue
+end
+
+-- Whether the sale an entry is waiting for has opened.
+function sale.open(entry, phase)
+    return phase == "general" or (phase == "presale" and entry.phase == "presale")
+end
+
+-- Everybody still waiting, in the order they will be let in: the presale
+-- before the general sale, then whoever was in the waiting room when their
+-- sale opened in the order the lottery drew, then everybody else as they
+-- arrived.
+function sale.line(event)
+    local line = {}
+    for _, entry in pairs(sale.queue(event).entries) do
+        if entry.status == "waiting" then line[#line + 1] = entry end
+    end
+    table.sort(line, function(a, b)
+        if a.phase ~= b.phase then return a.phase == "presale" end
+        if a.early ~= b.early then return a.early == true end
+        if a.early and a.lottery ~= b.lottery then return a.lottery < b.lottery end
+        return a.seq < b.seq
+    end)
+    return line
+end
+
+-- Time passing, worked out whenever somebody asks rather than on a timer:
+-- turns that ran out end, people who stopped checking in leave, and the next
+-- in line get their turn. Returns the phase, and whether anything changed
+-- that is worth writing down.
+function sale.advance(event)
+    local now = util.nowMs()
+    local phase = sale.phase(event)
+    local changed, shopping = false, 0
+    for _, entry in pairs(sale.queue(event).entries) do
+        if entry.status == "shopping" then
+            if now >= entry.turn_ends_at or now - entry.seen_at > sale.stale_ms then
+                entry.status, changed = "expired", true
+            else
+                shopping = shopping + 1
+            end
+        elseif entry.status == "waiting" and now - entry.seen_at > sale.stale_ms then
+            entry.status, changed = "left", true
+        end
+    end
+    if phase == "soon" or sale.left(event) <= 0 then return phase, changed end
+    for _, entry in ipairs(sale.line(event)) do
+        if shopping >= sale.shoppers then break end
+        if sale.open(entry, phase) then
+            entry.status = "shopping"
+            entry.admitted_at = now
+            entry.turn_ends_at = now + sale.turn_ms
+            shopping, changed = shopping + 1, true
+        end
+    end
+    return phase, changed
+end
+
+-- Where one person stands, as their Pocket shows it.
+function sale.status(event, accountId)
+    local phase = sale.phase(event)
+    local left = sale.left(event)
+    local out = {
+        phase = phase, limit = sale.limit(event), left = left,
+        sold_out = left <= 0,
+        bought = (event.bought or {})[accountId] or 0,
+        invited = sale.invited(event, accountId),
+        turn_ms = sale.turn_ms, status = "none",
+    }
+    local entry = sale.queue(event).entries[accountId]
+    if not entry then return out end
+    out.status, out.queue_phase = entry.status, entry.phase
+    if entry.status == "waiting" then
+        local line = sale.line(event)
+        if not sale.open(entry, phase) then
+            -- The waiting room: no places yet, only who else is here.
+            out.waiting_room = true
+            local count = 0
+            for _, other in ipairs(line) do
+                if other.phase == entry.phase then count = count + 1 end
+            end
+            out.in_room = count
+        else
+            -- Only the people whose sale is open are in this line.
+            local count = 0
+            for _, other in ipairs(line) do
+                if sale.open(other, phase) then
+                    count = count + 1
+                    if other == entry then out.ahead = count - 1 end
+                end
+            end
+            out.in_line = count
+            out.wait_ms = math.ceil(((out.ahead or 0) + 1) / sale.shoppers)
+                * math.floor(sale.turn_ms / 2)
+        end
+    elseif entry.status == "shopping" then
+        out.turn_left_ms = math.max(0, entry.turn_ends_at - util.nowMs())
+    end
+    return out
+end
+
+-- What anybody may be told about an event: never its queue or who else was
+-- invited.
+function sale.public(event, accountId)
+    local sold, total, minimum = 0, 0, nil
+    for _, typeId in ipairs(event.ticket_type_ids or {}) do
+        local ticketType = state.ticket_types[typeId]
+        if ticketType then
+            sold = sold + ticketType.sold_quantity
+            total = total + ticketType.total_quantity
+            minimum = not minimum and ticketType.price
+                or math.min(minimum, ticketType.price)
+        end
+    end
+    local entry = accountId and sale.queue(event).entries[accountId]
+    return {
+        event_id = event.event_id, title = event.title,
+        description = event.description, location = event.location,
+        event_day = event.event_day, event_time = event.event_time,
+        status = event.status, organizer_name = nameOf(event.organizer_account_id),
+        sold = sold, total = total, from_price = minimum,
+        sold_out = total > 0 and sold >= total,
+        phase = sale.phase(event), limit = sale.limit(event),
+        release_day = event.release_day, release_time = event.release_time,
+        presale_day = event.presale_day, presale_time = event.presale_time,
+        invited = accountId and sale.invited(event, accountId) or false,
+        queue_status = entry and entry.status or nil,
+    }
+end
+
+-- Release, presale and the limit per person, from CREATE_EVENT or
+-- EVENT_SALE. A presale needs a release to end at, and both have to be
+-- before the event starts.
+function sale.configure(event, payload)
+    local starts = sale.moment(event.event_day, event.event_time)
+    if payload.release_day ~= nil then
+        local day = math.floor(tonumber(payload.release_day) or -1)
+        local at = day >= 0 and sale.moment(day, payload.release_time)
+        need(at, "INVALID_RELEASE", "Give the sale a day and a time, like 1830")
+        need(not starts or at <= starts, "RELEASE_AFTER_EVENT",
+            "Tickets have to go on sale before the event")
+        event.release_day, event.release_time = day, payload.release_time
+    end
+    if payload.presale == false then
+        event.presale_day, event.presale_time = nil, nil
+    elseif payload.presale_day ~= nil then
+        need(event.release_day, "PRESALE_NEEDS_RELEASE",
+            "Set when the general sale opens first")
+        local day = math.floor(tonumber(payload.presale_day) or -1)
+        local at = day >= 0 and sale.moment(day, payload.presale_time)
+        need(at, "INVALID_PRESALE", "Give the presale a day and a time")
+        need(at < sale.moment(event.release_day, event.release_time),
+            "PRESALE_AFTER_RELEASE",
+            "The presale has to open before the general sale")
+        event.presale_day, event.presale_time = day, payload.presale_time
+    end
+    if payload.limit ~= nil then
+        local limit = math.floor(tonumber(payload.limit) or 0)
+        need(limit >= 1 and limit <= 10, "INVALID_LIMIT",
+            "1 to 10 tickets per person")
+        event.limit = limit
+    end
+end
+
+function sale.event(eventId)
+    local event = state.events[eventId]
+    need(event and event.status == "active", "NOT_FOUND", "Event not found")
+    return event
+end
+
 function actions.LIST_EVENTS(payload, caller)
-    whoIsAsking(caller)
+    local account = whoIsAsking(caller)
     local today = util.ingameDay()
     local events = util.sortedValues(state.events, function(event)
         return event.status == "active" and tonumber(event.event_day) >= today
@@ -2157,34 +2388,14 @@ function actions.LIST_EVENTS(payload, caller)
     end)
     local output = {}
     for _, event in ipairs(events) do
-        local sold, total, minimum = 0, 0, nil
-        for _, typeId in ipairs(event.ticket_type_ids or {}) do
-            local ticketType = state.ticket_types[typeId]
-            if ticketType then
-                sold = sold + ticketType.sold_quantity
-                total = total + ticketType.total_quantity
-                minimum = not minimum and ticketType.price or math.min(minimum, ticketType.price)
-            end
-        end
-        output[#output + 1] = {
-            event_id = event.event_id,
-            title = event.title,
-            description = event.description,
-            location = event.location,
-            event_day = event.event_day,
-            event_time = event.event_time,
-            sold = sold,
-            total = total,
-            from_price = minimum,
-        }
+        output[#output + 1] = sale.public(event, account.account_id)
     end
     return { events = output }
 end
 
 function actions.EVENT_DETAILS(payload, caller)
-    whoIsAsking(caller)
-    local event = state.events[payload.event_id]
-    need(event and event.status == "active", "NOT_FOUND", "Event not found")
+    local account = whoIsAsking(caller)
+    local event = sale.event(payload.event_id)
     local types = {}
     for _, id in ipairs(event.ticket_type_ids or {}) do
         local ticketType = state.ticket_types[id]
@@ -2194,7 +2405,72 @@ function actions.EVENT_DETAILS(payload, caller)
             types[#types + 1] = item
         end
     end
-    return { event = util.copy(event), ticket_types = types }
+    local _, changed = sale.advance(event)
+    if changed then save() end
+    return { event = sale.public(event, account.account_id), ticket_types = types,
+        mine = sale.status(event, account.account_id) }
+end
+
+-- The queue ------------------------------------------------------------------------
+
+function actions.QUEUE_JOIN(payload, caller)
+    local account = whoIsAsking(caller)
+    local event = sale.event(payload.event_id)
+    local left, any = sale.left(event)
+    need(any, "NO_TICKETS", "No tickets for this event yet")
+    need(left > 0, "SOLD_OUT", "Sold out")
+    event.bought = event.bought or {}
+    local limit = sale.limit(event)
+    need((event.bought[account.account_id] or 0) < limit, "LIMIT_REACHED",
+        "You have " .. limit .. ", the most one person can buy")
+    local phase = sale.advance(event)
+    local queue = sale.queue(event)
+    local entry = queue.entries[account.account_id]
+    if entry and (entry.status == "waiting" or entry.status == "shopping") then
+        entry.seen_at = util.nowMs()
+    else
+        local presale = event.presale_day ~= nil and phase ~= "general"
+            and sale.invited(event, account.account_id)
+        queue.seq = queue.seq + 1
+        entry = {
+            account_id = account.account_id,
+            phase = presale and "presale" or "general",
+            lottery = math.random(), seq = queue.seq,
+            joined_at = util.nowMs(), seen_at = util.nowMs(),
+            status = "waiting",
+        }
+        entry.early = not sale.open(entry, phase)
+        queue.entries[account.account_id] = entry
+        sale.advance(event)
+        save()
+    end
+    return { queue = sale.status(event, account.account_id) }
+end
+
+-- Asked every second or so by a Pocket in the queue. That is also how the
+-- queue knows somebody is still there.
+function actions.QUEUE_STATUS(payload, caller)
+    local account = whoIsAsking(caller)
+    local event = sale.event(payload.event_id)
+    local entry = sale.queue(event).entries[account.account_id]
+    if entry and (entry.status == "waiting" or entry.status == "shopping") then
+        entry.seen_at = util.nowMs()
+    end
+    local _, changed = sale.advance(event)
+    if changed then save() end
+    return { queue = sale.status(event, account.account_id) }
+end
+
+function actions.QUEUE_LEAVE(payload, caller)
+    local account = whoIsAsking(caller)
+    local event = sale.event(payload.event_id)
+    local entry = sale.queue(event).entries[account.account_id]
+    if entry and (entry.status == "waiting" or entry.status == "shopping") then
+        entry.status = entry.status == "shopping" and "done" or "left"
+        sale.advance(event)
+        save()
+    end
+    return { queue = sale.status(event, account.account_id) }
 end
 
 function actions.BUY_TICKETS(payload, caller)
@@ -2204,9 +2480,21 @@ function actions.BUY_TICKETS(payload, caller)
     need(event and event.status == "active" and ticketType
         and ticketType.event_id == event.event_id,
         "NOT_FOUND", "Ticket type not found")
+    -- FoxyOS 13: only on your turn in the queue. A Pocket from before 13
+    -- has no queue to join, and is told so.
+    sale.advance(event)
+    local entry = sale.queue(event).entries[account.account_id]
+    need(entry and entry.status == "shopping", "NOT_YOUR_TURN",
+        "Tickets are sold through a queue now. Join it in Tickets")
+    entry.seen_at = util.nowMs()
+    event.bought = event.bought or {}
+    local already = event.bought[account.account_id] or 0
+    local limit = sale.limit(event)
     local quantity = math.floor(tonumber(payload.quantity) or 0)
-    need(quantity >= 1 and quantity <= config.max_ticket_quantity,
-        "BAD_QUANTITY", "Choose 1-" .. config.max_ticket_quantity .. " tickets")
+    need(quantity >= 1 and quantity <= limit, "BAD_QUANTITY",
+        "Choose 1-" .. limit .. " tickets")
+    need(already + quantity <= limit, "LIMIT_REACHED",
+        limit .. " per person, and you have " .. already)
     need(ticketType.sold_quantity + quantity <= ticketType.total_quantity,
         "SOLD_OUT", "Not enough tickets are left")
     local total = util.roundMoney(ticketType.price * quantity)
@@ -2216,6 +2504,11 @@ function actions.BUY_TICKETS(payload, caller)
     ticketType.sold_quantity = ticketType.sold_quantity + quantity
     if ticketType.sold_quantity >= ticketType.total_quantity then
         ticketType.status = "sold_out"
+    end
+    event.bought[account.account_id] = already + quantity
+    if already + quantity >= limit or sale.left(event) <= 0 then
+        entry.status = "done"
+        sale.advance(event)
     end
 
     local tickets = {}
@@ -2244,8 +2537,9 @@ function actions.BUY_TICKETS(payload, caller)
         tickets = tickets,
         total = total,
         balance = moved.from_balance,
-        event = util.copy(event),
+        event = sale.public(event, account.account_id),
         ticket_type = util.copy(ticketType),
+        queue = sale.status(event, account.account_id),
     }
 end
 
@@ -2318,6 +2612,9 @@ function actions.CREATE_EVENT(payload, caller)
         status = "active",
         created_day = util.ingameDay(),
     }
+    -- FoxyOS 13: when tickets go on sale, a presale, and how many each
+    -- person may buy. Without a release they are on sale straight away.
+    sale.configure(event, payload)
     state.events[id] = event
     save()
     logActivity("Event created: " .. title, colors.magenta)
@@ -2326,16 +2623,40 @@ end
 
 function actions.MY_EVENTS(payload, caller)
     local owner = whoIsAsking(caller)
-    local output = util.sortedValues(state.events, function(event)
+    local events = util.sortedValues(state.events, function(event)
         return event.organizer_account_id == owner.account_id
     end, function(a, b) return a.event_day < b.event_day end)
-    for _, event in ipairs(output) do
-        event.ticket_types = {}
+    -- Built fresh: this used to hang the ticket types on the stored events
+    -- themselves, so every save wrote them twice.
+    local output = {}
+    for _, event in ipairs(events) do
+        local item = sale.public(event, owner.account_id)
+        item.status = event.status
+        item.ticket_types = {}
         for _, id in ipairs(event.ticket_type_ids or {}) do
-            event.ticket_types[#event.ticket_types + 1] = util.copy(state.ticket_types[id])
+            item.ticket_types[#item.ticket_types + 1] = util.copy(state.ticket_types[id])
         end
+        local invited, waiting, shopping = 0, 0, 0
+        for _ in pairs(event.invites or {}) do invited = invited + 1 end
+        for _, entry in pairs(sale.queue(event).entries) do
+            if entry.status == "waiting" then waiting = waiting + 1
+            elseif entry.status == "shopping" then shopping = shopping + 1 end
+        end
+        item.invited_count, item.waiting, item.shopping = invited, waiting, shopping
+        output[#output + 1] = item
     end
-    return { events = util.copy(output) }
+    return { events = output }
+end
+
+-- FoxyOS 13: changing when tickets go on sale, the presale, or the limit.
+function actions.EVENT_SALE(payload, caller)
+    local owner = whoIsAsking(caller)
+    local event = state.events[payload.event_id]
+    need(event and event.organizer_account_id == owner.account_id,
+        "NOT_OWNER", "Event not found or not yours")
+    sale.configure(event, payload)
+    save()
+    return { event = sale.public(event, owner.account_id) }
 end
 
 local function ownedEvent(payload, caller)
@@ -4271,13 +4592,16 @@ local function sendMail(from, rawTo, subject, body, extra)
     body = util.safeText(util.trim(tostring(body or "")), MAIL.body)
     need(#subject > 0 or #body > 0, "EMPTY_MAIL", "Write something first")
     if #subject == 0 then subject = "(no subject)" end
-    local today = util.ingameDay()
-    local sent = mail.sent_today[from]
-    if not sent or sent.day ~= today then sent = { day = today, count = 0 } end
-    need(sent.count < MAIL.per_day, "MAIL_LIMIT",
-        "That address has sent all it can today")
-    sent.count = sent.count + 1
-    mail.sent_today[from] = sent
+    -- A presale invitation is not counted: an event caps those itself.
+    if not extra.uncounted then
+        local today = util.ingameDay()
+        local sent = mail.sent_today[from]
+        if not sent or sent.day ~= today then sent = { day = today, count = 0 } end
+        need(sent.count < MAIL.per_day, "MAIL_LIMIT",
+            "That address has sent all it can today")
+        sent.count = sent.count + 1
+        mail.sent_today[from] = sent
+    end
 
     mail.sequence = mail.sequence + 1
     local id = string.format("MAIL%08d", mail.sequence)
@@ -4490,6 +4814,85 @@ function actions.VAULT_MAIL_APP_SEND(payload)
     need(allowed, "NOT_YOURS", "That address is not this app's company's")
     return sendMail(from, payload.to, payload.subject, payload.body,
         { app_name = util.safeText(tostring(payload.app_name or "An app"), 18) })
+end
+
+-- Presale invitations, FoxyOS 13 -------------------------------------------------
+-- An organizer invites people by FoxMail address or by name, and the
+-- invitation goes out as mail from the organizer's own address. The place in
+-- the presale belongs to the person, not the message: forwarding the mail
+-- lets nobody else in.
+
+local function inviteList(event)
+    local list = {}
+    for accountId, invite in pairs(event.invites or {}) do
+        list[#list + 1] = { account_id = accountId, name = invite.name,
+            address = invite.address, mailed = invite.mailed == true }
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
+    return list
+end
+
+function actions.EVENT_INVITE(payload, caller)
+    local owner, event = ownedEvent(payload, caller)
+    need(event.presale_day, "NO_PRESALE", "Set up a presale first")
+    local from = mail.personal[owner.account_id]
+    need(from and mail.addresses[from], "NO_ADDRESS",
+        "Invites go out from your FoxMail address. Get one in FoxMail first")
+    local who = util.trim(tostring(payload.who or ""))
+    need(#who >= 2, "NO_RECIPIENT", "Type a FoxMail address or a name")
+    local accountId, name, address
+    if who:find("@", 1, true) then
+        address = mailAddress(who)
+        need(mail.addresses[address], "NO_SUCH_ADDRESS",
+            "Nobody has the address " .. address)
+        accountId = mailReader(address)
+        need(accountId, "NO_SUCH_ADDRESS", "Nobody reads " .. address)
+    else
+        local found = core.byName(who)
+        need(found, "ACCOUNT_NOT_FOUND", "Nobody is called " .. who)
+        accountId, name = found.account_id, found.name
+        address = mail.personal[accountId]
+    end
+    name = name or nameOf(accountId)
+    need(accountId ~= owner.account_id, "SELF_INVITE", "It is your own event")
+    event.invites = event.invites or {}
+    need(not event.invites[accountId], "ALREADY_INVITED",
+        name .. " is already invited")
+    need(#inviteList(event) < 100, "TOO_MANY_INVITES", "100 invites per event")
+    local invite = { name = name, address = address, day = util.ingameDay() }
+    if address then
+        sendMail(from, address, "Presale invite: " .. event.title,
+            "You are invited to the presale for " .. event.title .. ", day "
+                .. event.event_day .. " at " .. event.event_time .. ". It opens"
+                .. " day " .. event.presale_day .. " at " .. event.presale_time
+                .. ", before the general sale on day " .. event.release_day
+                .. " at " .. event.release_time .. ". Find it in Tickets on"
+                .. " your Pocket and join the queue. Up to " .. sale.limit(event)
+                .. " tickets each. This invite is yours alone.",
+            { uncounted = true })
+        invite.mailed = true
+    end
+    event.invites[accountId] = invite
+    core.notify(accountId, "Presale invite", event.title .. ": presale opens day "
+        .. event.presale_day .. " " .. event.presale_time, "event")
+    save()
+    return { invite = { account_id = accountId, name = name, address = address,
+        mailed = invite.mailed == true }, invites = inviteList(event) }
+end
+
+function actions.EVENT_INVITES(payload, caller)
+    local _, event = ownedEvent(payload, caller)
+    return { invites = inviteList(event) }
+end
+
+function actions.EVENT_UNINVITE(payload, caller)
+    local _, event = ownedEvent(payload, caller)
+    local accountId = tostring(payload.account_id or "")
+    need(event.invites and event.invites[accountId], "NOT_INVITED",
+        "They were not invited")
+    event.invites[accountId] = nil
+    save()
+    return { invites = inviteList(event) }
 end
 
 -- What this Vault answers ------------------------------------------------------

@@ -612,103 +612,416 @@ end
 
 
 
-local function ticketTypeScreen(event, ticketTypes)
-local selectedQuantity = {}
-local page, blink = 1, true
-while true do
-local width, height = target.getSize()
-ui.clear(target)
-local countdown = util.eventCountdown(event.event_day, event.event_time)
-ui.header(target, "Event Tickets", "In " .. countdown,
-util.formatClock(blink))
-ui.wrappedText(target, 2, 4, event.title,
-width - 4, 3, ui.theme.ink)
-ui.text(target, 2, 7, "Day " .. event.event_day .. "  " .. event.event_time,
-ui.theme.muted)
-ui.wrappedText(target, 2, 8, event.location,
-width - 4, 3, ui.theme.muted)
-local pageItems, actualPage, pages = util.page(ticketTypes, page, 1)
-page = actualPage
-local scene = ui.scene(target)
-for index, ticketType in ipairs(pageItems) do
-local y = 11 + (index - 1) * 7
-local left = ticketType.total_quantity - ticketType.sold_quantity
-local soldOut = left <= 0
-ui.card(target, 2, y, width - 2, 6,
-soldOut and ui.theme.danger or ui.theme.accent)
-ui.wrappedText(target, 4, y, ticketType.name,
-width - 12, 3, ui.theme.ink, ui.theme.panel)
-ui.text(target, 4, y + 3, money(ticketType.price),
-soldOut and ui.theme.danger or ui.theme.muted,
-ui.theme.panel, width - 12)
-ui.text(target, 4, y + 4, left .. " left",
-soldOut and ui.theme.danger or ui.theme.muted,
-ui.theme.panel, width - 12)
-scene:button("buy:" .. ticketType.ticket_type_id,
-width - 8, y, 7, 6, soldOut and "SOLD" or "BUY",
-{ background = soldOut and colors.gray or ui.theme.accentDark,
-disabled = soldOut })
+
+
+
+
+
+
+
+
+local eventsScreen
+do
+local function minutesSeconds(ms)
+local seconds = math.max(0, math.floor((ms or 0) / 1000))
+return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
 end
-pageFooter(scene, page, pages)
-local action = scene:wait({ tickRate = 0.5 })
-blink = not blink
-if action == "back" or action == "__terminate" then return
-elseif action == "prev" then page = page - 1
-elseif action == "next" then page = page + 1
+
+
+local function badge(event, mine)
+local status = mine and mine.status or event.queue_status
+if event.sold_out or (mine and mine.sold_out) then
+return "SOLD OUT", colors.red
+end
+if status == "waiting" or status == "shopping" then
+return "IN THE QUEUE", colors.cyan
+end
+local phase = event.phase or "general"
+if phase == "general" then
+return "ON SALE" .. (event.from_price
+and ("  from " .. money(event.from_price)) or ""), colors.lime
+end
+if phase == "presale" and event.invited then
+return "PRESALE OPEN FOR YOU", colors.magenta
+end
+if event.invited and event.presale_day and phase == "soon" then
+return "PRESALE DAY " .. event.presale_day .. " "
+.. tostring(event.presale_time), colors.magenta
+end
+return "ON SALE DAY " .. tostring(event.release_day) .. " "
+.. tostring(event.release_time), colors.yellow
+end
+
+
+
+local function crowd(y, frame, walking, door)
+local width = target.getSize()
+ui.fill(target, 2, y, width - 2, 1, ui.theme.panel)
+ui.fill(target, width - 1, y, 1, 1, door)
+local span = width - 5
+for index = 0, 4 do
+local x
+if walking then
+x = 3 + (index * 5 + frame) % span
 else
-local typeId = action and action:match("^buy:(.+)$")
-if typeId then
-local chosen
-for _, item in ipairs(ticketTypes) do
-if item.ticket_type_id == typeId then chosen = item break end
+x = 3 + index * 5 + ((frame + index) % 3 == 0 and 1 or 0)
 end
-if chosen then
-local quantityText = ui.input(target, "TICKET QUANTITY", {
-hint = "Choose 1-" .. config.max_ticket_quantity,
-mode = "number", maxLength = 1,
-})
-local quantity = math.floor(tonumber(quantityText) or 0)
-if quantity >= 1 and quantity <= config.max_ticket_quantity then
-local total = chosen.price * quantity
-if ui.confirm(target, "BUY TICKETS",
-quantity .. "x " .. chosen.name .. "  " .. money(total),
-"BUY", "BACK") then
-local pin = ui.pin(target, "CONFIRM WITH PIN", true)
-if pin then
-local result, err = request("BUY_TICKETS", {
-event_id = event.event_id,
-ticket_type_id = chosen.ticket_type_id,
-quantity = quantity,
-pin = pin,
-}, true)
-if result then
-account.balance = result.balance
-ui.message(target, "success", "TICKETS SECURED",
-quantity .. " for " .. event.title, 1.2)
-return
-else
-ui.message(target, "error", "PURCHASE FAILED", err, 1.2)
-end
-end
-end
-elseif quantityText then
-ui.message(target, "error", "BAD QUANTITY",
-"Choose 1-" .. config.max_ticket_quantity)
-end
-end
-end
-end
+ui.fill(target, x, y, 1, 1, ui.theme.ink)
 end
 end
 
-local function eventsScreen(tabs)
+local function leaveQueue(eventId)
+request("QUEUE_LEAVE", { event_id = eventId }, true)
+end
+
+
+local function celebrate(event, count)
+local width, height = target.getSize()
+local top = height - 12
+for step = 1, 6 do
+ui.clear(target)
+local y = math.max(top - 2, height - step * 2)
+ui.fill(target, 3, y, width - 4, math.min(8, height - y + 1), colors.white)
+sleep(0.04)
+end
+ui.clear(target)
+ui.center(target, 2, "You're going!", ui.theme.success)
+ui.fill(target, 3, top - 2, width - 4, 8, colors.white)
+ui.fill(target, 3, top + 1, width - 4, 1, colors.lightGray)
+ui.center(target, top - 1, ui.truncate(event.title, width - 6),
+colors.black, colors.white)
+ui.center(target, top, "Day " .. tostring(event.event_day) .. "  "
+.. tostring(event.event_time), colors.gray, colors.white)
+ui.center(target, top + 3, count .. (count == 1 and " TICKET" or " TICKETS"),
+colors.black, colors.white)
+ui.center(target, top + 4, "In My tickets", colors.gray, colors.white)
+local scene = ui.scene(target)
+scene:button("mine", 2, height - 4, width - 2, 2, "See my tickets",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("done", 2, height - 1, width - 2, 1, "Done",
+{ background = ui.theme.panel })
+local action = scene:wait()
+return action == "mine" and "tab:mine" or nil
+end
+
+
+local function turnScreen(event, mine)
+local details = request("EVENT_DETAILS", { event_id = event.event_id }, true)
+local types = details and details.ticket_types or {}
+mine = details and details.mine or mine or {}
+local endsAt = util.nowMs() + (mine.turn_left_ms or 120000)
+local turnMs = mine.turn_ms or 120000
+local chosen, page, ticks = {}, 1, 0
+while running and sessionToken do
+ui.noteActivity()
+local width, height = target.getSize()
+local room = math.max(0, (mine.limit or 1) - (mine.bought or 0))
+local count, total = 0, 0
+for _, item in ipairs(types) do
+local quantity = chosen[item.ticket_type_id] or 0
+count, total = count + quantity, total + quantity * item.price
+end
+local leftMs = endsAt - util.nowMs()
+ui.clear(target)
+ui.header(target, "Your turn", ui.truncate(event.title, width - 3),
+minutesSeconds(leftMs))
+ui.progress(target, 2, 4, width - 2, math.max(0, leftMs), turnMs,
+leftMs < 30000 and colors.red or colors.lime, ui.theme.panel)
+ui.text(target, 2, 5, ui.truncate("Choose up to " .. room
+.. (room == 1 and " ticket" or " tickets"), width - 3), ui.theme.muted)
+local scene = ui.scene(target)
+local per = 3
+local pages = math.max(1, math.ceil(#types / per))
+page = math.max(1, math.min(page, pages))
+for slot = 1, per do
+local index = (page - 1) * per + slot
+local item = types[index]
+if not item then break end
+local y = 4 + slot * 3
+local quantity = chosen[item.ticket_type_id] or 0
+local available = item.available_quantity
+or (item.total_quantity - item.sold_quantity)
+ui.card(target, 2, y, width - 2, 2, available > 0 and colors.orange
+or colors.red)
+ui.text(target, 4, y, ui.truncate(item.name, width - 14),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 1, ui.truncate(available <= 0 and "Sold out"
+or (money(item.price) .. (available <= 5
+and ("  " .. available .. " left") or "")), width - 14),
+available > 0 and ui.theme.muted or colors.red, ui.theme.panel)
+scene:button("minus:" .. index, width - 9, y, 3, 2, "-",
+{ background = colors.gray, disabled = quantity <= 0 })
+ui.text(target, width - 5, y, tostring(quantity), ui.theme.ink,
+ui.theme.panel)
+scene:button("plus:" .. index, width - 3, y, 3, 2, "+",
+{ background = colors.orange, foreground = colors.black,
+disabled = count >= room or quantity >= available })
+end
+if pages > 1 then
+scene:button("prev", 2, 16, 4, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.text(target, 7, 16, page .. "/" .. pages, ui.theme.muted)
+scene:button("next", 11, 16, 4, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+scene:button("buy", 2, height - 2, width - 2, 2,
+count > 0 and ("Buy " .. count .. "  " .. money(total))
+or "Pick your tickets",
+{ background = ui.theme.success, foreground = colors.black,
+disabled = count <= 0 })
+scene:button("leave", width - 7, 16, 7, 1, "Leave",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 0.5, flash = false })
+if action == "__terminate" then leaveQueue(event.event_id) return nil end
+if action == "__tick" then ticks = ticks + 1 end
+
+
+if (action == "__tick" and ticks % 6 == 0) or leftMs <= 0 then
+local polled = request("QUEUE_STATUS", { event_id = event.event_id }, true)
+if polled then
+mine = polled.queue
+if mine.status ~= "shopping" then
+ui.message(target, "warning", "Your turn ran out",
+"Join the queue again for another", 1.8)
+return nil
+end
+endsAt = util.nowMs() + (mine.turn_left_ms or 0)
+end
+end
+local minus = tonumber(action and action:match("^minus:(%d+)$"))
+local plus = tonumber(action and action:match("^plus:(%d+)$"))
+if minus and types[minus] then
+local id = types[minus].ticket_type_id
+chosen[id] = math.max(0, (chosen[id] or 0) - 1)
+elseif plus and types[plus] then
+local id = types[plus].ticket_type_id
+chosen[id] = (chosen[id] or 0) + 1
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+elseif action == "leave" then
+if ui.confirm(target, "Leave the queue?",
+"Your turn goes to the next person", "Leave", "Stay") then
+leaveQueue(event.event_id)
+return nil
+end
+elseif action == "buy" and count > 0 then
+local pin = ui.pin(target, "Pay " .. money(total), true)
+if pin then
+local got, failure = 0, nil
+for _, item in ipairs(types) do
+local quantity = chosen[item.ticket_type_id] or 0
+if quantity > 0 and not failure then
+local result, err = request("BUY_TICKETS", {
+event_id = event.event_id,
+ticket_type_id = item.ticket_type_id,
+quantity = quantity, pin = pin,
+}, true)
+if result then
+got = got + quantity
+if account then account.balance = result.balance end
+mine = result.queue or mine
+else
+failure = err
+end
+end
+end
+if got > 0 then
+if mine.status == "shopping" then leaveQueue(event.event_id) end
+if failure then
+ui.message(target, "warning", "Not all of them", failure, 1.8)
+end
+return celebrate(event, got)
+end
+ui.message(target, "error", "Not bought", failure, 1.8)
+end
+end
+end
+return nil
+end
+
+
+
+local function queueScreen(event, mine)
+local frame, firstAhead = 0, nil
+while running and sessionToken do
+ui.noteActivity()
+if mine.status == "shopping" then return turnScreen(event, mine) end
+if mine.status ~= "waiting" then
+if mine.status == "expired" then
+ui.message(target, "warning", "Your turn ran out",
+"Join the queue again for another", 1.8)
+elseif mine.sold_out then
+ui.message(target, "warning", "Sold out",
+"Every ticket has gone", 1.8)
+elseif mine.status == "left" then
+ui.message(target, "warning", "You left the queue",
+"Keep the screen open to keep your place", 1.8)
+end
+return nil
+end
+local width, height = target.getSize()
+ui.clear(target)
+local scene = ui.scene(target)
+if mine.waiting_room then
+local opens = mine.queue_phase == "presale"
+and { event.presale_day, event.presale_time }
+or { event.release_day, event.release_time }
+local countdown = opens[1] and util.eventCountdown(opens[1], opens[2])
+or "soon"
+ui.header(target, "Waiting room", ui.truncate(event.title, width - 3))
+ui.center(target, 5, mine.queue_phase == "presale"
+and "THE PRESALE OPENS IN" or "THE SALE OPENS IN", ui.theme.muted)
+ui.center(target, 7, countdown, colors.yellow)
+ui.center(target, 8, "Day " .. tostring(opens[1]) .. "  "
+.. tostring(opens[2]), ui.theme.muted)
+crowd(10, frame, false, colors.yellow)
+ui.center(target, 12, (mine.in_room or 1) .. " waiting with you",
+ui.theme.ink)
+ui.wrappedText(target, 2, 14, "When it opens, everybody here"
+.. " gets a random place in line.", width - 2, 3, ui.theme.muted)
+else
+local ahead = mine.ahead or 0
+firstAhead = math.max(firstAhead or ahead, ahead)
+ui.header(target, "In the queue", ui.truncate(event.title, width - 3))
+ui.center(target, 5, ahead == 0 and "YOU'RE NEXT" or tostring(ahead),
+ahead == 0 and colors.lime or ui.theme.ink)
+ui.center(target, 6, ahead == 0 and "Any moment now"
+or (ahead == 1 and "person ahead of you" or "people ahead of you"),
+ui.theme.muted)
+ui.progress(target, 3, 8, width - 4, firstAhead - ahead + 1,
+firstAhead + 1, colors.cyan, ui.theme.panel)
+crowd(10, frame, true, colors.lime)
+ui.center(target, 12, "About " .. math.max(1,
+math.ceil((mine.wait_ms or 60000) / 60000)) .. " min", ui.theme.ink)
+ui.wrappedText(target, 2, 14, "A few people choose at a time,"
+.. " " .. minutesSeconds(mine.turn_ms) .. " each.",
+width - 2, 2, ui.theme.muted)
+end
+ui.center(target, height - 3, "Keep this screen open", ui.theme.accent)
+scene:button("leave", 2, height - 1, width - 2, 1, "Leave the queue",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 0.5, flash = false })
+frame = frame + 1
+if action == "__terminate" then leaveQueue(event.event_id) return nil end
+if action == "leave" then
+if ui.confirm(target, "Leave the queue?", "You lose your place",
+"Leave", "Stay") then
+leaveQueue(event.event_id)
+return nil
+end
+end
+
+if frame % 2 == 0 or action ~= "__tick" then
+local polled = request("QUEUE_STATUS", { event_id = event.event_id }, true)
+if polled then mine = polled.queue end
+end
+end
+return nil
+end
+
+
+local function eventPage(eventId)
+local blink = true
+while running and sessionToken do
+local details, err = request("EVENT_DETAILS", { event_id = eventId }, true)
+if not details then
+ui.message(target, "error", "Cannot open it", err, 1.6)
+return nil
+end
+local event, types = details.event, details.ticket_types or {}
+local mine = details.mine or { status = "none", limit = 5, bought = 0 }
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Event", "In " .. util.eventCountdown(event.event_day,
+event.event_time), util.formatClock(blink))
+ui.wrappedText(target, 2, 4, event.title, width - 2, 2, ui.theme.ink)
+ui.text(target, 2, 6, ui.truncate("Day " .. event.event_day .. "  "
+.. event.event_time .. "  " .. tostring(event.location or ""),
+width - 2), ui.theme.muted)
+if event.organizer_name then
+ui.text(target, 2, 7, ui.truncate("By " .. event.organizer_name,
+width - 2), ui.theme.muted)
+end
+local y = 9
+for index, item in ipairs(types) do
+if index > 3 then break end
+local left = item.available_quantity
+or (item.total_quantity - item.sold_quantity)
+local note = left <= 0 and "Sold out"
+or left <= math.max(2, item.total_quantity / 5) and "Few left" or ""
+ui.text(target, 2, y, ui.truncate(item.name, width - 18), ui.theme.ink)
+ui.text(target, width - 16, y, ui.truncate(money(item.price), 7),
+ui.theme.ink)
+ui.text(target, width - 8, y, note, left <= 0 and colors.red
+or colors.orange)
+y = y + 1
+end
+if #types == 0 then
+ui.text(target, 2, y, "No tickets yet", ui.theme.muted)
+end
+local label, color = badge(event, mine)
+ui.fill(target, 2, 13, width - 2, 1, color)
+ui.center(target, 13, ui.truncate(label, width - 2), colors.black, color)
+local note
+if (event.phase or "general") ~= "general" then
+local presale = event.invited and event.phase == "soon"
+and event.presale_day
+note = presale and ("Presale in " .. util.eventCountdown(
+event.presale_day, event.presale_time))
+or ("Sale in " .. util.eventCountdown(event.release_day,
+event.release_time))
+if event.phase == "presale" and not event.invited then
+note = "Presale is invite only"
+end
+end
+note = note or ("Up to " .. (mine.limit or 5) .. " each"
+.. ((mine.bought or 0) > 0 and ("  you have " .. mine.bought) or ""))
+ui.center(target, 14, ui.truncate(note, width - 2), ui.theme.muted)
+
+local scene = ui.scene(target)
+local cta, enabled = "Get tickets", true
+if mine.status == "shopping" then
+cta = "It's your turn"
+elseif mine.status == "waiting" then
+cta = "Back to the queue"
+elseif event.sold_out or mine.sold_out or #types == 0 then
+cta, enabled = event.sold_out and "Sold out" or "Not on sale yet", false
+elseif (mine.bought or 0) >= (mine.limit or 5) then
+cta, enabled = "You have " .. mine.bought .. " of " .. mine.limit, false
+elseif event.phase == "presale" and event.invited then
+cta = "Join the presale"
+elseif (event.phase or "general") ~= "general" then
+cta = "Join the waiting room"
+end
+scene:button("join", 2, 16, width - 2, 2, cta,
+{ background = ui.theme.success, foreground = colors.black,
+disabled = not enabled, shadow = enabled })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 1 })
+blink = not blink
+if action == "back" or action == "__terminate" then return nil end
+if action == "join" then
+local joined, joinError = request("QUEUE_JOIN", { event_id = eventId }, true)
+if not joined then
+ui.message(target, "error", "Cannot join", joinError, 1.8)
+else
+local switched = queueScreen(event, joined.queue)
+if switched then return switched end
+end
+end
+end
+return nil
+end
+
+function eventsScreen(tabs)
 local result = request("LIST_EVENTS")
 if not result then return end
 local events, page, blink = result.events, 1, true
-while true do
-local width, height = target.getSize()
+while running and sessionToken do
+local width = target.getSize()
 ui.clear(target)
-ui.header(target, "Events", "Live schedule", util.formatClock(blink))
+ui.header(target, "Events", "What's on", util.formatClock(blink))
 local pageItems, actualPage, pages = util.page(events, page, 2)
 page = actualPage
 local scene = ui.scene(target)
@@ -717,35 +1030,23 @@ ui.center(target, 9, "No upcoming events", ui.theme.muted)
 end
 for index, event in ipairs(pageItems) do
 local y = 4 + (index - 1) * 7
-local countdown = util.eventCountdown(event.event_day, event.event_time)
-ui.card(target, 2, y, width - 2, 6,
-index == 1 and ui.theme.accent or colors.magenta)
-ui.wrappedText(target, 4, y, event.title,
-width - 6, 2, ui.theme.ink, ui.theme.panel)
-ui.text(target, 4, y + 2, "IN " .. string.upper(countdown),
-ui.theme.accent, ui.theme.panel)
-local price = event.from_price and ("From " .. money(event.from_price)) or "Details"
-ui.text(target, 4, y + 3, ui.truncate(price, width - 6),
-ui.theme.muted, ui.theme.panel)
-ui.wrappedText(target, 4, y + 4, event.location,
-width - 6, 2, ui.theme.muted, ui.theme.panel)
-scene:button("event:" .. event.event_id, 2, y, width - 2, 6, "", {
-background = ui.theme.panel,
-})
-
-ui.fill(target, 2, y, 1, 6,
-index == 1 and ui.theme.accent or colors.magenta)
-ui.wrappedText(target, 4, y, event.title,
-width - 6, 2, ui.theme.ink, ui.theme.panel)
-ui.text(target, 4, y + 2, "IN " .. string.upper(countdown),
-ui.theme.accent, ui.theme.panel)
-ui.text(target, 4, y + 3, ui.truncate(price, width - 6),
-ui.theme.muted, ui.theme.panel)
-ui.wrappedText(target, 4, y + 4, event.location,
-width - 6, 2, ui.theme.muted, ui.theme.panel)
+local label, color = badge(event)
+scene:hotspot("event:" .. event.event_id, 2, y, width - 2, 6)
+ui.card(target, 2, y, width - 2, 6, color)
+ui.wrappedText(target, 4, y, event.title, width - 6, 2,
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 2, ui.truncate("IN " .. string.upper(
+util.eventCountdown(event.event_day, event.event_time))
+.. "  DAY " .. event.event_day, width - 6), ui.theme.accent,
+ui.theme.panel)
+ui.text(target, 4, y + 3, ui.truncate(tostring(event.location or ""),
+width - 6), ui.theme.muted, ui.theme.panel)
+ui.fill(target, 4, y + 4, width - 6, 1, color)
+ui.text(target, 5, y + 4, ui.truncate(label, width - 8),
+colors.black, color)
 end
 pageFooter(scene, page, pages, tabs)
-local action = scene:wait({ tickRate = 0.5, flash = false })
+local action = scene:wait({ tickRate = 1, flash = false })
 blink = not blink
 if tabs and (action == "home" or (action or ""):match("^tab:")) then
 return action
@@ -756,10 +1057,9 @@ elseif action == "next" then page = page + 1
 else
 local eventId = action and action:match("^event:(.+)$")
 if eventId then
-local details = request("EVENT_DETAILS", { event_id = eventId })
-if details then
-ui.wipe(target, "EVENT DETAILS")
-ticketTypeScreen(details.event, details.ticket_types)
+ui.wipe(target, "EVENT")
+local switched = eventPage(eventId)
+if switched and tabs then return switched end
 result = request("LIST_EVENTS", {}, true) or result
 events = result.events
 end

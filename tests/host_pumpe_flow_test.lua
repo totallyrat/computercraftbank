@@ -15,8 +15,12 @@ local actions = {
     -- 11.0: no hubs. Tickets opens on Events with My tickets as a tab; home
     -- leaves it. FoxyOS 12: MyID holds the Digital ID, visas, tax and the
     -- countries you run.
-    "open:tickets", "event:EVT000001", "back",
-    "tab:mine", "home",
+    -- FoxyOS 13: tickets through the queue. The waiting room, a place in
+    -- line, then a turn: two tickets chosen, paid with the PIN, and
+    -- straight to My tickets.
+    "open:tickets", "event:EVT000001", "join", "__tick", "__tick",
+    "__tick", "__tick", "plus:1", "plus:1", "minus:1", "plus:1", "buy", "mine",
+    "home",
     -- No tickets now. The tab says so and stays; leaving it closes nothing.
     "open:tickets", "tab:mine", "tab:events", "home",
     "open:myid", "signup",                           -- ask for a Digital ID
@@ -121,6 +125,8 @@ package.loaded["lib.util"] = {
         return (symbol or "$") .. tostring(value)
     end,
     formatClock = function() return "12:00" end,
+    -- A turn in the ticket queue counts down from a clock.
+    nowMs = function() return 1000000 end,
     ingameDay = function() return 42 end,
     eventCountdown = function() return "8d 06:30" end,
     page = function(items, requestedPage, pageSize)
@@ -282,6 +288,28 @@ local client = {
                     },
                 },
             }
+        elseif action == "QUEUE_JOIN" then
+            queueCalls = 0
+            return { queue = { status = "waiting", waiting_room = true,
+                queue_phase = "general", in_room = 3, turn_ms = 120000,
+                limit = 4, bought = 0 } }
+        elseif action == "QUEUE_STATUS" then
+            queueCalls = queueCalls + 1
+            if queueCalls == 1 then
+                return { queue = { status = "waiting", ahead = 1, in_line = 2,
+                    wait_ms = 60000, turn_ms = 120000, limit = 4, bought = 0 } }
+            end
+            return { queue = { status = "shopping", turn_left_ms = 120000,
+                turn_ms = 120000, limit = 4, bought = 0 } }
+        elseif action == "BUY_TICKETS" then
+            assert(payload.quantity == 2 and payload.pin == "1234"
+                and payload.ticket_type_id == "TT000001", "two, with the PIN")
+            ticketsBought = payload.quantity
+            return { tickets = { {}, {} }, balance = 450,
+                queue = { status = "shopping", limit = 4, bought = 2 } }
+        elseif action == "QUEUE_LEAVE" then
+            queueLeft = true
+            return { queue = { status = "done" } }
         elseif action == "MY_TICKETS" then
             ticketVisits = (ticketVisits or 0) + 1
             -- The second visit finds none: a tab stays open when empty.
@@ -823,6 +851,12 @@ local function find(items, expected)
     end
 end
 
+assert(find(drawnText, "Waiting room") and find(drawnText, "In the queue")
+    and find(drawnText, "Your turn"), "the waiting room, the line, the turn")
+assert(find(drawnText, "You're going!"), "and the tickets, celebrated")
+assert(ticketsBought == 2 and queueLeft,
+    "two bought, and the turn handed back for the next person")
+assert(find(buttonLabels, "Buy 2  $50"), "the total, on the button")
 assert(find(drawnText, "Setting up your"))
 assert(find(drawnText, "Welcome to Foxy"), "the guide ends with Welcome to Foxy")
 assert(find(buttonLabels, "Start") and not find(buttonLabels, "Skip"),

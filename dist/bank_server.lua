@@ -5752,6 +5752,14 @@ TICKET_SCAN = { auth = "session" },
 TICKET_SCAN_STATUS = { auth = "session" },
 TICKET_SCAN_CANCEL = { auth = "session" },
 
+QUEUE_JOIN = { auth = "session" },
+QUEUE_STATUS = { auth = "session" },
+QUEUE_LEAVE = { auth = "session" },
+EVENT_SALE = { auth = "session" },
+EVENT_INVITE = { auth = "session" },
+EVENT_INVITES = { auth = "session" },
+EVENT_UNINVITE = { auth = "session" },
+
 
 WEB_MINE = { auth = "session" },
 WEB_RESERVE = { auth = "session" },

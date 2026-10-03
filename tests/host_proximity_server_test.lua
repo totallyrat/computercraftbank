@@ -74,6 +74,9 @@ local ticketType = actions.ADD_TICKET_TYPE({
     price = 10,
     quantity = 50,
 })
+-- FoxyOS 13: tickets are bought on your turn in the queue.
+actions.QUEUE_JOIN({ session_token = guest.session_token,
+    event_id = event.event.event_id })
 local bought = actions.BUY_TICKETS({
     session_token = guest.session_token,
     event_id = event.event.event_id,
