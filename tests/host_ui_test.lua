@@ -601,4 +601,24 @@ do
     assert(saves == 1, "SAVE ran once")
 end
 
+-- FoxyOS 13: a till's customer screen. A tap on it is the customer's and
+-- never presses the button under the same spot on the till.
+do
+    local events = {
+        { "monitor_touch", "monitor_0", 3, 3 },  -- the customer, on their screen
+        { "monitor_touch", "monitor_7", 3, 3 },  -- a monitor that is not theirs
+    }
+    local index = 0
+    os.pullEvent = function()
+        index = index + 1
+        local event = assert(events[index], "waited past the taps")
+        return table.unpack(event)
+    end
+    ui.customerScreen("monitor_0")
+    local scene = ui.scene(mockTerminal(26, 20))
+    scene:button("charge", 1, 1, 10, 5, "Charge")
+    assert(scene:wait({ flash = false }) == "charge" and index == 2,
+        "only the second tap pressed it")
+end
+
 print("host_ui_test: OK")

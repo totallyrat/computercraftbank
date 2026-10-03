@@ -30,8 +30,9 @@ fs = {
         return tostring(left):gsub("/+$", "") .. "/"
             .. tostring(right):gsub("^/+", "")
     end,
-    exists = function(path) return written[path] ~= nil end,
-    isDir = function() return false end,
+    exists = function(path) return written[path] ~= nil or path == "/apps" end,
+    isDir = function(path) return path == "/apps" end,
+    list = function(path) return path == "/apps" and { "notes.lua" } or {} end,
     makeDir = function() end,
     delete = function(path) written[path] = nil end,
 }
@@ -105,7 +106,10 @@ package.loaded["lib.util"] = {
         end
     end,
     writeFile = function(path, body) written[path] = body end,
-    readFile = function(path) return written[path] end,
+    readFile = function(path)
+        if path == "/apps/notes.lua" then return "return function(api) end" end
+        return written[path]
+    end,
     checksum = function(body)
         -- Enough of a hash for the test: the two sides of a
         -- conversation must land on the same collection name.
@@ -157,6 +161,16 @@ local client = {
             return { apps = {} }
         elseif action == "FOXY_LOGIN_LIST" then
             return { apps = {} }
+        elseif action == "DEV_MINE" then
+            return { developer_id = developer and "DEV1" or nil,
+                developer_token = developer and "DEVTOKEN" or nil }
+        elseif action == "DEV_REGISTER" then
+            assert(payload.pin == "1234" and payload.app_id == nil)
+            developer = true
+            return { developer_id = "DEV1", developer_token = "DEVTOKEN" }
+        elseif action == "APP_PUBLISH" then
+            published = payload
+            return { app = { app_id = "APP00042", kind = payload.kind, version = 1 } }
         end
         return { ok = true }
     end,
@@ -325,7 +339,7 @@ end
 -- This phone has never been set up, so it signs in once, at the start. From
 -- then on (12.0) it opens on its account's lock screen, and the PIN is all
 -- it asks: turning the modem off and on again never types the name again.
-inputs = { "Ana Fox" }
+inputs = { "Ana Fox", "Notes", "Write things down" }
 function ui.input() return table.remove(inputs, 1) end
 function ui.networkError(_, err) error("network error: " .. tostring(err)) end
 function ui.pin() return "1234" end
@@ -342,7 +356,11 @@ actions = {
     "check", "install",                -- ask again, and take it this time
     "mode",                            -- then switch updates to automatic
     "back",
-    "tab:apps", "tab:account", "tab:phone",  -- 12.0: every tab
+    "tab:apps",
+    -- FoxyOS 13: Dev Mode came over from the Service Kiosk. Become a
+    -- developer with the PIN, then publish the file waiting in /apps.
+    "developer", "register", "file:1", "back",
+    "tab:account", "tab:phone",  -- 12.0: every tab
     -- 9.5: turning the modem off leaves you signed in. It used to drop the
     -- session, which parked the phone on a sign-in screen that needed the
     -- radio it had just switched off.
@@ -458,6 +476,11 @@ assert(not pressed("Account ID"),
 
 assert(drew("FREE SPACE"), "storage says what is free")
 assert(drew("WHAT IS ON THIS POCKET"), "and what the phone is holding")
+assert(published and published.developer_id == "DEV1" and published.kind == "app"
+    and published.name == "Notes" and published.body:find("api", 1, true),
+    "Dev Mode on the Pocket publishes what is in /apps, as the developer")
+assert(savedDevice.published and savedDevice.published["notes.lua"].id == "APP00042",
+    "and remembers it, so the next publish is an update")
 
 -- Updates ------------------------------------------------------------------------
 

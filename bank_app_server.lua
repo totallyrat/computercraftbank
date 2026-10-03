@@ -455,7 +455,7 @@ end
 function actions.TPB_PAY_CODE_QUOTE(payload)
     local account = requireSession(payload)
     local code = string.upper(util.trim(tostring(payload.code or "")))
-    need(#code >= 4, "BAD_CODE", "Type the code from the kiosk")
+    need(#code >= 4, "BAD_CODE", "Type the code from the till")
     local foxy = config.foxy_bank_code or "0001"
     local quote, err, errCode = ask(foxy, "LEDGER_CODE_QUOTE",
         { code = code }, 6)
@@ -514,7 +514,7 @@ function actions.TPB_PAY_CODE(payload)
             transaction(account, "fee", -fee, state.bank_name, "Kiosk fee")
         end
         transaction(account, "kiosk_pay", -quote.amount, quote.merchant,
-            quote.description or "Paid a kiosk")
+            quote.description or "Paid a till")
         save()
         logActivity(account.name .. " paid " .. tostring(quote.merchant)
             .. " " .. util.money(quote.amount, config.currency), colors.lime)
@@ -833,7 +833,7 @@ local function chooseBank()
             ui.wrappedText(target, 2, 6, err, width - 2, 3, colors.orange)
             ui.wrappedText(target, 2, 10, "A 3rd Party Bank Server hosts a"
                 .. " Bank App published to the App Server. Publish one from"
-                .. " a Service Kiosk in Dev Mode first.", width - 2, 4,
+                .. " Dev Mode, in a Pocket's Settings, first.", width - 2, 4,
                 colors.lightGray)
         elseif #banks == 0 then
             ui.center(target, 7, "NO BANK APPS PUBLISHED", colors.orange)

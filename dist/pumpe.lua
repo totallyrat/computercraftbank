@@ -2409,8 +2409,8 @@ util.formatClock())
 local scene = ui.scene(target)
 if #games == 0 then
 ui.wrappedText(target, 2, 5, "No games on the App Server yet."
-.. " A game is published from Dev Mode on a Service Kiosk,"
-.. " as a GAME.", width - 2, 5, ui.theme.muted)
+.. " A game is published from Dev Mode, in Settings,"
+.. " as a game.", width - 2, 5, ui.theme.muted)
 end
 for slot = 1, per do
 local game = games[(page - 1) * per + slot]
@@ -3569,7 +3569,7 @@ ui.wrappedText(target, 2, 7, offer.merchant, width - 2, 2,
 colors.white, ui.theme.accentDark)
 ui.wrappedText(target, 2, 10, claimed
 and "Wait while your items are added. The basket arrives here."
-or "This kiosk is asking whether you are the customer.",
+or "This till is asking whether you are the customer.",
 width - 2, 4, colors.lightGray, ui.theme.accentDark)
 if offer.distance and not claimed then
 ui.center(target, 15, offer.distance .. " blocks away",
@@ -3593,7 +3593,7 @@ local taken, err = request("PROXIMITY_ACCEPT",
 if not taken then
 inCall = false
 ui.message(target, "error", "Could not take it",
-err or "The kiosk moved on", 1.6)
+err or "The till moved on", 1.6)
 return
 end
 claimed = true
@@ -4035,6 +4035,9 @@ end
 end
 
 
+local developerScreen
+
+
 
 
 local SETTINGS_ACTIONS = {
@@ -4049,6 +4052,9 @@ tab = "phone" },
 { id = "connected", label = "Connected Apps", hint = "Who you signed in",
 tab = "apps" },
 { id = "dock", label = "Edit Your Dock", hint = "Your favourites", tab = "apps" },
+
+{ id = "developer", label = "Dev Mode", hint = "Publish apps and games",
+tab = "apps" },
 { id = "guide", label = "How Pocket Works", hint = "The tour", tab = "account" },
 { id = "logout", label = "Remove account", hint = "Take it off this Pocket",
 tab = "account" },
@@ -4088,6 +4094,7 @@ elseif id == "apps" then appSettingsScreen()
 elseif id == "connected" then connectedApps()
 elseif id == "guide" then guideScreen()
 elseif id == "dock" then favouritesPicker()
+elseif id == "developer" then developerScreen()
 elseif id == "logout" then
 
 
@@ -5272,6 +5279,34 @@ position = function() return net.locate(1) end,
 
 
 
+screens = function()
+local found = {}
+if type(peripheral) ~= "table" or not peripheral.getNames then
+return found
+end
+for _, name in ipairs(peripheral.getNames()) do
+local monitor = peripheral.getType(name) == "monitor"
+and peripheral.wrap(name)
+if monitor and monitor.isColor and monitor.isColor() then
+pcall(monitor.setTextScale, 0.5)
+if ui.customerScreen then ui.customerScreen(name) end
+local drawable = {}
+for _, method in ipairs({ "write", "blit", "clear",
+"clearLine", "setCursorPos", "getCursorPos",
+"setCursorBlink", "getSize", "isColor", "isColour",
+"setTextColor", "setTextColour", "setBackgroundColor",
+"setBackgroundColour", "getTextColor", "getTextColour",
+"getBackgroundColor", "getBackgroundColour", "scroll" }) do
+drawable[method] = monitor[method]
+end
+found[#found + 1] = drawable
+end
+end
+return found
+end,
+
+
+
 purchase = function(spec) return appPurchase(entry, spec) end,
 entitlements = function()
 local owned = request("APP_ENTITLEMENTS",
@@ -5420,6 +5455,121 @@ end
 
 
 
+
+
+
+
+
+
+
+
+function developerScreen()
+local devDir = "/apps"
+if type(device.published) ~= "table" then
+device.published = {}
+
+local old = util.loadTable(fs.combine(ROOT, "service_kiosk_device.dat"), {})
+for name, appId in pairs(type(old.published) == "table" and old.published or {}) do
+device.published[name] = { id = appId,
+kind = (old.published_kinds or {})[name] or "app" }
+end
+saveDevice()
+end
+while running and sessionToken do
+local mine = request("DEV_MINE", {}, true)
+local width, height = target.getSize()
+ui.clear(target)
+local scene = ui.scene(target)
+local files = {}
+if mine and mine.developer_id and fs.exists(devDir) and fs.isDir(devDir) then
+for _, name in ipairs(fs.list(devDir)) do
+if name:sub(-4) == ".lua" and not fs.isDir(fs.combine(devDir, name)) then
+files[#files + 1] = name
+end
+end
+table.sort(files)
+end
+if not mine or not mine.developer_id then
+ui.header(target, "Dev Mode", "Apps and games", util.formatClock())
+ui.card(target, 2, 5, width - 2, 6, colors.purple)
+ui.wrappedText(target, 4, 5, "Publish your own apps to the App"
+.. " Browser, and games to a CCG. The developer account is"
+.. " your Foxy Account's.", width - 6, 6, ui.theme.ink,
+ui.theme.panel)
+scene:button("register", 2, 12, width - 2, 3, "Become a developer",
+{ background = colors.purple, shadow = true })
+else
+ui.header(target, "Dev Mode", #files .. " in " .. devDir, util.formatClock())
+if #files == 0 then
+ui.wrappedText(target, 2, 5, "Put a .lua file in " .. devDir
+.. " on this computer. An app returns a function the"
+.. " Pocket calls with its api; a game returns a table.",
+width - 2, 6, ui.theme.muted)
+end
+for index, name in ipairs(files) do
+if index > 4 then break end
+local out = device.published[name]
+scene:button("file:" .. index, 2, 2 + index * 3, width - 2, 2,
+ui.truncate(name, width - 4) .. "\n" .. (out and ("Update the "
+.. (out.kind == "game" and "game" or "app")) or "Publish it"),
+{ background = ui.theme.panel })
+end
+end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait({ tickRate = 3 })
+if action == "back" or action == "__terminate" then return end
+if action == "register" then
+local pin = ui.pin(target, "Your PIN", true)
+if pin then
+local made, err = request("DEV_REGISTER", { pin = pin }, true)
+if made then
+pcall(fs.makeDir, devDir)
+ui.message(target, "success", made.existing and "Welcome back"
+or "You're a developer", "Put your app in " .. devDir, 2)
+else
+ui.message(target, "error", "Not registered", err, 1.8)
+end
+end
+end
+local name = files[tonumber(action and action:match("^file:(%d+)$")) or 0]
+if name then
+local out = device.published[name]
+local kind = out and out.kind
+if not kind then
+kind = ui.confirm(target, "What is it?", "An app for the Pocket,"
+.. " or a game for a CCG in Home Mode?", "App", "Game")
+and "app" or "game"
+end
+local title = ui.input(target, kind == "game" and "Game name" or "App name",
+{ hint = kind == "game" and "In the Game Browser" or "In the App Browser",
+maxLength = 18, allowSpace = true, minLength = 2 })
+local about = title and ui.input(target, "Description",
+{ hint = "One line about it", maxLength = 80, allowSpace = true,
+minLength = 0 })
+local body = about and util.readFile(fs.combine(devDir, name))
+if about and not body then
+ui.message(target, "error", "Cannot read it", name, 1.6)
+elseif body then
+local published, err = storeRequest("APP_PUBLISH", {
+developer_id = mine.developer_id,
+developer_token = mine.developer_token,
+app_id = out and out.id, kind = kind, name = title,
+description = about, body = body,
+}, true)
+if published then
+device.published[name] = { id = published.app.app_id,
+kind = published.app.kind or kind }
+saveDevice()
+ui.message(target, "success", kind == "game"
+and "In the Game Browser" or "In the App Browser",
+title .. "  v" .. tostring(published.app.version), 2)
+else
+ui.message(target, "error", "Not published", err, 2)
+end
+end
+end
+end
+end
 
 local function fetchApp(app, progress)
 local chunks, offset = {}, 0

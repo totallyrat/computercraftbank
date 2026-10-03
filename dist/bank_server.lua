@@ -2181,12 +2181,20 @@ recordPosition(account, payload.position)
 return { ok = account.position ~= nil }
 end
 
+
+
+
+local function skipOwner(terminal, offer)
+local _, owner = companyOwner(terminal)
+if owner then offer.declined[owner.account_id] = true end
+end
+
 function actions.PROXIMITY_OFFER(payload)
 local terminal = requireTerminal(payload)
 cleanupEphemeral()
 recordPosition(terminal, payload.position)
 need(freshPosition(terminal), "NO_POSITION",
-"This kiosk has no GPS fix. Add GPS anchors nearby.")
+"No GPS fix here. Add GPS anchors nearby.")
 local created = actions.CREATE_PAY_CODE(payload)
 local offer = {
 offer_id = nextId("proximity"),
@@ -2201,6 +2209,7 @@ created_at = util.nowMs(),
 expires_at = util.nowMs()
 + (tonumber(config.proximity_offer_ttl_ms) or 60000),
 }
+skipOwner(terminal, offer)
 state.proximity_offers[offer.offer_id] = offer
 retargetOffer(offer)
 save()
@@ -2215,7 +2224,7 @@ local terminal = requireTerminal(payload)
 cleanupEphemeral()
 recordPosition(terminal, payload.position)
 need(freshPosition(terminal), "NO_POSITION",
-"This kiosk has no GPS fix. Add GPS anchors nearby.")
+"No GPS fix here. Add GPS anchors nearby.")
 local offer = {
 offer_id = nextId("proximity"),
 terminal_id = terminal.terminal_id,
@@ -2228,6 +2237,7 @@ created_at = util.nowMs(),
 expires_at = util.nowMs()
 + (tonumber(config.proximity_offer_ttl_ms) or 60000),
 }
+skipOwner(terminal, offer)
 state.proximity_offers[offer.offer_id] = offer
 retargetOffer(offer)
 if offer.status == "offered" then offer.status = "claiming" end
@@ -3071,9 +3081,18 @@ end
 
 
 function actions.DEV_REGISTER(payload)
+local owner
+if payload.terminal_id then
 local terminal = requireTerminal(payload)
-local _, owner = companyOwner(terminal)
+local _
+_, owner = companyOwner(terminal)
 need(owner, "NO_COMPANY", "Link this kiosk to a company first")
+else
+
+
+need(payload.app_id == nil, "WRONG_APP", "Only the Pocket itself can do that")
+owner = requireSession(payload)
+end
 need(verifyAccount(owner, payload.pin), "BAD_PIN", "Incorrect owner PIN")
 state.developers = state.developers or {}
 local existing = state.developers[owner.account_id]
@@ -5076,6 +5095,63 @@ end
 
 function actions.COMPANY_CREATE(payload)
 return startCompany(shop.fromCompanyApp(payload), payload.company_name)
+end
+
+
+
+
+
+
+
+function actions.COMPANY_TILL(payload)
+local account, company = shop.owned(payload)
+local existing = payload.till_id and state.terminals[tostring(payload.till_id)]
+if existing and existing.auth_token == payload.till_token
+and existing.kind == "till" and existing.status == "active"
+and existing.company_id == company.company_id then
+existing.last_seen = util.nowMs()
+existing.name = util.safeText(company.name, 24)
+return { till_id = existing.terminal_id, till_token = existing.auth_token,
+name = existing.name }
+end
+local tills = {}
+for _, id in ipairs(company.linked_terminal_ids or {}) do
+local terminal = state.terminals[id]
+if terminal and terminal.kind == "till" then tills[#tills + 1] = terminal end
+end
+if #tills >= 12 then
+table.sort(tills, function(a, b)
+return (a.last_seen or 0) < (b.last_seen or 0)
+end)
+local oldest = tills[1]
+oldest.status = "retired"
+for index = #company.linked_terminal_ids, 1, -1 do
+if company.linked_terminal_ids[index] == oldest.terminal_id then
+table.remove(company.linked_terminal_ids, index)
+end
+end
+end
+local terminalId = nextId("terminal")
+local till = {
+terminal_id = terminalId,
+auth_token = util.token("TERMINAL"),
+kind = "till",
+name = util.safeText(company.name, 24),
+company_id = company.company_id,
+owner_account_id = account.account_id,
+quick_items = {},
+balance = 0,
+sales_total = 0,
+status = "active",
+created_day = util.ingameDay(),
+last_seen = util.nowMs(),
+}
+state.terminals[terminalId] = till
+company.linked_terminal_ids = company.linked_terminal_ids or {}
+company.linked_terminal_ids[#company.linked_terminal_ids + 1] = terminalId
+save()
+logActivity("New till for " .. company.name, colors.cyan)
+return { till_id = terminalId, till_token = till.auth_token, name = till.name }
 end
 
 function actions.COMPANY_STATE(payload)

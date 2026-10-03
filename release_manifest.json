@@ -20,20 +20,20 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 204742,
-      "checksum": "88145bb5"
+      "size": 206832,
+      "checksum": "638b0cf8"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 201105,
-      "checksum": "3b33951f"
+      "size": 205988,
+      "checksum": "87650418"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
-      "size": 76635,
-      "checksum": "d6485a8c"
+      "size": 8140,
+      "checksum": "838da242"
     },
     {
       "path": "event_kiosk.lua",
@@ -50,8 +50,8 @@
     {
       "path": "startup.lua",
       "source": "startup.lua",
-      "size": 47238,
-      "checksum": "e22b39a9"
+      "size": 48017,
+      "checksum": "f5c09943"
     },
     {
       "path": "launcher.lua",
@@ -74,8 +74,8 @@
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 45999,
-      "checksum": "d30bf461"
+      "size": 46183,
+      "checksum": "aed5baf4"
     },
     {
       "path": "lib/update.lua",
@@ -132,8 +132,8 @@
     {
       "path": "bank_app_server.lua",
       "source": "bank_app_server.lua",
-      "size": 40841,
-      "checksum": "9245c812"
+      "size": 40845,
+      "checksum": "c0a88eb1"
     },
     {
       "path": "buckapp.lua",
@@ -150,8 +150,8 @@
     {
       "path": "revolution.lua",
       "source": "revolution.lua",
-      "size": 24911,
-      "checksum": "365a6088"
+      "size": 24906,
+      "checksum": "a21e7c48"
     },
     {
       "path": "bank_vault.lua",
@@ -180,8 +180,8 @@
     {
       "path": "delivery_terminal.lua",
       "source": "delivery_terminal.lua",
-      "size": 67027,
-      "checksum": "6456c484"
+      "size": 67028,
+      "checksum": "4cdc2574"
     },
     {
       "path": "shop.lua",
@@ -198,8 +198,8 @@
     {
       "path": "company.lua",
       "source": "company.lua",
-      "size": 46450,
-      "checksum": "404ee6c1"
+      "size": 82720,
+      "checksum": "7245ce01"
     },
     {
       "path": "brickbreaker.lua",

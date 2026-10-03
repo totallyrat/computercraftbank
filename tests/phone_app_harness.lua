@@ -161,6 +161,19 @@ function phone.run(options)
         return scene
     end
 
+    -- FoxyOS 13: anything drawn somewhere other than the phone's screen --
+    -- a till's customer screen -- is drawn there by the real lib/ui.
+    for _, name in ipairs({ "clear", "fill", "card", "text", "center",
+        "wrappedText", "header" }) do
+        local stub = ui[name]
+        ui[name] = function(where, ...)
+            if where ~= nil and where ~= surface then
+                return realUi[name](where, ...)
+            end
+            return stub(where, ...)
+        end
+    end
+
     local appId = options.app_id or "TESTAPP"
     options.kept = options.kept or {}
     local api = {
@@ -190,6 +203,8 @@ function phone.run(options)
         -- A bank app's own 3rd Party Bank Server, when the test has one.
         bank = options.bank_app,
         banks = function() return {} end,
+        -- FoxyOS 13: customer screens beside a standing computer.
+        screens = options.screens and function() return options.screens end or nil,
         app_id = appId,
     }
     assert(loadfile(options.file))()(api)

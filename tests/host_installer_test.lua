@@ -138,21 +138,37 @@ assert(#phone.fetched == 1 and phone.fetched[1] == "release_manifest.json",
 -- Search ---------------------------------------------------------------------------------
 
 -- The down arrow opens it; the results follow every key.
-local kiosk = fresh()
-seen = h.run(kiosk, h.concat(
+local terminal = fresh()
+seen = h.run(terminal, h.concat(
     key("down"),
-    expect("Type to search", { "char", "s" }),
-    typed("hop"),
+    expect("Type to search", { "char", "p" }),
+    typed("ickup"),
     function(screen)
-        local _, y = h.where(screen, "Service Kiosk")
-        assert(y == 6, "the first result is the kiosk:\n" .. table.concat(screen, "\n"))
-        assert(h.has(screen, "> shop_"), "the box shows what was typed")
+        local _, y = h.where(screen, "Delivery Terminal")
+        assert(y == 6, "the first result is the terminal:\n" .. table.concat(screen, "\n"))
+        assert(h.has(screen, "> pickup_"), "the box shows what was typed")
         return key("enter")
     end,
-    expect("SERVICE KIOSK", key("enter"))
+    expect("DELIVERY TERMINAL", key("enter"))
 ))
 assert(seen.rebooted)
-assertInstalled(kiosk, "service", "service_kiosk.lua")
+assertInstalled(terminal, "delivery", "delivery_terminal.lua")
+
+-- FoxyOS 13: a program can ask for another to be installed -- a Service
+-- Kiosk turning itself into a Pocket. Nothing to tap: it installs and
+-- restarts into it.
+local merged = fresh()
+seen = h.run(merged, {}, { "--install", "pumpe" })
+assert(seen.rebooted, "installed, then restarted")
+assertInstalled(merged, "pumpe", "pumpe.lua")
+-- Not a program behind the operator's code, and not a retired one.
+for _, refused in ipairs({ "bank", "service" }) do
+    local computer = fresh()
+    h.run(computer, h.concat(expect("INSTALL POCKET", { "terminate" })),
+        { "--install", refused })
+    assert(computer.disk["startup.lua"] == h.installer,
+        "--install " .. refused .. " installs nothing")
+end
 
 -- Typing on the first screen starts a search with what was typed.
 local function firstResult(query)
@@ -171,6 +187,7 @@ local function firstResult(query)
     return found
 end
 assert(firstResult("ccg") == "CCG Bet Console")
+assert(firstResult("shop") == "Pocket", "FoxyOS 13: a shop's till is a Pocket")
 assert(firstResult("casino") == "CCG Bet Console", "keywords count")
 assert(firstResult("web") == "Internet Server")
 assert(firstResult("gps") == "GPS Anchor")
@@ -280,7 +297,9 @@ for id, name, file in installer:gmatch('{ id = "([%w_]+)", name = "([^"]+)", fil
 end
 assert(#programs >= 15, "the program list was not found")
 for _, program in ipairs(programs) do
-    local hidden = program.id == "tax"
+    -- FoxyOS 13: the Service Kiosk is hidden like the Tax Controller --
+    -- nobody installs one now -- and still boots, below.
+    local hidden = program.id == "tax" or program.id == "service"
     local roleFiles = update.rolePaths(program.id)
     if program.id ~= "tax" then
         assert(roleFiles and roleFiles[1] == program.file,
@@ -309,6 +328,16 @@ for _, program in ipairs(programs) do
             program.id .. " does not start: " .. table.concat(seen.launched, ", "))
     end
 end
+
+-- A kiosk that updated to 13 still starts: its program says it has merged.
+local oldKiosk = fresh({ disk = {
+    ["startup.lua"] = bootEntry("service"),
+    ["pumpe/installer.lua"] = h.installer,
+    ["pumpe/service_kiosk.lua"] = "-- the merged kiosk",
+    ["pumpe/config.lua"] = h.published("config.lua"),
+} })
+seen = h.run(oldKiosk, {}, { "--boot", "service" }, "pumpe/installer.lua")
+assert(seen.launched[1] == "pumpe/service_kiosk.lua", "a kiosk still boots")
 
 -- Reinstalling keeps settings ------------------------------------------------------------
 
@@ -551,9 +580,9 @@ for _, size in ipairs({ { 26, 20 }, { 51, 19 }, { 39, 13 }, { 57, 24 } }) do
     local computer = fresh({ width = size[1], height = size[2] })
     h.run(computer, h.concat(
         expect("INSTALL", key("down")),
-        typed("kiosk"),
-        expect("Service Kiosk", key("enter")),
-        expect("SERVICE KIOSK", tap("< BACK")),
+        typed("door"),
+        expect("Event Kiosk", key("enter")),
+        expect("EVENT KIOSK", tap("< BACK")),
         { "terminate" }
     ))
 end

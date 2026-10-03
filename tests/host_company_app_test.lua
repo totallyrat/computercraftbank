@@ -36,8 +36,13 @@ phone.push(script.actions, function(seen)
     return "start"
 end)
 phone.push(script.inputs, "Fox Goods")
--- Straight into it, on Products: a lamp, one-time.
-phone.push(script.actions, "add")
+-- Straight into it -- on Sell since FoxyOS 13, so over to Products for a
+-- lamp, one-time.
+phone.push(script.actions, function(seen)
+    assert(phone.has(phone.last(seen), "No products yet"),
+        "a new company opens on its till")
+    return "tab:products"
+end, "add")
 phone.push(script.inputs, "Lamp", "12")
 phone.push(script.actions, "pick:1")
 -- Into the Shop app, with a line under its name.
@@ -304,8 +309,10 @@ assert(#bank.request("DELIVERY_OUT", bank.as(ana,
 script = phone.script()
 -- Fox Goods is second now, after Ana Two.
 phone.push(script.actions, "company:2", function(seen)
-    assert(phone.has(phone.last(seen), "Discounts") and not phone.has(phone.last(seen), "More"),
-        "three tabs, and no More")
+    -- FoxyOS 13: four tabs -- Sell first -- and still no More. (The till's
+    -- own More chip is drawn on the shelf, not the bar.)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Sell") and phone.has(frame, "Discounts"), "four tabs")
     return "tab:discounts"
 end)
 phone.push(script.actions, "sale", "ship", "pick:3")

@@ -89,7 +89,7 @@ walk("../revolution.lua", "REVO", "Revolution", {
     { before = "account", tap = "tab:take" },
 }, {
     take = { "Take a payment", "Clearing", "Take", "Pay", "Account" },
-    pay = { "Pay nearby", "Pay kiosk by code" },
+    pay = { "Pay nearby", "Pay a till by code" },
     account = { "My Account ID", "Bring money in", "Move money out" },
 })
 

@@ -216,4 +216,38 @@ assert(direct.queue.status == "shopping", "nobody ahead, straight in")
 bank.request("BUY_TICKETS", bank.as(fans[6], { event_id = old.event_id,
     ticket_type_id = oldType.ticket_type_id, quantity = 1, pin = "2222" }))
 
+-- The lottery is for the waiting room only. Three wait before a sale opens
+-- and somebody arrives after it has; even with the luckiest draw there is,
+-- the late arrival goes behind all three.
+local lottery = bank.request("CREATE_EVENT", bank.as(organizer, {
+    title = "Lottery Night", event_day = today + 4, event_time = "12:00",
+    location = "Hall", release_day = today + 1, release_time = "10:00" })).event
+rejected(bank.request, "NO_PRESALE", "EVENT_INVITE", bank.as(organizer, {
+    event_id = lottery.event_id, who = "Fan 1" }))
+bank.request("ADD_TICKET_TYPE", bank.as(organizer, {
+    event_id = lottery.event_id, name = "Seat", price = 1, quantity = 50 }))
+local draws = { 0.9, 0.8, 0.7, 0.0 }
+local realRandom = math.random
+-- Only the draw is fixed: tokens and codes still get real randomness.
+math.random = function(low, high)
+    if low == nil then return table.remove(draws, 1) or realRandom() end
+    return realRandom(low, high)
+end
+local early = { fans[1], fans[2], fans[3] }
+for _, fan in ipairs(early) do
+    bank.request("QUEUE_JOIN", bank.as(fan, { event_id = lottery.event_id }))
+end
+harness.day = today + 1
+local lateFan = bank.register("Lucky Late", "9999")
+bank.request("QUEUE_JOIN", bank.as(lateFan, { event_id = lottery.event_id }))
+math.random = realRandom
+local function lotteryStatus(who)
+    return bank.request("QUEUE_STATUS", bank.as(who, { event_id = lottery.event_id })).queue
+end
+assert(lotteryStatus(fans[3]).status == "shopping"
+    and lotteryStatus(fans[2]).status == "shopping", "the two best draws first")
+assert(lotteryStatus(fans[1]).ahead == 0, "then the last of the waiting room")
+assert(lotteryStatus(lateFan).ahead == 1, "and the late arrival behind them all")
+harness.day = today
+
 print("host_ticket_queue_test: OK")

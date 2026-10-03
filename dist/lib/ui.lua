@@ -376,6 +376,13 @@ end
 return nil
 end
 
+
+
+local customerScreens = {}
+function ui.customerScreen(name)
+if name then customerScreens[name] = true end
+end
+
 function Scene:wait(options)
 options = options or {}
 local timer
@@ -453,7 +460,9 @@ idleTimer = scheduleIdleTimer()
 backgroundTimer = scheduleBackgroundTimer()
 while true do
 local event = { os.pullEvent() }
-if event[1] == "mouse_click" or event[1] == "monitor_touch" then
+if event[1] == "monitor_touch" and customerScreens[event[2]] then
+
+elseif event[1] == "mouse_click" or event[1] == "monitor_touch" then
 if handleIdle() then return finish("__idle") end
 recordActivity()
 local action, button = self:hit(event[3], event[4])

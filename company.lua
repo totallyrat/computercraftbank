@@ -1,13 +1,13 @@
 -- PUMPE APP: Company
 -- PUMPE APP ACTION: companies | My companies | Start and run your companies
 -- PUMPE APP ACTION: delivery | Delivery Mode | What is out for delivery
+-- PUMPE APP ACTION: sell | Point of Sale | Sell at your till
 --
 -- Running a company from your pocket, new in 11.1.
 --
--- Everything a Service Kiosk does to manage a company is here: starting
--- one, its products, its online store, and what its pickup points sell on
--- the spot. What stays on the kiosk is what belongs to that machine --
--- linking it, taking cash out of it, Dev Mode.
+-- Everything to manage a company is here: starting one, its products, its
+-- online store, and what its pickup points sell on the spot. FoxyOS 13
+-- moved the Service Kiosk in too, as the Sell tab: the till.
 --
 -- And Delivery Mode: a Delivery Terminal cut down to the road. It lists
 -- what is out for delivery, with the courier's code for a parcel going to
@@ -25,7 +25,9 @@ return function(api)
         { id = "delivery", label = "Delivery" } }
     -- 12.0 Final: three, all on the bar. Pickup points are part of the
     -- store, so they open from the Store tab.
-    local COMPANY_TABS = { { id = "products", label = "Products", short = "Items" },
+    -- FoxyOS 13: Sell is the Service Kiosk, moved in, and comes first.
+    local COMPANY_TABS = { { id = "sell", label = "Sell" },
+        { id = "products", label = "Products", short = "Items" },
         { id = "store", label = "Store" },
         { id = "discounts", label = "Discounts", short = "Deals", hint = "Sales and codes" } }
     local STORE_COLORS = { "orange", "red", "lime", "green", "cyan",
@@ -180,8 +182,8 @@ return function(api)
                 local index = (page - 1) * per + slot
                 local item = products[index]
                 if not item then break end
-                local where = item.kind == "subscription" and "Daily, at kiosks"
-                    or item.online and "Kiosks and Shop app" or "Kiosks only"
+                local where = item.kind == "subscription" and "Daily, at the till"
+                    or item.online and "Till and Shop app" or "At the till"
                 scene:button("item:" .. index, 2, 2 + slot * 3, width - 2, 2,
                     ui.truncate((item.favorite and "* " or "") .. item.name
                         .. "  " .. money(item.price), width - 4) .. "\n"
@@ -668,11 +670,728 @@ return function(api)
         return "home"
     end
 
-    local function companyScreen(company)
-        local tab = "products"
+    -- Sell: the till, FoxyOS 13 ---------------------------------------------------------
+    -- The Service Kiosk, moved into the Company app. On the Pocket itself it
+    -- sells on the spot; on a standing computer running the Pocket it spreads
+    -- out into a receipt and a wall of products, and every colour monitor
+    -- beside it faces the customer: what they are buying, the code to pay,
+    -- and the thank you. The device is one of the company's tills on the Bank,
+    -- so every way a kiosk took money works the same here.
+
+    local till = { carts = {} }
+
+    -- The till this device is for the company: kept in the app's own corner
+    -- of the phone, and recognised by the Bank when it comes back.
+    function till.start(company)
+        local kept = type(api.load) == "function" and api.load() or {}
+        kept.tills = type(kept.tills) == "table" and kept.tills or {}
+        local mine = kept.tills[company.company_id] or {}
+        local got, err = ask("COMPANY_TILL", { company_id = company.company_id,
+            till_id = mine.id, till_token = mine.token })
+        if not got then return nil, err end
+        kept.tills[company.company_id] = { id = got.till_id, token = got.till_token }
+        kept.last = company.company_id
+        if type(api.save) == "function" then api.save(kept) end
+        till.carts[company.company_id] = till.carts[company.company_id] or {}
+        return {
+            id = got.till_id, token = got.till_token, name = got.name,
+            company = company, cart = till.carts[company.company_id],
+            products = {}, category = "favorites", page = 1,
+            screens = type(api.screens) == "function" and api.screens() or {},
+            view = { mode = "idle", data = {}, frame = 0 },
+        }
+    end
+
+    -- A Bank call as this till.
+    function till.ask(desk, action, payload)
+        payload = payload or {}
+        payload.terminal_id, payload.terminal_token = desk.id, desk.token
+        return api.request(action, payload, true)
+    end
+
+    function till.refresh(desk)
+        local state = ask("COMPANY_STATE", { company_id = desk.company.company_id })
+        if state then desk.products = state.products or {} end
+        -- Favourites first, if there are any.
+        if not desk.looked then
+            desk.looked = true
+            desk.category = "items"
+            for _, product in ipairs(desk.products) do
+                if product.favorite then desk.category = "favorites" end
+            end
+        end
+        return state ~= nil
+    end
+
+    function till.shelf(desk)
+        local shown = {}
+        for _, product in ipairs(desk.products) do
+            local daily = product.kind == "subscription"
+            if (desk.category == "favorites" and product.favorite)
+                or (desk.category == "items" and not daily)
+                or (desk.category == "subs" and daily) then
+                shown[#shown + 1] = product
+            end
+        end
+        table.sort(shown, function(a, b) return a.name < b.name end)
+        return shown
+    end
+
+    -- The basket, sorted, with its total and whether it is daily.
+    function till.basket(desk)
+        local items, total, kind = {}, 0, nil
+        for _, entry in pairs(desk.cart) do
+            if (entry.quantity or 0) > 0 then
+                items[#items + 1] = { item_id = entry.item_id, name = entry.name,
+                    price = entry.price, quantity = entry.quantity,
+                    kind = entry.kind }
+                total = total + entry.price * entry.quantity
+                kind = kind or entry.kind
+            end
+        end
+        table.sort(items, function(a, b) return a.name < b.name end)
+        return items, util.roundMoney(total) or 0, kind or "one_time"
+    end
+
+    function till.clear(desk)
+        for key in pairs(desk.cart) do desk.cart[key] = nil end
+    end
+
+    -- One more of something. A basket is either paid once or daily, so
+    -- adding the other kind asks before it starts again.
+    function till.add(desk, item)
+        local items, _, kind = till.basket(desk)
+        if #items > 0 and kind ~= item.kind then
+            if not ui.confirm(target, "New basket?", item.kind == "subscription"
+                and "Daily things are sold on their own" or "This basket is daily",
+                "Start over", "Keep") then return end
+            till.clear(desk)
+        end
+        local entry = desk.cart[item.item_id] or { item_id = item.item_id,
+            name = item.name, price = item.price, kind = item.kind, quantity = 0 }
+        entry.quantity = entry.quantity + 1
+        desk.cart[item.item_id] = entry
+    end
+
+    -- The customer's screens ---------------------------------------------------------
+
+    function till.paintOne(desk, screen)
+        local width, height = screen.getSize()
+        local mode, data = desk.view.mode, desk.view.data or {}
+        local frame = desk.view.frame or 0
+        local compact = width < 24 or height < 11
+        local white, dark = colors.white, colors.black
+        ui.clear(screen, dark)
+        local function title(text, color)
+            ui.fill(screen, 1, 1, width, math.min(2, height), color)
+            ui.center(screen, 1, ui.truncate(text, math.max(1, width - 2)), dark, color)
+        end
+        if mode == "idle" then
+            title("WELCOME", ACCENT)
+            ui.center(screen, compact and 4 or 5, ui.truncate(desk.name,
+                math.max(1, width - 2)), white, dark)
+            ui.center(screen, compact and 6 or 7, compact and "READY"
+                or "READY WHEN YOU ARE", colors.lightGray, dark)
+            local pulse = math.max(2, math.min(width - 2, 2 + frame % math.max(2, width - 3)))
+            ui.fill(screen, math.floor((width - pulse) / 2) + 1,
+                math.min(height, compact and 8 or 9), pulse, 1, ACCENT)
+        elseif mode == "cart" then
+            title(data.kind == "subscription" and "EVERY DAY" or "YOUR ORDER", ACCENT)
+            local items = data.items or {}
+            local rows = math.max(1, height - 5)
+            local row = 3
+            for index = math.max(1, #items - rows + 1), #items do
+                local item = items[index]
+                local price = money(item.price * item.quantity)
+                local priceX = math.max(3, width - #price)
+                ui.text(screen, 2, row, ui.truncate(item.quantity .. "x " .. item.name,
+                    math.max(1, priceX - 3)), white, dark)
+                ui.text(screen, priceX, row, price, white, dark)
+                row = row + 1
+            end
+            local total = money(data.total or 0)
+            ui.fill(screen, 1, height - 1, width, 2, colors.gray)
+            ui.text(screen, 2, height, "TOTAL", white, colors.gray)
+            ui.text(screen, math.max(2, width - #total), height, total,
+                colors.lime, colors.gray)
+        elseif mode == "nearby" then
+            title("FOXY PAY", ACCENT)
+            ui.center(screen, 4, money(data.amount or 0), white, dark)
+            ui.center(screen, compact and 6 or 7, data.name
+                and ui.truncate(data.name, width - 2) or "Looking", ACCENT, dark)
+            ui.center(screen, compact and 8 or 9, "CHECK YOUR POCKET"
+                .. string.rep(".", frame % 4), colors.lightGray, dark)
+        elseif mode == "code" then
+            title("PAY WITH YOUR BANK", ACCENT)
+            ui.center(screen, 3, money(data.amount or 0)
+                .. (data.kind == "subscription" and "/DAY" or ""), white, dark)
+            local code = tostring(data.code or "------")
+            ui.fill(screen, 2, compact and 4 or 5, width - 2, compact and 2 or 3, white)
+            ui.center(screen, compact and 5 or 6, code:sub(1, 3) .. " " .. code:sub(4, 6),
+                dark, white)
+            ui.center(screen, compact and 7 or 9, data.left or "", colors.lightGray, dark)
+        elseif mode == "paid" then
+            ui.fill(screen, 1, 1, width, height, colors.lime)
+            ui.center(screen, math.max(2, math.floor(height / 2) - 1),
+                data.kind == "subscription" and "ACTIVE" or "PAID", dark, colors.lime)
+            ui.center(screen, math.max(3, math.floor(height / 2) + 1),
+                money(data.amount or 0), dark, colors.lime)
+            if height >= 8 then
+                ui.center(screen, height - 1, ui.truncate("THANK YOU"
+                    .. (data.payer and (", " .. data.payer) or ""), width - 2),
+                    dark, colors.lime)
+            end
+        else
+            title("NOT CHARGED", colors.red)
+            ui.center(screen, math.max(3, math.floor(height / 2)), "NOTHING PAID",
+                white, dark)
+        end
+    end
+
+    function till.paint(desk)
+        for _, screen in ipairs(desk.screens) do pcall(till.paintOne, desk, screen) end
+    end
+
+    function till.show(desk, mode, data)
+        desk.view = { mode = mode, data = data or {}, frame = 0 }
+        till.paint(desk)
+    end
+
+    -- What the customer sees between sales: the basket, or the welcome.
+    function till.resting(desk)
+        local items, total, kind = till.basket(desk)
+        if #items > 0 then
+            desk.view.mode, desk.view.data = "cart", { items = items, total = total,
+                kind = kind }
+        elseif desk.view.mode ~= "idle" then
+            desk.view.mode, desk.view.data = "idle", {}
+        end
+    end
+
+    -- Taking the money ------------------------------------------------------------------
+
+    function till.paid(desk, amount, payer, kind)
+        till.show(desk, "paid", { amount = amount, payer = payer, kind = kind })
+        local width, height = target.getSize()
+        for step = 1, 4 do
+            ui.clear(target, colors.lime)
+            ui.center(target, math.floor(height / 2) - 1, step % 2 == 1 and "PAID"
+                or "PAID!", colors.black, colors.lime)
+            ui.center(target, math.floor(height / 2) + 1, money(amount),
+                colors.black, colors.lime)
+            ui.center(target, math.floor(height / 2) + 3, ui.truncate(payer
+                or "Customer", width - 2), colors.black, colors.lime)
+            sleep(0.15)
+        end
+        ui.message(target, "success", kind == "subscription" and "Subscription on"
+            or "Paid " .. money(amount), payer or "Customer", 1)
+        till.clear(desk)
+        till.show(desk, "idle")
+    end
+
+    function till.gone(desk, title, body)
+        till.show(desk, "cancelled")
+        ui.message(target, "warning", title, body, 1.4)
+        till.show(desk, "idle")
+    end
+
+    function till.describe(items)
+        local names = {}
+        for index, item in ipairs(items) do
+            if index <= 3 then names[#names + 1] = item.name end
+        end
+        return #names > 0 and table.concat(names, ", ") or "Sale"
+    end
+
+    -- Waits on a Foxy Pay offer to whoever is nearest, or the one customer
+    -- this sale was rung up for. True once paid.
+    function till.waitOffer(desk, offer, amount, kind)
+        local frame = 0
+        while running() do
+            local width, height = target.getSize()
+            local waiting = offer.status == "offered" or offer.status == "claiming"
+                or offer.status == "claimed"
+            ui.clear(target)
+            ui.header(target, "Foxy Pay", money(amount), util.formatClock())
+            ui.center(target, 6, offer.portable and "SENT TO" or "OFFERED TO",
+                ui.theme.muted)
+            ui.center(target, 8, ui.truncate(offer.target_name
+                or (offer.status == "nobody_nearby" and "Nobody nearby" or "Looking"),
+                width - 2), offer.target_name and ui.theme.ink or colors.orange)
+            if offer.distance then
+                ui.center(target, 9, offer.distance .. " blocks away", ui.theme.muted)
+            end
+            ui.center(target, 12, waiting and ("Waiting for their Pocket"
+                .. string.rep(".", frame % 4)) or "Ask them to come closer",
+                ui.theme.accent)
+            desk.view.frame = frame
+            till.show(desk, "nearby", { amount = amount, name = offer.target_name })
+            local scene = ui.scene(target)
+            scene:button("cancel", 2, height - 2, width - 2, 2, "Cancel",
+                { background = ui.theme.danger })
+            local action = scene:wait({ tickRate = 0.6, flash = false })
+            frame = frame + 1
+            if action == "cancel" or action == "__terminate" then
+                till.ask(desk, "PROXIMITY_CANCEL", { offer_id = offer.offer_id })
+                if desk.customer and desk.customer.offer_id == offer.offer_id then
+                    desk.customer = nil
+                end
+                till.gone(desk, "Cancelled", "Nothing was charged")
+                return false
+            end
+            local polled = till.ask(desk, "PROXIMITY_STATUS", { offer_id = offer.offer_id })
+            if polled then offer = polled.offer end
+            if offer.status == "paid" then
+                if desk.customer and desk.customer.offer_id == offer.offer_id then
+                    desk.customer = nil
+                end
+                till.paid(desk, amount, offer.target_name, kind)
+                return true
+            end
+            if offer.status == "expired" or offer.status == "cancelled" then
+                desk.customer = nil
+                till.gone(desk, "Sale ended", "They did not confirm")
+                return false
+            end
+        end
+        return false
+    end
+
+    -- A code for somebody who banks somewhere else: they type it into their
+    -- bank's app. True once paid.
+    function till.waitCode(desk, created, kind)
+        local deadline = util.nowMs() + (tonumber(created.expires_at)
+            and math.max(0, created.expires_at - util.nowMs()) or 300000)
+        local frame = 0
+        while running() do
+            local width, height = target.getSize()
+            local seconds = math.max(0, math.floor((deadline - util.nowMs()) / 1000))
+            local left = string.format("%d:%02d LEFT", math.floor(seconds / 60), seconds % 60)
+            ui.clear(target)
+            ui.header(target, "Pay code", money(created.amount), util.formatClock())
+            ui.fill(target, 3, 6, width - 4, 5, colors.white)
+            ui.center(target, 7, "TYPE IN YOUR BANK", colors.gray, colors.white)
+            ui.center(target, 9, created.code:sub(1, 3) .. " " .. created.code:sub(4, 6),
+                colors.black, colors.white)
+            ui.center(target, 12, left, ui.theme.muted)
+            ui.center(target, 13, "Waiting" .. string.rep(".", frame % 4), ui.theme.accent)
+            desk.view.frame = frame
+            till.show(desk, "code", { amount = created.amount, code = created.code,
+                kind = kind, left = left })
+            local scene = ui.scene(target)
+            scene:button("cancel", 2, height - 2, width - 2, 2, "Cancel code",
+                { background = ui.theme.danger })
+            local action = scene:wait({ tickRate = 0.6, flash = false })
+            frame = frame + 1
+            if action == "cancel" or action == "__terminate" then
+                till.ask(desk, "CANCEL_CODE", { code = created.code })
+                till.gone(desk, "Cancelled", "Nothing was charged")
+                return false
+            end
+            local status = till.ask(desk, "CODE_STATUS", { code = created.code })
+            if status and status.status == "paid" then
+                till.paid(desk, created.amount, status.payer, status.kind or kind)
+                return true
+            end
+            if (status and (status.status == "expired" or status.status == "cancelled"))
+                or seconds <= 0 then
+                till.gone(desk, "Code expired", "Nothing was charged")
+                return false
+            end
+        end
+        return false
+    end
+
+    -- Charge: the customer this sale was rung up for, or whoever is nearest
+    -- with Foxy, or a code for another bank.
+    function till.charge(desk)
+        local items, total, kind = till.basket(desk)
+        if total <= 0 then
+            ui.message(target, "warning", "Nothing to charge", "Add something first", 1.2)
+            return
+        end
+        local payload = { amount = total, items = items, purchase_type = kind,
+            description = till.describe(items) }
+        if desk.customer then
+            payload.offer_id = desk.customer.offer_id
+            local sent, err = till.ask(desk, "PROXIMITY_BILL", payload)
+            if not sent then return failed("Not sent", err) end
+            return till.waitOffer(desk, sent.offer, total, kind)
+        end
+        local how = choose("Charge " .. money(total), till.describe(items), {
+            option("Foxy Pay: nearest Pocket", "nearby"),
+            option("Pay code: another bank", "code"),
+        }, labelOf)
+        if not how then return end
+        if how.id == "nearby" then
+            local position = type(api.position) == "function" and api.position()
+            if not position then
+                return failed("No GPS here", "Foxy Pay finds people with GPS anchors")
+            end
+            payload.position = position
+            local created, err = till.ask(desk, "PROXIMITY_OFFER", payload)
+            if not created then return failed("Not offered", err) end
+            return till.waitOffer(desk, created.offer, total, kind)
+        end
+        local created, err = till.ask(desk, "CREATE_PAY_CODE", payload)
+        if not created then return failed("No code", err) end
+        return till.waitCode(desk, created, kind)
+    end
+
+    -- Portable: find the customer first, ring them up after. They say yes
+    -- on their own Pocket, then again to pay.
+    function till.findCustomer(desk)
+        local position = type(api.position) == "function" and api.position()
+        if not position then
+            return failed("No GPS here", "Foxy Pay finds people with GPS anchors")
+        end
+        local created, err = till.ask(desk, "PROXIMITY_CLAIM", { position = position,
+            description = "Sale at " .. desk.name })
+        if not created then return failed("Cannot look", err) end
+        local offer, frame = created.offer, 0
+        while running() do
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Find customer", desk.name, util.formatClock())
+            if offer.status == "claimed" then
+                ui.center(target, 7, "READY", ui.theme.success)
+            elseif offer.target_name then
+                ui.center(target, 7, "ASKING" .. string.rep(".", frame % 4), ui.theme.accent)
+            else
+                ui.center(target, 7, "NOBODY NEARBY", colors.orange)
+            end
+            ui.center(target, 9, ui.truncate(offer.target_name or "Ask them to come closer",
+                width - 2), ui.theme.ink)
+            local scene = ui.scene(target)
+            scene:button("cancel", 2, height - 2, width - 2, 2, "Cancel",
+                { background = ui.theme.danger })
+            local action = scene:wait({ tickRate = 0.6, flash = false })
+            frame = frame + 1
+            if action == "cancel" or action == "__terminate" then
+                till.ask(desk, "PROXIMITY_CANCEL", { offer_id = offer.offer_id })
+                return
+            end
+            local polled = till.ask(desk, "PROXIMITY_STATUS", { offer_id = offer.offer_id })
+            if not polled then return end
+            offer = polled.offer
+            if offer.status == "claimed" then
+                desk.customer = offer
+                ui.message(target, "success", "Customer ready",
+                    tostring(offer.target_name), 1)
+                return
+            end
+        end
+    end
+
+    -- Tools: what a kiosk's own tab held that still belongs at a till.
+    function till.tools(desk)
+        while running() do
+            local item = choose("Till", desk.name, {
+                option("Verify a MyID", "myid"),
+                option("Customer screens: " .. #desk.screens, "screens"),
+                option("Custom amount", "custom"),
+            }, labelOf)
+            if not item then return end
+            if item.id == "myid" then
+                if ui.myIdVerifier then
+                    ui.myIdVerifier(target, function(code)
+                        return api.request("MYID_VERIFY", { code = code }, true)
+                    end)
+                end
+            elseif item.id == "screens" then
+                desk.screens = type(api.screens) == "function" and api.screens() or {}
+                till.show(desk, "idle")
+                ui.message(target, "info", #desk.screens .. " customer screens",
+                    #desk.screens > 0 and "Showing the welcome"
+                        or "Attach a colour monitor to this computer", 1.6)
+            elseif item.id == "custom" then
+                till.custom(desk)
+                return
+            end
+        end
+    end
+
+    -- An amount typed in, sold once or daily.
+    function till.custom(desk)
+        local text = ui.input(target, "Custom amount", { hint = "What to charge",
+            mode = "number", maxLength = 10 })
+        local amount = util.roundMoney(tonumber(text))
+        if not amount or amount <= 0 then return end
+        local daily = not ui.confirm(target, "Paid how?", "Once, or every day?",
+            "Once", "Daily")
+        till.custom_count = (till.custom_count or 0) + 1
+        till.add(desk, { item_id = "custom:" .. till.custom_count,
+            name = daily and "Daily amount" or "Amount", price = amount,
+            kind = daily and "subscription" or "one_time" })
+    end
+
+    -- The basket on its own, for a narrow screen.
+    function till.basketSheet(desk)
+        while running() do
+            local items, total, kind = till.basket(desk)
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Basket", #items .. " lines  " .. money(total)
+                .. (kind == "subscription" and "/day" or ""), util.formatClock())
+            local scene = ui.scene(target)
+            local rows = height - 9
+            for index, item in ipairs(items) do
+                if index > rows then break end
+                local y = 3 + index
+                ui.text(target, 2, y, ui.truncate(item.quantity .. "x " .. item.name,
+                    width - 18), ui.theme.ink)
+                ui.text(target, width - 15, y, ui.truncate(money(item.price
+                    * item.quantity), 8), ui.theme.muted)
+                scene:button("less:" .. index, width - 6, y, 3, 1, "-",
+                    { background = ui.theme.panel })
+                scene:button("more:" .. index, width - 3, y, 3, 1, "+",
+                    { background = ACCENT, foreground = colors.black })
+            end
+            if #items == 0 then ui.center(target, 6, "Empty", ui.theme.muted) end
+            scene:button("clear", 2, height - 3, 9, 1, "Clear",
+                { background = ui.theme.danger, disabled = #items == 0 })
+            scene:button("back", 2, height - 1, width - 2, 1, "Done",
+                { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return end
+            if action == "clear" and ui.confirm(target, "Clear basket?",
+                "Everything comes out", "Clear", "Keep") then
+                till.clear(desk)
+            end
+            local less = tonumber(action and action:match("^less:(%d+)$"))
+            local more = tonumber(action and action:match("^more:(%d+)$"))
+            local item = items[less or more or 0]
+            if item then
+                local entry = desk.cart[item.item_id]
+                entry.quantity = entry.quantity + (more and 1 or -1)
+                if entry.quantity <= 0 then desk.cart[item.item_id] = nil end
+            end
+            till.resting(desk)
+            till.paint(desk)
+        end
+    end
+
+    local CATEGORIES = { { "favorites", "Favs" }, { "items", "Items" },
+        { "subs", "Daily" } }
+
+    -- The tab itself.
+    local function sellPage(company)
+        local desk, err = till.start(company)
+        while running() and not desk do
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, ui.truncate(company.name, width - 9), "Sell",
+                util.formatClock())
+            ui.wrappedText(target, 2, 5, "This Pocket cannot be a till yet: "
+                .. tostring(err or "the Bank is not answering")
+                .. ". The Bank Server may need FoxyOS 13.", width - 2, 6,
+                ui.theme.muted)
+            local scene = ui.scene(target)
+            ui.tabBar(scene, target, COMPANY_TABS, "sell", ACCENT)
+            local action = scene:wait()
+            if action == "home" or action == "__terminate" then return "home" end
+            if action and action:match("^tab:") then return action end
+        end
+        till.refresh(desk)
+        till.show(desk, "idle")
+        local ticks = 0
+        while running() do
+            local width, height = target.getSize()
+            local wide = width >= 40
+            local items, total, kind = till.basket(desk)
+            local shelf = till.shelf(desk)
+            local bottom = ui.contentBottom(target)
+            ui.clear(target)
+            ui.header(target, ui.truncate(desk.name, width - 9), desk.customer
+                and ("For " .. tostring(desk.customer.target_name))
+                or ("Till  " .. #desk.screens .. " screens"), util.formatClock())
+            local scene = ui.scene(target)
+
+            -- The receipt: a column on a wide screen, a bar on a narrow one.
+            local shelfX, shelfWidth = 2, width - 2
+            if wide then
+                local receiptWidth = math.max(18, math.min(22, math.floor(width * 0.4)))
+                shelfX, shelfWidth = receiptWidth + 3, width - receiptWidth - 3
+                ui.fill(target, 1, 4, receiptWidth + 1, bottom - 3, ui.theme.panel)
+                ui.text(target, 2, 4, desk.customer and ui.truncate(
+                    tostring(desk.customer.target_name), receiptWidth - 1)
+                    or "RECEIPT", desk.customer and colors.lime or ui.theme.muted,
+                    ui.theme.panel)
+                local rows = bottom - 11
+                local first = math.max(1, #items - rows + 1)
+                for index = first, #items do
+                    local item = items[index]
+                    local y = 6 + index - first
+                    local price = money(item.price * item.quantity)
+                    scene:button("less:" .. index, 2, y, receiptWidth - #price - 1, 1,
+                        ui.truncate(item.quantity .. "x " .. item.name,
+                            receiptWidth - #price - 3),
+                        { background = ui.theme.panel, flash = false })
+                    ui.text(target, receiptWidth - #price + 1, y, price, ui.theme.muted,
+                        ui.theme.panel)
+                end
+                if #items == 0 then
+                    ui.text(target, 2, 6, "Tap a product", ui.theme.muted, ui.theme.panel)
+                end
+                ui.text(target, 2, bottom - 4, kind == "subscription" and "PER DAY"
+                    or "TOTAL", ui.theme.muted, ui.theme.panel)
+                local totalText = money(total)
+                ui.text(target, receiptWidth - #totalText + 1, bottom - 4, totalText,
+                    ui.theme.ink, ui.theme.panel)
+                local half = math.floor((receiptWidth - 1) / 2)
+                scene:button("clear", 2, bottom - 3, half, 1, "Clear",
+                    { background = colors.gray, disabled = #items == 0 })
+                scene:button("customer", 3 + half, bottom - 3, receiptWidth - half - 1, 1,
+                    desk.customer and "Drop" or "Customer",
+                    { background = desk.customer and colors.lime or colors.cyan,
+                      foreground = colors.black })
+                scene:button("charge", 2, bottom - 1, receiptWidth, 2,
+                    total > 0 and ("Charge " .. money(total)) or "Charge",
+                    { background = colors.lime, foreground = colors.black,
+                      disabled = total <= 0 })
+            end
+
+            -- Categories, then the products as tiles.
+            local chipWidth = math.floor((shelfWidth - 3) / 4)
+            local function chip(id, index, label, active)
+                local x = shelfX + (index - 1) * (chipWidth + 1)
+                local chipW = index == 4 and shelfX + shelfWidth - x or chipWidth
+                local background = active and ACCENT or ui.theme.panel
+                ui.fill(target, x, 4, chipW, 1, background)
+                ui.text(target, x + math.max(0, math.floor((chipW - #label) / 2)), 4,
+                    ui.truncate(label, chipW), active and colors.black or ui.theme.ink,
+                    background)
+                scene:hotspot(id, x, 4, chipW, 1)
+            end
+            for index, entry in ipairs(CATEGORIES) do
+                chip("cat:" .. entry[1], index, entry[2], desk.category == entry[1])
+            end
+            chip("tools", 4, "More", false)
+            local columns = 2
+            local tileHeight = wide and 3 or 2
+            local shelfBottom = wide and bottom or bottom - 3
+            local rows = math.max(1, math.floor((shelfBottom - 5) / (tileHeight + 1)))
+            local tileWidth = math.floor((shelfWidth - (columns - 1)) / columns)
+            local perPage = rows * columns
+            local pages = math.max(1, math.ceil(#shelf / perPage))
+            desk.page = math.max(1, math.min(desk.page, pages))
+            for slot = 1, perPage do
+                local index = (desk.page - 1) * perPage + slot
+                local product = shelf[index]
+                if not product then break end
+                local column = (slot - 1) % columns
+                local row = math.floor((slot - 1) / columns)
+                local inBasket = desk.cart[product.item_id]
+                    and desk.cart[product.item_id].quantity or 0
+                local label = ui.truncate(product.name, tileWidth - 2) .. "\n"
+                    .. ui.truncate(money(product.price) .. (product.kind == "subscription"
+                        and "/d" or "") .. (inBasket > 0 and not wide
+                            and ("  x" .. inBasket) or ""), tileWidth - 2)
+                if wide then
+                    label = label .. "\n" .. (inBasket > 0 and ("x" .. inBasket) or "")
+                end
+                scene:button("product:" .. index, shelfX + column * (tileWidth + 1),
+                    6 + row * (tileHeight + 1), tileWidth, tileHeight, label, {
+                        background = inBasket > 0 and ACCENT
+                            or product.kind == "subscription" and colors.purple
+                            or ui.theme.panel,
+                        foreground = inBasket > 0 and colors.black or ui.theme.ink })
+            end
+            if #shelf == 0 then
+                ui.wrappedText(target, shelfX, 7, desk.category == "favorites"
+                    and "No favourites yet: star products on the Products tab."
+                    or desk.category == "subs" and "Nothing daily: add a subscription"
+                        .. " on the Products tab."
+                    or "No products yet: add them on the Products tab.",
+                    shelfWidth, 4, ui.theme.muted)
+            end
+            if pages > 1 then
+                scene:button("prev", shelfX + shelfWidth - 9, shelfBottom, 4, 1, "<",
+                    { background = ui.theme.panel, disabled = desk.page <= 1 })
+                scene:button("next", shelfX + shelfWidth - 4, shelfBottom, 4, 1, ">",
+                    { background = ui.theme.panel, disabled = desk.page >= pages })
+            end
+
+            -- On a narrow screen the basket is a bar above the tabs.
+            if not wide then
+                local count = 0
+                for _, item in ipairs(items) do count = count + item.quantity end
+                scene:button("basket", 2, bottom - 1, 9, 2, count == 0 and "Empty"
+                    or ("Bag " .. count), { background = ui.theme.panel })
+                scene:button("customer", 2, bottom - 2, 9, 1,
+                    desk.customer and "Drop" or "Find",
+                    { background = desk.customer and colors.lime or colors.cyan,
+                      foreground = colors.black })
+                scene:button("charge", 12, bottom - 2, width - 12, 3,
+                    total > 0 and ("Charge\n" .. money(total)) or "Charge",
+                    { background = colors.lime, foreground = colors.black,
+                      disabled = total <= 0 })
+            end
+            ui.tabBar(scene, target, COMPANY_TABS, "sell", ACCENT)
+            till.resting(desk)
+            desk.view.frame = ticks
+            till.paint(desk)
+
+            local action = scene:wait({ tickRate = 0.5, flash = false })
+            if action == "home" or action == "__terminate" then
+                till.show(desk, "idle")
+                return "home"
+            end
+            if action and action:match("^tab:") then return action end
+            if action == "__tick" then
+                ticks = ticks + 1
+                if ticks % 60 == 0 then till.refresh(desk) end
+            elseif action == "charge" then
+                till.charge(desk)
+            elseif action == "customer" then
+                if desk.customer then
+                    if ui.confirm(target, "Drop customer?", "Let "
+                        .. tostring(desk.customer.target_name) .. " go", "Drop", "Keep") then
+                        till.ask(desk, "PROXIMITY_CANCEL",
+                            { offer_id = desk.customer.offer_id })
+                        desk.customer = nil
+                    end
+                else
+                    till.findCustomer(desk)
+                end
+            elseif action == "basket" then
+                till.basketSheet(desk)
+            elseif action == "clear" then
+                till.clear(desk)
+            elseif action == "tools" then
+                till.tools(desk)
+            elseif action == "prev" then
+                desk.page = desk.page - 1
+            elseif action == "next" then
+                desk.page = desk.page + 1
+            else
+                local category = action and action:match("^cat:(.+)$")
+                local productIndex = tonumber(action and action:match("^product:(%d+)$"))
+                local less = tonumber(action and action:match("^less:(%d+)$"))
+                if category then
+                    desk.category, desk.page = category, 1
+                elseif productIndex and shelf[productIndex] then
+                    local product = shelf[productIndex]
+                    till.add(desk, { item_id = product.item_id, name = product.name,
+                        price = product.price, kind = product.kind == "subscription"
+                            and "subscription" or "one_time" })
+                elseif less and items[less] then
+                    local entry = desk.cart[items[less].item_id]
+                    entry.quantity = entry.quantity - 1
+                    if entry.quantity <= 0 then desk.cart[items[less].item_id] = nil end
+                end
+            end
+        end
+        return "home"
+    end
+
+    local function companyScreen(company, first)
+        local tab = first or "sell"
         while running() do
             local switched
-            if tab == "store" then
+            if tab == "sell" then
+                switched = sellPage(company)
+            elseif tab == "store" then
                 switched = storePage(company)
             elseif tab == "discounts" then
                 switched = discountsPage(company)
@@ -726,7 +1445,7 @@ return function(api)
             end
             if #companies == 0 then
                 ui.wrappedText(target, 2, 5, listed and ("Start a company to"
-                    .. " sell at Service Kiosks, in the Shop app and at"
+                    .. " sell at your till, in the Shop app and at"
                     .. " pickup points.") or tostring(err or
                         "Cannot reach the Bank."), width - 2, 5, ui.theme.muted)
             end
@@ -930,8 +1649,20 @@ return function(api)
 
     -- Starting -----------------------------------------------------------------------
 
-    local tab = type(api.action) == "function" and api.action() == "delivery"
-        and "delivery" or "companies"
+    local wanted = type(api.action) == "function" and api.action() or nil
+    -- FoxyOS 13: Point of Sale opens the till this device last sold at, or
+    -- the only company there is. A standing computer opens straight onto it.
+    if wanted == "sell" then
+        local kept = type(api.load) == "function" and api.load() or {}
+        local listed = ask("COMPANY_LIST")
+        local companies = listed and listed.companies or {}
+        local pick = #companies == 1 and companies[1] or nil
+        for _, company in ipairs(companies) do
+            if company.company_id == kept.last then pick = company end
+        end
+        if pick then companyScreen(pick, "sell") end
+    end
+    local tab = wanted == "delivery" and "delivery" or "companies"
     while running() do
         local switched
         if tab == "delivery" then

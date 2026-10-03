@@ -253,8 +253,8 @@ return function(api)
 
     local function codePayScreen()
         while running() do
-            local code = ui.input(target, "Kiosk code", {
-                hint = "The code on the kiosk screen",
+            local code = ui.input(target, "Pay code", {
+                hint = "The code on the till's screen",
                 mode = "code", maxLength = 8,
             })
             if not code then return end
@@ -265,11 +265,11 @@ return function(api)
             else
                 local width, height = target.getSize()
                 ui.clear(target)
-                ui.header(target, "Pay kiosk", quote.merchant,
+                ui.header(target, "Pay a till", quote.merchant,
                     util.formatClock())
                 ui.card(target, 2, 5, width - 2, 8, REVO)
                 ui.wrappedText(target, 4, 6,
-                    quote.description or "Kiosk purchase", width - 6, 2,
+                    quote.description or "Purchase", width - 6, 2,
                     ui.theme.ink, ui.theme.panel)
                 ui.text(target, 4, 9, "Amount  " .. money(quote.amount),
                     ui.theme.ink, ui.theme.panel)
@@ -519,7 +519,7 @@ return function(api)
         elseif tab == "pay" then
             scene:button("pay", 2, 10, width - 2, 3, "Pay nearby",
                 { background = ui.theme.success, foreground = colors.black })
-            scene:button("code", 2, 14, width - 2, 3, "Pay kiosk by code",
+            scene:button("code", 2, 14, width - 2, 3, "Pay a till by code",
                 { background = colors.blue })
         else
             scene:button("id", 2, 10, width - 2, 2, "My Account ID",

@@ -200,7 +200,7 @@ local function linkCompany()
     end
     if not chosen then
         ui.message(target, "error", "NO COMPANY",
-            "Make one on a Service Kiosk first", 2)
+            "Start one in the Company app first", 2)
         return false
     end
     local linked, linkError = request("LINK_TERMINAL", {

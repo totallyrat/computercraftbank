@@ -55,11 +55,15 @@ local PROGRAMS = {
     { id = "pumpe", name = "Pocket", file = "pumpe.lua",
       detail = "The phone: money, friends, apps",
       about = "Money, friends, tickets and travel papers, all in one pocket computer.",
-      words = "phone pocket foxy money wallet apps" },
+      -- FoxyOS 13: the till is the Company app's Sell tab, so a shop's
+      -- checkout is a Pocket too -- on a standing computer, with screens.
+      words = "phone pocket foxy money wallet apps shop store till pos checkout"
+          .. " sell pay kiosk" },
+    -- FoxyOS 13: merged into the Company app. Still bootable, so a kiosk
+    -- that updates can say so and offer to become a Pocket.
     { id = "service", name = "Service Kiosk", file = "service_kiosk.lua",
-      detail = "A shop's checkout",
-      about = "A shop's till: sell, take Foxy Pay, run an online store.",
-      words = "shop store till pos checkout sell pay" },
+      detail = "Now the Company app", about = "Merged into the Pocket.",
+      hidden = true },
     { id = "delivery", name = "Delivery Terminal", file = "delivery_terminal.lua",
       detail = "Orders and pickup points",
       about = "Packs a shop's orders, or runs a pickup point with lockers.",
@@ -1081,6 +1085,18 @@ if mode == "--boot" then
     local program = programById(modeProgram)
     if program then return bootProgram(program) end
     message("error", "UNKNOWN PROGRAM", modeProgram .. " - pick one instead", 2)
+end
+
+-- FoxyOS 13: a program asking for another to be installed here -- a Service
+-- Kiosk turning itself into a Pocket. Only what anybody may install: a
+-- program behind the operator's code still goes through the menu.
+if mode == "--install" then
+    local program = programById(modeProgram)
+    if program and not program.code and not program.hidden then
+        if installChosen(program) then return end
+    else
+        message("error", "NOT INSTALLED", modeProgram .. " - pick one instead", 2)
+    end
 end
 
 -- The menu ------------------------------------------------------------------------

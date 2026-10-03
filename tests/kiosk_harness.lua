@@ -68,7 +68,8 @@ function kiosk.run(options)
         return tostring(left):gsub("/+$", "") .. "/" .. tostring(right):gsub("^/+", "")
     end
     fs.exists = fs.exists or function() return false end
-    shell = { getRunningProgram = function() return "/pumpe/" .. options.file end }
+    shell = { getRunningProgram = function() return "/pumpe/" .. options.file end,
+        run = options.shell_run }
     os.getComputerID = function() return 77 end
     os.day = function() return 42 end
     os.time = function() return 12 end
