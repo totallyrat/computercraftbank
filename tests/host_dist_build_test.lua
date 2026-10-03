@@ -23,6 +23,14 @@ end
 
 local STRIPPED = { "bank_server.lua", "bank_vault.lua", "pumpe.lua", "lib/net.lua",
     "lib/ui.lua", "lib/update.lua", "lib/util.lua" }
+-- FoxyOS 13: the apps the App Server ships, with their headers kept.
+local APPS = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
+    "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua" }
+local isApp = {}
+for _, path in ipairs(APPS) do
+    STRIPPED[#STRIPPED + 1] = path
+    isApp[path] = true
+end
 
 local saved, total = 0, 0
 for _, path in ipairs(STRIPPED) do
@@ -36,7 +44,24 @@ for _, path in ipairs(STRIPPED) do
             .. "; rerun the release builder")
     assert(lines(built) == lines(source),
         "dist/" .. path .. " moved lines, so errors would name the wrong one")
-    assert(not built:find("\n%s*%-%-"), "dist/" .. path .. " still has comments")
+    if isApp[path] then
+        -- Every header line the App Server and the Pocket read is still
+        -- there, on the line it was; nothing else is.
+        local sourceLines, builtLines = {}, {}
+        for line in (source .. "\n"):gmatch("(.-)\n") do sourceLines[#sourceLines + 1] = line end
+        for line in (built .. "\n"):gmatch("(.-)\n") do builtLines[#builtLines + 1] = line end
+        for index, line in ipairs(sourceLines) do
+            if line:match("^%-%-%s*PUMPE ") then
+                assert(builtLines[index] == line, "dist/" .. path .. " lost its header: " .. line)
+            end
+        end
+        for _, line in ipairs(builtLines) do
+            assert(not line:match("^%s*%-%-") or line:match("^%-%-%s*PUMPE "),
+                "dist/" .. path .. " still has comments: " .. line)
+        end
+    else
+        assert(not built:find("\n%s*%-%-"), "dist/" .. path .. " still has comments")
+    end
     assert(#built < #source)
     saved, total = saved + (#source - #built), total + #source
 end

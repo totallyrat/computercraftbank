@@ -184,9 +184,17 @@ const strippedFiles = [
   "lib/util.lua",
 ];
 
+// FoxyOS 13: the apps the App Server ships, too. A Pocket keeps every app
+// it installs beside a staged release, and the till made Company twice the
+// size. Their headers stay: the App Server and the Pocket read them.
+const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
+  "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua"];
+strippedFiles.push(...strippedApps);
+
 for (const relativePath of strippedFiles) {
   const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
-  const stripped = stripLua(source, relativePath);
+  const stripped = stripLua(source, relativePath,
+    { keepMarkers: strippedApps.includes(relativePath) });
   if (stripped.split("\n").length !== source.split("\n").length) {
     throw new Error(`${relativePath}: stripping moved lines`);
   }

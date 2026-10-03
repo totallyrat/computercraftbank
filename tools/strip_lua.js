@@ -10,7 +10,10 @@
 // space and never to none, so no two tokens run together; an inline long
 // comment counts as whitespace for the same reason.
 
-function stripLua(source, name) {
+// `options.keepMarkers` keeps a line comment that starts its line and reads
+// "-- PUMPE ...": an app's header (its name, its App Actions, a bank's
+// terms) is read by code, so an app stripped for its download keeps it.
+function stripLua(source, name, options = {}) {
   let out = "";
   let i = 0;
   let lineStart = true;
@@ -59,7 +62,15 @@ function stripLua(source, name) {
         }
         i = end;
       } else {
-        while (i < n && source[i] !== "\n") i += 1;
+        let end = i;
+        while (end < n && source[end] !== "\n") end += 1;
+        const comment = source.slice(i, end);
+        if (options.keepMarkers && lineStart && /^--\s*PUMPE /.test(comment)) {
+          out += comment;
+          lineStart = false;
+          pendingSpace = false;
+        }
+        i = end;
       }
     } else if (c === "\"" || c === "'") {
       let j = i + 1;

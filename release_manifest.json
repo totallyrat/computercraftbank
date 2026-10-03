@@ -125,9 +125,9 @@
     },
     {
       "path": "foxy.lua",
-      "source": "foxy.lua",
-      "size": 55658,
-      "checksum": "41c2a956"
+      "source": "dist/foxy.lua",
+      "size": 36991,
+      "checksum": "30115672"
     },
     {
       "path": "bank_app_server.lua",
@@ -137,9 +137,9 @@
     },
     {
       "path": "buckapp.lua",
-      "source": "buckapp.lua",
-      "size": 13711,
-      "checksum": "2e370ddd"
+      "source": "dist/buckapp.lua",
+      "size": 9517,
+      "checksum": "3e4f9bba"
     },
     {
       "path": "ccg_server.lua",
@@ -149,9 +149,9 @@
     },
     {
       "path": "revolution.lua",
-      "source": "revolution.lua",
-      "size": 24906,
-      "checksum": "a21e7c48"
+      "source": "dist/revolution.lua",
+      "size": 16114,
+      "checksum": "40f563db"
     },
     {
       "path": "bank_vault.lua",
@@ -167,15 +167,15 @@
     },
     {
       "path": "wc.lua",
-      "source": "wc.lua",
-      "size": 21865,
-      "checksum": "caaf83aa"
+      "source": "dist/wc.lua",
+      "size": 14417,
+      "checksum": "a28f8984"
     },
     {
       "path": "internet.lua",
-      "source": "internet.lua",
-      "size": 8146,
-      "checksum": "75013b0e"
+      "source": "dist/internet.lua",
+      "size": 5407,
+      "checksum": "9b1a595b"
     },
     {
       "path": "delivery_terminal.lua",
@@ -185,27 +185,27 @@
     },
     {
       "path": "shop.lua",
-      "source": "shop.lua",
-      "size": 39059,
-      "checksum": "c0cad5a5"
+      "source": "dist/shop.lua",
+      "size": 25891,
+      "checksum": "7d98cda7"
     },
     {
       "path": "foxmail.lua",
-      "source": "foxmail.lua",
-      "size": 19078,
-      "checksum": "5218a307"
+      "source": "dist/foxmail.lua",
+      "size": 13067,
+      "checksum": "7ddb85da"
     },
     {
       "path": "company.lua",
-      "source": "company.lua",
-      "size": 82720,
-      "checksum": "7245ce01"
+      "source": "dist/company.lua",
+      "size": 58296,
+      "checksum": "de12700b"
     },
     {
       "path": "brickbreaker.lua",
-      "source": "brickbreaker.lua",
-      "size": 5154,
-      "checksum": "abf110fd"
+      "source": "dist/brickbreaker.lua",
+      "size": 3134,
+      "checksum": "3c19e54e"
     }
   ]
 }
