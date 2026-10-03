@@ -98,6 +98,41 @@ assert(bank.balanceOf(kit) == 1000 - 42, "Kit paid 42")
 assert(bank.balanceOf(ana) == 500 + 42, "into the owner's account")
 assert(paidOffer.declined[ana.id], "the owner was never asked")
 
+-- Customer first: find them, ring them up, they pay on their own Pocket -------------------------
+
+local function lastOffer()
+    local newest
+    for _, offer in pairs(bank.state.proximity_offers) do
+        if not newest or offer.offer_id > newest.offer_id then newest = offer end
+    end
+    return newest
+end
+script = phone.script()
+phone.push(script.actions, "customer", function(seen)
+    assert(phone.has(phone.last(seen), "Kit Wolf"), "asking Kit, not Ana")
+    bank.request("PROXIMITY_ACCEPT", bank.as(kit, { offer_id = lastOffer().offer_id }))
+    return "__tick"
+end, function(seen)
+    assert(phone.said(seen, "Customer ready").body == "Kit Wolf")
+    assert(phone.has(phone.last(seen), "For Kit Wolf"), "the till is ringing up for Kit")
+    return "product:1"
+end, "charge", function(seen)
+    assert(phone.has(phone.last(seen), "SENT TO"), "the basket went to Kit's Pocket")
+    bank.request("FOXY_PAY_CONFIRM", bank.as(kit, { offer_id = lastOffer().offer_id,
+        pin = "5678" }))
+    return "__tick"
+end, function(seen)
+    assert(phone.said(seen, "Paid $12"))
+    return "customer"
+end, function(seen)
+    -- Found again, then the cashier walks off: the claim is let go.
+    bank.request("PROXIMITY_ACCEPT", bank.as(kit, { offer_id = lastOffer().offer_id }))
+    return "__tick"
+end, "tab:products", "home", "home")
+run(script)
+assert(bank.balanceOf(kit) == 1000 - 42 - 12, "Kit paid for the lamp too")
+assert(lastOffer().status == "cancelled", "leaving the till let Kit go")
+
 -- A code for another bank, cancelled ------------------------------------------------------
 
 script = phone.script()

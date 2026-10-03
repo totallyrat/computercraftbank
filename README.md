@@ -10,8 +10,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `bank_vault.lua` | Advanced Computer + wired modem to its Core | The Bank Vault: friends and chat, travel, events and tickets, app records, the Shop's orders, FoxMail, and since 11.2 every account's history and notifications |
 | `pumpe.lua` | Advanced Pocket Computer + wireless modem | The Pocket: personal phone, payments, the CCG app (Bet Play and Home Mode), MyID (Digital ID, visas, countries, tax), events, tickets, subscriptions |
 | `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track and Survivor arena; since 12.0 Home Mode, four free games for one player with a Pocket as the controller |
-| `service_kiosk.lua` | Advanced Computer + wireless/Ender modem | Square-style touch POS, favorites, products, receipts, payment codes, withdrawals, subscriptions |
-| `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, animated analytics, door admission |
+| `service_kiosk.lua` | (retired) | Since FoxyOS 13 the till is the Company app's **Sell** tab. An updated kiosk says so, pays out any money it still holds, and turns itself into a Pocket |
+| `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, release dates, presales and invitations, the queue's numbers, door admission |
 | `admin_terminal.lua` | Advanced Computer + wireless/Ender modem | Government-only tax controls, account approval, balances, bans, tax demands, announcements |
 | `border_controller.lua` | Advanced Computer + wireless/Ender modem | Checks travel codes, records visitors, and opens a redstone gate |
 | `gps_anchor.lua` | Computer + wireless/Ender modem | Serves its own coordinates so every device can locate itself |
@@ -34,7 +34,8 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - **Since 12.0 a Pocket belongs to its Foxy Account.** It starts on the lock screen of the account it was set up with — a big clock and the account's name — and the PIN is all it asks. There is no sign-in screen to reach from there; **Remove account** in Settings is how a phone changes hands.
 - **Every device has a main colour** (12.0). Orange like the fox out of the box; the Pocket asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it on one of their tabs (a kiosk's **Kiosk** tab, a terminal's **Setup** or **System**, a server's **Server**); the Bank Server and Vault keep the Bank's colours.
 
-- Start-up spells **POCKET** one letter at a time, then holds **FoxyOS 12** for two seconds. Installing a release shows the FoxyOS update screen: see **Automatic Internet Updates**.
+- Start-up spells **POCKET** one letter at a time, then holds **FoxyOS 13** for two seconds. Installing a release shows the FoxyOS update screen: see **Automatic Internet Updates**.
+- **Every app opens its own way** (FoxyOS 13). A motion in the app's colour grows out of the icon that was tapped and paints over the Home Screen, then holds a beat on the app's icon and name — about half a second. Friends ripples like a call coming in, Tickets closes in on a perforation, MyID scans a card, CCG boots like an arcade cabinet, Subs rises like a wave, Reminders shakes like a bell, Quick strikes like lightning, the App Browser lands in tiles and Settings closes like a shutter. Foxy sweeps up like a tail, FoxMail folds like an envelope, Shop rolls up an awning, Company opens its blinds, Internet sweeps like radar, Website Crafter types, BuckApp turns like a coin and Revolution spins. Any other app gets one of five shapes, chosen from its id, so it always opens the same way.
 - Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How Pocket Works** in Settings → Account re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your Pocket**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
@@ -43,7 +44,7 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - Unread counts appear as a badge in an icon's corner.
 - **Foxy** is the bank. Since 9.4 the balance, your accounts, Foxy Cash, the Bet Wallet, Activity, cashing out and the Account ID all live in its bank section; there is no Bank app on the Home Screen. (It was BuckApp until 9.0, then a built-in Bank tab until 9.4.)
 - **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
-- **Tickets** holds events and your own tickets; **MyID** holds everything the government does: your Digital ID, visas, the countries you run, and tax.
+- **Tickets** holds events and your own tickets, bought through a queue since FoxyOS 13 (see *Tickets and the queue*); **MyID** holds everything the government does: your Digital ID, visas, the countries you run, and tax.
 - Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
 - The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
 - **CCG** (the Bet app until 12.0) has three tabs: **Home** plays Home Mode on your own console, **Bet** joins a lobby and needs the Foxy Account PIN every time, and **Scores** keeps your best at home. The Bet Wallet is in Foxy.
@@ -57,8 +58,22 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - **Get a Digital ID** on the ID tab: the name on your ID and your PIN. It waits for the government, and counts only once somebody confirms it at an **Admin Terminal** (People → **DIGITAL IDS**, CONFIRM or REFUSE with a reason). You are told either way; a refused ID can be asked for again, and keeps its code.
 - Your **MyID Code** looks like `MY-7K2M-9QPA` — no 0, 1, O or I, so it can be read out loud. **Show my MyID Code** puts it on the screen, big.
 - **Visas need a confirmed Digital ID.** The Bank refuses a visa application without one.
-- **The MyID Verifier** is on every Service Kiosk (Kiosk → **MYID VERIFIER**) and on the Event Kiosk's door. Type the code somebody says — dashes, case and the `MY` are optional — and it answers **VALID** with the registered name, or **NOT VALID** and why (waiting, refused, unknown, suspended). Nothing else about the account is shown.
+- **The MyID Verifier** is at every till (Company → **Sell** → **More** → **Verify a MyID**) and on the Event Kiosk's door. Type the code somebody says — dashes, case and the `MY` are optional — and it answers **VALID** with the registered name, or **NOT VALID** and why (waiting, refused, unknown, suspended). Nothing else about the account is shown.
 - A verifier that types five codes that are nobody's has to wait a minute before the next, so it cannot be used to fish for names.
+
+## Tickets and the queue (FoxyOS 13)
+
+Tickets go on sale the way they do in real life.
+
+- **A release.** An event can go on sale at a set day and time instead of straight away. Until then its card says **ON SALE DAY 48 18:00**; the event's page counts down and offers **Join the waiting room**.
+- **The waiting room.** Everybody in it when the sale opens is put in a **random order** — arriving an hour early is no better than a minute early. Whoever arrives after the sale has opened joins at the back.
+- **The queue.** A few people choose at a time (`ticket_queue_shoppers`, three by default), each with **two minutes** (`ticket_turn_ms`) on a turn that counts down on screen. Waiting shows how many are ahead and roughly how long. Keep the screen open: the Pocket stays awake while it waits and checks in every second, and somebody who stops checking in for thirty seconds (`ticket_queue_stale_ms`) loses their place.
+- **Your turn.** Pick how many of each ticket type, pay once with your PIN, and the tickets arrive with **You're going!** A turn not used runs out and passes to the next person; **Leave** hands it on early.
+- **A limit per person**, 1 to 10, set by the organizer and counted across every purchase.
+- **Presales.** An organizer can open a presale before the general sale, for the people they **invite** — by FoxMail address or by name, at the Event Kiosk. The invitation goes out as **FoxMail from the organizer's own address** (and as a notification, which is all somebody without an address gets). It belongs to the person, not the message: forwarding it lets nobody else in. Invited people queue for the presale and go ahead of the general sale; everybody else waits for the general sale in its own waiting room.
+- **Sold out** closes the queue. A sale an organizer changes — a new release time, a new limit, the presale taken away — applies straight away.
+
+The Bank keeps the queue and works out who is next whenever somebody asks; nobody else's place, lottery draw or invitation is ever sent to a Pocket. A Pocket from before 13 cannot buy tickets until it updates: a purchase now has to be on your turn.
 
 ## Search, App Actions and QuickActions
 
@@ -94,7 +109,7 @@ Reminders and QuickActions are kept on the phone and fired by the Home Screen's 
 | Shop | Stores, Delivery, Places |
 | Internet | Go, Saved, Recent — the address box suggests sites you know as you type |
 | CCG | Home, Bet, Scores |
-| Company | Products, Store, Deals — pickup points open from Store |
+| Company | Sell, Products, Store, Deals — the till is Sell; pickup points open from Store |
 | Settings | Phone, Apps, Account — Close Pocket is on Account |
 | Friends | Chats (with the unread count), Friends, Urgent |
 | Tickets | Events, My tickets |
@@ -105,7 +120,6 @@ Reminders and QuickActions are kept on the phone and fired by the Home Screen's 
 
 | Kiosk, terminal or server | Tabs |
 | --- | --- |
-| Service Kiosk | Sell, Products, Store, Kiosk (balance, withdraw, company mail, link company, display, Foxy Pay, Dev Mode, colour, close) |
 | Delivery Terminal | Open, Done, Setup (pickup point, link company, colour, close) |
 | Pickup point (a Delivery Terminal in Pickup mode) | Collect, Store, Me |
 | Event Kiosk | Home (with colour, log out and close), Events, Door |
@@ -125,7 +139,7 @@ New in 11.0, and installed on every Pocket at sign-in, like Foxy.
 
 - **Your address.** Everybody can claim one at `foxy.com` — 2 to 16 letters, numbers, dots, dashes or underscores. Anybody with an address can write to anybody else.
 - **Company email.** A company's owner registers a domain for it on FoxMail's **Me** tab — `revolution.com`, say — and up to five addresses on it (`hello@`, `support@`...). The owner reads and sends as them beside their own address: the Me tab switches between them. `foxy.com` is the Bank's own and cannot be taken.
-- **At the till.** A Service Kiosk linked to the company reads and writes the company's addresses from **S → COMPANY MAIL**, and nobody's personal mail.
+- **At the till.** The company's addresses are in FoxMail on the owner's Pocket, so a till needs no mailbox of its own (FoxyOS 13).
 - **From apps.** `api.mail.send{ from = "news@yourcompany.com", to = "kit@foxy.com", subject = "...", body = "..." }` sends from an address on the domain of the company that **published the app**, and no other; fifty a day per app, however many phones it runs on.
 
 Limits, because mail is the first thing here anybody can make more of just by typing: thirty messages per inbox (the oldest goes), fifteen in Sent, 300 letters a message, five recipients, forty sent a day per address. Mail is kept on the Vault in a file of its own, and a message sent to three people is stored once.
@@ -200,7 +214,7 @@ Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048*
 
 **Games from the Game Browser (12.0 Final).** Home Mode plays more than the four: **CCG → Home → Game Browser** on the paired Pocket lists the App Server's games, and **Get it** has the console fetch one — in pieces, checked against what the App Server says it is — and keep it beside the four, with its own best score. Up to twelve; **Remove** takes one off. Only in Home Mode: Bet Play is untouched. The App Server ships **Brick Breaker**, and `brickbreaker.lua` is the example for writing one.
 
-A game is published from **Dev Mode** on a Service Kiosk: the first time a file goes out, it asks **APP or GAME**, and a game goes to the CCG's Game Browser instead of the Pocket's App Browser. A game is a file that returns one table — `new(width, height, random)`, `input(state, key)`, `tick(state)`, `speed(state)`, `draw(state, screen)`; `state.score`, `state.over` and `state.status` are read from it — and it runs in a box on the console: it is handed maths, strings, tables, colours and a board to paint (`screen.fill`, `screen.text`, clipped to the board), and nothing that reaches the disk, the network or the monitor. A game that errors ends its round and the console carries on; the console only ever reads plain copies of the score, the end and the status.
+A game is published from **Dev Mode** in the Pocket's Settings: the first time a file goes out, it asks **App or Game**, and a game goes to the CCG's Game Browser instead of the Pocket's App Browser. A game is a file that returns one table — `new(width, height, random)`, `input(state, key)`, `tick(state)`, `speed(state)`, `draw(state, screen)`; `state.score`, `state.over` and `state.status` are read from it — and it runs in a box on the console: it is handed maths, strings, tables, colours and a board to paint (`screen.fill`, `screen.text`, clipped to the board), and nothing that reaches the disk, the network or the monitor. A game that errors ends its round and the console carries on; the console only ever reads plain copies of the score, the end and the status.
 
 **The console always starts (12.0 Final).** A console opens on a menu — **HOME MODE** and **BET PLAY** — with what it found on the network: the CCG Server and the Bank. Home Mode needs neither. Bet Play signs the console in to its CCG Server when it is opened, and says exactly what is missing if there is none. A new console asks for its main colour and Home PIN before anything else.
 
@@ -222,7 +236,7 @@ Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when t
 
 ## Foxy Pay
 
-A Service Kiosk offers the bill to whoever is standing closest. Tap **NEARBY** with a cart built, and the nearest Pocket gets a full-screen offer showing the merchant, the amount and the distance. Since 9.4 this is how a Foxy account pays a shop, and **Portable Mode is on by default** — the basket is built on the customer's phone rather than on a second screen.
+A till offers the bill to whoever is standing closest. **Charge → Foxy Pay** with a basket built, and the nearest Pocket gets a full-screen offer showing the merchant, the amount and the distance. Since 9.4 this is how a Foxy account pays a shop. The company's owner is never offered their own bill (FoxyOS 13): a till is usually the owner's own Pocket, or a computer signed in as them, so theirs is very often the nearest account of all.
 
 **Not mine** passes the bill to the next nearest person rather than cancelling the sale, so someone declining an offer meant for the person behind them costs the cashier nothing. PIN rules, daily limits and the transaction log are identical to every other payment, and nothing is ever charged without a tap.
 
@@ -241,12 +255,12 @@ Anchors answer the same request ComputerCraft's own `gps host` answers, so ordin
 
 ### Portable Mode
 
-A kiosk carried to the customer has no second screen to show them what they are buying, so **Portable Mode** (POS Settings) turns the sale around: the customer is found *first*.
+A till carried to the customer has no second screen to show them what they are buying, so the sale can be turned around: the customer is found *first*.
 
-1. Tap **FIND**. The nearest Pocket is asked "are you the customer?"
+1. Tap **Find** (on a wide screen, **Customer**). The nearest Pocket is asked "are you the customer?"
 2. They tap **That is me**, and their name appears at the top of the receipt.
 3. The operator rings up the items as normal.
-4. **PAY** sends the finished basket to that same Pocket, itemised, and they confirm again with their PIN.
+4. **Charge** sends the finished basket to that same Pocket, itemised, and they confirm again with their PIN.
 
 Two confirmations replace the customer display: one to take the sale, one to pay it. A basket that has been rung up never changes hands — backing out ends the sale and kills its payment code, rather than offering somebody else's shopping to whoever is standing closest.
 
@@ -380,9 +394,11 @@ An app can sell things. The money goes to the account that published it, less **
 
 ### Dev Mode: writing your own app
 
-1. Open **POS Settings** on a Service Kiosk and tap **ENTER DEV MODE**. That registers a developer account against the kiosk's company owner and creates `/apps/` on that computer.
-2. Put a `.lua` file in `/apps/`.
-3. Open **Dev Mode** again, tap the file, give it a name and a description, and launch it.
+1. Open **Settings → Apps → Dev Mode** on a Pocket and tap **Become a developer** (FoxyOS 13: it was on the Service Kiosk). That registers a developer account for your Foxy Account, with your PIN.
+2. Put a `.lua` file in `/apps/` on that computer — a Pocket on a standing computer is the comfortable way to write one.
+3. Open **Dev Mode** again, tap the file, give it a name and a description, and it goes out.
+
+A kiosk that turns itself into a Pocket moves the apps it had in Dev Mode to `/apps/` and remembers which it published, so republishing one is still an update.
 
 It appears in every Pocket's App Browser. Republishing the same file is an update rather than a second copy, and the app keeps its place and its download count. An app belongs to whoever published it: nobody else can overwrite or delete it, and a developer can delete their own from the App Browser.
 
@@ -399,18 +415,17 @@ end
 
 It is handed that `api` table and nothing else. It can draw, and it can make requests as the signed-in account, but it never sees the session token or the device file.
 
-## The new customer monitor
+## The till (FoxyOS 13)
 
-The Service Kiosk automatically finds the first attached **Advanced Monitor**. A single 1×1 monitor is enough; the kiosk sets it to text scale `0.5` and adapts to its actual resolution.
+The Service Kiosk has merged with the Company app in the Pocket. A company's till is its **Sell** tab, the first of four (Sell, Products, Store, Deals), and **Point of Sale** in search opens it straight away — on a standing computer, onto the till it last sold at.
 
-The customer display has four animated states:
+- **It works on the Pocket itself**, for selling on the spot: products as tiles under **Favs**, **Items** and **Daily**, a bag along the bottom with the total on **Charge**, and **Find** to find the customer first. **More** has **Verify a MyID**, **Custom amount** (once or daily) and the customer screens.
+- **It is made for a standing computer.** Install the Pocket on an Advanced Computer with a wireless modem, sign in as the owner, open Company → Sell, and the till spreads out: the receipt down the left, the products on the right.
+- **Add screens.** Every colour **Advanced Monitor** attached to that computer is a customer screen, at text scale `0.5`, from a 1×1 up: the welcome with a pulse, the order as it is rung up, Foxy Pay's *check your Pocket*, the code to type into another bank's app, and **PAID** with a thank you by name. A tap on a customer screen never presses anything on the till. **More → Customer screens** looks again after one is attached.
+- **Charge** offers **Foxy Pay** to the nearest Pocket (it needs GPS anchors) or a **pay code** for somebody who banks elsewhere. A customer found first gets the basket on their own Pocket.
+- The device is one of the company's **tills** on the Bank: a terminal like a kiosk was, linked to the company from the start, recognised every time the app comes back. Sales are paid into the owner's account. A company keeps up to twelve; the one nobody has used longest is let go to make room.
 
-1. Idle branding and a pulsing ready indicator.
-2. A live receipt that updates immediately when the cashier taps a product.
-3. Total, six-character payment code, and a live expiry countdown.
-4. A full-screen paid or subscription-active animation with the amount and customer name.
-
-The kiosk remains fully usable without the monitor. Attach one later and tap **S → Rescan Display**.
+**An old Service Kiosk** updates like everything else and then shows *"The Service Kiosk has merged with the Company app in the Pocket"* with **DOWNLOAD POCKET**, which turns the computer into a Pocket through Easy Deployment, keeping its customer monitor. A kiosk that was never linked to a company still holds money of its own; it offers **WITHDRAW $… FIRST**, a code typed into Foxy, so nothing is left on a machine nobody will open again. Easy Deployment no longer offers the Service Kiosk; `shop`, `till` and `kiosk` find the Pocket.
 
 ## The web
 
@@ -477,7 +492,7 @@ New in 10.2. Buying something no longer means walking to the store.
 
 ### Opening a store
 
-A store belongs to a company, so it is opened from a **Service Kiosk linked to that company** (its **Store** tab), or since 11.1 from the **Company app** on the owner's phone (the company, then **Store**).
+A store belongs to a company, so it is opened from the **Company app** on the owner's Pocket (the company, then **Store**).
 
 - **Colour** — one of thirteen. The store's cards, buttons and order screens are painted in it on every buyer's phone.
 - **Tagline** — what the store sells, in a line. Search reads it as well as the name.
@@ -489,8 +504,8 @@ The money for every order goes to the company owner's Foxy account, fee included
 
 ### Cancelling and returns (11.0)
 
-- **Returns.** Every order can be returned for at least **five days** after it arrives; the kiosk's **RETURNS** button sets up to thirty. The buyer asks from the order's page in Shop, with a reason. The store sees it at the top of its Delivery Terminal and presses **REFUND RETURN** once the goods are back — the whole order, delivery included, comes out of the owner's account — or **DECLINE** with a reason the buyer is told.
-- **Cancelling.** An order **confirms two hours** after checkout. With **CANCELLING ON**, a buyer can cancel until then from the order's page. While an order can be cancelled, the Bank holds its money rather than the store, so a cancellation is always refunded in full; the kiosk shows what is waiting, and the store is paid the moment the order confirms. The Delivery Terminal shows *Buyer can cancel for 1h 20m*, so staff know not to ship it yet.
+- **Returns.** Every order can be returned for at least **five days** after it arrives; the store's **Returns** setting allows up to thirty. The buyer asks from the order's page in Shop, with a reason. The store sees it at the top of its Delivery Terminal and presses **REFUND RETURN** once the goods are back — the whole order, delivery included, comes out of the owner's account — or **DECLINE** with a reason the buyer is told.
+- **Cancelling.** An order **confirms two hours** after checkout. With **CANCELLING ON**, a buyer can cancel until then from the order's page. While an order can be cancelled, the Bank holds its money rather than the store, so a cancellation is always refunded in full; the Company app shows what is waiting, and the store is paid the moment the order confirms. The Delivery Terminal shows *Buyer can cancel for 1h 20m*, so staff know not to ship it yet.
 - **The store refunds.** **CANCEL + REFUND** on any open order at the Delivery Terminal — sold out, say.
 - Refunds go back to whichever bank paid. One to another bank is retried until that bank answers, and lands in the buyer's Foxy account if that bank refuses it outright.
 - A store's terms are fixed when somebody pays; changing them changes new orders only.
@@ -521,19 +536,19 @@ The **Delivery** tab lists your orders, open first, and follows each one live: i
 
 ### The Company app (11.1)
 
-**Company** is in the App Browser, from FoxyOS. It is where an owner starts companies, sees them and runs them without walking to a kiosk:
+**Company** is in the App Browser, from FoxyOS. It is where an owner starts companies, sells, and runs them:
 
 - **Companies** lists yours: products, whether the store is open. **+ Start a company** makes a new one.
-- Inside one, **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every kiosk of the company sells.
+- Inside one, **Sell** is the till (see *The till*). **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every till of the company sells.
 - **Store** is the online store: open or closed, colour, tagline, home delivery and its fee, cancelling, and the return window — and **Pickup points**, which opens the company's points: the switch that lets buyers pick up, and what each point sells on the spot (see below).
 - **Deals** (12.0): the sale, free delivery and discount codes — see *Discounts* above.
 - **Delivery** — Delivery Mode — lists everything **Out for delivery** across your companies. A parcel for a pickup point shows its **delivery code** and the point; a home delivery shows its coordinates, how far and which way (it needs GPS anchors), and a **Delivered** button with an optional note.
 
-What stays on the kiosk is what belongs to that machine: linking it, withdrawals from it, Dev Mode. Only the Company app can run a company — every other app on a phone uses the same session — and the Bank checks on every request that the person asking owns the company named.
+Only the Company app can run a company — every other app on a phone uses the same session — and the Bank checks on every request that the person asking owns the company named.
 
 ### The Delivery Terminal
 
-A new role in Easy Deployment. Link it to the company once with the owner's Foxy name and PIN, the same way a kiosk is linked.
+A new role in Easy Deployment. Link it to the company once with the owner's Foxy name and PIN.
 
 The board shows every order, open ones first. Tap one to move it on: a **premade stage** (Order received, Packing, Packed, Out for delivery, At the pickup point) or **your own words**. **DONE** tells the buyer it arrived, with an optional note — *left by the door*. An order for a pickup point shows its **delivery code** — what the courier types at the point.
 
@@ -554,7 +569,7 @@ Then it runs itself:
 - **Collecting.** The buyer taps **ENTER CODE** and types the six digits from their phone. Then **Foxy Security**: their Pocket asks *Is this you?* over whatever is open, and they answer **It's me** with their PIN — or **Not me**, and the parcel stays in and their code changes. The terminal waits up to two minutes, then moves the parcel from its locker into the pickup chest. Anything somebody left in the pickup chest is moved into a spare locker first.
 - **Pre-confirming.** Foxy's **Security** tab lists every parcel waiting at a pickup point and any question waiting to be answered. Confirm one ahead of time and, for thirty minutes, its code opens it without asking. Tapping it again takes that back.
 - **Me (12.0 Final).** No code to hand? **Me → TYPE YOUR NAME**, and your Pocket asks *Is this you?* — **It's me** with your PIN shows the counter your orders for that point. One that has arrived comes out with a tap (you just said yes, so it does not ask again). One still on its way can be made **ready**: when it arrives its code opens it without asking. **< DONE** signs you out, and so does walking away for a minute. Only your own orders, only on that counter; **Not me** shows it nothing. A person's Pocket is asked at most once a minute, and names nobody has count as wrong codes.
-- **Buying on the spot (11.1).** A pickup point can sell what it has: the counter's **Store** tab lists what is on sale and how many are left — at the company's sale price since 12.0 Final, with **I HAVE A DISCOUNT CODE** before paying (the Bank works the price out as the Shop app's checkout does, and a code used here counts its use) — the customer picks one and pays with **Foxy Pay** (needs GPS anchors) or **a code for another bank**, and it comes out into the pickup chest. What it sells — a name, the game item (`oak_log`, or `create:cogwheel` for a mod), how many a sale, the price — is set up per point in the Company app's **Store → Pickup points**. Stock is whatever is in the lockers that is not somebody's parcel; staff put it in through the pickup chest with **STAFF → RESTOCK STORE**, which fills lockers already in use first so empty ones stay free for parcels. The money goes to the owner like any kiosk sale. If a sale comes up short — a locker emptied by hand while the customer paid — the customer is told and the owner is notified who is owed what; that refund is the owner's to make.
+- **Buying on the spot (11.1).** A pickup point can sell what it has: the counter's **Store** tab lists what is on sale and how many are left — at the company's sale price since 12.0 Final, with **I HAVE A DISCOUNT CODE** before paying (the Bank works the price out as the Shop app's checkout does, and a code used here counts its use) — the customer picks one and pays with **Foxy Pay** (needs GPS anchors) or **a code for another bank**, and it comes out into the pickup chest. What it sells — a name, the game item (`oak_log`, or `create:cogwheel` for a mod), how many a sale, the price — is set up per point in the Company app's **Store → Pickup points**. Stock is whatever is in the lockers that is not somebody's parcel; staff put it in through the pickup chest with **STAFF → RESTOCK STORE**, which fills lockers already in use first so empty ones stay free for parcels. The money goes to the owner like any sale at a till. If a sale comes up short — a locker emptied by hand while the customer paid — the customer is told and the owner is notified who is owed what; that refund is the owner's to make.
 - **Five wrong codes** a minute per pickup point, then it waits. **Five wrong staff PINs** lock the staff door for five minutes; the count survives a reboot. The company owner can always sign in instead of using the PIN.
 - **Updates.** A pickup point updates itself after a minute with nobody at the counter, from the counter screen, so nobody is ever halfway through anything. (Pickup points on 11.0 never updated in Pickup mode; after 11.1 lands, they tell customers to fetch staff until staff leave Pickup mode once.)
 
@@ -574,7 +589,7 @@ Since 12.0 Easy Deployment is a downloader. One file, `startup.lua`, sets up any
 
 2. Run `startup` (or restart the computer).
 3. **The Pocket has the first screen** — unless this is a new world. On a computer with nothing installed and a modem, Easy Deployment first asks the network for a Bank; if none answers, the first screen is **Welcome to Foxy** (12.0 Final), and **GET THE BANK SERVER** fetches it from GitHub (operator's code `4040`). **NOT NOW** goes to the Pocket. Otherwise tap **INSTALL POCKET**, or press Enter.
-4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Service Kiosk, `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the Pocket.
+4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Pocket (the till is in its Company app), `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the Pocket.
 5. Every program gets the same full screen as the Pocket, with one big **INSTALL** button. The **Bank Server** (Foxy's) and the **Admin Terminal** ask for the operator's code, `4040`. The 3rd Party Bank Server is its own entry and needs no code.
 6. It downloads the program, `config.lua`, the shared `lib/` files and its own copy as `/pumpe/installer.lua`, writes `/startup.lua` to boot through that copy, and restarts into the program.
 
@@ -625,9 +640,9 @@ Local configuration survives: each device merges the published config over its o
 
 The Bank Server still answers installers from before 12.0 over Rednet, which only a device with ComputerCraft's HTTP switched off still asks. Its own runtime it serves from `/pumpe`; any other program it fetches from the release when one is asked for and keeps **in memory** — until 11.2 it kept them in `/updates` on its own disk, which is half of how a Core filled up. Since 12.0 a device with HTTP switched off cannot be set up or updated: Easy Deployment downloads from GitHub.
 
-**Published without comments (11.2).** The Core, the Vault, the shared libraries and, since FoxyOS 12, the Pocket's own program are downloaded from `dist/`: the same files built by `tools/build_release_manifest.js` with their comments and indentation taken out — a third of every one of them was prose for whoever reads this repository. Every line stays on the line it came from, so an error a computer reports still names the right line here, and `tests/host_dist_build_test.lua` proves each one compiles to exactly the same bytecode as its source. Programs whose comments are read by code (the installer's `-- PUMPE EASY DEPLOYMENT`, the apps' `-- PUMPE APP:` lines) are published as they are. Edit the source, never `dist/`; the builder rewrites it.
+**Published without comments (11.2).** The Core, the Vault, the shared libraries, since FoxyOS 12 the Pocket's own program, and since FoxyOS 13 the apps the App Server ships are downloaded from `dist/`: the same files built by `tools/build_release_manifest.js` with their comments and indentation taken out — a third of every one of them was prose for whoever reads this repository. Every line stays on the line it came from, so an error a computer reports still names the right line here, and `tests/host_dist_build_test.lua` proves each one compiles to exactly the same bytecode as its source. Comments that code reads are kept: the installer is published as it is, for its `-- PUMPE EASY DEPLOYMENT` line, and a stripped app keeps every `-- PUMPE ...` header line (its name, its App Actions, a bank's terms) on the line it was. Edit the source, never `dist/`; the builder rewrites it.
 
-Because each device stages only its own role, the worst-case update is the Bank Core's: about 666 KiB of ComputerCraft's 1,000,000-byte computer, leaving it roughly 311 KiB for its data (the release builder prints the current figures). A Pocket peaks at about 640 KiB while it holds a downloaded release and asks, and keeps its apps beside that — about 75 KiB for Foxy and FoxMail, about 186 KiB with every app. Until FoxyOS 12 the Pocket's program shipped with its comments, and a phone with every app installed had no room to stage an update. And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
+Because each device stages only its own role, the worst-case update is about 682 KiB of ComputerCraft's 1,000,000-byte computer — a Pocket, which holds a downloaded release while it asks — and the Bank Core's is about 672 KiB, leaving it roughly 304 KiB for its data (the release builder prints the current figures). A Pocket keeps its apps beside that: about 49 KiB for Foxy and FoxMail, about 150 KiB with every app FoxyOS ships. FoxyOS 13's till doubled the Company app, which is why the apps are stripped now too. And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
 
 ### Manifest layout
 
@@ -709,19 +724,19 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - **Auto Mode** does that waiting for you and keeps opening the next lobby. It stops only for the code entered when it was started.
 - The console stores only its server-issued ID/token. It never stores Pocket PINs or decides payouts.
 
-### Service Kiosk
+### A till (the Pocket on a standing computer)
 
-- Use an Advanced Computer so every action can be tapped.
-- Attach an Advanced Monitor directly or through a wired peripheral network.
-- Products and favorites belong to the linked company and therefore appear on every linked kiosk.
-- The cashier always opens on the receipt-and-products POS. Use the top tabs for **Favorited**, **All Products**, and **Subscriptions**, `+` to add a product, and `S` for settings.
-- A linked kiosk settles sales into the company owner's Pocket balance. An unlinked kiosk uses its own local merchant balance.
+- Use an Advanced Computer with a wireless modem, and install **Pocket** on it. Sign in as the company's owner, then Company → **Sell**.
+- Attach Advanced Monitors directly or through a wired peripheral network; every colour one is a customer screen.
+- Foxy Pay needs GPS anchors, like everything that finds a person.
+- The Pocket locks after a minute without a tap, like any Pocket; the customer screens keep showing the welcome.
 
 ### Event Kiosk
 
 - Signs in with an ordinary Foxy Account.
 - Event day is the in-game day number.
 - Event time is entered as four digits (`1830` becomes `18:30`).
+- An event's page has **SALE** (when tickets go on sale, and how many each person may buy) and **PRESALE** (when it opens, and who is invited), and shows who is in line and choosing.
 
 ### Bank Admin Terminal
 
@@ -762,21 +777,13 @@ Open **MyID → Countries** to create a country. Its owner automatically receive
 
 Open **MyID → Visas** to see citizenship and visa codes, active visits and departure days, Free Roam access, application history, or request a 1–30 in-game-day visa. The destination country's owner approves or declines each request in MyID → Countries. Asking for a visa needs a confirmed Digital ID.
 
-### Service Kiosk
+### A till
 
-The kiosk registers itself, asks for its public name, then offers to link a company:
-
-- Sign in with the company owner's Pocket account.
-- Select an owned company or create one.
-- Press `+`, enter a product and price, then choose **One Time** or **Subscription**.
-- Favorite products with the `F` control. Tap products to build the receipt on the left and use the side buttons to page through larger catalogs.
-- **PAY** also works with an empty receipt: enter a custom amount on the touch keypad, then choose **One Time** or **Subscription**.
-
-Skipping company setup is safe. You can link later under **S → Link Company**.
+Install the Pocket, sign in as the owner, install **Company** from the App Browser, and start a company. Add products on **Products**, star the ones you sell most, then **Sell**. Attach a monitor for the customer whenever you like.
 
 ### Events
 
-Sign in, create the event, then add one or more ticket types. Customers immediately see active future events in their Pocket.
+Sign in, create the event — tickets on sale **now**, or **later** at a day and time, and how many each person may buy — then add one or more ticket types. Customers see active future events in their Pocket straight away, with when they go on sale. For a presale, open the event and tap **PRESALE**: set when it opens, then **+ INVITE** people by FoxMail address or by name.
 
 ### CCG
 
@@ -875,11 +882,11 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 - If a save ever does not fit, the Bank gives up history still waiting for the Vault rather than money, and says so on the dashboard.
 - ComputerCraft's disk limit is a server setting: `computer_space_limit` in the CC:Tweaked server config. A busy server can raise it; nothing here depends on the default.
 
-**Customer monitor is blank**
+**Customer screen is blank**
 
 - It must be an Advanced Monitor, not a basic monitor.
-- Tap **S → Rescan Display** after attaching it.
-- If several color monitors are attached, the kiosk uses the first one found.
+- At the till, **More → Customer screens** after attaching it. Every colour monitor on the computer is used.
+- The till draws on it while Sell is open; leave the till and it holds what it last showed.
 
 **Events show the wrong countdown**
 
@@ -910,4 +917,4 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 ## Version
 
-FoxyOS 12 — release `12.1.0`.
+FoxyOS 13 — release `13.0.0`.

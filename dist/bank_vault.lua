@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "12.1.0"
+local PROGRAM_VERSION = "13.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2485,7 +2485,7 @@ and ticketType.event_id == event.event_id,
 sale.advance(event)
 local entry = sale.queue(event).entries[account.account_id]
 need(entry and entry.status == "shopping", "NOT_YOUR_TURN",
-"Tickets are sold through a queue now. Join it in Tickets")
+"Not your turn in the queue. A Pocket from before FoxyOS 13 must update")
 entry.seen_at = util.nowMs()
 event.bought = event.bought or {}
 local already = event.bought[account.account_id] or 0

@@ -1333,11 +1333,17 @@ return function(api)
             till.paint(desk)
 
             local action = scene:wait({ tickRate = 0.5, flash = false })
-            if action == "home" or action == "__terminate" then
+            if action == "home" or action == "__terminate"
+                or (action and action:match("^tab:")) then
+                -- Leaving the till lets go of a customer it found, rather
+                -- than leave them waiting on their Pocket until it times out.
+                if desk.customer then
+                    till.ask(desk, "PROXIMITY_CANCEL", { offer_id = desk.customer.offer_id })
+                    desk.customer = nil
+                end
                 till.show(desk, "idle")
-                return "home"
+                return action:match("^tab:") and action or "home"
             end
-            if action and action:match("^tab:") then return action end
             if action == "__tick" then
                 ticks = ticks + 1
                 if ticks % 60 == 0 then till.refresh(desk) end

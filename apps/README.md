@@ -4,10 +4,11 @@ Apps in this folder are written here and published from inside the game. They
 are **not** part of a release: nothing here is in `release_manifest.json`, and
 the App Server does not ship them. To put one on your network:
 
-1. Copy the file onto a Service Kiosk, into the `/apps/` folder that Dev Mode
-   creates.
-2. Open **POS Settings → DEV MODE**, tap the file, give it a name and a
-   description, and launch it.
+1. Copy the file onto a computer running the Pocket, into `/apps/`. (Before
+   FoxyOS 13 this was a Service Kiosk's job; the kiosk merged into the
+   Company app.)
+2. Open **Settings → Apps → Dev Mode**, become a developer once with your
+   PIN, tap the file, and give it a name and a description.
 3. It appears in every Pocket's **App Browser**.
 
 | App | What it is |
@@ -51,6 +52,7 @@ end
 | `api.call(spec)` | Raise the Pocket's Urgent Contact ring. See **The Urgent Contact API** |
 | `api.bank(action, payload)` | For a **bank app**: talk to the 3rd Party Bank Server hosting it. See below |
 | `api.position()` | Where the phone is, or nil when the network has no GPS anchors |
+| `api.screens()` | FoxyOS 13: the colour monitors beside a standing computer, set to text scale 0.5, to draw on as a customer screen. A list of drawable targets, empty on a pocket computer; a tap on one never reaches your app |
 | `api.purchase(spec)` | Sell something. See **In-app purchases** |
 | `api.entitlements()` | What the Bank says this player has paid you for |
 | `api.cancel(productId)` | Stop one of your subscriptions |

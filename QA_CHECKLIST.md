@@ -7,6 +7,42 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 13 (13.0.0)
+
+Update the Bank Server (Core and Vault) and the App Server first: the till and the queue live on the Bank, and the Company app comes from the App Server.
+
+### The till
+
+- [ ] On a Pocket: Company → a company → **Sell** opens first. Add products on **Products**, star one; **Favs** shows it, **Items** the rest, **Daily** subscriptions.
+- [ ] Tap products: **Bag** counts them, **Charge** shows the total. **Bag** lets you take one back out.
+- [ ] **Charge → Foxy Pay** with another player standing near and GPS anchors up: their Pocket gets the offer; paying shows **PAID** at the till. The owner's own Pocket is never asked, even standing right there.
+- [ ] **Charge → Pay code**: the code shows; **Cancel code** charges nothing. A Revolution or BuckApp account can pay one.
+- [ ] **Find**: the nearest other player is asked; once they say yes the header says *For <name>* and **Charge** sends them the basket. Switching tabs lets them go.
+- [ ] **More → Verify a MyID** checks a confirmed code. **More → Custom amount** adds an amount, once or daily.
+- [ ] On an Advanced Computer running the Pocket, the till shows a receipt column and product tiles. Attach a colour monitor and use **More → Customer screens**: it shows the welcome, the order as it is rung up, the Foxy Pay or code screen, and **PAID**. Tapping the monitor never presses anything on the till.
+- [ ] Search **Point of Sale** on the Home Screen: it opens straight onto the till.
+
+### The Service Kiosk
+
+- [ ] An old kiosk updates and shows *The Service Kiosk has merged with the Company app in the Pocket* with **DOWNLOAD POCKET**; its customer monitor says the till moved.
+- [ ] An unlinked kiosk with money on it shows **WITHDRAW $… FIRST**: the code typed into Foxy pays it out.
+- [ ] **DOWNLOAD POCKET**: the computer installs the Pocket and restarts into it. Apps that were in the kiosk's Dev Mode are in `/apps`.
+- [ ] Easy Deployment no longer lists the Service Kiosk; searching `shop` finds the Pocket.
+- [ ] Settings → Apps → **Dev Mode**: become a developer with the PIN, publish a file from `/apps` as an app, then again (it updates rather than duplicating).
+
+### Events and the queue
+
+- [ ] At the Event Kiosk, create an event with tickets on sale **LATER**, a limit of 2. Its card on a Pocket says **ON SALE DAY … …**; the event page offers **Join the waiting room**.
+- [ ] Two or three Pockets in the waiting room when the sale opens get places in a random order; one that joins afterwards is behind them.
+- [ ] With more people than turns: the screen counts people ahead, then **Your turn** with a two-minute countdown. Pick tickets, pay with the PIN: **You're going!**, and the tickets are in My tickets.
+- [ ] Buying past the limit is refused. A turn left to run out passes to the next person. Leaving the queue screen for half a minute loses the place.
+- [ ] **PRESALE** on the event: set a time before the sale, **+ INVITE** one person by FoxMail address and one by name. The first gets the invitation in FoxMail from the organizer; both get a notification. Only they can buy during the presale; others wait for the general sale.
+- [ ] Taking an invite back removes their presale place. **REMOVE PRESALE** puts everybody on the general sale.
+
+### Opening apps
+
+- [ ] Every built-in app opens with a different motion from its icon, then its name, in about half a second. Foxy, FoxMail, Shop, Company and Internet each have their own too.
+
 ## FoxyOS 12 (12.1.0)
 
 Update the Bank Server (Core and Vault) first: MyID lives on the Bank.

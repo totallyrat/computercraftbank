@@ -1,5 +1,54 @@
 # Changelog
 
+## 13.0.0
+
+FoxyOS 13. The Service Kiosk merged into the Company app as its till, tickets
+go on sale the real way with a queue and presales, and every app opens with a
+motion of its own.
+
+**The till is in the Company app.** Company has a Sell tab, first of four:
+products as tiles, a bag, Charge with Foxy Pay or a pay code, Find for the
+customer first, a custom amount, and the MyID Verifier. Point of Sale in
+search opens it straight away.
+
+**Made for standing computers.** Install the Pocket on an Advanced Computer
+and the till spreads out into a receipt and a wall of products. Every colour
+monitor attached is a customer screen: the welcome, the order, the code, the
+thank you. A tap on one never presses the till's buttons.
+
+**The Service Kiosk has merged.** An updated kiosk says so and offers
+Download Pocket, which turns the computer into a Pocket. A kiosk never
+linked to a company offers to pay out what it still holds first. Easy
+Deployment no longer lists it.
+
+**Dev Mode is in Settings.** Apps and games are published from the Pocket
+now, under your own Foxy Account, from /apps.
+
+**Your own bill, never.** Foxy Pay at a till skips the company's owner, whose
+Pocket is usually the nearest of all.
+
+**Tickets on sale at a set time.** An event can open its sale at a day and
+time, with a countdown until then. Events made before 13 are on sale now.
+
+**The waiting room and the queue.** Everybody waiting when a sale opens gets
+a random place; later arrivals join at the back. A few people choose at a
+time, two minutes each, counted down on screen. Keep the screen open.
+
+**A limit per person.** One to ten tickets, set by the organizer, across
+every purchase.
+
+**Presales by invite.** At the Event Kiosk, an organizer sets a presale and
+invites people by FoxMail address or name. The invite is mailed from the
+organizer's own address, and only the person invited gets in.
+
+**Every app opens its own way.** A motion in the app's colour grows from
+the icon that was tapped: Friends ripples, Tickets tears, MyID scans, CCG
+boots like an arcade. Every other app gets a shape of its own.
+
+**Room for the till.** The apps the App Server ships now download without
+their comments, a third smaller, so a Pocket with every app still has room
+to update.
+
 ## 12.1.0
 
 FoxyOS 12. Every device runs FoxyOS and the phone is the Pocket; MyID is

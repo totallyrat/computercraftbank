@@ -1333,11 +1333,17 @@ desk.view.frame = ticks
 till.paint(desk)
 
 local action = scene:wait({ tickRate = 0.5, flash = false })
-if action == "home" or action == "__terminate" then
-till.show(desk, "idle")
-return "home"
+if action == "home" or action == "__terminate"
+or (action and action:match("^tab:")) then
+
+
+if desk.customer then
+till.ask(desk, "PROXIMITY_CANCEL", { offer_id = desk.customer.offer_id })
+desk.customer = nil
 end
-if action and action:match("^tab:") then return action end
+till.show(desk, "idle")
+return action:match("^tab:") and action or "home"
+end
 if action == "__tick" then
 ticks = ticks + 1
 if ticks % 60 == 0 then till.refresh(desk) end
