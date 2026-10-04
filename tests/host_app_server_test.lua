@@ -216,6 +216,12 @@ server.seed()
 local company = listedId("COMPANY")
 assert(company and company.name == "Company" and company.author == "FoxyOS",
     "the Company app is in the App Browser, from FoxyOS")
+-- FoxyOS 14: INVT, made by Foxy.
+files["/pumpe/invt.lua"] = "-- PUMPE APP: INVT\nreturn function(api) end\n"
+server.seed()
+local invite = listedId("INVT")
+assert(invite and invite.name == "INVT" and invite.author == "Foxy",
+    "INVT is in the App Browser, by Foxy")
 
 -- Games, 12.0 Final ------------------------------------------------------------------
 -- An app is for the PUMPE and a game is for a CCG in Home Mode. The App

@@ -209,6 +209,8 @@ function phone.run(options)
         screens = options.screens and function() return options.screens end or nil,
         -- The owner's PIN, when the test answers it.
         pin = options.pin,
+        -- FoxyLogin, when the test signs in.
+        login = options.login,
         app_id = appId,
     }
     assert(loadfile(options.file))()(api)

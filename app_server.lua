@@ -156,6 +156,9 @@ local SHIPPED = {
     -- example for anybody writing one.
     { file = "brickbreaker.lua", id = "BRICKS", name = "Brick Breaker",
       description = "Bounce the ball, break the wall.", kind = "game" },
+    -- FoxyOS 14: invitations and small events, made by Foxy.
+    { file = "invt.lua", id = "INVT", name = "INVT", author = "Foxy",
+      description = "Invite friends. Small events, one price, no queue." },
 }
 
 local function seedShippedApps()
@@ -171,7 +174,7 @@ local function seedShippedApps()
                 kind = shipped.kind or "app",
                 name = shipped.name,
                 description = shipped.description,
-                author = "FoxyOS",
+                author = shipped.author or "FoxyOS",
                 developer_id = "PUMPE",
                 version = (existing and (existing.version or 0) or 0) + 1,
                 size = #body,

@@ -125,6 +125,7 @@ RELEASE.optional = {
 "foxmail.lua",
 "company.lua",
 "brickbreaker.lua",
+"invt.lua",
 }
 
 RELEASE.programs = {
@@ -5835,6 +5836,18 @@ EVENT_SALE = { auth = "session" },
 EVENT_INVITE = { auth = "session" },
 EVENT_INVITES = { auth = "session" },
 EVENT_UNINVITE = { auth = "session" },
+
+
+INVT_FEED = { auth = "session", from = "INVT", app = "required" },
+INVT_EVENT = { auth = "session", from = "INVT", app = "required" },
+INVT_CREATE = { auth = "session", from = "INVT", app = "required" },
+INVT_JOIN = { auth = "session", from = "INVT", app = "required" },
+INVT_BUY = { auth = "spender", pin = true, from = "INVT", app = "required" },
+INVT_TICKETS = { auth = "session", from = "INVT", app = "required" },
+INVT_FRIENDS = { auth = "session", from = "INVT", app = "required" },
+INVT_INVITE = { auth = "session", from = "INVT", app = "required" },
+INVT_CHECKIN = { auth = "session", from = "INVT", app = "required" },
+INVT_CANCEL = { auth = "session", from = "INVT", app = "required" },
 
 
 WEB_MINE = { auth = "session" },

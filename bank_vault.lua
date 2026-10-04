@@ -99,6 +99,8 @@ local function blankState()
         -- Pushed up to the Core so a PUMPE's poll never crosses the cable.
         waiting = {},
         migrated = {},
+        -- FoxyOS 14: INVT, by Foxy. Its events and the tickets to them.
+        invt = { events = {}, tickets = {} },
     }
 end
 
@@ -134,6 +136,8 @@ local prefixes = {
     -- gets a new one rather than the last owner's pages.
     web = { "SITE", 8 },
     order = { "ORD", 8 },
+    invt = { "INV", 6 },
+    invt_ticket = { "INVT", 8 },
 }
 
 local function nextId(kind)
@@ -4893,6 +4897,317 @@ function actions.EVENT_UNINVITE(payload, caller)
     event.invites[accountId] = nil
     save()
     return { invites = inviteList(event) }
+end
+
+-- INVT, FoxyOS 14 -------------------------------------------------------------------
+-- Invitations and small events, by Foxy: a friend's party, a café's quiz
+-- night. One price (free is a price), a number of spots, no queue. A public
+-- event is in everybody's feed; a private one only reaches the people its
+-- host invited -- friends, or anybody by their FoxMail address. Up to ten
+-- tickets an account. Only the INVT app asks, and only once its user has
+-- signed in with Foxy: the Core checks both before anything reaches here.
+local invt = { limit = 10, spots = 500 }
+
+function invt.event(id)
+    local event = state.invt.events[tostring(id or "")]
+    need(event and event.status == "active", "NOT_FOUND", "That event is gone")
+    return event
+end
+
+function invt.over(event)
+    local _, remaining = util.eventCountdown(event.day, event.time)
+    return remaining ~= nil and remaining < -24 * 60
+end
+
+-- Who may see an event, and so find it, join it or be told about it.
+function invt.sees(event, accountId)
+    return event.public or event.host_id == accountId
+        or (event.invites or {})[accountId] ~= nil
+        or (event.going or {})[accountId] ~= nil
+end
+
+-- What anybody who may see it is told. The guest list is the host's.
+function invt.public(event, accountId)
+    local mine = (event.going or {})[accountId] or 0
+    local out = {
+        invt_id = event.invt_id, title = event.title,
+        description = event.description, day = event.day, time = event.time,
+        price = event.price, spots = event.spots, taken = event.taken,
+        left = math.max(0, event.spots - event.taken), public = event.public,
+        host_name = nameOf(event.host_id), host = event.host_id == accountId,
+        invited = (event.invites or {})[accountId] ~= nil, mine = mine,
+        limit = invt.limit,
+    }
+    if event.host_id == accountId then
+        out.guests, out.invites = {}, {}
+        for guestId, count in pairs(event.going or {}) do
+            out.guests[#out.guests + 1] = { name = nameOf(guestId), count = count }
+        end
+        for invitedId, invite in pairs(event.invites or {}) do
+            out.invites[#out.invites + 1] = { account_id = invitedId,
+                name = invite.name, address = invite.address,
+                going = (event.going or {})[invitedId] ~= nil }
+        end
+        table.sort(out.guests, function(a, b) return a.name < b.name end)
+        table.sort(out.invites, function(a, b) return a.name < b.name end)
+    end
+    return out
+end
+
+function actions.INVT_CREATE(payload, caller)
+    local host = whoIsAsking(caller)
+    local title = util.safeText(util.trim(tostring(payload.title or "")), 30)
+    need(#title >= 2, "INVALID_TITLE", "Give it a title")
+    local day = math.floor(tonumber(payload.day) or -1)
+    local time = tostring(payload.time or "")
+    need(day >= util.ingameDay() and util.parseEventTime(time), "INVALID_TIME",
+        "When: a day from today, and a time like 1830")
+    local _, remaining = util.eventCountdown(day, time)
+    need(remaining and remaining > 0, "INVALID_TIME", "That is in the past")
+    local spots = math.floor(tonumber(payload.spots) or 0)
+    need(spots >= 1 and spots <= invt.spots, "INVALID_SPOTS",
+        "1 to " .. invt.spots .. " spots")
+    local price = util.roundMoney(tonumber(payload.price) or 0)
+    need(price and price >= 0 and price <= 100000, "INVALID_PRICE",
+        "A price from free to 100000")
+    local mine = 0
+    for _, event in pairs(state.invt.events) do
+        if event.host_id == host.account_id and event.status == "active"
+            and not invt.over(event) then mine = mine + 1 end
+    end
+    need(mine < 10, "TOO_MANY", "Ten upcoming events at once")
+    local id = nextId("invt")
+    local event = {
+        invt_id = id, host_id = host.account_id, title = title,
+        description = util.safeText(util.trim(tostring(payload.description or "")), 120),
+        day = day, time = time, spots = spots, price = price,
+        public = payload.public ~= false, status = "active",
+        taken = 0, going = {}, invites = {}, created_day = util.ingameDay(),
+    }
+    state.invt.events[id] = event
+    save()
+    logActivity("INVT: " .. title, colors.pink)
+    return { event = invt.public(event, host.account_id) }
+end
+
+-- The feed: what this person may see that has not happened yet, soonest
+-- first.
+function actions.INVT_FEED(payload, caller)
+    local account = whoIsAsking(caller)
+    local list = {}
+    for _, event in pairs(state.invt.events) do
+        if event.status == "active" and not invt.over(event)
+            and invt.sees(event, account.account_id) then
+            list[#list + 1] = invt.public(event, account.account_id)
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.day ~= b.day then return a.day < b.day end
+        return (util.parseEventTime(a.time) or 0) < (util.parseEventTime(b.time) or 0)
+    end)
+    local tickets = 0
+    for _, ticket in pairs(state.invt.tickets) do
+        local event = state.invt.events[ticket.invt_id]
+        if ticket.account_id == account.account_id and event
+            and event.status == "active" and not invt.over(event) then
+            tickets = tickets + 1
+        end
+    end
+    return { events = list, tickets = tickets }
+end
+
+function actions.INVT_EVENT(payload, caller)
+    local account = whoIsAsking(caller)
+    local event = invt.event(payload.invt_id)
+    need(invt.sees(event, account.account_id), "NOT_INVITED",
+        "That event is private")
+    return { event = invt.public(event, account.account_id) }
+end
+
+-- Tickets: one call whether free or paid. A paid one comes through the
+-- Core's spender route with the PIN, and its money goes to the host.
+function invt.issue(account, event, quantity, paid)
+    need(event.host_id ~= account.account_id, "OWN_EVENT", "It is your own event")
+    need(event.public or (event.invites or {})[account.account_id],
+        "NOT_INVITED", "Only invited people can join a private event")
+    need(not invt.over(event), "OVER", "That event is over")
+    quantity = math.floor(tonumber(quantity) or 0)
+    local mine = (event.going or {})[account.account_id] or 0
+    need(quantity >= 1 and mine + quantity <= invt.limit, "LIMIT_REACHED",
+        invt.limit .. " tickets an account" .. (mine > 0
+            and (", and you have " .. mine) or ""))
+    need(event.taken + quantity <= event.spots, "SOLD_OUT",
+        event.spots - event.taken <= 0 and "No spots left"
+            or ("Only " .. (event.spots - event.taken) .. " spots left"))
+    local total = util.roundMoney(event.price * quantity)
+    local balance
+    if total > 0 then
+        need(paid, "PIN_REQUIRED", "Paid tickets need your PIN")
+        activeAccount(event.host_id, true)
+        local moved = core.move(account.account_id, event.host_id, total,
+            "invt", event.title .. " x" .. quantity)
+        balance = moved.from_balance
+    end
+    event.going = event.going or {}
+    event.going[account.account_id] = mine + quantity
+    event.taken = event.taken + quantity
+    local issued = {}
+    for _ = 1, quantity do
+        local ticket = { ticket_id = nextId("invt_ticket"), invt_id = event.invt_id,
+            account_id = account.account_id, code = util.randomString(6),
+            paid = event.price, used = false, day = util.ingameDay() }
+        state.invt.tickets[ticket.ticket_id] = ticket
+        issued[#issued + 1] = ticket.code
+    end
+    core.notify(event.host_id, "Going: " .. event.title, account.name .. " x"
+        .. quantity .. (total > 0 and ("  " .. util.money(total, config.currency)) or ""),
+        "event")
+    save()
+    return { codes = issued, total = total, balance = balance,
+        event = invt.public(event, account.account_id) }
+end
+
+function actions.INVT_JOIN(payload, caller)
+    local account = whoIsAsking(caller)
+    local event = invt.event(payload.invt_id)
+    need(event.price <= 0, "PIN_REQUIRED", "Paid tickets need your PIN")
+    return invt.issue(account, event, payload.quantity, false)
+end
+
+function actions.INVT_BUY(payload, caller)
+    local account = whoIsAsking(caller)
+    local event = invt.event(payload.invt_id)
+    return invt.issue(account, event, payload.quantity, true)
+end
+
+-- Your tickets, newest event first, for the drawer at the top of the feed.
+function actions.INVT_TICKETS(payload, caller)
+    local account = whoIsAsking(caller)
+    local list = {}
+    for _, ticket in pairs(state.invt.tickets) do
+        local event = state.invt.events[ticket.invt_id]
+        if ticket.account_id == account.account_id and event
+            and event.status == "active" and not invt.over(event) then
+            list[#list + 1] = { invt_id = event.invt_id, title = event.title,
+                day = event.day, time = event.time, code = ticket.code,
+                used = ticket.used, host_name = nameOf(event.host_id) }
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.day ~= b.day then return a.day < b.day end
+        if a.time ~= b.time then return a.time < b.time end
+        return a.code < b.code
+    end)
+    return { tickets = list }
+end
+
+-- Friends to invite, the way the Friends app knows them.
+function actions.INVT_FRIENDS(payload, caller)
+    local account = whoIsAsking(caller)
+    local friends = {}
+    for friendId in pairs(account.friends) do
+        friends[#friends + 1] = { account_id = friendId, name = nameOf(friendId) }
+    end
+    table.sort(friends, function(a, b) return a.name < b.name end)
+    return { friends = friends }
+end
+
+-- Inviting: a friend by their account, or anybody by FoxMail address. An
+-- address gets a mail from the host's own address when the host has one;
+-- everybody invited is told on their Pocket.
+function actions.INVT_INVITE(payload, caller)
+    local host = whoIsAsking(caller)
+    local event = invt.event(payload.invt_id)
+    need(event.host_id == host.account_id, "NOT_OWNER", "Only its host invites")
+    local accountId, address
+    if payload.account_id then
+        accountId = tostring(payload.account_id)
+        need(host.friends[accountId], "NOT_FRIENDS",
+            "Invite friends by name, anybody else by FoxMail")
+    else
+        address = mailAddress(payload.address)
+        need(mail.addresses[address], "NO_SUCH_ADDRESS",
+            "Nobody has the address " .. address)
+        accountId = mailReader(address)
+        need(accountId, "NO_SUCH_ADDRESS", "Nobody reads " .. address)
+    end
+    need(accountId ~= host.account_id, "OWN_EVENT", "It is your own event")
+    event.invites = event.invites or {}
+    local name = nameOf(accountId)
+    need(not event.invites[accountId], "ALREADY_INVITED", name .. " is already invited")
+    local count = 0
+    for _ in pairs(event.invites) do count = count + 1 end
+    need(count < 100, "TOO_MANY_INVITES", "100 invites an event")
+    local from = mail.personal[host.account_id]
+    local mailed = false
+    if address and from and mail.addresses[from] then
+        sendMail(from, address, "You're invited: " .. event.title,
+            host.name .. " invites you to " .. event.title .. ", day " .. event.day
+                .. " at " .. event.time .. ". " .. (event.price > 0
+                    and ("Tickets " .. util.money(event.price, config.currency) .. ".")
+                    or "Free.") .. " Open INVT on your Pocket to join.",
+            { uncounted = true })
+        mailed = true
+    end
+    event.invites[accountId] = { name = name, address = address,
+        day = util.ingameDay() }
+    core.notify(accountId, "INVT: you're invited", event.title .. " from "
+        .. host.name, "event")
+    save()
+    return { invited = { account_id = accountId, name = name, mailed = mailed },
+        event = invt.public(event, host.account_id) }
+end
+
+-- At the door: the host types the code from a guest's ticket.
+function actions.INVT_CHECKIN(payload, caller)
+    local host = whoIsAsking(caller)
+    local event = invt.event(payload.invt_id)
+    need(event.host_id == host.account_id, "NOT_OWNER", "Only its host checks people in")
+    local code = string.upper(util.trim(tostring(payload.code or "")))
+    for _, ticket in pairs(state.invt.tickets) do
+        if ticket.invt_id == event.invt_id and ticket.code == code then
+            local first = not ticket.used
+            ticket.used = true
+            save()
+            return { valid = first, name = nameOf(ticket.account_id),
+                already = not first }
+        end
+    end
+    return { valid = false }
+end
+
+-- Calling it off: everybody who paid is refunded by the host first, so a
+-- host who cannot cover it is told before anything moves.
+function actions.INVT_CANCEL(payload, caller)
+    local host = whoIsAsking(caller)
+    local event = invt.event(payload.invt_id)
+    need(event.host_id == host.account_id, "NOT_OWNER", "Only its host can cancel it")
+    local owed, total = {}, 0
+    for _, ticket in pairs(state.invt.tickets) do
+        if ticket.invt_id == event.invt_id and (ticket.paid or 0) > 0 then
+            owed[ticket.account_id] = util.roundMoney((owed[ticket.account_id] or 0)
+                + ticket.paid)
+            total = util.roundMoney(total + ticket.paid)
+        end
+    end
+    if total > 0 then
+        local account = core.account(host.account_id)
+        need(account and (account.balance or 0) >= total, "INSUFFICIENT_FUNDS",
+            "Refunds need " .. util.money(total, config.currency)
+                .. " in your account")
+    end
+    for guestId, amount in pairs(owed) do
+        core.move(host.account_id, guestId, amount, "invt_refund",
+            "Refund: " .. event.title)
+    end
+    event.status = "cancelled"
+    for guestId in pairs(event.going or {}) do
+        core.notify(guestId, "Cancelled: " .. event.title, owed[guestId]
+            and ("Refunded " .. util.money(owed[guestId], config.currency))
+            or "Your ticket is void", "event")
+    end
+    save()
+    return { cancelled = true, refunded = total }
 end
 
 -- What this Vault answers ------------------------------------------------------

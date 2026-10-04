@@ -70,6 +70,8 @@ const forwardOptionalFiles = [
   "company.lua",
   // 12.0 Final: a game for the CCG's Game Browser, shipped by the App Server.
   "brickbreaker.lua",
+  // FoxyOS 14: INVT, by Foxy, shipped by the App Server.
+  "invt.lua",
 ];
 
 function checksum(buffer) {
@@ -188,7 +190,8 @@ const strippedFiles = [
 // it installs beside a staged release, and the till made Company twice the
 // size. Their headers stay: the App Server and the Pocket read them.
 const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
-  "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua"];
+  "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
+  "invt.lua"];
 strippedFiles.push(...strippedApps);
 
 for (const relativePath of strippedFiles) {

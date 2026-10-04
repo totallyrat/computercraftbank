@@ -50,6 +50,7 @@ local APPS = {
     ["ext:WC"] = { name = "Website Crafter", glyph = "W", color = colors.yellow },
     ["ext:BUCK"] = { name = "BuckApp", glyph = "B", color = colors.orange },
     ["ext:REVO"] = { name = "Revolution", glyph = "R", color = colors.purple },
+    ["ext:INVT"] = { name = "INVT", glyph = "I", color = colors.pink },
 }
 
 -- Every one of these opens its own way.

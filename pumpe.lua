@@ -317,6 +317,10 @@ do
         if band < t - 0.125 then return 1 end
         if band < t then return 2 end
     end
+    -- INVT: a card unfolding from the middle.
+    function STYLES.unfold(c, x, y, t)
+        return front(math.abs(y - (c.h + 1) / 2) * 1.5, t * (c.h * 0.75 + 1), 1.5)
+    end
     -- And for every other app, one of these.
     function STYLES.diamond(c, x, y, t)
         return front(math.abs(x - c.ox) + math.abs(y - c.oy) * 1.5,
@@ -342,7 +346,7 @@ do
         browser = "tiles", settings = "shutter" }
     local SHIPPED = { FOXY = "sweep", MAIL = "envelope", SHOP = "awning",
         COMPANY = "blinds", NET = "radar", WC = "typewriter", BUCK = "coin",
-        REVO = "spin" }
+        REVO = "spin", INVT = "unfold" }
     local OTHERS = { "diamond", "iris", "doors", "rise", "diagonal" }
 
     function opening.style(id)

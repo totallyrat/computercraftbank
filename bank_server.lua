@@ -125,6 +125,7 @@ RELEASE.optional = {
     "foxmail.lua",
     "company.lua",
     "brickbreaker.lua",
+    "invt.lua",
 }
 
 RELEASE.programs = {
@@ -5835,6 +5836,18 @@ pair.routes = {
     EVENT_INVITE = { auth = "session" },
     EVENT_INVITES = { auth = "session" },
     EVENT_UNINVITE = { auth = "session" },
+    -- FoxyOS 14: INVT, by Foxy. Only the INVT app, and only for somebody
+    -- who signed in to it with Foxy. A paid ticket is a spend, with the PIN.
+    INVT_FEED = { auth = "session", from = "INVT", app = "required" },
+    INVT_EVENT = { auth = "session", from = "INVT", app = "required" },
+    INVT_CREATE = { auth = "session", from = "INVT", app = "required" },
+    INVT_JOIN = { auth = "session", from = "INVT", app = "required" },
+    INVT_BUY = { auth = "spender", pin = true, from = "INVT", app = "required" },
+    INVT_TICKETS = { auth = "session", from = "INVT", app = "required" },
+    INVT_FRIENDS = { auth = "session", from = "INVT", app = "required" },
+    INVT_INVITE = { auth = "session", from = "INVT", app = "required" },
+    INVT_CHECKIN = { auth = "session", from = "INVT", app = "required" },
+    INVT_CANCEL = { auth = "session", from = "INVT", app = "required" },
     -- The web, new in 10.0. The Vault keeps the register of who owns which
     -- domain; the pages are on an Internet Server.
     WEB_MINE = { auth = "session" },

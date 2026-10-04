@@ -21,14 +21,14 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 206832,
-      "checksum": "90482938"
+      "size": 207543,
+      "checksum": "d5f15468"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 212064,
-      "checksum": "e6f5c411"
+      "size": 212196,
+      "checksum": "a947c94b"
     },
     {
       "path": "service_kiosk.lua",
@@ -51,8 +51,8 @@
     {
       "path": "startup.lua",
       "source": "startup.lua",
-      "size": 49489,
-      "checksum": "e6c3eb8d"
+      "size": 49501,
+      "checksum": "79b8ce2e"
     },
     {
       "path": "launcher.lua",
@@ -81,8 +81,8 @@
     {
       "path": "lib/update.lua",
       "source": "dist/lib/update.lua",
-      "size": 16779,
-      "checksum": "0a6bc900"
+      "size": 16804,
+      "checksum": "c6e82c80"
     },
     {
       "path": "lib/util.lua",
@@ -121,8 +121,8 @@
     {
       "path": "app_server.lua",
       "source": "app_server.lua",
-      "size": 16994,
-      "checksum": "1e36b01d"
+      "size": 17220,
+      "checksum": "d3dccbe0"
     },
     {
       "path": "foxy.lua",
@@ -157,8 +157,8 @@
     {
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
-      "size": 160481,
-      "checksum": "12509ad6"
+      "size": 171484,
+      "checksum": "34a8bc28"
     },
     {
       "path": "internet_server.lua",
@@ -207,6 +207,12 @@
       "source": "dist/brickbreaker.lua",
       "size": 3134,
       "checksum": "3c19e54e"
+    },
+    {
+      "path": "invt.lua",
+      "source": "dist/invt.lua",
+      "size": 21617,
+      "checksum": "257e823d"
     }
   ]
 }

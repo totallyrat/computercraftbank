@@ -25,7 +25,8 @@ local STRIPPED = { "bank_server.lua", "bank_vault.lua", "pumpe.lua", "lib/net.lu
     "lib/ui.lua", "lib/update.lua", "lib/util.lua" }
 -- FoxyOS 13: the apps the App Server ships, with their headers kept.
 local APPS = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
-    "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua" }
+    "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
+    "invt.lua" }
 local isApp = {}
 for _, path in ipairs(APPS) do
     STRIPPED[#STRIPPED + 1] = path
