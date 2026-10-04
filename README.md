@@ -34,8 +34,8 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - **Since 12.0 a Pocket belongs to its Foxy Account.** It starts on the lock screen of the account it was set up with — a big clock and the account's name — and the PIN is all it asks. There is no sign-in screen to reach from there; **Remove account** in Settings is how a phone changes hands.
 - **Every device has a main colour** (12.0). Orange like the fox out of the box; the Pocket asks once, and Settings → **Main colour** changes it. Kiosks, terminals, consoles and servers pick theirs when they are set up and change it on one of their tabs (a kiosk's **Kiosk** tab, a terminal's **Setup** or **System**, a server's **Server**); the Bank Server and Vault keep the Bank's colours.
 
-- Start-up spells **POCKET** one letter at a time, then holds **FoxyOS 13** for two seconds. Installing a release shows the FoxyOS update screen: see **Automatic Internet Updates**.
-- **Every app opens its own way** (FoxyOS 13). A motion in the app's colour grows out of the icon that was tapped and paints over the Home Screen, then holds a beat on the app's icon and name — about half a second. Friends ripples like a call coming in, Tickets closes in on a perforation, MyID scans a card, CCG boots like an arcade cabinet, Subs rises like a wave, Reminders shakes like a bell, Quick strikes like lightning, the App Browser lands in tiles and Settings closes like a shutter. Foxy sweeps up like a tail, FoxMail folds like an envelope, Shop rolls up an awning, Company opens its blinds, Internet sweeps like radar, Website Crafter types, BuckApp turns like a coin and Revolution spins. Any other app gets one of five shapes, chosen from its id, so it always opens the same way.
+- **Start-up (FoxyOS 14).** A circle of your theme colour opens from the middle of the screen until it covers it, then black opens over it the same way — three times — and **POCKET** lands on black, followed by *Powered by FoxyOS* and the version. The same circles play while the Pocket updates or is installed: see **Automatic Internet Updates**.
+- **Every app opens its own way** (FoxyOS 13). A motion in the app's colour grows out of the icon that was tapped and paints over the Home Screen, then holds a beat on the app's icon and name — about half a second. Friends ripples like a call coming in, Tickets closes in on a perforation, MyID scans a card, CCG boots like an arcade cabinet, Subs rises like a wave, Reminders shakes like a bell, Quick strikes like lightning, the App Browser lands in tiles and Settings closes like a shutter. Foxy sweeps up like a tail, FoxMail folds like an envelope, Shop rolls up an awning, Company opens its blinds, Internet sweeps like radar, Website Crafter types, BuckApp turns like a coin, Revolution spins and INVT unfolds like a card. Any other app gets one of five shapes, chosen from its id, so it always opens the same way.
 - Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How Pocket Works** in Settings → Account re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your Pocket**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
@@ -74,6 +74,19 @@ Tickets go on sale the way they do in real life.
 - **Sold out** closes the queue. A sale an organizer changes — a new release time, a new limit, the presale taken away — applies straight away.
 
 The Bank keeps the queue and works out who is next whenever somebody asks; nobody else's place, lottery draw or invitation is ever sent to a Pocket. A Pocket from before 13 cannot buy tickets until it updates: a purchase now has to be on your turn.
+
+## INVT (FoxyOS 14)
+
+**INVT** is in the App Browser, made by **Foxy**: invitations and small events — a party among friends, a café's quiz night. One price (free is a price), a number of spots, and no queue; the Tickets app is still there for the big ones. You sign in with **Foxy** (it asks to see your name and your friends).
+
+- **The feed** lists every public event and the private ones you were invited to, soonest first, sliding in: when, who is hosting, the price, how many spots are left, and whether you are going.
+- **Your tickets** are behind the ticket at the top of the feed: tap it and a drawer drags down with all of them; tap one for its code, and **Close** pushes the drawer back up.
+- **A new event** is a ticket rising from the bottom to fill in: **title**, **when** (a day and a time), **about** (where, what to bring), **spots**, **price** (0 for free) and **public or private**. **Send it out** stamps it.
+- **An event's page** has everything about it and **Join, free** or **Get tickets**: how many (up to **ten an account**, across purchases), then your PIN when it costs something — the money goes straight to the host. A ticket prints out with **YOU'RE GOING**.
+- **Private events** only reach the people invited. The host invites **a friend** from their friends list, or anybody **by FoxMail address** — they are mailed from the host's own address when the host has one, and everybody invited is told on their Pocket.
+- **Hosting:** **Guests** shows who is coming and who was invited, **Check in** takes the six-letter code from a guest's ticket (once), and **Cancel it** refunds everybody who paid — from the host, checked before any money moves, so a host who cannot cover it is told and nothing is half refunded.
+
+The Bank's Vault keeps INVT's events and tickets. Only the INVT app may ask, and only for somebody who signed in to it with Foxy; the Core checks both on every request.
 
 ## Search, App Actions and QuickActions
 
@@ -419,6 +432,8 @@ It is handed that `api` table and nothing else. It can draw, and it can make req
 
 The Service Kiosk has merged with the Company app in the Pocket. A company's till is its **Sell** tab, the first of four (Sell, Products, Store, Deals), and **Point of Sale** in search opens it straight away — on a standing computer, onto the till it last sold at.
 
+**Till mode (FoxyOS 14)** is the till on its own, for a counter. It has a tab of its own on the Company app's front page (**Companies, Till mode, Delivery**), an App Action (**Till mode** in search), and the first entry under a Sell tab's **More**. The till fills the screen with no tabs, the Pocket **never locks** while it is open, and leaving — **Exit**, or a terminate from the keyboard — asks for the owner's PIN, so a customer at a standing till cannot walk off with the Pocket behind it.
+
 - **It works on the Pocket itself**, for selling on the spot: products as tiles under **Favs**, **Items** and **Daily**, a bag along the bottom with the total on **Charge**, and **Find** to find the customer first. **More** has **Verify a MyID**, **Custom amount** (once or daily) and the customer screens.
 - **It is made for a standing computer.** Install the Pocket on an Advanced Computer with a wireless modem, sign in as the owner, open Company → Sell, and the till spreads out: the receipt down the left, the products on the right.
 - **Add screens.** Every colour **Advanced Monitor** attached to that computer is a customer screen, at text scale `0.5`, from a 1×1 up: the welcome with a pulse, the order as it is rung up, Foxy Pay's *check your Pocket*, the code to type into another bank's app, and **PAID** with a thank you by name. A tap on a customer screen never presses anything on the till. **More → Customer screens** looks again after one is attached.
@@ -534,9 +549,13 @@ Paying from another bank is a charge Foxy asks that bank to make. The PIN goes t
 
 The **Delivery** tab lists your orders, open first, and follows each one live: it asks again every few seconds while it is open. Every step the store takes is also a notification.
 
+### Shop Apps (FoxyOS 14)
+
+A store can have an app of its own. On the store's page in the Company app, **Make a Shop App** asks for its name and a line about it; within half a minute the App Server lists it in the App Browser like any other app, under the company's name. Installed, it opens on the store's **front door** in the store's colours — **Shop now**, with Delivery and Places beside it — rather than the list of every store. It is built from the Shop app, locked to the store, and rebuilt whenever the Shop app or the store's app changes, so it is never behind. **Take it down** removes it from the App Browser; a store has to be open to have one. A Shop App is about the size of the Shop app itself on a Pocket.
+
 ### The Company app (11.1)
 
-**Company** is in the App Browser, from FoxyOS. It is where an owner starts companies, sells, and runs them:
+**Company** is in the App Browser, from FoxyOS. It is where an owner starts companies, sells, and runs them. Its front page has three tabs: **Companies**, **Till mode** (see *The till*) and **Delivery**:
 
 - **Companies** lists yours: products, whether the store is open. **+ Start a company** makes a new one.
 - Inside one, **Sell** is the till (see *The till*). **Products** adds, renames, reprices and deletes products, favourites them for the till, and puts them in the Shop app with a line under the name. They are the same products every till of the company sells.
@@ -632,6 +651,8 @@ Every role updates itself. A Pocket, CCG console, kiosk, controller or Bank chec
 
 **The FoxyOS update screen (FoxyOS 12).** Every device downloads the same way, Easy Deployment included: **FOXY** blinks in the middle of the screen, and a thin bar along the bottom edge fills as the files arrive.
 
+**The Pocket has its own (FoxyOS 14).** A Pocket downloads under its circles — the theme colour opening from the middle, then black — with the same thin bar, asks under **POCKET**, and installing plays the circles for **fifteen seconds**, the bar filling under them, before it restarts into its start-up. Easy Deployment plays the circles too when it installs the Pocket. Every other device keeps FOXY.
+
 **The Pocket downloads first, then asks.** The release is downloaded and checked into a staging folder under the update screen, then the screen slides up into the question: the release's name, its version, what it is, and two buttons — **Install** and **Cancel & Delete**. Install swaps the files in and restarts; Cancel & Delete throws the download away and leaves the phone as it was, and it asks again next time it starts. Settings → Updates has a Check now button and the Automatic switch for anyone who wants no question. Every other role is unattended — there is nobody in front of a Bank Server to tap Install — so everything except the Pocket still updates itself without asking, under the same screen.
 
 What the phone shows comes from the manifest: a `label` naming the release and a `changes` array of headlines. Both are derived by the release builder from files in this repository — the label from `release_name` in `config.lua`, the headlines from the top section of `CHANGELOG.md` — so they cannot drift from the release they describe. `release_name` is the one config value an update replaces rather than preserves; every other local setting still survives.
@@ -642,7 +663,7 @@ The Bank Server still answers installers from before 12.0 over Rednet, which onl
 
 **Published without comments (11.2).** The Core, the Vault, the shared libraries, since FoxyOS 12 the Pocket's own program, and since FoxyOS 13 the apps the App Server ships are downloaded from `dist/`: the same files built by `tools/build_release_manifest.js` with their comments and indentation taken out — a third of every one of them was prose for whoever reads this repository. Every line stays on the line it came from, so an error a computer reports still names the right line here, and `tests/host_dist_build_test.lua` proves each one compiles to exactly the same bytecode as its source. Comments that code reads are kept: the installer is published as it is, for its `-- PUMPE EASY DEPLOYMENT` line, and a stripped app keeps every `-- PUMPE ...` header line (its name, its App Actions, a bank's terms) on the line it was. Edit the source, never `dist/`; the builder rewrites it.
 
-Because each device stages only its own role, the worst-case update is about 682 KiB of ComputerCraft's 1,000,000-byte computer — a Pocket, which holds a downloaded release while it asks — and the Bank Core's is about 672 KiB, leaving it roughly 304 KiB for its data (the release builder prints the current figures). A Pocket keeps its apps beside that: about 49 KiB for Foxy and FoxMail, about 150 KiB with every app FoxyOS ships. FoxyOS 13's till doubled the Company app, which is why the apps are stripped now too. And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
+Because each device stages only its own role, the worst-case update is about 691 KiB of ComputerCraft's 1,000,000-byte computer — a Pocket, which holds a downloaded release while it asks — and the Bank Core's is about 685 KiB, leaving it roughly 291 KiB for its data (the release builder prints the current figures). A Pocket keeps its apps beside that: about 49 KiB for Foxy and FoxMail, about 179 KiB with every app FoxyOS ships, and each Shop App adds about 27 KiB. FoxyOS 13's till doubled the Company app, which is why the apps are stripped now too. And the Core's data no longer grows with time: since 9.3 everything that grows without limit — conversations, events, tickets, app records, the domain register, and since 11.2 history and notifications — lives on the Vault.
 
 ### Manifest layout
 
@@ -917,4 +938,4 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 ## Version
 
-FoxyOS 13 — release `13.0.0`.
+FoxyOS 14 — release `14.0.0`.

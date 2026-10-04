@@ -7,6 +7,41 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 14 (14.0.0)
+
+Update the Bank Server (Core and Vault) and the App Server first: INVT and Shop Apps live on the Bank, and the apps come from the App Server.
+
+### The Pocket's circles
+
+- [ ] Restart a Pocket: the theme colour opens from the middle until it covers the screen, then black opens over it, three times; **POCKET** appears on black, then *Powered by FoxyOS 14.0.0*.
+- [ ] Change the main colour in Settings and restart: the circles are the new colour.
+- [ ] Publish the next release after this one: the Pocket downloads under the circles with a thin bar along the bottom, asks under **POCKET**, and **Install** plays the circles for about fifteen seconds before restarting.
+- [ ] Easy Deployment installing the Pocket on a new computer shows the circles; installing anything else still shows FOXY.
+
+### Till mode
+
+- [ ] Open Company: the front page has **Companies**, **Till mode** and **Delivery** tabs. **Till mode → Start till mode** opens the till full screen with **TILL MODE** at the top and no tabs.
+- [ ] Leave it untouched for three minutes: it does not lock.
+- [ ] **Exit** with a wrong PIN stays; with the right PIN it leaves. Ctrl+T on a computer's keyboard asks for the PIN too.
+- [ ] Search **Till mode** on the Home Screen: it opens straight into it. A company's **Sell → More → Till mode** does too.
+
+### INVT
+
+- [ ] INVT is in the App Browser, by **Foxy**. Opening it plays the envelope, then asks to sign in with Foxy.
+- [ ] **+ New event**: a ticket rises; fill in the title, when, about, spots, a price of 0, and make it **Private**. **Send it out** stamps it.
+- [ ] **Invite → A friend** lists your friends; pick one. **Invite → By FoxMail address** with somebody's address: they get a mail from your address.
+- [ ] On the invited person's Pocket: the event is in their feed; **Join, free** with 3 tickets. The ticket at the top of the feed says 3; tapping it pulls the drawer down with all three and their codes.
+- [ ] A friend who was not invited never sees the private event. A public event with a price shows for everybody; buying asks for the PIN and pays the host.
+- [ ] Eleven tickets on one account is refused. A full event says **Full**.
+- [ ] The host's **Guests** lists who is coming; **Check in** takes a code once.
+- [ ] **Cancel it** on a paid event refunds everybody; with too little in the host's account it refuses and nothing moves.
+
+### Shop Apps
+
+- [ ] On an open store's page in the Company app, **Make a Shop App** with a name and a line. Within a minute it is in the App Browser under the company's name.
+- [ ] Install it: it opens on the store's front door in the store's colours; **Shop now** lists its products and checks out as Shop does.
+- [ ] **Take it down**: it leaves the App Browser within a minute.
+
 ## FoxyOS 13 (13.0.0)
 
 Update the Bank Server (Core and Vault) and the App Server first: the till and the queue live on the Bank, and the Company app comes from the App Server.

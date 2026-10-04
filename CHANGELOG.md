@@ -1,5 +1,43 @@
 # Changelog
 
+## 14.0.0
+
+FoxyOS 14, all about the Pocket. A new start-up and update animation, a
+Till mode you can find, INVT by Foxy, and Shop Apps.
+
+**Circles at start-up.** Your theme colour opens from the middle of the
+screen, then black opens over it, three times. POCKET lands on black, then
+"Powered by FoxyOS" and the version.
+
+**Circles while updating.** A Pocket downloads under the same circles and
+asks under POCKET. Installing plays them for fifteen seconds. Easy
+Deployment plays them when it installs the Pocket.
+
+**Till mode.** It has its own tab on the Company app's front page, an App
+Action, and a place under Sell's More. The till fills the screen, the Pocket
+never locks while it is open, and leaving asks for your PIN.
+
+**INVT, by Foxy.** A new app for invitations and small events: one price,
+a number of spots, no queue. Sign in with Foxy. Public events are in
+everybody's feed; private ones only reach the people you invite.
+
+**A ticket to fill in.** A new INVT event is a ticket rising from the
+bottom: title, when, about, spots, price, public or private.
+
+**Invite friends or anybody.** Pick from your friends, or type a FoxMail
+address; they are mailed from your own address and told on their Pocket.
+
+**Up to ten tickets.** Join free events with a tap, pay for others with
+your PIN, the money straight to the host. Your tickets drag down from the
+ticket at the top of the feed.
+
+**Hosting.** See who is coming, check people in by their ticket code, or
+cancel with everybody refunded, checked before any money moves.
+
+**Shop Apps.** On a store's page in the Company app, Make a Shop App gives
+the store an app of its own in the App Browser, opening on its own front
+door.
+
 ## 13.0.0
 
 FoxyOS 13. The Service Kiosk merged into the Company app as its till, tickets

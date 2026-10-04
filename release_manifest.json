@@ -1,58 +1,56 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "13.0.0",
-  "label": "FoxyOS 13",
+  "version": "14.0.0",
+  "label": "FoxyOS 14",
   "notes": "FoxyOS automatic internet release",
   "changes": [
-    "The till is in the Company app.",
-    "Made for standing computers.",
-    "The Service Kiosk has merged.",
-    "Dev Mode is in Settings.",
-    "Your own bill, never.",
-    "Tickets on sale at a set time.",
-    "The waiting room and the queue.",
-    "A limit per person.",
-    "Presales by invite.",
-    "Every app opens its own way.",
-    "Room for the till."
+    "Circles at start-up.",
+    "Circles while updating.",
+    "Till mode.",
+    "INVT, by Foxy.",
+    "A ticket to fill in.",
+    "Invite friends or anybody.",
+    "Up to ten tickets.",
+    "Hosting.",
+    "Shop Apps."
   ],
   "files": [
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
       "size": 208982,
-      "checksum": "43850639"
+      "checksum": "1184b19a"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
       "size": 212196,
-      "checksum": "a947c94b"
+      "checksum": "86b1da6c"
     },
     {
       "path": "service_kiosk.lua",
       "source": "service_kiosk.lua",
       "size": 8140,
-      "checksum": "e44bce82"
+      "checksum": "646c0963"
     },
     {
       "path": "event_kiosk.lua",
       "source": "event_kiosk.lua",
       "size": 35587,
-      "checksum": "8810b883"
+      "checksum": "cd12d404"
     },
     {
       "path": "tax_controller.lua",
       "source": "tax_controller.lua",
       "size": 1742,
-      "checksum": "05af3112"
+      "checksum": "e1d23fd3"
     },
     {
       "path": "startup.lua",
       "source": "startup.lua",
       "size": 49501,
-      "checksum": "79b8ce2e"
+      "checksum": "7717bb6f"
     },
     {
       "path": "launcher.lua",
@@ -64,7 +62,7 @@
       "path": "config.lua",
       "source": "config.lua",
       "size": 7915,
-      "checksum": "7af54b76"
+      "checksum": "9a38be38"
     },
     {
       "path": "lib/net.lua",
@@ -96,13 +94,13 @@
       "path": "border_controller.lua",
       "source": "border_controller.lua",
       "size": 22693,
-      "checksum": "2c695060"
+      "checksum": "09d9c421"
     },
     {
       "path": "ccg.lua",
       "source": "ccg.lua",
       "size": 67711,
-      "checksum": "80b24757"
+      "checksum": "afc789d8"
     }
   ],
   "optional_files": [
@@ -110,19 +108,19 @@
       "path": "gps_anchor.lua",
       "source": "gps_anchor.lua",
       "size": 5147,
-      "checksum": "d8f72f16"
+      "checksum": "8791ddb7"
     },
     {
       "path": "admin_terminal.lua",
       "source": "admin_terminal.lua",
       "size": 40715,
-      "checksum": "8310b4fd"
+      "checksum": "25cd417e"
     },
     {
       "path": "app_server.lua",
       "source": "app_server.lua",
       "size": 20701,
-      "checksum": "2749e3f6"
+      "checksum": "5f4baeb7"
     },
     {
       "path": "foxy.lua",
@@ -134,7 +132,7 @@
       "path": "bank_app_server.lua",
       "source": "bank_app_server.lua",
       "size": 40845,
-      "checksum": "802b62f1"
+      "checksum": "8b62ce72"
     },
     {
       "path": "buckapp.lua",
@@ -146,7 +144,7 @@
       "path": "ccg_server.lua",
       "source": "ccg_server.lua",
       "size": 32318,
-      "checksum": "c6164bd3"
+      "checksum": "08a16b94"
     },
     {
       "path": "revolution.lua",
@@ -158,13 +156,13 @@
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
       "size": 171484,
-      "checksum": "34a8bc28"
+      "checksum": "57dac609"
     },
     {
       "path": "internet_server.lua",
       "source": "internet_server.lua",
       "size": 12613,
-      "checksum": "02e7a2d6"
+      "checksum": "f99cdcf7"
     },
     {
       "path": "wc.lua",
@@ -182,7 +180,7 @@
       "path": "delivery_terminal.lua",
       "source": "delivery_terminal.lua",
       "size": 67028,
-      "checksum": "0638d9b4"
+      "checksum": "452a94b5"
     },
     {
       "path": "shop.lua",
