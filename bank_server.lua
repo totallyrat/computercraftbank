@@ -5155,6 +5155,52 @@ function actions.COMPANY_TILL(payload)
     return { till_id = terminalId, till_token = till.auth_token, name = till.name }
 end
 
+-- FoxyOS 14: Shop Apps. A store's own app, turned on from its Store page in
+-- the Company app with a name and a line about it. The App Server asks for
+-- the list and builds each from the Shop app, locked to its store, so it
+-- sits in the App Browser like any other app.
+function actions.COMPANY_SHOP_APP(payload)
+    local _, company = shop.owned(payload)
+    if payload.enabled == false then
+        company.shop_app = nil
+        save()
+        logActivity("Shop App taken down: " .. company.name, colors.orange)
+        return { shop_app = nil }
+    end
+    need(shop.settings(company).open, "STORE_CLOSED", "Open the store first")
+    local name = util.safeText(util.trim(tostring(payload.name or company.name)), 18)
+    need(#name >= 2, "INVALID_NAME", "The app needs a name")
+    local old = company.shop_app or {}
+    company.shop_app = {
+        name = name,
+        description = util.safeText(util.trim(tostring(payload.description
+            or old.description or "")), 60),
+        created_day = old.created_day or util.ingameDay(),
+        revision = (old.revision or 0) + 1,
+    }
+    save()
+    logActivity("Shop App: " .. name, colors.lime)
+    return { shop_app = util.copy(company.shop_app) }
+end
+
+-- Asked by the App Server: every store with an app of its own. Nothing here
+-- is not already on the storefront.
+function actions.SHOP_APPS()
+    local list = {}
+    for _, company in pairs(state.companies) do
+        if company.status == "active" and company.shop_app then
+            local settings = shop.settings(company)
+            list[#list + 1] = { company_id = company.company_id,
+                company_name = company.name, name = company.shop_app.name,
+                description = company.shop_app.description,
+                color = settings.color, open = settings.open == true,
+                revision = company.shop_app.revision }
+        end
+    end
+    table.sort(list, function(a, b) return a.company_id < b.company_id end)
+    return { apps = list }
+end
+
 function actions.COMPANY_STATE(payload)
     local _, company = shop.owned(payload)
     local terminals = {}
@@ -5173,6 +5219,7 @@ function actions.COMPANY_STATE(payload)
         settings = util.copy(shop.settings(company)),
         held = shop.held(company),
         terminals = terminals,
+        shop_app = company.shop_app and util.copy(company.shop_app) or nil,
     }
 end
 

@@ -818,6 +818,52 @@ return function(api)
         ui.tabBar(scene, target, TABS, tab, SHOP)
     end
 
+    -- FoxyOS 14: a Shop App is this app locked to one store, built by the
+    -- App Server for a store that turned one on. Its first tab is the
+    -- store's own front door, in the store's colours.
+    local only = type(api.shop_store) == "string" and api.shop_store or nil
+    if only then TABS[1] = { id = "stores", label = "Store" } end
+    local function frontDoor()
+        while running() do
+            local got, err = ask("SHOP_STORE", { company_id = only }, true)
+            local store = got and got.store
+            local width, height = target.getSize()
+            local background, foreground = paint(store and store.color or "orange")
+            ui.clear(target)
+            ui.header(target, ui.truncate(store and store.name or "Store", width - 9),
+                store and (store.tagline ~= "" and store.tagline or "Online store")
+                    or "Closed", util.formatClock())
+            local scene = ui.scene(target)
+            ui.fill(target, 1, 4, width, 7, background)
+            if store then
+                ui.center(target, 6, ui.truncate(store.name, width - 2), foreground,
+                    background)
+                ui.center(target, 8, ui.truncate(offers(store) or (store.products
+                    .. " products"), width - 2), foreground, background)
+                ui.wrappedText(target, 2, 12, terms(store, true), width - 2, 3,
+                    ui.theme.muted)
+                scene:button("shop", 2, height - 5, width - 2, 2, "Shop now",
+                    { background = background, foreground = foreground, shadow = true })
+            else
+                ui.wrappedText(target, 2, 12, tostring(err or "This store is closed"
+                    .. " for now."), width - 2, 3, ui.theme.muted)
+            end
+            tabs.draw(scene)
+            local action = scene:wait({ tickRate = 10 })
+            if action == "home" or action == "__terminate"
+                or (action or ""):match("^tab:") then
+                return action
+            end
+            if action == "shop" then
+                local placed = storePage(only)
+                if placed then
+                    orderPage(placed)
+                    return "tab:delivery"
+                end
+            end
+        end
+    end
+
     -- Opened from search by name: straight to what was asked for.
     local wanted = type(api.action) == "function" and api.action()
     if wanted == "delivery" or wanted == "stores" then tab = wanted end
@@ -828,6 +874,8 @@ return function(api)
             switched = deliveryPage(tabs)
         elseif tab == "places" then
             switched = placesPage(tabs)
+        elseif only then
+            switched = frontDoor()
         else
             switched = storesPage(tabs)
         end

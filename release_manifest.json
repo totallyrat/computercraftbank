@@ -21,8 +21,8 @@
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 207543,
-      "checksum": "d5f15468"
+      "size": 208982,
+      "checksum": "43850639"
     },
     {
       "path": "pumpe.lua",
@@ -121,8 +121,8 @@
     {
       "path": "app_server.lua",
       "source": "app_server.lua",
-      "size": 17220,
-      "checksum": "d3dccbe0"
+      "size": 20701,
+      "checksum": "2749e3f6"
     },
     {
       "path": "foxy.lua",
@@ -187,8 +187,8 @@
     {
       "path": "shop.lua",
       "source": "dist/shop.lua",
-      "size": 25891,
-      "checksum": "7d98cda7"
+      "size": 27432,
+      "checksum": "1c1fd8cb"
     },
     {
       "path": "foxmail.lua",
@@ -199,8 +199,8 @@
     {
       "path": "company.lua",
       "source": "dist/company.lua",
-      "size": 61558,
-      "checksum": "819dd71f"
+      "size": 64188,
+      "checksum": "3b33b603"
     },
     {
       "path": "brickbreaker.lua",
