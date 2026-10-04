@@ -268,7 +268,11 @@ if not okUi or type(ui) ~= "table" or type(ui.updating) ~= "function"
 or not target or options.screen == false then
 return work(progressOf(nil), nil)
 end
-return ui.updating(target, function(progress)
+
+
+local updating = type(options.updating) == "function" and options.updating
+or ui.updating
+return updating(target, function(progress)
 return work(progressOf(progress), progress)
 end, options.note or found.label
 or ("FoxyOS " .. tostring(found.version)))

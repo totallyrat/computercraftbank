@@ -1171,7 +1171,8 @@ function ui.updateReady(target, info)
 target = surface(target)
 local width, height = target.getSize()
 local wordTop = updateWordTop(height)
-local drawn = ui.wordmark(target, wordTop, "FOXY", nil, ui.theme.accent)
+
+local drawn = ui.wordmark(target, wordTop, info.word or "FOXY", nil, ui.theme.accent)
 local panelTop = drawn and math.max(wordTop + GLYPH_HEIGHT + 1, height - 9)
 or math.max(1, height - 9)
 local frames = 6
@@ -1199,6 +1200,105 @@ local action = scene:wait()
 if action == "install" then return true end
 if action == "cancel" or action == "__terminate" then return false end
 end
+end
+
+
+
+
+
+
+
+
+
+function ui.circleWipe(target, color, after)
+target = surface(target)
+local width, height = target.getSize()
+local cx, cy = (width + 1) / 2, (height + 1) / 2
+
+local reach = math.sqrt((width / 2) ^ 2 + (height * 0.75) ^ 2) + 1
+for frame = 1, ui.CIRCLE_FRAMES do
+local radius = reach * frame / ui.CIRCLE_FRAMES
+for y = 1, height do
+local dy = (y - cy) * 1.5
+local span = radius * radius - dy * dy
+if span > 0 then
+local half = math.sqrt(span)
+local left = math.max(1, math.ceil(cx - half))
+local right = math.min(width, math.floor(cx + half))
+if right >= left then
+ui.fill(target, left, y, right - left + 1, 1, color)
+end
+end
+end
+if after then after() end
+sleep(ui.CIRCLE_STEP)
+end
+end
+ui.CIRCLE_FRAMES, ui.CIRCLE_STEP = 7, 0.05
+
+
+function ui.circles(target, rounds, after)
+for _ = 1, rounds or 3 do
+ui.circleWipe(target, ui.theme.accent, after)
+ui.circleWipe(target, colors.black, after)
+end
+end
+
+
+function ui.pocketStart(target, version)
+target = surface(target)
+ui.circles(target, 3)
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, colors.black)
+local top = math.max(2, math.floor((height - GLYPH_HEIGHT) / 2))
+if not ui.wordmark(target, top, "POCKET", nil, ui.theme.accent) then
+ui.center(target, math.floor(height / 2), "POCKET", ui.theme.accent,
+colors.black)
+end
+sleep(1)
+ui.fill(target, 1, 1, width, height, colors.black)
+ui.center(target, math.floor(height / 2), ui.truncate("Powered by FoxyOS "
+.. tostring(version or ""), width - 2), colors.white, colors.black)
+sleep(1.5)
+end
+
+
+local function pocketBar(target, fraction)
+local width, height = target.getSize()
+local filled = math.floor(width * util.clamp(tonumber(fraction) or 0, 0, 1) + 0.5)
+if filled > 0 then ui.fill(target, 1, height, filled, 1, ui.theme.panel) end
+end
+
+
+function ui.pocketUpdating(target, work)
+target = surface(target)
+local fraction = 0
+local function progress(value) fraction = util.clamp(tonumber(value) or 0, 0, 1) end
+local results = { n = 0 }
+local function run() results = table.pack(work(progress)) end
+if type(parallel) == "table" and type(parallel.waitForAny) == "function" then
+parallel.waitForAny(run, function()
+while true do
+ui.circles(target, 1, function() pocketBar(target, fraction) end)
+end
+end)
+else
+run()
+end
+ui.fill(target, 1, 1, select(1, target.getSize()), select(2, target.getSize()),
+colors.black)
+return table.unpack(results, 1, results.n)
+end
+
+
+function ui.pocketInstalling(target, seconds)
+target = surface(target)
+local round = 2 * ui.CIRCLE_FRAMES * ui.CIRCLE_STEP
+local rounds = math.max(1, math.ceil((seconds or 15) / round))
+for done = 1, rounds do
+ui.circles(target, 1, function() pocketBar(target, (done - 1) / rounds) end)
+end
+pocketBar(target, 1)
 end
 
 

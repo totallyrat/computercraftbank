@@ -531,9 +531,15 @@ end
 
 -- FoxyOS 12: the download screen every device shows -- FOXY blinking in the
 -- middle, and a thin bar along the bottom row, side to side, grey on black.
+-- FoxyOS 14: installing the Pocket plays the Pocket's own circles instead.
 local downloading = { lit = true, fraction = 0, note = "" }
 local function downloadFrame()
     local width, height = target.getSize()
+    if downloading.circles then
+        local filled = math.floor(width * downloading.fraction + 0.5)
+        if filled > 0 then fill(1, height, filled, 1, theme.panel) end
+        return
+    end
     clear()
     local top = math.max(1, math.min(math.floor((height - 5) / 2), height - 15))
     if not wordmark(top, "FOXY", downloading.lit and theme.accent or theme.background) then
@@ -552,8 +558,31 @@ local function progress(program, entry, done, total, index, count)
     downloadFrame()
 end
 
--- Runs `work` with FOXY blinking twice a second, where the computer can run
--- two things at once.
+-- One circle opening from the middle in `color`, the bar kept on top: the
+-- Pocket's own animation, as lib/ui draws it.
+function downloading.wipe(color)
+    local width, height = target.getSize()
+    local cx, cy = (width + 1) / 2, (height + 1) / 2
+    local reach = math.sqrt((width / 2) ^ 2 + (height * 0.75) ^ 2) + 1
+    for frame = 1, 7 do
+        local radius = reach * frame / 7
+        for y = 1, height do
+            local dy = (y - cy) * 1.5
+            local span = radius * radius - dy * dy
+            if span > 0 then
+                local half = math.sqrt(span)
+                local left = math.max(1, math.ceil(cx - half))
+                local right = math.min(width, math.floor(cx + half))
+                if right >= left then fill(left, y, right - left + 1, 1, color) end
+            end
+        end
+        downloadFrame()
+        sleep(0.05)
+    end
+end
+
+-- Runs `work` with FOXY blinking twice a second -- or, for the Pocket, its
+-- circles going round -- where the computer can run two things at once.
 local function blinking(work)
     if type(parallel) ~= "table" or type(parallel.waitForAny) ~= "function" then
         return work()
@@ -561,9 +590,14 @@ local function blinking(work)
     local results = { n = 0 }
     parallel.waitForAny(function() results = table.pack(work()) end, function()
         while true do
-            sleep(0.5)
-            downloading.lit = not downloading.lit
-            downloadFrame()
+            if downloading.circles then
+                downloading.wipe(theme.accent)
+                downloading.wipe(colors.black)
+            else
+                sleep(0.5)
+                downloading.lit = not downloading.lit
+                downloadFrame()
+            end
         end
     end)
     return table.unpack(results, 1, results.n)
@@ -590,6 +624,8 @@ local function install(program, root, manifest)
         if fs.exists(stale) then fs.delete(stale) end
     end
     downloading.lit = true
+    downloading.circles = program.id == "pumpe"
+    if downloading.circles then clear() end
     local fetched, fetchError = blinking(function()
         local done = 0
         for index, entry in ipairs(entries) do

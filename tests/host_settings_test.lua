@@ -420,6 +420,14 @@ function ui.updateReady(_, info)
     return scene:wait() == "install"
 end
 restartingDrawn = false
+-- FoxyOS 14: the Pocket's own screens -- circles at start-up, while a
+-- release comes down, and for fifteen seconds while it installs.
+function ui.pocketStart(_, version) pocketStarted = version end
+function ui.pocketUpdating(_, work) return work(function() end) end
+function ui.pocketInstalling(_, seconds)
+    installSeconds = seconds
+    sleep(seconds)
+end
 function ui.updateFrame(_, _, _, note)
     if note == "Restarting" then restartingDrawn = true end
 end
@@ -520,15 +528,17 @@ assert(pressed("Install") and pressed("Cancel & Delete"),
     "with both answers on screen, one over the other")
 assert(updateAnswer == true,
     "and Check now puts the question again, so Cancel is not the end of it")
-assert(restartingDrawn, "installed, it says it is restarting")
--- And the boot that is not an update stays short. The tagline holds for two
--- seconds and the wordmark does not blink; anything longer is the phone
--- looking busy while doing nothing, which is what the update screen is for.
-assert(splashOptions, "the phone never drew its start-up screen")
-assert(splashOptions.hold == 2,
-    "the tagline holds for " .. tostring(splashOptions.hold)
-        .. "s at boot; two is the whole of it")
-assert(splashOptions.blinks == 0, "and the wordmark does not blink first")
+-- FoxyOS 14: the question is asked under POCKET, the download plays the
+-- Pocket's circles, and installing plays them for fifteen seconds.
+assert(readyShown[1].word == "POCKET", "asked under POCKET")
+assert(updateOptions[1].updating == ui.pocketUpdating,
+    "the circles while the release comes down, not FOXY")
+assert(installSeconds == 15 and installTook >= 15000 and installTook < 16000,
+    "installing plays the circles for fifteen seconds: " .. tostring(installTook))
+assert(not restartingDrawn, "rather than the old screen")
+-- And the start-up: the circles, POCKET, and what it runs on.
+assert(pocketStarted == "8.5.0", "the start-up names the version it runs: " .. tostring(pocketStarted))
+assert(not splashOptions, "the old start-up is gone")
 
 -- The modem --------------------------------------------------------------------
 -- Turning the radio off is the one setting that changes what the rest of the

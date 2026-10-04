@@ -268,7 +268,11 @@ function net.autoUpdate(config, role, root, client, options)
             or not target or options.screen == false then
             return work(progressOf(nil), nil)
         end
-        return ui.updating(target, function(progress)
+        -- FoxyOS 14: a device can bring a screen of its own (the Pocket's
+        -- circles). It takes the same arguments as ui.updating.
+        local updating = type(options.updating) == "function" and options.updating
+            or ui.updating
+        return updating(target, function(progress)
             return work(progressOf(progress), progress)
         end, options.note or found.label
             or ("FoxyOS " .. tostring(found.version)))

@@ -4148,9 +4148,16 @@ end
 -- so the question is put once rather than every half minute.
 local updateDeferred
 
+-- FoxyOS 14: installing plays the Pocket's circles for fifteen seconds, the
+-- bar filling under them, whether or not it takes that long: a phone that
+-- goes dark for a moment and comes back different reads as a glitch.
 local function updateInstalled()
-    ui.updateFrame(target, 1, true, "Restarting")
-    sleep(0.4)
+    if type(ui.pocketInstalling) == "function" then
+        ui.pocketInstalling(target, 15)
+    else
+        ui.updateFrame(target, 1, true, "Restarting")
+        sleep(0.4)
+    end
 end
 
 -- Handed to net.autoUpdate once the release is down. False deletes it.
@@ -4159,6 +4166,7 @@ local function confirmUpdate(found)
     if updateDeferred == found.version then return false end
     local size = tonumber(found.bytes)
     local wanted = ui.updateReady(target, {
+        word = "POCKET",
         title = found.label or "FoxyOS",
         version = found.version,
         what = "For this Pocket" .. (size and ("  " .. math.ceil(size / 1024) .. " KiB") or ""),
@@ -4181,6 +4189,8 @@ local function checkForUpdate(force)
         programVersion = force and PROGRAM_VERSION or nil,
         confirm = asking and confirmUpdate or nil,
         target = target,
+        -- FoxyOS 14: the circles, not FOXY, while a release comes down.
+        updating = ui.pocketUpdating,
         onInstalled = updateInstalled,
     })
 end
@@ -7106,16 +7116,19 @@ local function mainMenu()
     end
 end
 
--- The start-up: the letters land one at a time, then the tagline holds for
--- two seconds and the phone is yours. Nothing is being downloaded here, so
--- nothing here should look like it is: the long screen belongs to an update
--- and only to an update. A device still carrying an older shared library has
--- no ui.splash, so it keeps the old progress-bar boot instead of crashing.
+-- The start-up. Nothing is being downloaded here, so nothing here should
+-- look like it is: the long screen belongs to an update and only to an
+-- update. A device still carrying an older shared library keeps an older
+-- start-up instead of crashing.
 -- Anything a website left behind last time. A page is a visit, not an
 -- install, so the folder it runs from starts every session empty.
 pcall(webpage.sweep)
 
-if type(ui.splash) == "function" then
+if type(ui.pocketStart) == "function" then
+    -- FoxyOS 14: three rounds of circles in the Pocket's colour, POCKET on
+    -- black, then what it runs on.
+    ui.pocketStart(target, config.version)
+elseif type(ui.splash) == "function" then
     -- FoxyOS 12: the Pocket, on FoxyOS.
     ui.splash(target, "POCKET", ui.osLabel and ui.osLabel(config) or "FoxyOS",
         { footnote = "v" .. config.version, blinks = 0, hold = 2 })

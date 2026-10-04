@@ -4148,9 +4148,16 @@ end
 
 local updateDeferred
 
+
+
+
 local function updateInstalled()
+if type(ui.pocketInstalling) == "function" then
+ui.pocketInstalling(target, 15)
+else
 ui.updateFrame(target, 1, true, "Restarting")
 sleep(0.4)
+end
 end
 
 
@@ -4159,6 +4166,7 @@ if device.update_mode == "auto" then return true end
 if updateDeferred == found.version then return false end
 local size = tonumber(found.bytes)
 local wanted = ui.updateReady(target, {
+word = "POCKET",
 title = found.label or "FoxyOS",
 version = found.version,
 what = "For this Pocket" .. (size and ("  " .. math.ceil(size / 1024) .. " KiB") or ""),
@@ -4181,6 +4189,8 @@ force = force or nil,
 programVersion = force and PROGRAM_VERSION or nil,
 confirm = asking and confirmUpdate or nil,
 target = target,
+
+updating = ui.pocketUpdating,
 onInstalled = updateInstalled,
 })
 end
@@ -7112,10 +7122,13 @@ end
 
 
 
-
 pcall(webpage.sweep)
 
-if type(ui.splash) == "function" then
+if type(ui.pocketStart) == "function" then
+
+
+ui.pocketStart(target, config.version)
+elseif type(ui.splash) == "function" then
 
 ui.splash(target, "POCKET", ui.osLabel and ui.osLabel(config) or "FoxyOS",
 { footnote = "v" .. config.version, blinks = 0, hold = 2 })
