@@ -114,6 +114,8 @@ function phone.run(options)
         return entry
     end
     ui.inkOn, ui.searchEntries = realUi.inkOn, realUi.searchEntries
+    -- Keeping the phone awake, counted.
+    function ui.noteActivity() seen.awake = (seen.awake or 0) + 1 end
     ui.MAIN_COLORS, ui.mainColor = realUi.MAIN_COLORS, "orange"
     function ui.contentBottom() return HEIGHT - 2 end
     function ui.resolveTab(_, action, spec)
@@ -205,6 +207,8 @@ function phone.run(options)
         banks = function() return {} end,
         -- FoxyOS 13: customer screens beside a standing computer.
         screens = options.screens and function() return options.screens end or nil,
+        -- The owner's PIN, when the test answers it.
+        pin = options.pin,
         app_id = appId,
     }
     assert(loadfile(options.file))()(api)

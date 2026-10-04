@@ -199,8 +199,8 @@
     {
       "path": "company.lua",
       "source": "dist/company.lua",
-      "size": 58433,
-      "checksum": "ced9e05a"
+      "size": 61558,
+      "checksum": "819dd71f"
     },
     {
       "path": "brickbreaker.lua",

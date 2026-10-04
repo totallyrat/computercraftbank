@@ -178,11 +178,54 @@ phone.push(script.actions, function(seen)
 end, function()
     assert(shown("YOUR ORDER"), "and shows the order as it is rung up")
     return "less:1"
-end, "tools", "pick:2", function(seen)
+end, "tools", "pick:3", function(seen)
     assert(phone.said(seen, "1 customer screens"), "the screen, found")
     return "back"
 end, "home", "home")
 run(script, { width = 51, height = 19, screens = { screen } })
+
+-- Till mode, FoxyOS 14: full screen, awake, and the PIN to leave -------------------------------
+
+local pins = {}
+local function runTill(script, wanted)
+    return phone.run({ bank = bank, who = ana, file = "../company.lua",
+        script = script, wanted = wanted, app_id = "COMPANY",
+        position = at(0, 0), kept = kept,
+        pin = function(reason)
+            pins[#pins + 1] = reason
+            return table.remove(script.pins, 1)
+        end })
+end
+script = phone.script()
+phone.push(script.actions, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "TILL MODE") and phone.has(frame, "Exit"),
+        "Till mode opens straight onto the till")
+    assert(not phone.has(frame, "Products"), "with no tabs to wander off through")
+    return "product:1"
+end, "exit", function(seen)
+    assert(phone.has(phone.last(seen), "TILL MODE"), "a wrong PIN stays")
+    return "__terminate"
+end, "__tick", "exit", function(seen)
+    -- Out, onto the Till mode tab: the way back in.
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Start till mode") and phone.has(frame, "Till mode"),
+        "the Till mode tab, on the app's front page")
+    return "start"
+end, "exit", "tab:companies", "home")
+phone.push(script.pins, false, false, true, true)
+seen = runTill(script, "till")
+assert(#pins == 4 and pins[1] == "Leave till mode", "leaving always asks for the PIN")
+assert((seen.awake or 0) >= 4, "and the till keeps the Pocket awake")
+
+-- From a company's Sell tab, More has Till mode first.
+script = phone.script()
+phone.push(script.actions, "company:1", "tools", "pick:1", function(seen)
+    assert(phone.has(phone.last(seen), "TILL MODE"))
+    return "exit"
+end, "tab:products", "home", "home")
+phone.push(script.pins, true)
+runTill(script, nil)
 
 -- Only the owner, and only through the Company app ----------------------------------------
 

@@ -2,6 +2,7 @@
 -- PUMPE APP ACTION: companies | My companies | Start and run your companies
 -- PUMPE APP ACTION: delivery | Delivery Mode | What is out for delivery
 -- PUMPE APP ACTION: sell | Point of Sale | Sell at your till
+-- PUMPE APP ACTION: till | Till mode | The till, full screen, never locks
 
 
 
@@ -21,7 +22,10 @@ local ui, util, target, colors = api.ui, api.util, api.target, api.colors
 local money = api.money
 
 local ACCENT = colors.cyan
+
+
 local TABS = { { id = "companies", label = "Companies" },
+{ id = "till", label = "Till mode", short = "Till" },
 { id = "delivery", label = "Delivery" } }
 
 
@@ -1086,12 +1090,16 @@ end
 
 function till.tools(desk)
 while running() do
-local item = choose("Till", desk.name, {
+local items = {
 option("Verify a MyID", "myid"),
 option("Customer screens: " .. #desk.screens, "screens"),
 option("Custom amount", "custom"),
-}, labelOf)
+}
+
+if not desk.mode then table.insert(items, 1, option("Till mode", "tillmode")) end
+local item = choose("Till", desk.name, items, labelOf)
 if not item then return end
+if item.id == "tillmode" then return "tillmode" end
 if item.id == "myid" then
 if ui.myIdVerifier then
 ui.myIdVerifier(target, function(code)
@@ -1175,37 +1183,68 @@ local CATEGORIES = { { "favorites", "Favs" }, { "items", "Items" },
 { "subs", "Daily" } }
 
 
-local function sellPage(company)
+
+
+function till.leave()
+if type(api.pin) == "function" then return api.pin("Leave till mode") == true end
+return ui.confirm(target, "Leave till mode?", "Back to the Company app",
+"Leave", "Stay")
+end
+
+
+
+
+
+local function sellPage(company, tillMode)
 local desk, err = till.start(company)
 while running() and not desk do
 local width = target.getSize()
 ui.clear(target)
-ui.header(target, ui.truncate(company.name, width - 9), "Sell",
-util.formatClock())
+ui.header(target, ui.truncate(company.name, width - 9),
+tillMode and "Till mode" or "Sell", util.formatClock())
 ui.wrappedText(target, 2, 5, "This Pocket cannot be a till yet: "
 .. tostring(err or "the Bank is not answering")
-.. ". The Bank Server may need FoxyOS 13.", width - 2, 6,
+.. ". The Bank Server needs FoxyOS 13 or newer.", width - 2, 6,
 ui.theme.muted)
 local scene = ui.scene(target)
+if tillMode then
+local _, height = target.getSize()
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+else
 ui.tabBar(scene, target, COMPANY_TABS, "sell", ACCENT)
+end
 local action = scene:wait()
-if action == "home" or action == "__terminate" then return "home" end
+if action == "home" or action == "back" or action == "__terminate" then
+return "home"
+end
 if action and action:match("^tab:") then return action end
 end
 till.refresh(desk)
 till.show(desk, "idle")
+desk.mode = tillMode
 local ticks = 0
 while running() do
+
+
+if tillMode and type(ui.noteActivity) == "function" then
+ui.noteActivity()
+end
 local width, height = target.getSize()
 local wide = width >= 40
 local items, total, kind = till.basket(desk)
 local shelf = till.shelf(desk)
-local bottom = ui.contentBottom(target)
+local bottom = tillMode and height or ui.contentBottom(target)
 ui.clear(target)
 ui.header(target, ui.truncate(desk.name, width - 9), desk.customer
 and ("For " .. tostring(desk.customer.target_name))
+or tillMode and "TILL MODE"
 or ("Till  " .. #desk.screens .. " screens"), util.formatClock())
 local scene = ui.scene(target)
+if tillMode then
+scene:button("exit", width - 6, 2, 6, 1, "Exit",
+{ background = ui.theme.panel })
+end
 
 
 local shelfX, shelfWidth = 2, width - 2
@@ -1327,12 +1366,19 @@ total > 0 and ("Charge\n" .. money(total)) or "Charge",
 { background = colors.lime, foreground = colors.black,
 disabled = total <= 0 })
 end
+if not tillMode then
 ui.tabBar(scene, target, COMPANY_TABS, "sell", ACCENT)
+end
 till.resting(desk)
 desk.view.frame = ticks
 till.paint(desk)
 
 local action = scene:wait({ tickRate = 0.5, flash = false })
+
+
+if tillMode and (action == "exit" or action == "__terminate") then
+if till.leave() then action = "home" else action = nil end
+end
 if action == "home" or action == "__terminate"
 or (action and action:match("^tab:")) then
 
@@ -1365,7 +1411,11 @@ till.basketSheet(desk)
 elseif action == "clear" then
 till.clear(desk)
 elseif action == "tools" then
-till.tools(desk)
+if till.tools(desk) == "tillmode" then
+
+sellPage(company, true)
+till.show(desk, "idle")
+end
 elseif action == "prev" then
 desk.page = desk.page - 1
 elseif action == "next" then
@@ -1655,24 +1705,84 @@ end
 
 
 
-local wanted = type(api.action) == "function" and api.action() or nil
 
-
-if wanted == "sell" then
+local function lastTill(companies)
 local kept = type(api.load) == "function" and api.load() or {}
-local listed = ask("COMPANY_LIST")
-local companies = listed and listed.companies or {}
 local pick = #companies == 1 and companies[1] or nil
 for _, company in ipairs(companies) do
 if company.company_id == kept.last then pick = company end
 end
-if pick then companyScreen(pick, "sell") end
+return pick
 end
-local tab = wanted == "delivery" and "delivery" or "companies"
+
+local function tillPage()
+while running() do
+local listed, err = ask("COMPANY_LIST")
+local companies = listed and listed.companies or {}
+local pick = lastTill(companies)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Till mode", pick and ui.truncate(pick.name, width - 3)
+or "Your till, full screen", util.formatClock())
+local scene = ui.scene(target)
+ui.card(target, 2, 5, width - 2, 6, ACCENT)
+ui.wrappedText(target, 4, 5, "The till fills the screen and this"
+.. " Pocket stays awake. Leaving asks for your PIN. On a computer,"
+.. " every colour monitor faces the customer.", width - 6, 6,
+ui.theme.ink, ui.theme.panel)
+if #companies == 0 then
+ui.wrappedText(target, 2, 12, listed and "Start a company first,"
+.. " on Companies." or tostring(err or "Cannot reach the Bank."),
+width - 2, 3, ui.theme.muted)
+elseif pick then
+scene:button("start", 2, 12, width - 2, 3, "Start till mode",
+{ background = colors.lime, foreground = colors.black, shadow = true })
+if #companies > 1 then
+scene:button("other", 2, 16, width - 2, 1, "Another company",
+{ background = ui.theme.panel })
+end
+else
+scene:button("other", 2, 12, width - 2, 3, "Choose a company",
+{ background = colors.lime, foreground = colors.black, shadow = true })
+end
+ui.tabBar(scene, target, TABS, "till", ACCENT)
+local action = scene:wait()
+if action == "home" or action == "__terminate" then return "home" end
+if action and action:match("^tab:") then return action end
+if action == "start" and pick then
+sellPage(pick, true)
+elseif action == "other" then
+local chosen = choose("Till mode", "Which company?", companies,
+function(company) return company.name end)
+if chosen then sellPage(chosen, true) end
+end
+end
+return "home"
+end
+
+
+
+local wanted = type(api.action) == "function" and api.action() or nil
+
+
+
+if wanted == "sell" or wanted == "till" then
+local listed = ask("COMPANY_LIST")
+local pick = lastTill(listed and listed.companies or {})
+if pick and wanted == "till" then
+sellPage(pick, true)
+elseif pick then
+companyScreen(pick, "sell")
+end
+end
+local tab = wanted == "delivery" and "delivery"
+or (wanted == "till" and "till") or "companies"
 while running() do
 local switched
 if tab == "delivery" then
 switched = deliveryPage()
+elseif tab == "till" then
+switched = tillPage()
 else
 switched = companiesPage()
 end
