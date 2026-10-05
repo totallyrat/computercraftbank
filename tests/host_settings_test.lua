@@ -70,6 +70,8 @@ package.loaded.config = {
     urgent_ring_poll_seconds = 3, bet_maximum = 10000,
     app_protocol = "PUMPE_APPS_V1", app_hostname = "APP_SERVER",
     app_chunk_size = 6000, max_apps_installed = 12,
+    release_name = "FoxyOS 8.5",
+    beta_manifest_url = "https://example.test/beta/release_manifest.json",
 }
 package.loaded["lib.util"] = {
     loadTable = function(path, fallback)
@@ -704,5 +706,108 @@ assert(bootDevice.favorites[1] == "ccg" and bootDevice.favorites[2] == "tickets"
 assert(bootDevice.shortcuts[1].steps[1].app == "ccg"
     and bootDevice.shortcuts[1].steps[1].action == "bet",
     "and a QuickAction that opened Bet opens CCG on Bet")
+
+-- FoxyOS 14.1: Beta Updates ----------------------------------------------------
+-- A tab of its own in Settings. Signing up makes the Pocket read the beta
+-- manifest too -- on its own address, on the beta channel -- and a beta is
+-- always asked about, even on a Pocket that installs releases by itself.
+-- Leaving stops it looking.
+local net = package.loaded["lib.net"]
+net.isNewerVersion = function(candidate, current)
+    local function parts(value)
+        local a, b, c = tostring(value or ""):match("^(%d+)%.(%d+)%.(%d+)")
+        return tonumber(a) or 0, tonumber(b) or 0, tonumber(c) or 0
+    end
+    local a1, b1, c1 = parts(candidate)
+    local a2, b2, c2 = parts(current)
+    if a1 ~= a2 then return a1 > a2 end
+    if b1 ~= b2 then return b1 > b2 end
+    return c1 > c2
+end
+local betaReads = {}
+package.loaded["lib.update"] = {
+    PUBLISHED_FILES = { "pumpe.lua" }, PUBLISHED_OPTIONAL = {},
+    fetchManifest = function(url, _, channel)
+        betaReads[#betaReads + 1] = { url = url, channel = channel }
+        return { version = "14.5.0", label = "FoxyOS 15 Beta", channel = "beta" }
+    end,
+}
+local betaOptions = {}
+net.autoUpdate = function(_, _, _, _, options)
+    options = options or {}
+    betaOptions[#betaOptions + 1] = options
+    if not options.manifestUrl then return false end
+    -- The beta manifest has one: asked about, whatever the setting.
+    assert(options.confirm, "a beta is never installed without asking")
+    if options.confirm({ version = "14.5.0", label = "FoxyOS 15 Beta",
+        beta = true, changes = {} }) then
+        return true
+    end
+    return false
+end
+readyShown = {}
+savedDevice, deviceSaves = {}, {}
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "auto" }
+local drawsBeforeBeta, buttonsBeforeBeta = #drawnText, #buttonLabels
+index, actions = 0, {
+    "open:settings", "tab:beta",       -- the tab, not signed up yet
+    "join",                            -- signed up
+    "home",
+    "__tick",                          -- the Pocket looks for one by itself
+    "cancel",                          -- and asks: not now
+    "open:settings", "tab:beta",
+    "get", "install",                  -- from the tab, then yes
+    "leave",                           -- and out again
+    "home",
+    "__tick",                          -- no more betas
+    "__terminate",
+}
+local betaOk, betaErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(betaOk or tostring(betaErr):find("more actions", 1, true), tostring(betaErr))
+local function drewSinceBeta(text)
+    for at = drawsBeforeBeta + 1, #drawnText do
+        if drawnText[at]:find(text, 1, true) then return true end
+    end
+    return false
+end
+local function pressedSinceBeta(text)
+    for at = buttonsBeforeBeta + 1, #buttonLabels do
+        if buttonLabels[at]:find(text, 1, true) then return true end
+    end
+    return false
+end
+assert(drewSinceBeta("NEWEST BETA") and drewSinceBeta("FoxyOS 15 Beta"),
+    "the tab shows the newest beta")
+assert(pressedSinceBeta("Sign up") and pressedSinceBeta("Get FoxyOS 15 Beta")
+    and pressedSinceBeta("Leave Beta Updates"), "with a way in, the beta, and a way out")
+assert(betaReads[1].url == "https://example.test/beta/release_manifest.json"
+    and betaReads[1].channel == "beta", "read from the beta's own manifest, on its channel")
+local joined, left = false, false
+for _, snapshot in ipairs(deviceSaves) do
+    if snapshot.beta == true then joined = true end
+    if joined and snapshot.beta == false then left = true end
+end
+assert(joined and left, "signing up and leaving are remembered on the device")
+-- What the Pocket asked the updater for, in order.
+local looked = {}
+for _, options in ipairs(betaOptions) do
+    if options.manifestUrl then
+        assert(options.manifestUrl == "https://example.test/beta/release_manifest.json"
+            and options.channel == "beta" and options.beta == true,
+            "a beta look names the beta manifest and its channel")
+        looked[#looked + 1] = options
+    end
+end
+assert(#looked == 2, "the beta was looked for twice -- by itself, and from"
+    .. " the tab -- not before signing up and not after leaving: " .. #looked)
+assert(#readyShown == 2 and readyShown[1].title == "FoxyOS 15 Beta"
+    and readyShown[1].version == "14.5.0",
+    "asked twice, naming the beta and its version, though updates are automatic")
+local stableLooks = 0
+for _, options in ipairs(betaOptions) do
+    if not options.manifestUrl then stableLooks = stableLooks + 1 end
+end
+assert(stableLooks >= 2, "and the release is still looked for first")
 
 print("host_settings_test: OK")

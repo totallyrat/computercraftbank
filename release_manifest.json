@@ -1,74 +1,68 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "14.0.0",
-  "label": "FoxyOS 14",
+  "version": "14.1.0",
+  "label": "FoxyOS 14.1",
   "notes": "FoxyOS automatic internet release",
   "changes": [
-    "Circles at start-up.",
-    "Circles while updating.",
-    "Till mode.",
-    "INVT, by Foxy.",
-    "A ticket to fill in.",
-    "Invite friends or anybody.",
-    "Up to ten tickets.",
-    "Hosting.",
-    "Shop Apps."
+    "Beta Updates.",
+    "Betas are numbered .5.",
+    "Ready for FoxyOS 15."
   ],
   "files": [
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 208982,
-      "checksum": "1184b19a"
+      "size": 211189,
+      "checksum": "0a038b6e"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 212196,
-      "checksum": "86b1da6c"
+      "size": 216861,
+      "checksum": "39ad1a9b"
     },
     {
       "path": "service_kiosk.lua",
-      "source": "service_kiosk.lua",
+      "source": "dist/service_kiosk.lua",
       "size": 8140,
-      "checksum": "646c0963"
+      "checksum": "83ce1804"
     },
     {
       "path": "event_kiosk.lua",
-      "source": "event_kiosk.lua",
+      "source": "dist/event_kiosk.lua",
       "size": 35587,
-      "checksum": "cd12d404"
+      "checksum": "00261b45"
     },
     {
       "path": "tax_controller.lua",
-      "source": "tax_controller.lua",
+      "source": "dist/tax_controller.lua",
       "size": 1742,
-      "checksum": "e1d23fd3"
+      "checksum": "8cb0aa54"
     },
     {
       "path": "startup.lua",
-      "source": "startup.lua",
+      "source": "dist/startup.lua",
       "size": 49501,
-      "checksum": "7717bb6f"
+      "checksum": "8da86470"
     },
     {
       "path": "launcher.lua",
-      "source": "launcher.lua",
+      "source": "dist/launcher.lua",
       "size": 972,
       "checksum": "0939126c"
     },
     {
       "path": "config.lua",
-      "source": "config.lua",
-      "size": 7915,
-      "checksum": "9a38be38"
+      "source": "dist/config.lua",
+      "size": 8244,
+      "checksum": "6dbc48d2"
     },
     {
       "path": "lib/net.lua",
       "source": "dist/lib/net.lua",
-      "size": 9160,
-      "checksum": "a5e54272"
+      "size": 9712,
+      "checksum": "7a9f1b99"
     },
     {
       "path": "lib/ui.lua",
@@ -79,8 +73,8 @@
     {
       "path": "lib/update.lua",
       "source": "dist/lib/update.lua",
-      "size": 16804,
-      "checksum": "c6e82c80"
+      "size": 17069,
+      "checksum": "ce47a8b6"
     },
     {
       "path": "lib/util.lua",
@@ -92,35 +86,35 @@
   "extra_files": [
     {
       "path": "border_controller.lua",
-      "source": "border_controller.lua",
+      "source": "dist/border_controller.lua",
       "size": 22693,
-      "checksum": "09d9c421"
+      "checksum": "c96853a2"
     },
     {
       "path": "ccg.lua",
-      "source": "ccg.lua",
+      "source": "dist/ccg.lua",
       "size": 67711,
-      "checksum": "afc789d8"
+      "checksum": "0ff83819"
     }
   ],
   "optional_files": [
     {
       "path": "gps_anchor.lua",
-      "source": "gps_anchor.lua",
+      "source": "dist/gps_anchor.lua",
       "size": 5147,
-      "checksum": "8791ddb7"
+      "checksum": "38be7018"
     },
     {
       "path": "admin_terminal.lua",
-      "source": "admin_terminal.lua",
+      "source": "dist/admin_terminal.lua",
       "size": 40715,
-      "checksum": "25cd417e"
+      "checksum": "734ab9bf"
     },
     {
       "path": "app_server.lua",
-      "source": "app_server.lua",
-      "size": 20701,
-      "checksum": "5f4baeb7"
+      "source": "dist/app_server.lua",
+      "size": 22954,
+      "checksum": "979ebc15"
     },
     {
       "path": "foxy.lua",
@@ -130,9 +124,9 @@
     },
     {
       "path": "bank_app_server.lua",
-      "source": "bank_app_server.lua",
+      "source": "dist/bank_app_server.lua",
       "size": 40845,
-      "checksum": "8b62ce72"
+      "checksum": "d71765b3"
     },
     {
       "path": "buckapp.lua",
@@ -142,9 +136,9 @@
     },
     {
       "path": "ccg_server.lua",
-      "source": "ccg_server.lua",
+      "source": "dist/ccg_server.lua",
       "size": 32318,
-      "checksum": "08a16b94"
+      "checksum": "8eafa715"
     },
     {
       "path": "revolution.lua",
@@ -156,13 +150,13 @@
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
       "size": 171484,
-      "checksum": "57dac609"
+      "checksum": "3d8ee3aa"
     },
     {
       "path": "internet_server.lua",
-      "source": "internet_server.lua",
+      "source": "dist/internet_server.lua",
       "size": 12613,
-      "checksum": "f99cdcf7"
+      "checksum": "abcb1ad8"
     },
     {
       "path": "wc.lua",
@@ -178,9 +172,9 @@
     },
     {
       "path": "delivery_terminal.lua",
-      "source": "delivery_terminal.lua",
+      "source": "dist/delivery_terminal.lua",
       "size": 67028,
-      "checksum": "452a94b5"
+      "checksum": "cabf9b76"
     },
     {
       "path": "shop.lua",

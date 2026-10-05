@@ -1,5 +1,25 @@
 # Changelog
 
+## 14.1.0
+
+FoxyOS 14.1, a quick one: Beta Updates, and the Bank and App Server getting
+ready for FoxyOS 15.
+
+**Beta Updates.** A new tab in the Pocket's Settings. Sign up and the
+Pocket gets the next FoxyOS before everybody else, before it has been
+tested. The tab shows the newest beta and gets it; leave any time.
+
+**Betas are numbered .5.** FoxyOS 15 Beta is 14.5. A Pocket reads a minor
+version of 5 as a beta wherever it finds one and only installs it if it
+signed up, and it always asks first, even when updates are automatic. A
+beta is published in a manifest of its own, so the Bank, every server and
+every Pocket that did not sign up never see it. Leaving keeps the beta you
+have until the full release, which is newer, arrives the usual way.
+
+**Ready for FoxyOS 15.** The Bank keeps stores' .shop addresses and the App
+Server counts downloads per day. Nothing uses either until FoxyOS 15, and
+nothing changes for anybody on 14.
+
 ## 14.0.0
 
 FoxyOS 14, all about the Pocket. A new start-up and update animation, a

@@ -7,6 +7,15 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 14.1 (14.1.0)
+
+- [ ] Settings on a Pocket has four tabs: Phone, Apps, **Beta**, Me. Beta shows *Not signed up*, this Pocket's release, and *No beta right now* until one is out.
+- [ ] **Sign up** asks first, then says *Signed up*; the tab shows *You are signed up* and a **Leave Beta Updates** button.
+- [ ] Once a beta is published, the tab names it (*FoxyOS 15 Beta*, version 14.5.0) with **Get FoxyOS 15 Beta**; within half a minute a signed-up Pocket also asks about it by itself — even with automatic updates on.
+- [ ] A Pocket that is not signed up never offers the beta, and the Bank, App Server and every other device stay on 14.1.
+- [ ] **Leave Beta Updates** on a Pocket running a beta says it keeps the beta until the full release.
+- [ ] Searching *Beta* on the Home Screen finds Beta Updates.
+
 ## FoxyOS 14 (14.0.0)
 
 Update the Bank Server (Core and Vault) and the App Server first: INVT and Shop Apps live on the Bank, and the apps come from the App Server.

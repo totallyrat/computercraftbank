@@ -502,15 +502,16 @@ do
         return string.format("%08x", hash)
     end
     local manifest = h.readRepo("release_manifest.json")
-    local startupEntry = '"path": "startup.lua",%s*"source": "startup.lua",%s*"size": %d+,%s*"checksum": "%x+"'
+    -- FoxyOS 14.1: every published file is downloaded from dist/.
+    local startupEntry = '"path": "startup.lua",%s*"source": "dist/startup.lua",%s*"size": %d+,%s*"checksum": "%x+"'
     assert(manifest:find(startupEntry), "the manifest's installer entry")
     local restamped = manifest:gsub(startupEntry, '"path": "startup.lua", "source": '
-        .. '"startup.lua", "size": ' .. #older .. ', "checksum": "' .. djb2(older) .. '"')
+        .. '"dist/startup.lua", "size": ' .. #older .. ', "checksum": "' .. djb2(older) .. '"')
     local computer = fresh({ disk = {
         ["pumpe/installer.lua"] = older,
         ["pumpe/pumpe.lua"] = h.published("pumpe.lua"),
         ["pumpe/config.lua"] = 'return { version = "' .. published .. '" }\n',
-    }, served = { ["release_manifest.json"] = restamped, ["startup.lua"] = older } })
+    }, served = { ["release_manifest.json"] = restamped, ["dist/startup.lua"] = older } })
     seen = h.run(computer, {}, { "--boot", "pumpe" }, "pumpe/installer.lua")
     assert(not seen.rebooted and seen.launched[1] == "pumpe/pumpe.lua",
         "no endless restarts")

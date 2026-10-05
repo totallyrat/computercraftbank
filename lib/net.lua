@@ -224,21 +224,29 @@ function net.autoUpdate(config, role, root, client, options)
     role = string.lower(tostring(role or ""))
     if role == "" then return false end
 
+    -- FoxyOS 14.1: a check against another manifest -- the beta one. It is
+    -- timed on its own, and it never falls back to the Bank's depot: the
+    -- Bank holds the release, not a beta, so asking it would install the
+    -- release instead of what was looked for.
+    local elsewhere = type(options.manifestUrl) == "string"
+        and options.manifestUrl ~= ""
+    local checkKey = elsewhere and (role .. "@" .. options.manifestUrl) or role
+
     -- A program from one release running beside a config.lua from another is
     -- a partial install. Do not wait for the manifest to move on: repair it
     -- at once, whatever the check interval says.
-    local mismatched = options.programVersion
+    local mismatched = not elsewhere and options.programVersion
         and options.programVersion ~= "0.0.0"
         and options.programVersion ~= config.version
     local interval = math.max(5,
         math.floor(tonumber(config.client_update_check_seconds)
             or config.update_check_seconds or 30)) * 1000
     local now = util.nowMs()
-    if not options.force and not mismatched and lastAutoUpdateCheck[role]
-        and now - lastAutoUpdateCheck[role] < interval then
+    if not options.force and not mismatched and lastAutoUpdateCheck[checkKey]
+        and now - lastAutoUpdateCheck[checkKey] < interval then
         return false
     end
-    lastAutoUpdateCheck[role] = now
+    lastAutoUpdateCheck[checkKey] = now
 
     if mismatched then
         net.lastUpdateError = "installed " .. tostring(options.programVersion)
@@ -290,12 +298,21 @@ function net.autoUpdate(config, role, root, client, options)
                 config = config, role = role, root = root,
                 requiredPaths = options.requiredPaths,
                 optionalPaths = options.optionalPaths,
+                manifestUrl = elsewhere and options.manifestUrl or nil,
+                channel = options.channel, beta = options.beta,
             })
         end
-        -- Already on the newest release is a settled answer. Anything else
-        -- means the manifest could not be read, which is the one case worth
-        -- spending a request on the Bank over.
-        if found == false and why == "current" then return false end
+        -- Already on the newest release is a settled answer, and so is a
+        -- beta this device did not sign up for. Anything else means the
+        -- manifest could not be read, which is the one case worth spending
+        -- a request on the Bank over.
+        if found == false and (why == "current" or why == "beta") then
+            return false
+        end
+        if not found and elsewhere then
+            net.lastUpdateError = why
+            return false
+        end
         if not found then
             -- No manifest, so nothing to download first. The Bank still
             -- knows what release it is running, and asking about a version
@@ -356,6 +373,8 @@ function net.autoUpdate(config, role, root, client, options)
             repair = true,
             requiredPaths = options.requiredPaths,
             optionalPaths = options.optionalPaths,
+            manifestUrl = elsewhere and options.manifestUrl or nil,
+            channel = options.channel, beta = options.beta,
         })
         if found then
             local updated, detail = underScreen(found, function(onProgress, progress)
@@ -372,7 +391,7 @@ function net.autoUpdate(config, role, root, client, options)
                 return true
             end
             net.lastUpdateError = detail
-        elseif why == "current" or why == "disabled" then
+        elseif why == "current" or why == "disabled" or why == "beta" then
             -- Settled answers.
             return false
         else
@@ -380,6 +399,7 @@ function net.autoUpdate(config, role, root, client, options)
             net.lastUpdateError = why
         end
     end
+    if elsewhere then return false end
     return depotUpdate(config, role, root, client)
 end
 

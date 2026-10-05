@@ -31,6 +31,14 @@ function update.isNewer(candidate, current)
     return candidatePatch > currentPatch
 end
 
+-- FoxyOS 14.1: Beta Updates. A beta is numbered half way to the release it
+-- comes before -- FoxyOS 15 Beta is 14.5 -- so a minor version of 5 is a
+-- beta wherever it is found, and only a device that signed up takes one.
+function update.isBeta(value)
+    local _, minor = versionParts(value)
+    return minor == 5
+end
+
 function update.checksum(body)
     return util.checksum(body)
 end
@@ -510,7 +518,11 @@ end
 function update.check(options)
     local config = options.config or {}
     local role = options.role
-    local manifestUrl = tostring(config.update_manifest_url or "")
+    -- FoxyOS 14.1: a Pocket signed up to Beta Updates also reads the beta
+    -- manifest, which is a file of its own beside the release's, so nothing
+    -- that only knows the release's ever sees a beta.
+    local manifestUrl = tostring(options.manifestUrl
+        or config.update_manifest_url or "")
     if manifestUrl == "" then return false, "no manifest url" end
 
     -- Without a published set to check against, validateManifest treats
@@ -518,7 +530,7 @@ function update.check(options)
     -- away. A role that names no paths of its own gets the published ones.
     local manifest, err = update.fetchManifest(manifestUrl,
         options.requiredPaths or update.PUBLISHED_FILES,
-        config.update_channel or "stable",
+        options.channel or config.update_channel or "stable",
         options.optionalPaths or update.PUBLISHED_OPTIONAL)
     if not manifest then return nil, err end
     if not update.isNewer(manifest.version, config.version) then
@@ -535,6 +547,10 @@ function update.check(options)
         end
         return false, "current"
     end
+    -- A beta, wherever it turned up, is only for a device that asked.
+    if update.isBeta(manifest.version) and not options.beta then
+        return false, "beta"
+    end
 
     local files, total = update.filesForRole(manifest, role)
     if #files == 0 then
@@ -548,6 +564,7 @@ function update.check(options)
         changes = manifest.changes or {},
         files = files,
         bytes = total,
+        beta = update.isBeta(manifest.version),
     }
 end
 

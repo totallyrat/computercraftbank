@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "14.0.0"
+local PROGRAM_VERSION = "14.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4165,8 +4165,9 @@ local function updateInstalled()
 end
 
 -- Handed to net.autoUpdate once the release is down. False deletes it.
+-- A beta is always asked about, whatever the setting says.
 local function confirmUpdate(found)
-    if device.update_mode == "auto" then return true end
+    if device.update_mode == "auto" and not found.beta then return true end
     if updateDeferred == found.version then return false end
     local size = tonumber(found.bytes)
     local wanted = ui.updateReady(target, {
@@ -4183,20 +4184,32 @@ end
 -- The one place the phone looks for a release. With the modem off it does not
 -- look at all: the switch promises the phone stops talking, and fetching a
 -- manifest over the internet instead would be a lie told on a technicality.
-local function checkForUpdate(force)
+--
+-- FoxyOS 14.1: a Pocket signed up to Beta Updates looks at the beta manifest
+-- too, after the release's, and always asks before installing one.
+-- `betaOnly` is the Download button on the Beta Updates tab.
+local function checkForUpdate(force, betaOnly)
     if device.modem_on == false then return false end
     local asking = device.update_mode ~= "auto"
     if asking and updateDeferred and not force then return false end
     if force then updateDeferred = nil end
-    return net.autoUpdate(config, "pumpe", ROOT, client, {
-        force = force or nil,
-        programVersion = force and PROGRAM_VERSION or nil,
-        confirm = asking and confirmUpdate or nil,
-        target = target,
-        -- FoxyOS 14: the circles, not FOXY, while a release comes down.
-        updating = ui.pocketUpdating,
-        onInstalled = updateInstalled,
-    })
+    local function look(url)
+        return net.autoUpdate(config, "pumpe", ROOT, client, {
+            force = force or nil,
+            programVersion = force and not url and PROGRAM_VERSION or nil,
+            confirm = (asking or url) and confirmUpdate or nil,
+            target = target,
+            -- FoxyOS 14: the circles, not FOXY, while a release comes down.
+            updating = ui.pocketUpdating,
+            onInstalled = updateInstalled,
+            beta = device.beta == true,
+            manifestUrl = url, channel = url and "beta" or nil,
+        })
+    end
+    if not betaOnly and look(nil) then return true end
+    local betaUrl = tostring(config.beta_manifest_url or "")
+    if device.beta == true and betaUrl ~= "" then return look(betaUrl) end
+    return false
 end
 
 local function updatesScreen()
@@ -4255,6 +4268,132 @@ local function updatesScreen()
     end
 end
 
+-- Beta Updates, FoxyOS 14.1 ---------------------------------------------------
+-- Signing up lets this Pocket have what is coming before everybody else, and
+-- before it has been tested. A beta is numbered half way to the release it
+-- comes before -- FoxyOS 15 Beta is 14.5 -- and is published in a manifest
+-- of its own, so only a Pocket that signed up ever reads one. Leaving keeps
+-- the beta that is installed: the release it comes before is newer than it,
+-- and arrives the usual way.
+local beta = { checked = false }
+
+function beta.isBeta(version)
+    return tostring(version or ""):match("^%d+%.5%.%d+") ~= nil
+end
+
+-- What the beta manifest has right now: beta.seen, or beta.why.
+function beta.look()
+    beta.checked, beta.seen, beta.why = true, nil, nil
+    if device.modem_on == false then
+        beta.why = "The modem is off"
+        return
+    end
+    local url = tostring(config.beta_manifest_url or "")
+    local okLib, update = pcall(require, "lib.update")
+    if url == "" or not okLib or type(update) ~= "table"
+        or type(update.fetchManifest) ~= "function" then
+        beta.why = "This Pocket cannot read betas"
+        return
+    end
+    local found, err = update.fetchManifest(url, update.PUBLISHED_FILES,
+        "beta", update.PUBLISHED_OPTIONAL)
+    if found then beta.seen = found else beta.why = err end
+end
+
+-- The tab. `spec` is Settings' tab bar; without one (search, a QuickAction)
+-- it is a screen of its own with a way back.
+function beta.page(spec)
+    while running do
+        if not beta.checked then beta.look() end
+        local width, height = target.getSize()
+        local joined = device.beta == true
+        local seen = beta.seen
+        local newer = seen and net.isNewerVersion(seen.version, config.version)
+        ui.clear(target)
+        ui.header(target, "Beta Updates", joined and "Signed up"
+            or "Not signed up", util.formatClock())
+        ui.card(target, 2, 4, width - 2, 4, joined and ui.theme.success
+            or ui.theme.accent)
+        ui.text(target, 4, 4, "BETA UPDATES", ui.theme.muted, ui.theme.panel)
+        ui.text(target, 4, 5, joined and "You are signed up"
+            or "Get what is next first", ui.theme.ink, ui.theme.panel)
+        ui.wrappedText(target, 4, 6, "Untested, so things can break.",
+            width - 6, 2, ui.theme.muted, ui.theme.panel)
+        ui.text(target, 2, 9, "THIS POCKET", ui.theme.muted)
+        ui.text(target, 2, 10, ui.truncate(tostring(config.release_name
+            or "FoxyOS") .. "  v" .. tostring(config.version), width - 2),
+            beta.isBeta(config.version) and ui.theme.warning or ui.theme.ink)
+        ui.text(target, 2, 12, "NEWEST BETA", ui.theme.muted)
+        if seen then
+            ui.text(target, 2, 13, ui.truncate(tostring(seen.label
+                or "FoxyOS Beta"), width - 2), ui.theme.ink)
+            ui.text(target, 2, 14, ui.truncate("Version " .. tostring(seen.version)
+                .. (newer and "" or "  (you have it)"), width - 2), ui.theme.muted)
+        else
+            ui.text(target, 2, 13, "No beta right now", ui.theme.ink)
+            ui.text(target, 2, 14, ui.truncate(tostring(beta.why or ""), width - 2),
+                ui.theme.muted)
+        end
+        local scene = ui.scene(target)
+        local bottom = spec and ui.contentBottom(target) or height - 1
+        if not joined then
+            scene:button("join", 2, bottom - 2, width - 2, 2, "Sign up",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk })
+        elseif newer then
+            scene:button("get", 2, bottom - 2, width - 2, 2,
+                ui.truncate("Get " .. tostring(seen.label or "the beta"),
+                    width - 4),
+                { background = ui.theme.success, foreground = colors.black })
+        else
+            scene:button("check", 2, bottom - 2, width - 2, 2, "Check again",
+                { background = ui.theme.accentDark,
+                  disabled = device.modem_on == false })
+        end
+        if joined then
+            scene:button("leave", 2, bottom, width - 2, 1, "Leave Beta Updates",
+                { background = ui.theme.panel })
+        end
+        if spec then
+            ui.tabBar(scene, target, spec.list, spec.active)
+        else
+            scene:button("back", 1, height, 8, 1, "< Back",
+                { background = ui.theme.panel })
+        end
+        local action = scene:wait({ tickRate = 5 })
+        if action == "back" or action == "home" or action == "__terminate"
+            or (action or ""):match("^tab:") then
+            return action
+        end
+        if action == "join" then
+            if ui.confirm(target, "Sign up?", "Betas come before testing is"
+                .. " done, so things may break. Leave any time.", "Sign up",
+                "Back") then
+                device.beta = true
+                saveDevice()
+                beta.look()
+                ui.message(target, "success", "Signed up",
+                    "Betas show up here first", 1.2)
+            end
+        elseif action == "leave" then
+            local keeping = beta.isBeta(config.version)
+            if ui.confirm(target, "Leave Beta Updates?", keeping
+                and "This beta stays until the full release comes out."
+                or "No more betas on this Pocket.", "Leave", "Stay") then
+                device.beta = false
+                saveDevice()
+            end
+        elseif action == "check" then
+            beta.look()
+        elseif action == "get" then
+            if not checkForUpdate(true, true) then
+                ui.message(target, "info", "Not installed",
+                    net.lastUpdateError or "Nothing was changed", 1.6)
+                beta.look()
+            end
+        end
+    end
+end
+
 -- Dev Mode, written beside the App Browser it publishes to.
 local developerScreen
 
@@ -4269,6 +4408,9 @@ local SETTINGS_ACTIONS = {
       tab = "phone" },
     { id = "storage", label = "Storage", hint = "What is on this Pocket",
       tab = "phone" },
+    -- FoxyOS 14.1: a tab of its own.
+    { id = "beta", label = "Beta Updates", hint = "Try what is next first",
+      tab = "beta" },
     { id = "apps", label = "App Settings", hint = "What apps may do", tab = "apps" },
     { id = "connected", label = "Connected Apps", hint = "Who you signed in",
       tab = "apps" },
@@ -4316,6 +4458,7 @@ local function settingsScreen(wanted)
         elseif id == "guide" then guideScreen()
         elseif id == "dock" then favouritesPicker()
         elseif id == "developer" then developerScreen()
+        elseif id == "beta" then beta.page()
         elseif id == "logout" then
             -- 12.0: a PUMPE opens on its account's lock screen, so leaving
             -- is not signing out for a moment -- it is this phone forgetting
@@ -4407,8 +4550,15 @@ local function settingsScreen(wanted)
         title = "Settings",
         list = { { id = "phone", label = "Phone" },
             { id = "apps", label = "Apps" },
+            { id = "beta", label = "Beta Updates", short = "Beta" },
             { id = "account", label = "Account", short = "Me" } },
         pages = { phone = page("phone", "Settings"), apps = page("apps", "Apps"),
+            beta = function(spec)
+                if not (running and (sessionToken or offline()) and not closed) then
+                    return "home"
+                end
+                return beta.page(spec)
+            end,
             account = page("account", "Account") },
         running = function()
             return running and (sessionToken or offline()) and not closed

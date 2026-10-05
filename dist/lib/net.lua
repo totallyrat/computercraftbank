@@ -227,18 +227,26 @@ if role == "" then return false end
 
 
 
-local mismatched = options.programVersion
+
+local elsewhere = type(options.manifestUrl) == "string"
+and options.manifestUrl ~= ""
+local checkKey = elsewhere and (role .. "@" .. options.manifestUrl) or role
+
+
+
+
+local mismatched = not elsewhere and options.programVersion
 and options.programVersion ~= "0.0.0"
 and options.programVersion ~= config.version
 local interval = math.max(5,
 math.floor(tonumber(config.client_update_check_seconds)
 or config.update_check_seconds or 30)) * 1000
 local now = util.nowMs()
-if not options.force and not mismatched and lastAutoUpdateCheck[role]
-and now - lastAutoUpdateCheck[role] < interval then
+if not options.force and not mismatched and lastAutoUpdateCheck[checkKey]
+and now - lastAutoUpdateCheck[checkKey] < interval then
 return false
 end
-lastAutoUpdateCheck[role] = now
+lastAutoUpdateCheck[checkKey] = now
 
 if mismatched then
 net.lastUpdateError = "installed " .. tostring(options.programVersion)
@@ -290,12 +298,21 @@ found, why = updater.check({
 config = config, role = role, root = root,
 requiredPaths = options.requiredPaths,
 optionalPaths = options.optionalPaths,
+manifestUrl = elsewhere and options.manifestUrl or nil,
+channel = options.channel, beta = options.beta,
 })
 end
 
 
 
-if found == false and why == "current" then return false end
+
+if found == false and (why == "current" or why == "beta") then
+return false
+end
+if not found and elsewhere then
+net.lastUpdateError = why
+return false
+end
 if not found then
 
 
@@ -356,6 +373,8 @@ root = root,
 repair = true,
 requiredPaths = options.requiredPaths,
 optionalPaths = options.optionalPaths,
+manifestUrl = elsewhere and options.manifestUrl or nil,
+channel = options.channel, beta = options.beta,
 })
 if found then
 local updated, detail = underScreen(found, function(onProgress, progress)
@@ -372,7 +391,7 @@ os.reboot()
 return true
 end
 net.lastUpdateError = detail
-elseif why == "current" or why == "disabled" then
+elseif why == "current" or why == "disabled" or why == "beta" then
 
 return false
 else
@@ -380,6 +399,7 @@ else
 net.lastUpdateError = why
 end
 end
+if elsewhere then return false end
 return depotUpdate(config, role, root, client)
 end
 

@@ -6,6 +6,15 @@ const { stripLua } = require("./strip_lua");
 
 const projectRoot = path.resolve(__dirname, "..");
 
+// FoxyOS 14.1: Beta Updates. `--beta` builds the same files into beta/, with
+// a manifest of their own on the "beta" channel. Only a Pocket signed up to
+// Beta Updates reads it: the Bank, every server and every Pocket that is not
+// signed up keep reading release_manifest.json, which this mode leaves
+// alone -- and so does the root startup.lua, because a new computer is set
+// up by downloading that file straight from the repository.
+const betaBuild = process.argv.includes("--beta");
+const outputRoot = betaBuild ? path.join(projectRoot, "beta") : projectRoot;
+
 // `files` stays byte-for-byte compatible with the v5.2.1 updater, which
 // rejects any manifest entry it does not already know about. Everything added
 // since then goes in `extra_files`, which older updaters ignore and current
@@ -86,6 +95,16 @@ const configSource = fs.readFileSync(
 );
 const versionMatch = configSource.match(/\bversion\s*=\s*"(\d+\.\d+\.\d+)"/);
 if (!versionMatch) throw new Error("Could not read version from config.lua");
+// A beta is numbered half way to the release it comes before: FoxyOS 15
+// Beta is 14.5. A Pocket reads a minor version of 5 as a beta wherever it
+// finds one, so neither manifest may carry the other kind.
+const isBetaVersion = versionMatch[1].split(".")[1] === "5";
+if (betaBuild && !isBetaVersion) {
+  throw new Error(`--beta needs a beta version (x.5.y), not ${versionMatch[1]}`);
+}
+if (!betaBuild && isBetaVersion) {
+  throw new Error(`${versionMatch[1]} is a beta version: build it with --beta`);
+}
 
 // What the release is called, and what it changed. Both are read out of the
 // repository rather than kept in this script: the label is config.lua's
@@ -132,7 +151,9 @@ const stampedStartup = startupSource.replace(
 if (!stampedStartup.includes(`INSTALLER_VERSION = "${versionMatch[1]}"`)) {
   throw new Error("Could not stamp INSTALLER_VERSION into startup.lua");
 }
-if (stampedStartup !== startupSource) fs.writeFileSync(startupPath, stampedStartup);
+if (!betaBuild && stampedStartup !== startupSource) {
+  fs.writeFileSync(startupPath, stampedStartup);
+}
 
 // Stamp each program with the release it belongs to, so a device can tell at
 // startup that it is running a program from a different release than its
@@ -163,7 +184,10 @@ for (const program of publishedPrograms) {
 
 // Keep both public one-file entry points identical. startup.lua starts
 // automatically at the computer root; installer.lua is the manual filename.
-fs.copyFileSync(startupPath, path.join(projectRoot, "installer.lua"));
+// A beta has neither: nobody sets a computer up from a beta.
+if (!betaBuild) {
+  fs.copyFileSync(startupPath, path.join(projectRoot, "installer.lua"));
+}
 
 // 11.2. The servers and the shared libraries are published without their
 // comments and indentation: the Bank Core ran out of disk, and a third of
@@ -194,25 +218,38 @@ const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
   "invt.lua"];
 strippedFiles.push(...strippedApps);
 
-for (const relativePath of strippedFiles) {
-  const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
-  const stripped = stripLua(source, relativePath,
-    { keepMarkers: strippedApps.includes(relativePath) });
-  if (stripped.split("\n").length !== source.split("\n").length) {
-    throw new Error(`${relativePath}: stripping moved lines`);
-  }
-  const target = path.join(projectRoot, "dist", relativePath);
+// FoxyOS 14.1: everything a computer downloads is in dist/, the files that
+// are not stripped copied there as they are. Between two releases the
+// readable source at the root is the next one being written -- a beta, for
+// a start -- and a release whose manifest pointed at the root would hand
+// every computer that file instead, failing its checksum.
+const allPublished = [...releaseFiles, ...extraReleaseFiles, ...forwardOptionalFiles];
+for (const relativePath of allPublished) {
+  const target = path.join(outputRoot, "dist", relativePath);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, stripped);
+  if (strippedFiles.includes(relativePath)) {
+    const source = fs.readFileSync(path.join(projectRoot, relativePath), "utf8");
+    const stripped = stripLua(source, relativePath,
+      { keepMarkers: strippedApps.includes(relativePath) });
+    if (stripped.split("\n").length !== source.split("\n").length) {
+      throw new Error(`${relativePath}: stripping moved lines`);
+    }
+    fs.writeFileSync(target, stripped);
+  } else if (relativePath === "startup.lua") {
+    // Stamped here too, so a beta's copy carries the beta's version while
+    // the root file stays the release's.
+    fs.writeFileSync(target, stampedStartup);
+  } else {
+    fs.copyFileSync(path.join(projectRoot, relativePath), target);
+  }
 }
 
-// What a computer downloads for a published path.
-const shippedSource = (relativePath) => (strippedFiles.includes(relativePath)
-  ? `dist/${relativePath}` : relativePath);
+// What a computer downloads for a published path, relative to the manifest.
+const shippedSource = (relativePath) => `dist/${relativePath}`;
 
 const describe = (relativePath) => {
   const source = shippedSource(relativePath);
-  const body = fs.readFileSync(path.join(projectRoot, source));
+  const body = fs.readFileSync(path.join(outputRoot, source));
   return {
     path: relativePath,
     source,
@@ -223,7 +260,7 @@ const describe = (relativePath) => {
 
 const manifest = {
   schema: 1,
-  channel: "stable",
+  channel: betaBuild ? "beta" : "stable",
   version: versionMatch[1],
   label: releaseLabel,
   notes: "FoxyOS automatic internet release",
@@ -234,13 +271,13 @@ const manifest = {
 };
 
 fs.writeFileSync(
-  path.join(projectRoot, "release_manifest.json"),
+  path.join(outputRoot, "release_manifest.json"),
   `${JSON.stringify(manifest, null, 2)}\n`,
 );
 
 // Sizes as installed: the stripped build where there is one.
 const fileSize = (relativePath) =>
-  fs.statSync(path.join(projectRoot, shippedSource(relativePath))).size;
+  fs.statSync(path.join(outputRoot, shippedSource(relativePath))).size;
 const depotOnlyFiles = [
   "pumpe.lua",
   "service_kiosk.lua",
@@ -273,7 +310,8 @@ if (worstPeak + DATABASE_HEADROOM > COMPUTER_LIMIT) {
 }
 
 console.log(
-  `Built release_manifest.json for FoxyOS v${manifest.version} (${releaseLabel}), `
+  `Built ${betaBuild ? "beta/" : ""}release_manifest.json for FoxyOS `
+    + `v${manifest.version} (${releaseLabel}), `
     + `${releaseChanges.length} change headlines`,
 );
 console.log(

@@ -655,6 +655,8 @@ Every role updates itself. A Pocket, CCG console, kiosk, controller or Bank chec
 
 **The Pocket downloads first, then asks.** The release is downloaded and checked into a staging folder under the update screen, then the screen slides up into the question: the release's name, its version, what it is, and two buttons — **Install** and **Cancel & Delete**. Install swaps the files in and restarts; Cancel & Delete throws the download away and leaves the phone as it was, and it asks again next time it starts. Settings → Updates has a Check now button and the Automatic switch for anyone who wants no question. Every other role is unattended — there is nobody in front of a Bank Server to tap Install — so everything except the Pocket still updates itself without asking, under the same screen.
 
+**Beta Updates (FoxyOS 14.1).** Settings on a Pocket has a **Beta Updates** tab. Sign up and the Pocket gets the next FoxyOS before everybody else, before it has been tested: the tab shows the newest beta with a button to get it, and a Pocket that is signed up also looks for betas by itself, after the release. A beta is numbered half way to the release it comes before — **FoxyOS 15 Beta is 14.5** — and a Pocket reads a minor version of 5 as a beta wherever it finds one: it installs one only if it signed up, and always asks first, even with automatic updates on. Betas are published in a manifest of their own, `beta/release_manifest.json` beside the release's (`beta_manifest_url` in `config.lua`), on the `beta` channel, so the Bank, every server and every Pocket that did not sign up never see one; looking for a beta also never falls back to the Bank's depot, which holds the release. Leaving keeps the beta you have until the full release, which is newer, arrives the usual way. If a beta will not start, run `installer` and install the Pocket again: that is the release.
+
 What the phone shows comes from the manifest: a `label` naming the release and a `changes` array of headlines. Both are derived by the release builder from files in this repository — the label from `release_name` in `config.lua`, the headlines from the top section of `CHANGELOG.md` — so they cannot drift from the release they describe. `release_name` is the one config value an update replaces rather than preserves; every other local setting still survives.
 
 Local configuration survives: each device merges the published config over its own, so your currency, limits and government key are preserved rather than reset to the published defaults. A release can name a setting it is taking back — `config_resets` in `config.lua` — and a device still carrying exactly that stale value adopts the new default instead. That is how the retired `CHANGE-ME-GOVERNMENT-KEY` placeholder is cleared.
@@ -688,7 +690,7 @@ update_check_seconds = 5,
 client_update_check_seconds = 60,
 ```
 
-The manifest and source files share the repository root. For example, `lib/update.lua` is available relative to the manifest as `lib/update.lua`. The Minecraft server's ComputerCraft HTTP configuration must allow HTTPS access to `raw.githubusercontent.com`.
+Every file a computer downloads is in `dist/`, next to the manifest: for example `lib/update.lua` is published as `dist/lib/update.lua`. Since FoxyOS 14.1 that includes the files that are not stripped, copied there as they are, because between two releases the readable source at the root is the next one being written — a beta, for a start — and must not change what the release serves. A beta is the same layout under `beta/`. The Minecraft server's ComputerCraft HTTP configuration must allow HTTPS access to `raw.githubusercontent.com`.
 
 ### Publishing each new version
 
@@ -700,6 +702,8 @@ tools/run_tests.sh
 ```
 
 The builder is the only step. It copies `startup.lua` to `installer.lua`, stamps `INSTALLER_VERSION` from `config.lua`, and regenerates `release_manifest.json` with both file arrays. It never rewrites program source, and nothing has to be checksummed by hand.
+
+A beta is built with `node tools/build_release_manifest.js --beta`, from a `config.lua` whose version is a beta (x.5.y). It writes only `beta/` — its own `dist/` and `release_manifest.json` — and leaves the release, `installer.lua` and the root `startup.lua` alone, because a new computer is set up by downloading that file straight from the repository. The builder refuses a beta version without `--beta`, and `--beta` without one.
 
 `tests/host_release_manifest_test.lua` then fails the suite if the manifest, the version stamp, or the two entry points have drifted from the files in the repository — so a stale manifest cannot be published by accident.
 

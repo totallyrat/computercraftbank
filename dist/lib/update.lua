@@ -31,6 +31,14 @@ if candidateMinor ~= currentMinor then return candidateMinor > currentMinor end
 return candidatePatch > currentPatch
 end
 
+
+
+
+function update.isBeta(value)
+local _, minor = versionParts(value)
+return minor == 5
+end
+
 function update.checksum(body)
 return util.checksum(body)
 end
@@ -510,7 +518,11 @@ end
 function update.check(options)
 local config = options.config or {}
 local role = options.role
-local manifestUrl = tostring(config.update_manifest_url or "")
+
+
+
+local manifestUrl = tostring(options.manifestUrl
+or config.update_manifest_url or "")
 if manifestUrl == "" then return false, "no manifest url" end
 
 
@@ -518,7 +530,7 @@ if manifestUrl == "" then return false, "no manifest url" end
 
 local manifest, err = update.fetchManifest(manifestUrl,
 options.requiredPaths or update.PUBLISHED_FILES,
-config.update_channel or "stable",
+options.channel or config.update_channel or "stable",
 options.optionalPaths or update.PUBLISHED_OPTIONAL)
 if not manifest then return nil, err end
 if not update.isNewer(manifest.version, config.version) then
@@ -536,6 +548,10 @@ end
 return false, "current"
 end
 
+if update.isBeta(manifest.version) and not options.beta then
+return false, "beta"
+end
+
 local files, total = update.filesForRole(manifest, role)
 if #files == 0 then
 return nil, "release has no files for " .. tostring(role)
@@ -548,6 +564,7 @@ label = manifest.label,
 changes = manifest.changes or {},
 files = files,
 bytes = total,
+beta = update.isBeta(manifest.version),
 }
 end
 

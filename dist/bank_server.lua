@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "14.0.0"
+local PROGRAM_VERSION = "14.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -4382,6 +4382,8 @@ confirm_hours = shop.confirm_hours,
 sale = settings.sale,
 free_shipping = settings.free_shipping,
 free_over = settings.free_over,
+
+site = company.shop_site and company.shop_site.domain or nil,
 }
 end
 
@@ -5201,6 +5203,82 @@ table.sort(list, function(a, b) return a.company_id < b.company_id end)
 return { apps = list }
 end
 
+
+
+
+
+
+
+function shop.siteName(value)
+local key = string.lower(util.trim(tostring(value or ""))):gsub("%.shop$", "")
+if #key < 3 or #key > 20 or not key:match("^[%a%d%-]+$")
+or key:sub(1, 1) == "-" or key:sub(-1) == "-" then
+return nil
+end
+return key .. ".shop"
+end
+
+function shop.siteOwner(domain)
+for _, company in pairs(state.companies) do
+if company.status == "active" and company.shop_site
+and company.shop_site.domain == domain then
+return company
+end
+end
+return nil
+end
+
+
+
+function actions.COMPANY_SHOP_SITE(payload)
+local _, company = shop.owned(payload)
+if payload.enabled == false then
+local old = company.shop_site
+company.shop_site = nil
+save()
+if old then
+logActivity("Shop Website taken down: " .. old.domain, colors.orange)
+end
+return { shop_site = nil }
+end
+need(shop.settings(company).open, "STORE_CLOSED", "Open the store first")
+local domain = shop.siteName(payload.site)
+need(domain, "BAD_DOMAIN", "An address is 3-20 letters, numbers or dashes")
+local holder = shop.siteOwner(domain)
+need(not holder or holder == company, "SITE_TAKEN",
+domain .. " is another store's")
+local old = company.shop_site or {}
+company.shop_site = {
+domain = domain,
+created_day = old.created_day or util.ingameDay(),
+revision = (old.revision or 0) + 1,
+}
+save()
+logActivity("Shop Website: " .. domain, colors.lime)
+return { shop_site = util.copy(company.shop_site) }
+end
+
+
+
+
+function actions.SHOP_SITE(payload)
+local company
+if payload.company_id then
+company = state.companies[tostring(payload.company_id)]
+need(company and company.status == "active" and company.shop_site,
+"NO_SUCH_SITE", "That store has no website")
+else
+local domain = shop.siteName(payload.domain)
+need(domain, "BAD_DOMAIN", "An address is 3-20 letters, numbers or dashes")
+company = shop.siteOwner(domain)
+need(company, "NO_SUCH_SITE", "No store is at " .. domain)
+end
+local settings = shop.settings(company)
+return { domain = company.shop_site.domain, company_id = company.company_id,
+company_name = company.name, color = settings.color,
+tagline = settings.tagline, open = settings.open == true }
+end
+
 function actions.COMPANY_STATE(payload)
 local _, company = shop.owned(payload)
 local terminals = {}
@@ -5220,6 +5298,7 @@ settings = util.copy(shop.settings(company)),
 held = shop.held(company),
 terminals = terminals,
 shop_app = company.shop_app and util.copy(company.shop_app) or nil,
+shop_site = company.shop_site and util.copy(company.shop_site) or nil,
 }
 end
 

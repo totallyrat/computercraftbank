@@ -270,6 +270,47 @@ assert(bricks and bricks.name == "Brick Breaker" and bricks.author == "FoxyOS",
     "Brick Breaker is in the Game Browser, from FoxyOS")
 assert(not listed(actions.APP_LIST().apps, "BRICKS"))
 
+-- FoxyOS 14.1, for the App Browser's front page in 15 ---------------------------
+-- Latest is the newest apps, numbered as they first arrive: an update keeps
+-- its place. Trending is the last week of downloads, a week of in-game days.
+local function entry(appId)
+    return listed(actions.APP_LIST().apps, appId)
+end
+local newest = actions.APP_PUBLISH({
+    developer_id = GOOD.developer_id, developer_token = GOOD.developer_token,
+    name = "Fresh", body = BODY,
+}).app
+assert(newest.added and newest.added > entry(plain.app_id).added,
+    "a new app is newer than every app before it")
+local notesAdded = entry(plain.app_id).added
+actions.APP_PUBLISH({
+    developer_id = GOOD.developer_id, developer_token = GOOD.developer_token,
+    app_id = plain.app_id, name = "Plain", body = BODY .. "-- v2\n",
+})
+assert(entry(plain.app_id).added == notesAdded, "an update is not a new app")
+assert(entry(newest.app_id).trending == 0, "nobody has it yet")
+local function download(appId, day)
+    os.day = function() return day end
+    actions.APP_CHUNK({ app_id = appId, offset = 0, limit = 10 })
+    -- Later pieces of the same download are not more downloads.
+    actions.APP_CHUNK({ app_id = appId, offset = 10, limit = 10 })
+end
+download(newest.app_id, 400)
+download(newest.app_id, 403)
+download(newest.app_id, 406)
+download(plain.app_id, 406)
+os.day = function() return 406 end
+assert(entry(newest.app_id).trending == 3, "three this week: "
+    .. tostring(entry(newest.app_id).trending))
+assert(entry(plain.app_id).trending == 1)
+os.day = function() return 408 end
+assert(entry(newest.app_id).trending == 2, "a download older than a week stops counting")
+download(newest.app_id, 420)
+assert(server.state.apps[newest.app_id].daily[400] == nil,
+    "and is forgotten, so the record stays small")
+assert(entry(newest.app_id).trending == 1 and entry(plain.app_id).trending == 0)
+os.day = function() return 400 end
+
 print("host_app_server_test: OK")
 
 -- 9.2: publishing is when the Bank is told who owns an app, because it is

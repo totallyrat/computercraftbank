@@ -79,12 +79,13 @@ local function verify(section, expected, label)
     for index, entry in ipairs(entries) do
         assert(entry.path == expected[index],
             label .. " entry " .. index .. " is " .. entry.path)
-        -- Served from its own path, or since 11.2 from its stripped build
-        -- in dist/ (see host_dist_build_test.lua). Every updater since 7.0
-        -- downloads by source.
-        assert(entry.source == entry.path
-            or entry.source == "dist/" .. entry.path,
-            entry.path .. " must be served from its own path or dist/")
+        -- Served from dist/: since 11.2 the stripped build (see
+        -- host_dist_build_test.lua), and since FoxyOS 14.1 every other file
+        -- copied there too, so the readable source at the root can move on
+        -- to the next release -- a beta -- without the published one
+        -- changing under it. Every updater since 7.0 downloads by source.
+        assert(entry.source == "dist/" .. entry.path,
+            entry.path .. " must be served from dist/")
         local body = readFile("../" .. entry.source)
         assert(entry.size == #body,
             entry.path .. " size is stale; rerun the release builder")
@@ -185,6 +186,29 @@ for index, expectedChange in ipairs(expectedChanges) do
     assert(publishedChanges[index] == expectedChange,
         "change " .. index .. " is \"" .. tostring(publishedChanges[index])
             .. "\" but the changelog says \"" .. expectedChange .. "\"")
+end
+
+-- FoxyOS 14.1: Beta Updates. A minor version of 5 is a beta wherever a
+-- Pocket finds one, so the release is never numbered like one, and a beta
+-- is published only in a manifest of its own, beside this one, on its own
+-- channel -- which nothing but a Pocket signed up to Beta Updates reads.
+assert(version:match("^%d+%.(%d+)%.") ~= "5",
+    "v" .. version .. " is numbered as a beta; build it with --beta")
+local betaHandle = io.open("../beta/release_manifest.json", "rb")
+if betaHandle then
+    local beta = betaHandle:read("*a")
+    betaHandle:close()
+    assert(beta:find('"channel": "beta"', 1, true), "the beta is on the beta channel")
+    local betaVersion = beta:match('"version":%s*"([%d%.]+)"')
+    assert(betaVersion and betaVersion:match("^%d+%.5%.%d+$"),
+        "a beta is numbered x.5.y: " .. tostring(betaVersion))
+    for _, entry in ipairs(readEntries(beta)) do
+        assert(entry.source == "dist/" .. entry.path,
+            entry.path .. " must be served from the beta's own dist/")
+        local body = readFile("../beta/" .. entry.source)
+        assert(entry.size == #body and entry.checksum == checksum(body),
+            "beta " .. entry.path .. " is stale; rerun the builder with --beta")
+    end
 end
 
 print("host_release_manifest_test: OK")
