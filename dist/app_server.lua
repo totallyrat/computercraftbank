@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "14.1.0"
+local PROGRAM_VERSION = "15.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -247,73 +247,29 @@ local function seedShippedApps()
     save()
 end
 
--- Shop Apps, FoxyOS 14 ---------------------------------------------------------------
--- A store turns one on from its Store page in the Company app; the Bank keeps
--- the list. Each is built here from the Shop app, locked to its store, and
--- listed like any other app, under the company's name. It is rebuilt when
--- the Shop app or the store's app changes, so a store's app is never behind.
-local shopApps = { every = 30 }
-
-function shopApps.body(entry, shopBody)
-    return "-- PUMPE APP: " .. entry.name .. "\n"
-        .. "-- PUMPE APP ACTION: store | " .. entry.name .. " | Shop at "
-        .. entry.company_name .. "\n"
-        .. "-- A Shop App: " .. entry.company_name .. "'s store, built from Shop.\n"
-        .. "local shop = (function()\n" .. shopBody .. "\nend)()\n"
-        .. "return function(api)\n"
-        .. "    api.shop_store = " .. string.format("%q", entry.company_id) .. "\n"
-        .. "    return shop(api)\n"
-        .. "end\n"
-end
-
-function shopApps.sync()
-    local listed = bank:request("SHOP_APPS", {}, 4)
-    local shopBody = util.readFile(fs.combine(ROOT, "shop.lua"))
-    if not listed or not shopBody then return false end
-    -- The Shop app's own header lines would make every store's app offer
-    -- Shop's actions too.
-    shopBody = shopBody:gsub("%-%-%s*PUMPE [^\n]*", "")
-    local wanted = {}
-    for _, entry in ipairs(listed.apps or {}) do
-        local appId = "SA-" .. tostring(entry.company_id)
-        wanted[appId] = true
-        local body = shopApps.body(entry, shopBody)
-        local sum = util.checksum(body)
-        local existing = state.apps[appId]
-        local description = entry.description ~= "" and entry.description
-            or ("Shop at " .. entry.company_name)
-        if not existing or existing.checksum ~= sum
-            or existing.description ~= description then
-            if not fs.exists(appsDir) then fs.makeDir(appsDir) end
-            util.writeFile(appPath(appId), body)
-            state.apps[appId] = {
-                app_id = appId, kind = "app", name = entry.name,
-                description = description, author = entry.company_name,
-                developer_id = "SHOPAPP", shop_app = entry.company_id,
-                version = (existing and (existing.version or 0) or 0) + 1,
-                size = #body, checksum = sum, published_day = util.ingameDay(),
-                downloads = existing and existing.downloads or 0,
-                added = existing and existing.added or catalogueStats.stamp(),
-                daily = existing and existing.daily or nil,
-            }
-            if not existing then table.insert(state.order, appId) end
-            logActivity("Shop App " .. entry.name .. " v"
-                .. state.apps[appId].version, colors.lime)
-        end
-    end
-    -- A store that took its app down: gone from the catalogue.
+-- Shop Apps, FoxyOS 14, retired in 15 ----------------------------------------------------
+-- A store's own app, built here from the Shop app, became a Shop Website:
+-- name.shop, which a Pocket opens as the store without keeping anything.
+-- What is left of them leaves the catalogue when this server starts, so no
+-- Pocket is offered one again; a Pocket on 15 takes its own copy off.
+local function retireShopApps()
+    local retired = 0
     for index = #state.order, 1, -1 do
         local appId = state.order[index]
         local app = state.apps[appId]
-        if app and app.shop_app and not wanted[appId] then
+        if app and (app.shop_app or app.developer_id == "SHOPAPP") then
             state.apps[appId] = nil
             table.remove(state.order, index)
             if fs.exists(appPath(appId)) then fs.delete(appPath(appId)) end
-            logActivity("Shop App taken down: " .. app.name, colors.orange)
+            retired = retired + 1
         end
     end
-    save()
-    return true
+    if retired > 0 then
+        save()
+        logActivity(retired .. " Shop App" .. (retired == 1 and "" or "s")
+            .. " retired: stores are websites now", colors.orange)
+    end
+    return retired
 end
 
 local actions = {}
@@ -481,17 +437,10 @@ local function serverLoop()
 end
 
 local function updateLoop()
-    local waited = 0
     while running do
         net.autoUpdate(config, "apps", ROOT, nil,
             { programVersion = PROGRAM_VERSION })
-        -- FoxyOS 14: and which stores have an app of their own.
-        if waited <= 0 then
-            pcall(shopApps.sync)
-            waited = shopApps.every
-        end
         sleep(10)
-        waited = waited - 10
     end
 end
 
@@ -539,8 +488,7 @@ end
 
 if rawget(_G, "PUMPE_TEST_MODE") == true then
     return { actions = actions, state = state, shipped = SHIPPED,
-        seed = seedShippedApps, sync_shop_apps = shopApps.sync,
-        set_bank = function(client) bank = client end }
+        seed = seedShippedApps, retire_shop_apps = retireShopApps }
 end
 
 -- 12.0: this server's main colour, orange unless its owner chose one.
@@ -551,6 +499,7 @@ net.autoUpdate(config, "apps", ROOT, nil,
 net.host(config.app_protocol, config.app_hostname)
 if not fs.exists(appsDir) then fs.makeDir(appsDir) end
 seedShippedApps()
+retireShopApps()
 bank:discover()
 logActivity("App Server online on #" .. os.getComputerID(), colors.lime)
 save()

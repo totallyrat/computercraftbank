@@ -269,8 +269,10 @@ ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 actions = {
     "login",
     "open:browser",                      -- the App Browser
+    "explore",                           -- FoxyOS 15: every app, in a list
     "open:NOTES", "get",                 -- install one; that closes it
     "open:ROTTEN", "get", "back",        -- one that arrives damaged
+    "back",                              -- back to the front page
     "back",                              -- leave the browser
     "__tick",                            -- 12.0 Final: apps update themselves
     "open:ext:FOXY",                     -- 11.0: opens on its Bank tab
@@ -311,6 +313,8 @@ function ui.scene()
     function scene:wait()
         index = index + 1
         local action = actions[index]
+        -- A step can be a check, which runs here and names the tap.
+        if type(action) == "function" then action = action(live) end
         assert(action, "PUMPE asked for more actions than the script has")
         if not action:match("^__") then
             assert(live[action], "tapped '" .. action
@@ -351,6 +355,10 @@ end
 
 -- The App Browser talks to the App Server, never to the Bank.
 assert(drew("App Browser"))
+-- FoxyOS 15: its front page, and Explore for the rest.
+assert(drew("LATEST") and drew("TRENDING") and pressed("Explore"),
+    "the front page has the two carousels and Explore")
+assert(drew("Explore"), "Explore lists every app")
 assert(asked(storeCalls, "APP_LIST") and asked(storeCalls, "APP_CHUNK"))
 assert(written["/pumpe/apps/MAIL.lua"] == MAIL_BODY,
     "FoxMail is installed on sign-in, like Foxy, without visiting the browser")
@@ -423,5 +431,109 @@ assert(pressed("Bring money in"),
     "Fast Bank Transfer is reachable from the account it moves money into")
 assert(not pressed("Code Pay"),
     "but not Code Pay: paying a kiosk is Foxy Pay, or a third-party bank")
+
+-- FoxyOS 15: the App Browser's front page ------------------------------------------------
+-- Latest is the newest apps, Trending this week's most downloaded, five
+-- each, in carousels that turn by themselves and by hand. Shop Apps are not
+-- in it: stores are websites now. Explore lists every app, A to Z.
+local catalogue = {
+    { app_id = "APP00001", name = "Alpha", author = "Ann", description = "First",
+      added = 1, trending = 0, downloads = 50, version = 1, size = 1, checksum = "a" },
+    { app_id = "APP00002", name = "Bravo", author = "Bo", description = "Second",
+      added = 5, trending = 9, downloads = 3, version = 1, size = 1, checksum = "b" },
+    { app_id = "APP00003", name = "Charlie", author = "Cy", description = "Third",
+      added = 3, trending = 4, downloads = 1, version = 1, size = 1, checksum = "c" },
+    { app_id = "APP00004", name = "Delta", author = "Di", description = "Fourth",
+      added = 7, trending = 1, downloads = 0, version = 1, size = 1, checksum = "d" },
+    { app_id = "SA-COM000001", name = "Fox Goods", author = "Fox Goods",
+      description = "Shop at Fox Goods", shop_app = "COM000001", added = 9,
+      trending = 99, version = 1, size = 1, checksum = "s" },
+}
+storeClient.request = function(_, action)
+    if action == "APP_LIST" then return { apps = catalogue } end
+    return { ok = true }
+end
+inputs = { "FoxyUser" }
+local mark = 0
+local function since()
+    local out = {}
+    for at = mark + 1, #drawnText do out[#out + 1] = drawnText[at] end
+    mark = #drawnText
+    return " " .. table.concat(out, " | ") .. " "
+end
+local function cards(text)
+    -- The names on the two carousels, in the order drawn.
+    local found = {}
+    for name in text:gmatch("| (%u%l+) |") do
+        if name == "Alpha" or name == "Bravo" or name == "Charlie" or name == "Delta" then
+            found[#found + 1] = name
+        end
+    end
+    return found
+end
+index, actions = 0, {
+    "login",
+    function() mark = #drawnText return "open:browser" end,
+    function(live)
+        local text = since()
+        local shown = cards(text)
+        assert(shown[1] == "Delta" and shown[2] == "Bravo",
+            "Latest opens on the newest, Trending on the most downloaded: " .. text)
+        assert(text:find("| NEW |", 1, true) and text:find("| #1 ", 1, true), text)
+        assert(text:find("LATEST", 1, true) and text:find("TRENDING", 1, true))
+        assert(text:find("| o... |", 1, true), "a dot an app, the first lit")
+        assert(not text:find("Fox Goods", 1, true), "no Shop Apps")
+        assert(live["latest:next"] and live["trending:prev"] and live["latest:open"])
+        return "__tick"
+    end,
+    function()
+        local shown = cards(since())
+        assert(shown[#shown - 1] == "Bravo" and shown[#shown] == "Bravo",
+            "a tick turns Latest to the next newest, Trending staying put")
+        return "__tick"
+    end,
+    function()
+        local shown = cards(since())
+        assert(shown[#shown - 1] == "Bravo" and shown[#shown] == "Charlie",
+            "the next tick turns Trending: they take turns")
+        return "trending:prev"
+    end,
+    function()
+        local shown = cards(since())
+        assert(shown[#shown] == "Bravo", "by hand, backwards")
+        return "latest:prev"
+    end,
+    function()
+        local shown = cards(since())
+        assert(shown[#shown - 1] == "Delta", "Latest back to the newest")
+        return "trending:next"
+    end,
+    function()
+        local shown = cards(since())
+        assert(shown[#shown] == "Charlie", "Trending on to the second")
+        return "trending:open"
+    end,
+    function()
+        local text = since()
+        assert(text:find(" Charlie |", 1, true) and text:find("by Cy", 1, true),
+            "tapping the card opens the app on it: " .. text)
+        return "back"
+    end,
+    function() buttonMark = #buttonLabels return "explore" end,
+    function()
+        local text = table.concat(buttonLabels, " | ", buttonMark + 1)
+        local a, b, c, d = text:find("Alpha", 1, true), text:find("Bravo", 1, true),
+            text:find("Charlie", 1, true), text:find("Delta", 1, true)
+        assert(a and b and c and d and a < b and b < c and c < d, "Explore is A to Z")
+        assert(not text:find("Fox Goods", 1, true), "still no Shop Apps")
+        return "back"
+    end,
+    "back",
+    "__terminate",
+}
+local carouselOk, carouselErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(carouselOk or tostring(carouselErr):find("more actions", 1, true),
+    tostring(carouselErr))
+assert(index >= #actions - 1, "the whole front page was walked: " .. index)
 
 print("host_pumpe_apps_test: OK")

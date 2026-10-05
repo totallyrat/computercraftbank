@@ -14,7 +14,7 @@
 --   installer.lua --boot <program>   update if the release is newer, then start
 --   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local INSTALLER_VERSION = "14.1.0"
+local INSTALLER_VERSION = "15.0.0"
 local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"

@@ -7,15 +7,14 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
-## FoxyOS 15 Beta (14.5.0)
+## FoxyOS 15 (15.0.0)
 
-Only Pockets signed up to Beta Updates get this. The Bank, the App Server and everything else stay on 14.1. If the beta will not start, run `installer` on the Pocket and install the Pocket again: that puts the release back.
+Update the Bank (Core and Vault) and the App Server first. The App Server takes the old Shop Apps out of its catalogue when it starts.
 
-### Getting it
+### On the Pocket
 
-- [ ] Settings → Beta: *FoxyOS 15 Beta, Version 14.5.0* with **Get FoxyOS 15 Beta**. It downloads under the circles, asks under POCKET, installs, restarts.
-- [ ] The start-up ends on *Powered by FoxyOS 15 Beta*.
-- [ ] After signing in, Foxy, FoxMail, Company, Shop, Internet and INVT are the beta's copies (Foxy has no intro: that is the quickest tell), and the App Server's ten-minute app updates leave them alone.
+- [ ] The start-up ends on *Powered by FoxyOS 15.0.0*. (On a beta it says *FoxyOS 15 Beta*.)
+- [ ] Settings → Beta says *No beta right now*.
 
 ### Banners
 
@@ -45,6 +44,7 @@ Only Pockets signed up to Beta Updates get this. The Bank, the App Server and ev
 - [ ] The same on a Pocket without Shop installed: it opens, and nothing new is on the Pocket afterwards (Settings → Storage).
 - [ ] A closed store, or an address nobody has, says so in a red banner.
 - [ ] A Pocket that had a Shop App installed loses it at sign-in, with a green banner, and the store's address (if it has one) is in Internet → Saved.
+- [ ] The App Browser lists no Shop Apps, and a Company app from before 15 is told *Shop Apps are Shop Websites now*.
 - [ ] **Open it** on the Shop Website page opens the store; **Take it down** frees the address.
 
 ## FoxyOS 14.1 (14.1.0)

@@ -405,61 +405,70 @@ end
 
 
 
-local function shopAppPage(company, state)
-local app = state.shop_app
+local function squash(name)
+return (string.lower(tostring(name or "")):gsub("[^%w%-]", "")):sub(1, 20)
+end
+
+local function shopSitePage(company, state)
+local site = state.shop_site
 while running() do
 local width, height = target.getSize()
 ui.clear(target)
-ui.header(target, "Shop App", app and "In the App Browser"
-or "Your store as an app", util.formatClock())
+ui.header(target, "Shop Website", site and "On the web"
+or "Your store on the web", util.formatClock())
 local scene = ui.scene(target)
 ui.card(target, 2, 5, width - 2, 5, colors.lime)
-if app then
-ui.text(target, 4, 5, ui.truncate(app.name, width - 6), ui.theme.ink,
+if site then
+ui.text(target, 4, 5, "YOUR ADDRESS", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate(site.domain, width - 6), ui.theme.ink,
 ui.theme.panel)
-ui.wrappedText(target, 4, 6, app.description ~= "" and app.description
-or ("Shop at " .. company.name), width - 6, 3, ui.theme.muted,
-ui.theme.panel)
-scene:button("name", 2, 11, width - 2, 1, "Rename it",
+ui.wrappedText(target, 4, 8, "Type it into Internet.", width - 6, 2,
+ui.theme.muted, ui.theme.panel)
+scene:button("visit", 2, 11, width - 2, 2, "Open it",
+{ background = colors.lime, foreground = colors.black })
+scene:button("rename", 2, 14, width - 2, 1, "Change the address",
 { background = ui.theme.panel })
-scene:button("about", 2, 13, width - 2, 1, "Change its line",
-{ background = ui.theme.panel })
-scene:button("down", 2, 15, width - 2, 1, "Take it down",
+scene:button("down", 2, 16, width - 2, 1, "Take it down",
 { background = ui.theme.danger })
 else
-ui.wrappedText(target, 4, 5, "An app of your store's own: people"
-.. " install it from the App Browser and it opens straight onto"
-.. " your store.", width - 6, 5, ui.theme.ink, ui.theme.panel)
-scene:button("make", 2, 11, width - 2, 3, "Make the app",
+ui.wrappedText(target, 4, 5, "An address like "
+.. (squash(company.name) ~= "" and squash(company.name) or "store")
+.. ".shop. Typed into Internet, it opens your store.",
+width - 6, 5, ui.theme.ink, ui.theme.panel)
+scene:button("make", 2, 11, width - 2, 3, "Choose an address",
 { background = colors.lime, foreground = colors.black, shadow = true })
 end
 scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
 local action = scene:wait()
 if action == "back" or action == "__terminate" then return end
 local payload
-if action == "make" or action == "name" then
-local name = ui.input(target, "App name", { hint = "On the Home Screen",
-initial = app and app.name or ui.truncate(company.name, 18),
-maxLength = 18, allowSpace = true, minLength = 2 })
-if name then payload = { name = name } end
-elseif action == "about" then
-local line = ui.input(target, "Its line", { hint = "In the App Browser",
-initial = app and app.description or "", maxLength = 60,
-allowSpace = true, minLength = 0 })
-if line then payload = { name = app.name, description = line } end
+if action == "make" or action == "rename" then
+local typed = ui.input(target, "Address", {
+hint = "Letters, numbers, dashes. Ends .shop",
+mode = "domain", maxLength = 20, minLength = 3,
+initial = site and (site.domain:gsub("%.shop$", ""))
+or squash(company.name) })
+if typed then payload = { site = typed } end
+elseif action == "visit" then
+if type(api.browse) == "function" then
+api.browse(site.domain)
+else
+ui.message(target, "info", "Not on this Pocket",
+"Update the Pocket to open it", 1.6)
+end
 elseif action == "down" and ui.confirm(target, "Take it down?",
-"It leaves the App Browser", "Take down", "Keep") then
+site.domain .. " stops opening your store", "Remove", "Keep") then
 payload = { enabled = false }
 end
 if payload then
 payload.company_id = company.company_id
-local saved, err = ask("COMPANY_SHOP_APP", payload)
+local saved, err = ask("COMPANY_SHOP_SITE", payload)
 if not saved then
 failed("Not changed", err)
 else
-app = saved.shop_app
-ui.message(target, "success", app and "Shop App ready" or "Taken down",
-app and "In the App Browser in a minute" or company.name, 1.6)
+site = saved.shop_site
+ui.message(target, "success", site and "On the web" or "Taken down",
+site and site.domain or company.name, 1.6)
 end
 end
 end
@@ -496,8 +505,8 @@ or "Cancelling: off", ui.theme.panel },
 { "returns", "Returns: " .. tostring(settings.return_days or 5)
 .. " days", ui.theme.panel },
 
-{ "shopapp", state.shop_app and ("Shop App: " .. state.shop_app.name
-.. "  >") or "Make a Shop App  >", colors.lime },
+{ "shopsite", state.shop_site and ("Web: " .. state.shop_site.domain)
+or "Put it on the web  >", colors.lime },
 }
 
 local gap = (height - 5) >= #entries * 2 and 2 or 1
@@ -509,7 +518,7 @@ ui.truncate(entry[2], width - 4), {
 background = entry[3],
 foreground = (entry[1] == "open"
 and settings.open == false or entry[1] == "color"
-or entry[1] == "shopapp")
+or entry[1] == "shopsite")
 and colors.black or colors.white })
 end
 end
@@ -543,8 +552,8 @@ maxLength = 4, initial = plain(settings.fee) })
 if typed then change = { fee = tonumber(typed) or 0 } end
 elseif action == "points" then
 pointsPage(company)
-elseif action == "shopapp" then
-shopAppPage(company, state)
+elseif action == "shopsite" then
+shopSitePage(company, state)
 elseif action == "cancel" then
 if settings.cancel or ui.confirm(target, "Let buyers cancel?",
 "For " .. tostring(state.store.confirm_hours or 2)

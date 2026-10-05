@@ -52,6 +52,8 @@ loadfile = function(path)
                 -- draws anything; one that is told no closes immediately.
                 if api.running() then appLiveRuns = appLiveRuns + 1 end
                 api.bank("TPB_INFO", {})
+                -- FoxyOS 15: and, when a run asks, to the web.
+                for _, domain in ipairs(browseTo or {}) do api.browse(domain) end
             end
         end
     end
@@ -64,13 +66,13 @@ local account = {
 }
 
 package.loaded.config = {
-    version = "8.5.0", currency = "$",
+    version = "8.4.0", currency = "$",
     send_money_daily_limit = 2000, send_money_fee_rate = 0.10,
     pumpe_lock_seconds = 60, pumpe_pin_seconds = 120,
     urgent_ring_poll_seconds = 3, bet_maximum = 10000,
     app_protocol = "PUMPE_APPS_V1", app_hostname = "APP_SERVER",
     app_chunk_size = 6000, max_apps_installed = 12,
-    release_name = "FoxyOS 8.5",
+    release_name = "FoxyOS 8.4",
     beta_manifest_url = "https://example.test/beta/release_manifest.json",
 }
 package.loaded["lib.util"] = {
@@ -82,6 +84,10 @@ package.loaded["lib.util"] = {
         if bootDevice and tostring(path):find("device", 1, true) then
             return bootDevice
         end
+        -- FoxyOS 15: what a run says it has installed, and what the
+        -- Internet app kept.
+        if tostring(path):find("NET.dat", 1, true) then return netStore or fallback end
+        if bootApps and tostring(path):find("pumpe_apps", 1, true) then return bootApps end
         if tostring(path):find("apps", 1, true) then
             -- One installed app, so the built-in apps still fit on the
             -- first Home Screen page. It reaches a bank of its own, because
@@ -173,6 +179,30 @@ local client = {
         elseif action == "APP_PUBLISH" then
             published = payload
             return { app = { app_id = "APP00042", kind = payload.kind, version = 1 } }
+        elseif action == "SHOP_SITE" and payload.domain == "foxgoods.shop" then
+            return { domain = "foxgoods.shop", company_id = "COM000001",
+                company_name = "Fox Goods", color = "lime", open = true }
+        elseif action == "SHOP_SITE" and payload.domain == "closed.shop" then
+            return { domain = "closed.shop", company_id = "COM000002",
+                company_name = "Wolf Wares", open = false }
+        elseif action == "APP_INFO" and payload.app_id == "SHOP" and shopBody then
+            return { app = { app_id = "SHOP", name = "Shop", version = 1, size = #shopBody,
+                checksum = package.loaded["lib.util"].checksum(shopBody) } }
+        elseif action == "APP_CHUNK" and payload.app_id == "SHOP" and shopBody then
+            chunked = chunked or {}
+            chunked[#chunked + 1] = "SHOP"
+            return { app_id = "SHOP", offset = 0, data = shopBody,
+                next_offset = #shopBody, total_size = #shopBody, done = true }
+        elseif action == "SHOP_SITE" and payload.company_id == "COM000001" then
+            return { domain = "foxgoods.shop", company_id = "COM000001" }
+        elseif action == "SHOP_SITE" then
+            return nil, "That store has no website", "NO_SUCH_SITE"
+        elseif action == "APP_LIST" and appList then
+            return { apps = appList }
+        elseif action == "APP_CHUNK" then
+            chunked = chunked or {}
+            chunked[#chunked + 1] = payload.app_id
+            return nil, "not in this test"
         end
         return { ok = true }
     end,
@@ -539,7 +569,7 @@ assert(installSeconds == 15 and installTook >= 15000 and installTook < 16000,
     "installing plays the circles for fifteen seconds: " .. tostring(installTook))
 assert(not restartingDrawn, "rather than the old screen")
 -- And the start-up: the circles, POCKET, and what it runs on.
-assert(pocketStarted == "8.5.0", "the start-up names the version it runs: " .. tostring(pocketStarted))
+assert(pocketStarted == "8.4.0", "the start-up names the version it runs: " .. tostring(pocketStarted))
 assert(not splashOptions, "the old start-up is gone")
 
 -- The modem --------------------------------------------------------------------
@@ -809,5 +839,128 @@ for _, options in ipairs(betaOptions) do
     if not options.manifestUrl then stableLooks = stableLooks + 1 end
 end
 assert(stableLooks >= 2, "and the release is still looked for first")
+
+-- FoxyOS 15: a Pocket on a beta --------------------------------------------------
+-- It says so at start-up. The apps FoxyOS ships come from the beta, not the
+-- App Server, and the App Server's updates leave them alone. And Shop Apps
+-- are websites now: one still installed comes off, its store's address
+-- saved in Internet.
+package.loaded.config.version = "14.5.0"
+package.loaded.config.release_name = "FoxyOS 15 Beta"
+-- An app's own corner of the phone is written as text; this reads it back.
+textutils = { serialize = function(value) netSaved = value return "{...}" end }
+local betaFetches = {}
+local BETA_FOXY = "-- PUMPE APP: Foxy\n-- PUMPE APP ACTION: bank | Foxy Bank | Money\n"
+    .. "return function(api) end\n"
+package.loaded["lib.update"] = {
+    PUBLISHED_FILES = { "pumpe.lua" }, PUBLISHED_OPTIONAL = {},
+    fetchManifest = function(url, _, channel)
+        betaManifestReads = (betaManifestReads or 0) + 1
+        assert(url == "https://example.test/beta/release_manifest.json" and channel == "beta")
+        return { version = "14.5.0", label = "FoxyOS 15 Beta", files = {
+            { path = "foxy.lua", checksum = "beta0001", size = #BETA_FOXY },
+            { path = "pumpe.lua", checksum = "beta0002", size = 1 } } }
+    end,
+    fetchFile = function(url, file, version)
+        betaFetches[#betaFetches + 1] = file.path .. "@" .. version
+        return BETA_FOXY
+    end,
+}
+bootApps = { list = {
+    { app_id = "FOXY", name = "Foxy", version = 3, author = "FoxyOS" },
+    { app_id = "SA-COM000001", name = "Fox Goods", version = 1, author = "Fox Goods" },
+    { app_id = "SA-COM000002", name = "Wolf Wares", version = 1, author = "Wolf Wares" },
+    { app_id = "TESTBANK", name = "Test Bank", version = 1, author = "Ana Fox" },
+} }
+netStore = { bookmarks = { "foxden" }, history = {} }
+appList = { { app_id = "FOXY", name = "Foxy", version = 4, size = 10, checksum = "x" },
+    { app_id = "TESTBANK", name = "Test Bank", version = 2, size = 10, checksum = "y" },
+    { app_id = "SA-COM000001", name = "Fox Goods", version = 2, size = 10, checksum = "z" } }
+pocketStarted, chunked = nil, {}
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "auto" }
+local drawsBeforeOnBeta = #drawnText
+index, actions = 0, { "__tick", "__terminate" }
+local onBetaOk, onBetaErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(onBetaOk or tostring(onBetaErr):find("more actions", 1, true), tostring(onBetaErr))
+assert(pocketStarted == "15 Beta", "Powered by FoxyOS 15 Beta: " .. tostring(pocketStarted))
+assert(#betaFetches == 1 and betaFetches[1] == "foxy.lua@14.5.0",
+    "Foxy came from the beta, and nothing it does not have: " .. table.concat(betaFetches, ","))
+assert(written["/pumpe/apps/FOXY.lua"] == BETA_FOXY, "written in place of the release's")
+local foxy, gone = nil, true
+for _, entry in ipairs(bootApps.list) do
+    if entry.app_id == "FOXY" then foxy = entry end
+    if entry.app_id:match("^SA%-") then gone = false end
+end
+assert(foxy.beta == "14.5.0" and foxy.beta_sum == "beta0001", "and marked as the beta's")
+assert(gone, "both Shop Apps came off")
+assert(written["/pumpe/apps/NET.dat"] and netSaved and netSaved.bookmarks[1] == "foxgoods.shop"
+    and netSaved.bookmarks[2] == "foxden" and #netSaved.bookmarks == 2,
+    "the store with a website is saved in Internet; the one without is not")
+local said = false
+for at = drawsBeforeOnBeta + 1, #drawnText do
+    if drawnText[at] == "Shop Apps are websites now" then said = true end
+end
+assert(said, "and the Pocket says so")
+-- The App Server's update for Foxy is not taken: the beta's stays. Test
+-- Bank, which the beta does not ship, still updates as before.
+local fetchedFoxy, fetchedBank, fetchedShopApp = false, false, false
+for _, id in ipairs(chunked) do
+    if id == "FOXY" then fetchedFoxy = true end
+    if id == "TESTBANK" then fetchedBank = true end
+    if id == "SA-COM000001" then fetchedShopApp = true end
+end
+assert(not fetchedFoxy, "a beta's app is kept out of the App Server's updates")
+assert(fetchedBank, "every other app still updates")
+assert(not fetchedShopApp, "and a Shop App is never fetched again")
+
+-- Back on a release, the beta's copy goes back to the App Server's -- even
+-- though the App Server's Foxy has the version number this Pocket has.
+package.loaded.config.version = "15.0.0"
+package.loaded.config.release_name = "FoxyOS 15"
+appList[1].version = 3
+chunked, betaFetches, betaManifestReads = {}, {}, 0
+index, actions = 0, { "__tick", "__terminate" }
+local releaseOk, releaseErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(releaseOk or tostring(releaseErr):find("more actions", 1, true), tostring(releaseErr))
+assert(pocketStarted == "15.0.0", "a release names its version")
+assert(#betaFetches == 0 and betaManifestReads == 0,
+    "a release does not even look at the beta")
+fetchedFoxy = false
+for _, id in ipairs(chunked) do
+    if id == "FOXY" then fetchedFoxy = true end
+end
+assert(fetchedFoxy, "the beta's Foxy is replaced by the release's")
+package.loaded.config.version = "8.4.0"
+bootApps, appList, netStore, textutils = nil, nil, nil, nil
+
+-- FoxyOS 15: a .shop address, from an app's api.browse -------------------------------
+-- The Bank says which store is at it. Closed, or nobody's, the Pocket says so.
+-- Open, Shop runs for the visit, told the store and the address -- fetched
+-- from the App Server and held in memory, so nothing new is on the Pocket.
+shopBody = "return function(api) SHOP_VISIT = { store = api.shop_store,"
+    .. " domain = api.domain, app_id = api.app_id } end\n"
+browseTo = { "closed.shop", "nobody.shop", "foxgoods.shop" }
+chunked, SHOP_VISIT = {}, nil
+local drawsBeforeShop = #drawnText
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "auto" }
+index, actions = 0, { "open:ext:TESTBANK", "__terminate" }
+local shopOk, shopErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(shopOk or tostring(shopErr):find("more actions", 1, true), tostring(shopErr))
+local function drewSinceShop(text)
+    for at = drawsBeforeShop + 1, #drawnText do
+        if drawnText[at] == text then return true end
+    end
+    return false
+end
+assert(drewSinceShop("Wolf Wares is closed"), "a closed store says so")
+assert(drewSinceShop("No such shop"), "an address nobody has says so")
+assert(SHOP_VISIT and SHOP_VISIT.store == "COM000001"
+    and SHOP_VISIT.domain == "foxgoods.shop" and SHOP_VISIT.app_id == "SHOP",
+    "the store opened as itself, told its address")
+assert(#chunked == 1 and chunked[1] == "SHOP", "Shop was fetched for the visit")
+assert(written["/pumpe/apps/SHOP.lua"] == nil, "and nothing of it was kept")
+browseTo, shopBody, SHOP_VISIT = nil, nil, nil
 
 print("host_settings_test: OK")

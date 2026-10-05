@@ -42,7 +42,6 @@ local APPS = {
     quick = { name = "Quick", glyph = "&", color = colors.lime },
     browser = { name = "Apps", glyph = "+", color = colors.blue },
     settings = { name = "Settings", glyph = "*", color = colors.gray },
-    ["ext:FOXY"] = { name = "Foxy", glyph = "F", color = colors.orange },
     ["ext:MAIL"] = { name = "FoxMail", glyph = "M", color = colors.purple },
     ["ext:SHOP"] = { name = "Shop", glyph = "S", color = colors.lime },
     ["ext:COMPANY"] = { name = "Company", glyph = "C", color = colors.pink },
@@ -106,6 +105,13 @@ for id, app in pairs(APPS) do
     end
     firstFrames[id] = snapshot
 end
+
+-- FoxyOS 15: Foxy has no opening at all. It opens straight onto the Bank,
+-- whose card drops in by itself (host_foxy_card_test.lua).
+ui.clear(display, colors.black)
+slept = 0
+opening.play("ext:FOXY", { name = "Foxy", glyph = "F", color = colors.orange })
+assert(slept == 0 and colourCount(colors.orange) == 0, "Foxy opens with nothing first")
 
 -- The motion starts where the icon is: the ripple near a corner icon has
 -- painted that corner first.

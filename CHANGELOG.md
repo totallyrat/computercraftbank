@@ -1,27 +1,33 @@
 # Changelog
 
-## 14.5.0
+## 15.0.0
 
-FoxyOS 15 Beta, for Pockets signed up to Beta Updates. Not tested yet: that
-is what the beta is for.
+FoxyOS 15. Stores move onto the web, notices become banners, Foxy opens
+straight away and the App Browser gets a front page. First out as FoxyOS
+15 Beta (14.5) to Pockets signed up to Beta Updates.
 
-**Shop Websites.** Shop Apps are websites now: a store's address is
-name.shop, set on its page in the Company app. Type it into Internet and
-the store opens as itself, held in memory for the visit instead of 27 KB
-on your Pocket. Shop Apps still on a Pocket come off it, their address
-saved in Internet.
+**Shop Websites.** Shop Apps are websites now. A store's address is
+name.shop, set on its Store page in the Company app. Type it into
+Internet and the store opens as itself, on its own front door with the
+address on top. The Shop code is held in memory for the visit, so it
+costs a Pocket nothing, where a Shop App was 27 KB. A Shop App still on a
+Pocket comes off it at sign-in, its store's address saved in Internet.
 
 **Notices are banners.** A notice is a banner across the middle of the
-screen that opens from a line, green when something went right and red
-when it did not.
+screen, over what was there, opening from a line drawn out from the
+centre: green when something went right, red when it did not.
 
-**Foxy opens straight away.** No intro. The Foxy Bank card drops in from
-the top in two seconds, once each time Foxy is opened.
+**Foxy opens straight away.** No intro, and no opening animation. The
+Foxy Bank card drops in from the top and is done in two seconds, once
+each time Foxy is opened: not again after visiting another tab.
 
-**A new App Browser.** The newest apps and this week's most downloaded,
-in two carousels that turn by themselves. Explore lists every app.
+**A new App Browser.** The front page has the newest apps and this
+week's most downloaded, in two carousels that turn by themselves, with
+arrows to turn them by hand. Explore lists every app, A to Z, with search.
 
-**Beta apps.** On a beta, the apps FoxyOS ships come from the beta too.
+**Beta apps.** A Pocket on a beta gets the beta's own copies of the apps
+FoxyOS ships, and the App Server leaves them alone until it is on a
+release again.
 
 ## 14.1.0
 

@@ -457,7 +457,7 @@ return function(api)
                         "Update the Pocket to open it", 1.6)
                 end
             elseif action == "down" and ui.confirm(target, "Take it down?",
-                site.domain .. " stops opening your store", "Take down", "Keep") then
+                site.domain .. " stops opening your store", "Remove", "Keep") then
                 payload = { enabled = false }
             end
             if payload then

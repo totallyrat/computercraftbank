@@ -13,6 +13,7 @@
 
 
 
+
 return function(api)
 local ui, util, target = api.ui, api.util, api.target
 local colors = api.colors
@@ -54,9 +55,11 @@ api.browse(domain)
 end
 
 local function ask(initial)
+
+
 local typed, picked = ui.input(target, "Go to", {
-hint = "A domain, like foxden", initial = initial,
-maxLength = 20,
+hint = "foxden, or a store.shop", initial = initial,
+maxLength = 25, mode = "domain",
 
 suggest = function(value)
 local found, seen = {}, {}
@@ -128,7 +131,7 @@ if #history == 0 then
 
 
 ui.wrappedText(target, 2, 10, "Websites are made in Website"
-.. " Crafter. Ask somebody for theirs, or make one.",
+.. " Crafter. Stores are at name.shop: try one.",
 width - 2, 5, ui.theme.muted)
 else
 ui.text(target, 2, 10, "RECENTLY", ui.theme.muted)

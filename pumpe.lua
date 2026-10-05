@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "14.5.0"
+local PROGRAM_VERSION = "15.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -277,10 +277,6 @@ do
     function STYLES.shutter(c, x, y, t)
         local edge = math.min(x - 1, c.w - x, (y - 1) * 1.5, (c.h - y) * 1.5)
         return front(edge, t * (c.w / 2 + 1), 1)
-    end
-    -- Foxy: a tail sweeping up from the corner.
-    function STYLES.sweep(c, x, y, t)
-        return front(x / c.w + (c.h - y + 1) / c.h, t * 2.1, 0.2)
     end
     -- FoxMail: the flap of an envelope folding down.
     function STYLES.envelope(c, x, y, t)
@@ -4331,7 +4327,8 @@ function beta.page(spec)
             ui.text(target, 2, 13, ui.truncate(tostring(seen.label
                 or "FoxyOS Beta"), width - 2), ui.theme.ink)
             ui.text(target, 2, 14, ui.truncate("Version " .. tostring(seen.version)
-                .. (newer and "" or "  (you have it)"), width - 2), ui.theme.muted)
+                .. (newer and "" or seen.version == config.version and "  (you have it)"
+                    or "  (yours is newer)"), width - 2), ui.theme.muted)
         else
             ui.text(target, 2, 13, "No beta right now", ui.theme.ink)
             ui.text(target, 2, 14, ui.truncate(tostring(beta.why or ""), width - 2),
@@ -6912,11 +6909,10 @@ local function updateApps(force)
         local here = installedApp(app.app_id)
         -- FoxyOS 15: an app this Pocket has from its beta stays the beta's
         -- while it is on one, and goes back to the App Server's once it is
-        -- on a release. Shop Apps are websites now and are not fetched.
+        -- on a release.
         local pinned = here and here.beta and onBeta
         local leftBeta = here and here.beta and not onBeta
         if here and app.kind ~= "game" and not pinned
-            and not tostring(app.app_id):match("^SA%-")
             and (here.version ~= app.version or leftBeta) then
             local width = target.getSize()
             ui.fill(target, 1, 1, width, 1, ui.theme.accent)

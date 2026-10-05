@@ -30,34 +30,7 @@ end
 
 
 
-local function sweepIn(word, row, color)
-local width = target.getSize()
-local left = math.max(1, math.floor((width - #word) / 2) + 1)
-for count = 1, #word do
-ui.text(target, left, row, word:sub(1, count), color,
-ui.theme.background)
-sleep(0.05)
-end
-end
 
-
-
-local function shimmer(x, y, width, height)
-for column = 0, width + 3 do
-for row = 0, height - 1 do
-local at = x + column - 2
-if at >= x and at < x + width then
-ui.fill(target, at, y + row, 1, 1, FOX)
-end
-local trail = x + column - 3
-if trail >= x and trail < x + width then
-ui.fill(target, trail, y + row, 1, 1, colors.brown)
-end
-end
-sleep(0.012)
-end
-ui.fill(target, x, y, width, height, colors.brown)
-end
 
 local function progressPulse(row, label)
 local width = target.getSize()
@@ -85,19 +58,50 @@ raw:sub(1, 4), raw:sub(5, 8), raw:sub(9, 12),
 }, " ")
 end
 
-local function drawCard(overview, y)
+
+
+local function drawCard(overview, y, clip)
 local width = target.getSize()
 local cardWidth = width - 2
-ui.fill(target, 2, y, cardWidth, 6, colors.brown)
-ui.text(target, 3, y, "FOXY", FOX, colors.brown)
-ui.text(target, cardWidth - 2, y, "[]", colors.yellow, colors.brown)
-ui.text(target, 3, y + 2, cardNumber(overview), INK, colors.brown)
-ui.text(target, 3, y + 4,
-ui.truncate(string.upper(overview.name or ""), cardWidth - 8),
-INK, colors.brown)
-ui.text(target, cardWidth - 4, y + 4,
-ui.truncate(tostring(overview.personal_number or ""), 5),
-ui.theme.muted, colors.brown)
+clip = clip or 1
+local top = math.max(y, clip)
+if y + 5 >= top then
+ui.fill(target, 2, top, cardWidth, y + 6 - top, colors.brown)
+end
+local function at(row, x, text, color)
+if row >= clip then ui.text(target, x, row, text, color, colors.brown) end
+end
+at(y, 3, "FOXY", FOX)
+at(y, cardWidth - 2, "[]", colors.yellow)
+at(y + 2, 3, cardNumber(overview), INK)
+at(y + 4, 3, ui.truncate(string.upper(overview.name or ""), cardWidth - 8), INK)
+at(y + 4, cardWidth - 4, ui.truncate(tostring(overview.personal_number or ""), 5),
+ui.theme.muted)
+end
+
+
+
+
+local cardDropped = false
+local function dropCard(overview, rest)
+local width = target.getSize()
+local frames = 40
+for frame = 1, frames do
+local t = frame / frames
+local fall
+if t < 0.7 then
+fall = 1 - (1 - t / 0.7) ^ 3
+else
+fall = 1 + math.sin((t - 0.7) / 0.3 * math.pi) * 0.15
+end
+local y = math.floor(rest - 6 + 6 * fall + 0.5)
+ui.fill(target, 1, rest, width, 7, ui.theme.background)
+drawCard(overview, y, rest)
+sleep(0.05)
+end
+ui.fill(target, 1, rest, width, 7, ui.theme.background)
+drawCard(overview, rest)
+cardDropped = true
 end
 
 
@@ -777,7 +781,7 @@ return true
 end
 
 local function bankScreen()
-local offset, shimmered = 0, false
+local offset = 0
 while running() do
 
 
@@ -815,12 +819,7 @@ if not overview then return end
 local width, height = target.getSize()
 ui.clear(target)
 ui.header(target, "Foxy Bank", overview.name, util.formatClock())
-drawCard(overview, 4)
-if not shimmered then
-shimmer(2, 4, width - 2, 6)
-drawCard(overview, 4)
-shimmered = true
-end
+if cardDropped then drawCard(overview, 4) end
 ui.text(target, 2, 11, "BALANCE", ui.theme.muted)
 ui.text(target, 2, 12, money(overview.balance), INK)
 if overview.saved > 0 then
@@ -916,6 +915,8 @@ scene:button("down", width - 4, 11, 3, 1, "v",
 { background = ui.theme.panel,
 disabled = lastShown >= #rows })
 ui.tabBar(scene, target, TABS, "bank", FOX)
+
+if not cardDropped then dropCard(overview, 4) end
 local action = scene:wait({ tickRate = 5 })
 if action == "home" or action == "__terminate"
 or (action or ""):match("^tab:") then
@@ -1159,13 +1160,6 @@ if jump[wanted] then
 jump[wanted]()
 return
 end
-end
-
-if not startTab then
-ui.clear(target)
-sweepIn("FOXY", 8, FOX)
-sweepIn("small bank, big vault", 10, ui.theme.muted)
-sleep(0.5)
 end
 
 

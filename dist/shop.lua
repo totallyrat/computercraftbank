@@ -821,7 +821,10 @@ end
 
 
 
+
+
 local only = type(api.shop_store) == "string" and api.shop_store or nil
+local address = type(api.domain) == "string" and api.domain or nil
 if only then TABS[1] = { id = "stores", label = "Store" } end
 local function frontDoor()
 while running() do
@@ -831,8 +834,8 @@ local width, height = target.getSize()
 local background, foreground = paint(store and store.color or "orange")
 ui.clear(target)
 ui.header(target, ui.truncate(store and store.name or "Store", width - 9),
-store and (store.tagline ~= "" and store.tagline or "Online store")
-or "Closed", util.formatClock())
+ui.truncate(address or (store and (store.tagline ~= "" and store.tagline
+or "Online store") or "Closed"), width - 3), util.formatClock())
 local scene = ui.scene(target)
 ui.fill(target, 1, 4, width, 7, background)
 if store then

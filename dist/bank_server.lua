@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "14.1.0"
+local PROGRAM_VERSION = "15.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -5159,48 +5159,10 @@ end
 
 
 
-
-
 function actions.COMPANY_SHOP_APP(payload)
-local _, company = shop.owned(payload)
-if payload.enabled == false then
-company.shop_app = nil
-save()
-logActivity("Shop App taken down: " .. company.name, colors.orange)
-return { shop_app = nil }
-end
-need(shop.settings(company).open, "STORE_CLOSED", "Open the store first")
-local name = util.safeText(util.trim(tostring(payload.name or company.name)), 18)
-need(#name >= 2, "INVALID_NAME", "The app needs a name")
-local old = company.shop_app or {}
-company.shop_app = {
-name = name,
-description = util.safeText(util.trim(tostring(payload.description
-or old.description or "")), 60),
-created_day = old.created_day or util.ingameDay(),
-revision = (old.revision or 0) + 1,
-}
-save()
-logActivity("Shop App: " .. name, colors.lime)
-return { shop_app = util.copy(company.shop_app) }
-end
-
-
-
-function actions.SHOP_APPS()
-local list = {}
-for _, company in pairs(state.companies) do
-if company.status == "active" and company.shop_app then
-local settings = shop.settings(company)
-list[#list + 1] = { company_id = company.company_id,
-company_name = company.name, name = company.shop_app.name,
-description = company.shop_app.description,
-color = settings.color, open = settings.open == true,
-revision = company.shop_app.revision }
-end
-end
-table.sort(list, function(a, b) return a.company_id < b.company_id end)
-return { apps = list }
+shop.owned(payload)
+reject("SHOP_APPS_RETIRED",
+"Shop Apps are Shop Websites now. Update the Company app")
 end
 
 
@@ -5297,7 +5259,6 @@ store = shop.public(company),
 settings = util.copy(shop.settings(company)),
 held = shop.held(company),
 terminals = terminals,
-shop_app = company.shop_app and util.copy(company.shop_app) or nil,
 shop_site = company.shop_site and util.copy(company.shop_site) or nil,
 }
 end
