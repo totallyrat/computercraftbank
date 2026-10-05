@@ -9,7 +9,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1471,6 +1471,10 @@ local function homeDraw(home)
     if home.screen == "pair" then
         ui.text(target, 2, height, "COLOR", ui.inkOn(accent), accent)
         ui.text(target, 8, height, "PIN", colors.white, colors.gray)
+        -- FoxyOS 15.1: Beta Updates, the owner's like the rest of this row.
+        local betaOn = util.betaJoined(ROOT)
+        ui.text(target, 12, height, "BETA", betaOn and colors.black or colors.white,
+            betaOn and colors.lime or colors.gray)
     end
 end
 
@@ -1528,6 +1532,9 @@ local function homeMode()
                 elseif c == height and b >= 8 and b <= 10 and home.screen == "pair" then
                     -- A new Home PIN; the old one opened this screen.
                     setHomePin()
+                elseif c == height and b >= 12 and b <= 15 and home.screen == "pair"
+                    and type(ui.betaUpdates) == "function" then
+                    ui.betaUpdates(target, ROOT, { kind = "console", version = config.version })
                 end
             elseif event == "terminate" then
                 running, home.active = false, false

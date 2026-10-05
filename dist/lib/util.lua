@@ -390,4 +390,27 @@ if code then return "refused", err, code end
 return "unknown", err
 end
 
+
+
+
+
+
+function util.isBetaVersion(value)
+return tostring(value or ""):match("^%d+%.5%.%d+") ~= nil
+end
+
+local function betaFile(root)
+return fs.combine(root or "/pumpe", "beta_updates.dat")
+end
+
+function util.betaJoined(root)
+if type(fs) ~= "table" then return false end
+local saved = util.loadTable(betaFile(root), {})
+return type(saved) == "table" and saved.joined == true
+end
+
+function util.setBetaJoined(root, joined)
+util.saveTable(betaFile(root), { joined = joined == true })
+end
+
 return util

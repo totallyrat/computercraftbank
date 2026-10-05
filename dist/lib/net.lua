@@ -218,8 +218,7 @@ end
 
 net.updateTarget = nil
 
-function net.autoUpdate(config, role, root, client, options)
-options = options or {}
+local function autoUpdateOnce(config, role, root, client, options)
 if type(config) ~= "table" or config.auto_update == false then return false end
 role = string.lower(tostring(role or ""))
 if role == "" then return false end
@@ -322,6 +321,10 @@ if not ping or not net.isNewerVersion(ping.version, config.version)
 then
 return false
 end
+
+if util.isBetaVersion(ping.version) and not options.beta then
+return false
+end
 found = { version = ping.version, changes = {}, depot = true }
 end
 local stages = not found.depot and updater
@@ -401,6 +404,26 @@ end
 end
 if elsewhere then return false end
 return depotUpdate(config, role, root, client)
+end
+
+function net.autoUpdate(config, role, root, client, options)
+options = options or {}
+local done = autoUpdateOnce(config, role, root, client, options)
+if done then return done end
+
+
+
+
+local url = type(config) == "table" and tostring(config.beta_manifest_url or "") or ""
+if options.manifestUrl == nil and options.beta == nil and url ~= ""
+and util.betaJoined(root) then
+local betaOptions = {}
+for key, value in pairs(options) do betaOptions[key] = value end
+betaOptions.manifestUrl, betaOptions.channel, betaOptions.beta = url, "beta", true
+betaOptions.programVersion = nil
+return autoUpdateOnce(config, role, root, client, betaOptions)
+end
+return done
 end
 
 return net

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -6167,6 +6167,21 @@ local function checkForOnlineUpdate()
         repair = true,
     }
     local updated, detail = onlineUpdate.check(options)
+    -- FoxyOS 15.1: a Bank signed up to Beta Updates takes betas too, after
+    -- the release, and its Vault follows it over the cable as always.
+    local betaUrl = tostring(config.beta_manifest_url or "")
+    if not updated and betaUrl ~= "" and util.betaJoined(ROOT) then
+        local betaOptions = {}
+        for key, value in pairs(options) do betaOptions[key] = value end
+        betaOptions.manifestUrl, betaOptions.channel, betaOptions.beta =
+            betaUrl, "beta", true
+        local found, why = onlineUpdate.check(betaOptions)
+        if found then
+            updated, detail, options = found, nil, betaOptions
+        elseif detail ~= "current" then
+            detail = detail or why
+        end
+    end
     if updated then
         -- FoxyOS 12: the screen every device shows while a release comes
         -- down -- FOXY blinking, a thin bar along the bottom.
@@ -6315,6 +6330,10 @@ end
 local function dashboardLoop()
     local target = term.current()
     ui.serverTabs({
+        -- FoxyOS 15.1: the Bank can take betas too. Its Vault follows it.
+        version = config.version, betaRoot = ROOT,
+        betaWarning = "Every Pocket uses this Bank, and the Vault follows it:"
+            .. " a beta here is a beta for everybody.",
         target = target, title = "BANK SERVER", subtitle = "v" .. config.version,
         cards = function()
             return { { "ACCOUNTS", count(state.accounts), colors.cyan },
@@ -6824,10 +6843,14 @@ local function kib(bytes)
 end
 
 local function releaseFiles(paths, onFile)
-    local manifestUrl = tostring(config.update_manifest_url or "")
+    -- FoxyOS 15.1: a Bank on a beta sends its Vault the same beta.
+    local onBeta = util.isBetaVersion(config.version)
+    local manifestUrl = tostring((onBeta and config.beta_manifest_url)
+        or config.update_manifest_url or "")
     if manifestUrl == "" then return nil, "no release address" end
     local manifest, err = onlineUpdate.fetchManifest(manifestUrl,
-        RELEASE.published, config.update_channel or "stable", RELEASE.optional)
+        RELEASE.published, onBeta and "beta" or (config.update_channel or "stable"),
+        RELEASE.optional)
     if not manifest then return nil, err or "no manifest" end
     if manifest.version ~= config.version then
         return nil, "the release moved on; this Bank updates first"
@@ -7121,6 +7144,7 @@ if TEST_MODE then
         ensure_bank_startup = ensureBankStartup,
         local_update_body = localUpdateBody,
         deployment_fetch = fetchDepotFile,
+        check_for_update = checkForOnlineUpdate,
         depot = depot,
         free_old_depot = freeOldDepot,
         ledger = ledger,

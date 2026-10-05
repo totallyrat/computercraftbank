@@ -44,6 +44,7 @@ kiosk.push(script.actions, function(seen)
         "the three tabs, and no More")
     assert(kiosk.has(frame, "COLOUR") and kiosk.has(frame, "LOG OUT")
         and kiosk.has(frame, "CLOSE"), "the kiosk's own controls are on Home")
+    assert(kiosk.has(frame, "BETA"), "FoxyOS 15.1: Beta Updates, beside Create")
     return "tab:events"
 end, function(seen)
     assert(kiosk.has(seen.frames[#seen.frames], "Fox Fest"), "the Events tab lists them")
@@ -53,11 +54,13 @@ kiosk.push(script.inputs, "ABCD2345")
 -- FoxyOS 12: the MyID Verifier, at the door.
 kiosk.push(script.actions, "myid")
 kiosk.push(script.inputs, "MY7K2M9QPA")
-kiosk.push(script.actions, "tab:home", "color", "exit")
+kiosk.push(script.actions, "tab:home", "color", "beta", "exit")
 
 local seen = kiosk.run({ file = "event_kiosk.lua", bank = bank, script = script,
     device = { last_name = "" } })
 assert(seen.picked == 2, "the colour is picked when the kiosk is set up, and again from Home")
+assert(seen.beta and seen.beta.spec.kind == "kiosk" and seen.beta.spec.version,
+    "BETA opens Beta Updates for this kiosk, saying what it runs")
 assert(verified == "ABCD2345", "the Door verifies by entry code")
 assert(kiosk.said(seen, "TICKET REJECTED"))
 assert(seen.verified and seen.verified[1].name == "Kit Wolf",
@@ -65,7 +68,7 @@ assert(seen.verified and seen.verified[1].name == "Kit Wolf",
 
 -- And on a pocket-sized screen nothing leaves it either.
 script = kiosk.script()
-kiosk.push(script.actions, "login", "tab:events", "tab:door", "myid", "tab:home", "exit")
+kiosk.push(script.actions, "login", "tab:events", "tab:door", "myid", "tab:home", "beta", "exit")
 kiosk.push(script.inputs, "Ana Fox")
 kiosk.push(script.pins, "1234")
 kiosk.push(script.inputs, "MY7K2M9QPA")

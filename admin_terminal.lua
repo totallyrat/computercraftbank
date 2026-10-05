@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -844,6 +844,10 @@ local function dashboard()
         myid = { "DIGITAL IDS", "Confirm or refuse", function() myIdScreen() end },
         color = { "MAIN COLOUR", "How this terminal looks",
             function() ui.pickMainColor(target, ROOT, "Terminal colour") end },
+        -- FoxyOS 15.1.
+        beta = { "BETA UPDATES", "Get what is next first",
+            function() ui.betaUpdates(target, ROOT, { kind = "terminal",
+                version = config.version }) end },
         lock = { "LOCK", "Sign the key out", function() governmentToken = nil end },
     }
     local function run(id)
@@ -922,7 +926,7 @@ local function dashboard()
             people = grid("PEOPLE", { "accounts", "pending", "myid", "announce",
                 "stats" }),
             inbox = messageInbox,
-            system = grid("SYSTEM", { "controls", "system", "color", "lock" }),
+            system = grid("SYSTEM", { "controls", "system", "color", "beta", "lock" }),
         },
         running = function() return running and governmentToken ~= nil end,
     })

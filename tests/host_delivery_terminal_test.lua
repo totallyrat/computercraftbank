@@ -674,6 +674,12 @@ local function fullRun(WIDTH, HEIGHT)
     end
     assert(onSale, "the Store shows the sale price, and what it was")
     assert(mine.here and mine.coming, "Me shows what is here and what is coming")
+    -- FoxyOS 15.1: Beta Updates, on the Setup tab.
+    local betaShown = false
+    for _, label in ipairs(seen.labels) do
+        if label == "BETA UPDATES" then betaShown = true end
+    end
+    assert(betaShown, "the terminal can sign up to betas from Setup")
 
     -- The home order, all the way through.
     local home = orders[homeOrder.order_id]

@@ -1,5 +1,24 @@
 # Changelog
 
+## 15.1.0
+
+FoxyOS 15.1: Beta Updates on every device, ahead of FoxyOS 16 Beta.
+
+**Beta Updates everywhere.** Every server, kiosk, terminal and console can
+sign up to Beta Updates now, not only the Pocket: BETA UPDATES on a
+server's Server tab, BETA on the Event Kiosk, Beta Updates on the Delivery
+Terminal's Setup, the Border Controller's Owner tab, the Admin Terminal's
+System tab and the CCG's Home Mode settings. Signed up, a device installs
+each beta by itself as it comes out, after checking for the release.
+
+**The Bank too, with its Vault.** A Bank signed up takes betas, and its
+Vault follows it over the cable as it always does, sent the same beta.
+Its screen warns first: every Pocket uses the Bank.
+
+**Leaving keeps the beta.** A device that leaves keeps the beta it has until
+the full release, which is newer, arrives the usual way. A Bank on a beta
+is never mistaken for a release to follow.
+
 ## 15.0.0
 
 FoxyOS 15. Stores move onto the web, notices become banners, Foxy opens

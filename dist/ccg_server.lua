@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -783,6 +783,7 @@ end
 -- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
     ui.serverTabs({
+        version = config.version,
         target = target, title = "CCG SERVER", subtitle = "v" .. PROGRAM_VERSION,
         cards = function()
             local open, running_count, players = 0, 0, 0

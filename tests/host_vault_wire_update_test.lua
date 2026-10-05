@@ -365,4 +365,89 @@ assert(repair and behind and update and repair < behind and behind < update
     and dashboard:find("pair.updateScreen(target)", 1, true),
     "UPDATE VAULT sits beside RE-PAIR while the Vault is behind")
 
+-- FoxyOS 15.1: Beta Updates --------------------------------------------------------------
+-- A Bank signed up takes a beta after the release, by itself. Its Vault
+-- follows it as always: the Core sends the beta it runs, from the beta's
+-- own manifest.
+local updater = require("lib.update")
+textutils.unserialize = function(body)
+    local built = load("return " .. tostring(body))
+    return built and built()
+end
+local BETA = {}
+for path, body in pairs(RELEASE) do BETA[path] = body:gsub("99%.0%.0", "99.5.0") end
+local betaManifest = { version = "99.5.0", files = {} }
+for path, body in pairs(BETA) do
+    betaManifest.files[#betaManifest.files + 1] = { path = path, size = #body,
+        checksum = util.checksum(body) }
+end
+config.beta_manifest_url = "https://example.invalid/beta/release_manifest.json"
+local asked = {}
+updater.fetchManifest = function(url, _, channel)
+    asked[#asked + 1] = { url = url, channel = channel }
+    return url:find("/beta/", 1, true) and betaManifest or manifest
+end
+local fetchedFrom = {}
+updater.fetchFile = function(url, file)
+    fetchedFrom[#fetchedFrom + 1] = url
+    return (url:find("/beta/", 1, true) and BETA or RELEASE)[file.path]
+end
+
+-- The Core's own check: the release, then -- signed up -- the beta.
+local checks, applied = {}, nil
+local realCheck, realApply = updater.check, updater.apply
+updater.check = function(options)
+    checks[#checks + 1] = options.manifestUrl or "release"
+    if options.manifestUrl then
+        return { version = "99.5.0", label = "Beta", files = {}, bytes = 0,
+            manifest_url = options.manifestUrl }
+    end
+    return false, "current"
+end
+updater.apply = function(found, options)
+    applied = { found = found, options = options }
+    return true, found.version
+end
+local rebooted = 0
+os.reboot = function() rebooted = rebooted + 1 end
+config.version = "99.0.0"
+core.check_for_update()
+assert(#checks == 1 and checks[1] == "release" and not applied,
+    "a Bank that did not sign up never looks at the beta")
+-- Signed up from the Server tab (host_beta_screen_test.lua): the file. The
+-- harness keeps tables in memory, so this one file is read off the disk.
+local harnessLoad = util.loadTable
+util.loadTable = function(path, fallback)
+    if tostring(path):find("beta_updates.dat", 1, true) then
+        local body = disk[norm(path)]
+        return body and textutils.unserialize(body) or util.copy(fallback)
+    end
+    return harnessLoad(path, fallback)
+end
+disk["/pumpe/beta_updates.dat"] = "{ joined = true }"
+assert(util.betaJoined("/pumpe"))
+checks = {}
+core.check_for_update()
+assert(#checks == 2 and checks[2] == config.beta_manifest_url,
+    "signed up, it looks at the beta after the release")
+assert(applied and applied.options.beta == true and applied.options.channel == "beta"
+    and rebooted == 1, "and takes it, by itself")
+disk["/pumpe/beta_updates.dat"] = nil
+updater.check, updater.apply = realCheck, realApply
+
+-- On the beta, its Vault gets the same beta, over the cable.
+reset()
+config.version = "99.5.0"
+asked, fetchedFrom = {}, {}
+local sentBeta, betaWhy = core.pair.updateVault(true)
+assert(sentBeta, "the Vault was sent the beta: " .. tostring(betaWhy))
+assert(asked[#asked].url == config.beta_manifest_url and asked[#asked].channel == "beta",
+    "from the beta's manifest, on its channel")
+for _, url in ipairs(fetchedFrom) do
+    assert(url == config.beta_manifest_url, "every file from the beta: " .. url)
+end
+assert(disk["/pumpe/bank_vault.lua"] == BETA["bank_vault.lua"], "the beta Vault is in place")
+assert(assert(loadfile("/pumpe/config.lua"))().version == "99.5.0", "and says so")
+config.version = "99.0.0"
+
 print("host_vault_wire_update_test: OK")

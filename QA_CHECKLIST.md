@@ -7,6 +7,16 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 15.1 (15.1.0)
+
+- [ ] Every server's Server tab has **BETA UPDATES** (the Vault has none: it follows its Core). It opens Beta Updates: *Not signed up*, *Running v15.1.0*, **SIGN UP** and **BACK**.
+- [ ] On the Bank, the screen warns that *a beta here is a beta for everybody*.
+- [ ] **SIGN UP** asks first, then shows *Signed up*; the Server tab button reads **BETA: ON**.
+- [ ] Event Kiosk: **BETA** beside CREATE EVENT. Delivery Terminal: **BETA UPDATES** on Setup. Border Controller: on Owner, behind the owner PIN. Admin Terminal: on System. CCG: **BETA** in the bottom row of Home Mode settings.
+- [ ] Once a beta is out, a signed-up server or kiosk installs it by itself within a minute or so; one that is not signed up stays on 15.1.
+- [ ] A signed-up Bank takes the beta and its Vault follows within a few minutes.
+- [ ] **LEAVE** on a device running a beta says it keeps the beta until the full release.
+
 ## FoxyOS 15 (15.0.0)
 
 Update the Bank (Core and Vault) and the App Server first. The App Server takes the old Shop Apps out of its catalogue when it starts.

@@ -790,6 +790,64 @@ end
 
 
 
+function ui.betaUpdates(target, root, spec)
+target = surface(target)
+spec = spec or {}
+local kind = tostring(spec.kind or "device")
+while true do
+local width, height = target.getSize()
+local joined = util.betaJoined(root)
+local onBeta = util.isBetaVersion(spec.version)
+ui.clear(target)
+ui.header(target, "BETA UPDATES", joined and "Signed up" or "Not signed up",
+util.formatClock())
+local y = 4
+y = y + ui.wrappedText(target, 2, y, joined
+and ("This " .. kind .. " installs each beta by itself as it comes out.")
+or ("Get the next FoxyOS before everybody else. Betas come before"
+.. " testing is done, so things can break."), width - 2, 3, ui.theme.ink) + 1
+if spec.version then
+ui.text(target, 2, y, ui.truncate("Running v" .. tostring(spec.version)
+.. (onBeta and "  (a beta)" or ""), width - 2),
+onBeta and ui.theme.warning or ui.theme.muted)
+y = y + 2
+end
+if spec.warning and y + 2 < height - 3 then
+ui.wrappedText(target, 2, y, spec.warning, width - 2,
+math.max(1, height - 4 - y), ui.theme.warning)
+end
+local scene = ui.scene(target)
+local half = math.floor((width - 3) / 2)
+scene:button(joined and "leave" or "join", 2, height - 2, half, 2,
+joined and "LEAVE" or "SIGN UP", { background = joined
+and ui.theme.danger or ui.theme.success,
+foreground = joined and ui.inkOn(ui.theme.danger) or colors.black })
+scene:button("back", 3 + half, height - 2, width - 3 - half, 2, "BACK",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+if action == "join" and ui.confirm(target, "SIGN UP?", "This " .. kind
+.. " will install betas by itself. Leave any time.", "SIGN UP", "BACK") then
+util.setBetaJoined(root, true)
+ui.message(target, "success", "SIGNED UP", "Betas install here by themselves", 1.4)
+elseif action == "leave" and ui.confirm(target, "LEAVE?", onBeta
+and "It keeps this beta until the full release comes out."
+or "No more betas here.", "LEAVE", "STAY") then
+util.setBetaJoined(root, false)
+ui.message(target, "success", "LEFT BETA UPDATES", onBeta
+and "The full release replaces this beta" or nil, 1.4)
+end
+end
+end
+
+
+
+
+
+
+
+
+
 
 
 
@@ -804,6 +862,15 @@ list[#list + 1] = { id = "__color", label = "MAIN COLOUR",
 hint = "How this server looks", color = ui.theme.accent,
 run = function() ui.pickMainColor(target, spec.root,
 spec.colorTitle or "Server colour") end }
+end
+local betaRoot = spec.betaRoot or spec.root
+if betaRoot and spec.beta ~= false then
+local joined = util.betaJoined(betaRoot)
+list[#list + 1] = { id = "__beta", label = joined and "BETA: ON"
+or "BETA UPDATES", hint = "Get what is next first",
+color = joined and ui.theme.success or ui.theme.panel,
+run = function() ui.betaUpdates(target, betaRoot, { kind = "server",
+version = spec.version, warning = spec.betaWarning }) end }
 end
 return list
 end

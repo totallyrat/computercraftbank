@@ -4,6 +4,7 @@ local WIDTH, HEIGHT = 51, 19
 -- 12.0: Gate, Scan and Owner are tabs; closing is on Owner, behind the PIN.
 local actions = { "enter", "done", "exit", "done", "tab:scan", "tab:owner", "stop" }
 local requests, drawnText, redstoneStates = {}, {}, {}
+borderLabels = {}
 local oneSecondSleeps = 0
 
 colors = {
@@ -46,6 +47,9 @@ package.loaded.config = {
 }
 
 package.loaded["lib.util"] = {
+    -- FoxyOS 15.1: Beta Updates, not signed up here.
+    betaJoined = function() return false end,
+    isBetaVersion = function() return false end,
     loadTable = function()
         return {
             controller_id = "BORDER000001",
@@ -178,8 +182,9 @@ function ui.networkError(_, err) error(err) end
 
 function ui.scene()
     local scene = {}
-    function scene:button(_, x, y, width, height)
+    function scene:button(_, x, y, width, height, label)
         assertBox("button", x, y, width, height)
+        borderLabels[#borderLabels + 1] = tostring(label)
     end
     function scene:hotspot(_, x, y, width, height)
         assertBox("hotspot", x, y, width, height)
@@ -201,6 +206,11 @@ package.loaded["lib.ui"] = ui
 
 assert(loadfile("../border_controller.lua"))()
 assert(#actions == 0)
+local betaOnOwner = false
+for _, label in ipairs(borderLabels) do
+    if label == "BETA UPDATES" then betaOnOwner = true end
+end
+assert(betaOnOwner, "FoxyOS 15.1: Beta Updates is on the Owner tab")
 assert(oneSecondSleeps == 10)
 assert(redstoneStates[1] == false)
 assert(redstoneStates[2] == true)

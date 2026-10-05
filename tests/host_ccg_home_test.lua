@@ -46,6 +46,9 @@ rednet = {
 local saved = {}
 package.loaded.config = { version = "12.0.0", currency = "$" }
 package.loaded["lib.util"] = {
+    -- FoxyOS 15.1: Beta Updates, not signed up here.
+    betaJoined = function() return false end,
+    isBetaVersion = function() return false end,
     loadTable = function(_, fallback) return fallback end,
     saveTable = function(_, value) saved[#saved + 1] = value end,
     truncate = function(value, maximum) return tostring(value or ""):sub(1, maximum) end,

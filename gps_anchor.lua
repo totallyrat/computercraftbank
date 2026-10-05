@@ -12,7 +12,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -81,6 +81,7 @@ end
 -- keeps no log, so Activity is how many it has answered.
 local function screenLoop()
     ui.serverTabs({
+        version = config.version,
         target = target, title = "GPS ANCHOR", subtitle = "v" .. config.version,
         cards = function()
             return { { "POSITION", device.x .. ", " .. device.y .. ", " .. device.z,

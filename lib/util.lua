@@ -390,4 +390,27 @@ function util.ledger.outcome(credited, err, code)
     return "unknown", err
 end
 
+-- FoxyOS 15.1: Beta Updates on every device. A beta is numbered half way
+-- to the release it comes before (FoxyOS 16 Beta is 15.5), so a minor
+-- version of 5 is a beta wherever it turns up. Signing a device up is a
+-- file of its own beside its programs, so an update -- which rewrites
+-- config.lua -- never takes the choice away.
+function util.isBetaVersion(value)
+    return tostring(value or ""):match("^%d+%.5%.%d+") ~= nil
+end
+
+local function betaFile(root)
+    return fs.combine(root or "/pumpe", "beta_updates.dat")
+end
+
+function util.betaJoined(root)
+    if type(fs) ~= "table" then return false end
+    local saved = util.loadTable(betaFile(root), {})
+    return type(saved) == "table" and saved.joined == true
+end
+
+function util.setBetaJoined(root, joined)
+    util.saveTable(betaFile(root), { joined = joined == true })
+end
+
 return util

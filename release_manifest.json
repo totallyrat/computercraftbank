@@ -1,52 +1,50 @@
 {
   "schema": 1,
   "channel": "stable",
-  "version": "15.0.0",
-  "label": "FoxyOS 15",
+  "version": "15.1.0",
+  "label": "FoxyOS 15.1",
   "notes": "FoxyOS automatic internet release",
   "changes": [
-    "Shop Websites.",
-    "Notices are banners.",
-    "Foxy opens straight away.",
-    "A new App Browser.",
-    "Beta apps."
+    "Beta Updates everywhere.",
+    "The Bank too, with its Vault.",
+    "Leaving keeps the beta."
   ],
   "files": [
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 209907,
-      "checksum": "a01f2355"
+      "size": 210699,
+      "checksum": "98f8f8c3"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
       "size": 226536,
-      "checksum": "b4df0e20"
+      "checksum": "9c48eb81"
     },
     {
       "path": "service_kiosk.lua",
       "source": "dist/service_kiosk.lua",
       "size": 8140,
-      "checksum": "e48c4444"
+      "checksum": "03ee52e5"
     },
     {
       "path": "event_kiosk.lua",
       "source": "dist/event_kiosk.lua",
-      "size": 35587,
-      "checksum": "1214ef85"
+      "size": 36089,
+      "checksum": "06858921"
     },
     {
       "path": "tax_controller.lua",
       "source": "dist/tax_controller.lua",
       "size": 1742,
-      "checksum": "bdf54e94"
+      "checksum": "68d3b915"
     },
     {
       "path": "startup.lua",
       "source": "dist/startup.lua",
       "size": 49501,
-      "checksum": "7476a8b0"
+      "checksum": "8b0751b1"
     },
     {
       "path": "launcher.lua",
@@ -57,20 +55,20 @@
     {
       "path": "config.lua",
       "source": "dist/config.lua",
-      "size": 8242,
-      "checksum": "800959b4"
+      "size": 8244,
+      "checksum": "a98545d4"
     },
     {
       "path": "lib/net.lua",
       "source": "dist/lib/net.lua",
-      "size": 9712,
-      "checksum": "7a9f1b99"
+      "size": 10431,
+      "checksum": "c740f554"
     },
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 49581,
-      "checksum": "2ab779f3"
+      "size": 52122,
+      "checksum": "bdf993b8"
     },
     {
       "path": "lib/update.lua",
@@ -81,42 +79,42 @@
     {
       "path": "lib/util.lua",
       "source": "dist/lib/util.lua",
-      "size": 9441,
-      "checksum": "4c2cb468"
+      "size": 9927,
+      "checksum": "112e0f44"
     }
   ],
   "extra_files": [
     {
       "path": "border_controller.lua",
       "source": "dist/border_controller.lua",
-      "size": 22693,
-      "checksum": "e74a37e2"
+      "size": 23190,
+      "checksum": "16765c34"
     },
     {
       "path": "ccg.lua",
       "source": "dist/ccg.lua",
-      "size": 67711,
-      "checksum": "dedccc59"
+      "size": 68215,
+      "checksum": "e0e94643"
     }
   ],
   "optional_files": [
     {
       "path": "gps_anchor.lua",
       "source": "dist/gps_anchor.lua",
-      "size": 5147,
-      "checksum": "362c8c58"
+      "size": 5181,
+      "checksum": "c216c9bc"
     },
     {
       "path": "admin_terminal.lua",
       "source": "dist/admin_terminal.lua",
-      "size": 40715,
-      "checksum": "c889cdff"
+      "size": 40930,
+      "checksum": "2e634cc3"
     },
     {
       "path": "app_server.lua",
       "source": "dist/app_server.lua",
-      "size": 20442,
-      "checksum": "965bf87f"
+      "size": 20476,
+      "checksum": "d7265663"
     },
     {
       "path": "foxy.lua",
@@ -127,8 +125,8 @@
     {
       "path": "bank_app_server.lua",
       "source": "dist/bank_app_server.lua",
-      "size": 40845,
-      "checksum": "969a39f3"
+      "size": 40879,
+      "checksum": "0b9f3137"
     },
     {
       "path": "buckapp.lua",
@@ -139,8 +137,8 @@
     {
       "path": "ccg_server.lua",
       "source": "dist/ccg_server.lua",
-      "size": 32318,
-      "checksum": "4b2c8b55"
+      "size": 32352,
+      "checksum": "e6231619"
     },
     {
       "path": "revolution.lua",
@@ -152,13 +150,13 @@
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
       "size": 171484,
-      "checksum": "7b0ccfea"
+      "checksum": "60c0ed8b"
     },
     {
       "path": "internet_server.lua",
       "source": "dist/internet_server.lua",
-      "size": 12613,
-      "checksum": "f0521718"
+      "size": 12647,
+      "checksum": "69330fbc"
     },
     {
       "path": "wc.lua",
@@ -175,8 +173,8 @@
     {
       "path": "delivery_terminal.lua",
       "source": "dist/delivery_terminal.lua",
-      "size": 67028,
-      "checksum": "841c4fb6"
+      "size": 67505,
+      "checksum": "93c6f29a"
     },
     {
       "path": "shop.lua",

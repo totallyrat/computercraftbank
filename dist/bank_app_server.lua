@@ -16,7 +16,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- is public, its accounts are opened by whoever wants one, and there is
 -- nothing here that could compromise the Foxy ledger.
 
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -957,6 +957,7 @@ end
 -- 12.0: Status, Activity and Server tabs, as on every server.
 local function dashboardLoop()
     ui.serverTabs({
+        version = config.version,
         target = target, title = state.bank_name or "3RD PARTY BANK",
         subtitle = function()
             return "Bank " .. tostring(state.bank_code) .. "  v" .. PROGRAM_VERSION

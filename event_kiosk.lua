@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -720,10 +720,15 @@ local function dashboard()
             -- behind More. A short screen gets one-row buttons.
             local bottom = ui.contentBottom(target)
             local roomy = bottom >= 16
-            scene:button("create", 2, roomy and 11 or bottom - 2, width - 2,
-                roomy and 3 or 1, "CREATE EVENT",
+            -- FoxyOS 15.1: Beta Updates, beside Create.
+            local betaOn = util.betaJoined(ROOT)
+            local createY, createH = roomy and 11 or bottom - 2, roomy and 3 or 1
+            scene:button("create", 2, createY, width - 11, createH, "CREATE EVENT",
                 { background = ui.theme.accent, foreground = ui.theme.accentInk,
                   shadow = roomy })
+            scene:button("beta", width - 8, createY, 8, createH, "BETA",
+                { background = betaOn and ui.theme.success or ui.theme.panel,
+                  foreground = betaOn and colors.black or ui.theme.ink })
             local third = math.floor((width - 4) / 3)
             local rowY, rowH = roomy and bottom - 1 or bottom, roomy and 2 or 1
             scene:button("color", 2, rowY, third, rowH, "COLOUR",
@@ -749,6 +754,8 @@ local function dashboard()
                 refresh = true
             elseif action == "color" then
                 ui.pickMainColor(target, ROOT, "Kiosk colour")
+            elseif action == "beta" then
+                ui.betaUpdates(target, ROOT, { kind = "kiosk", version = config.version })
             elseif action == "logout" then
                 if ui.confirm(target, "LOG OUT", "End organizer session?", "LOG OUT",
                     "BACK") then

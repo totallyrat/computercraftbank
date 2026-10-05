@@ -195,6 +195,11 @@ function kiosk.run(options)
         seen.picked = (seen.picked or 0) + 1
         return "orange"
     end
+    -- FoxyOS 15.1: Beta Updates, drawn for real in host_beta_screen_test.lua.
+    ui.betaUpdates = function(_, root, spec)
+        draw("beta:" .. tostring(spec and spec.kind))
+        seen.beta = { root = root, spec = spec }
+    end
     function ui.moreMenu(_, spec)
         draw("more:" .. tostring(spec and spec.title))
         seen.more[#seen.more + 1] = spec

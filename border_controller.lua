@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -425,6 +425,12 @@ local function dashboard()
     local function pickColour()
         if ownerUnlock("OWNER PIN") then ui.pickMainColor(target, ROOT, "Border colour") end
     end
+    -- FoxyOS 15.1: Beta Updates, the owner's call like the colour.
+    local function betaUpdates()
+        if ownerUnlock("OWNER PIN") then
+            ui.betaUpdates(target, ROOT, { kind = "controller", version = config.version })
+        end
+    end
     local function close()
         if ownerUnlock("OWNER PIN TO CLOSE") then running = false end
     end
@@ -504,6 +510,8 @@ local function dashboard()
             local entries = {
                 { "setup", "CHANGE COUNTRY", ui.theme.panel },
                 { "color", "MAIN COLOUR", ui.theme.accent },
+                { "beta", util.betaJoined(ROOT) and "BETA UPDATES: ON" or "BETA UPDATES",
+                  util.betaJoined(ROOT) and ui.theme.success or ui.theme.panel },
                 { "stop", "CLOSE", ui.theme.danger },
             }
             for index, entry in ipairs(entries) do
@@ -521,6 +529,8 @@ local function dashboard()
                 changeTerritory()
             elseif action == "color" then
                 pickColour()
+            elseif action == "beta" then
+                betaUpdates()
             elseif action == "stop" then
                 close()
             end

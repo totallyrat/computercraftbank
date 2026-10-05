@@ -83,7 +83,8 @@ textutils = { unserializeJSON = function() return current end,
     serialize = function(value)
         local parts = {}
         for key, item in pairs(value) do
-            parts[#parts + 1] = tostring(key) .. " = " .. string.format("%q", tostring(item))
+            parts[#parts + 1] = tostring(key) .. " = " .. (type(item) == "string"
+                and string.format("%q", item) or tostring(item))
         end
         table.sort(parts)
         return "{ " .. table.concat(parts, ", ") .. " }"
@@ -114,7 +115,7 @@ http = {
 }
 local realLoadfile = loadfile
 loadfile = function(path)
-    if path == "/pumpe/.self_update/config.lua" then
+    if tostring(path):match("/%.self_update/config%.lua$") then
         local text = files[path]
         local version = text and text:match('version = "([%d%.]+)"') or "0.0.0"
         return function() return { version = version } end
@@ -241,5 +242,71 @@ none = net.autoUpdate(config, "pumpe", "/pumpe", watching, {
 })
 assert(none == false and not pinged and depotRuns == 0,
     "a beta nobody asked for is not a reason to go to the Bank")
+
+-- FoxyOS 15.1: every device -----------------------------------------------------------
+-- Signing up is a file beside the device's programs. A device signed up
+-- looks at the beta after the release and takes one by itself, the way it
+-- takes a release; one that is not never reads the beta at all.
+manifests["release_manifest.json"] = saved
+manifests["release_manifest.json"].channel = "stable"
+manifests["beta/release_manifest.json"].channel = "beta"
+local writeOpen = fs.open
+fs.open = function(path, mode)
+    if mode == "r" then
+        if files[path] == nil then return nil end
+        local body = files[path]
+        return { readAll = function() return body end, close = function() end }
+    end
+    return writeOpen(path, mode)
+end
+textutils.unserialize = function(body)
+    local built = load("return " .. tostring(body))
+    return built and built()
+end
+local util = require("lib.util")
+files, rebooted, depotRuns = {}, 0, 0
+assert(not util.betaJoined("/kiosk"), "nobody is signed up to start with")
+util.setBetaJoined("/kiosk", true)
+assert(util.betaJoined("/kiosk") and files["/kiosk/beta_updates.dat"], "signed up, on disk")
+local function betaReads()
+    local count = 0
+    for _, source in ipairs(requested) do
+        if source == "beta/release_manifest.json" then count = count + 1 end
+    end
+    return count
+end
+-- A kiosk with the whole release on it, so there is nothing to repair.
+for _, path in ipairs(update.rolePaths("event")) do
+    files["/kiosk/" .. update.installPath(path)] = "FoxyOS 14.1 " .. path
+end
+local readsBefore = betaReads()
+config.beta_manifest_url = BETA
+local took = net.autoUpdate(config, "event", "/kiosk", nil, { force = true })
+assert(took and rebooted == 1, "a signed-up kiosk takes the beta by itself")
+assert(files["/kiosk/event_kiosk.lua"] == "FoxyOS 15 Beta event_kiosk.lua",
+    "the beta's own program")
+assert(betaReads() == readsBefore + 1)
+util.setBetaJoined("/kiosk", false)
+assert(not util.betaJoined("/kiosk"), "and leaving is remembered too")
+readsBefore = betaReads()
+for _, path in ipairs(update.rolePaths("event")) do
+    files["/elsewhere/" .. update.installPath(path)] = "FoxyOS 14.1 " .. path
+end
+local quiet = net.autoUpdate(config, "event", "/elsewhere", nil, { force = true })
+assert(not quiet and betaReads() == readsBefore and rebooted == 1,
+    "a device that did not sign up never even reads the beta")
+assert(depotRuns == 0)
+
+-- A Bank on a beta is not a release to follow: a Pocket that cannot read
+-- the manifest asks the Bank what it runs, and a beta there is no answer.
+manifests["release_manifest.json"] = nil
+local askedAboutIt = false
+none = net.autoUpdate(config, "pumpe", "/pumpe", { request = function()
+    return { version = "14.5.0" } end }, {
+    force = true, confirm = function() askedAboutIt = true return true end,
+})
+assert(none == false and not askedAboutIt and depotRuns == 0,
+    "the Bank's beta is not offered to a Pocket that did not sign up")
+manifests["release_manifest.json"] = saved
 
 print("host_beta_channel_test: OK")

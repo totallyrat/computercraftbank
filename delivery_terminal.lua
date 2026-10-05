@@ -30,7 +30,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.0.0"
+local PROGRAM_VERSION = "15.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1489,6 +1489,11 @@ local function setupPage(spec)
             scene:button("setup", 2, 10, width - 2, 3, "SET UP A PICKUP POINT",
                 { background = ui.theme.accent, foreground = ui.theme.accentInk })
         end
+        -- FoxyOS 15.1: Beta Updates, on a line of its own.
+        local betaOn = util.betaJoined(ROOT)
+        scene:button("beta", 2, 13, width - 2, 1, betaOn and "BETA UPDATES: ON"
+            or "BETA UPDATES", { background = betaOn and ui.theme.success
+                or ui.theme.panel, foreground = betaOn and colors.black or ui.theme.ink })
         -- The terminal itself: three across on a computer, one under the
         -- other on anything narrower.
         local controls = { { "link", "LINK COMPANY", ui.theme.panel },
@@ -1519,6 +1524,8 @@ local function setupPage(spec)
             linkCompany()
         elseif action == "color" then
             ui.pickMainColor(target, ROOT, "Terminal colour")
+        elseif action == "beta" then
+            ui.betaUpdates(target, ROOT, { kind = "terminal", version = config.version })
         elseif action == "close" and ui.confirm(target, "CLOSE",
             "Stop the Delivery Terminal?", "CLOSE", "BACK") then
             running = false
