@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "14.1.0"
+local PROGRAM_VERSION = "14.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -344,7 +344,9 @@ do
     local BUILT_IN = { friends = "ripple", tickets = "tear", myid = "scan",
         ccg = "arcade", subs = "wave", reminders = "shake", quick = "bolt",
         browser = "tiles", settings = "shutter" }
-    local SHIPPED = { FOXY = "sweep", MAIL = "envelope", SHOP = "awning",
+    -- FoxyOS 15: Foxy has none. It opens straight onto the Bank, whose
+    -- card drops in by itself.
+    local SHIPPED = { FOXY = "none", MAIL = "envelope", SHOP = "awning",
         COMPANY = "blinds", NET = "radar", WC = "typewriter", BUCK = "coin",
         REVO = "spin", INVT = "unfold" }
     local OTHERS = { "diamond", "iris", "doors", "rise", "diagonal" }
@@ -360,6 +362,7 @@ do
     end
 
     function opening.play(id, app)
+        if opening.style(id) == "none" then return end
         local width, height = target.getSize()
         local color = app.color or ui.theme.accentDark
         local edge = color == colors.white and colors.lightGray or colors.white
@@ -5547,6 +5550,10 @@ function webpage.browse(domain)
             "Turn it on in Settings", 1.4)
         return
     end
+    -- FoxyOS 15: a .shop address is a store, and opens as the store itself
+    -- (webpage.shop, beside the App Browser). No website can be called this:
+    -- every other domain is one word with no dot in it.
+    if domain:match("%.shop$") then return webpage.shop(domain) end
     webClient = webClient or net.client({
         protocol = config.web_protocol or "PUMPE_WEB_V1",
         hostname = config.web_hostname or "INTERNET_SERVER",
@@ -5586,7 +5593,15 @@ function webpage.browse(domain)
 end
 
 local function runInstalledApp(entry, wantedAction)
-    local loader, loadError = loadfile(appPath(entry.app_id))
+    -- FoxyOS 15: a .shop visit brings the store's code with it, held in
+    -- memory for the visit rather than written to this Pocket.
+    local loader, loadError
+    if type(entry.body) == "string" then
+        loader, loadError = load(entry.body, "@" .. tostring(entry.domain
+            or entry.app_id), "t")
+    else
+        loader, loadError = loadfile(appPath(entry.app_id))
+    end
     if not loader then
         ui.message(target, "error", entry.name .. " is damaged",
             "Reinstall it from the App Browser", 2)
@@ -5782,6 +5797,10 @@ local function runInstalledApp(entry, wantedAction)
         -- opens normally, which is what every app did before 10.0.
         action = function() return wantedAction end,
         app_id = entry.app_id,
+        -- FoxyOS 15: the store a .shop address opened, which Shop shows on
+        -- its own, and the address itself.
+        shop_store = entry.shop_store,
+        domain = entry.domain,
     })
     if not ok then
         ui.message(target, "error", entry.name .. " stopped",
@@ -6029,6 +6048,10 @@ local function installApp(app)
             "Remove something first", 1.8)
         return false
     end
+    -- On a beta, an app it ships comes from the beta, not the App Server.
+    if beta.isBeta(config.version) and beta.APP_FILES[app.app_id] then
+        pcall(beta.syncApps)
+    end
     -- The tick draws itself, one stroke at a time.
     ui.clear(target)
     ui.header(target, "Installed", app.name, util.formatClock())
@@ -6110,13 +6133,323 @@ local function appDetail(app, mine)
     end
 end
 
+-- FoxyOS 15: Shop Websites, and what became of Shop Apps ------------------------
+-- name.shop is a store's address on the web. The Bank says which store is
+-- at it, and the store opens as itself: the Shop app, locked to that store.
+-- A Pocket with Shop installed runs its own copy; one without fetches it
+-- from the App Server for this visit, holds it in memory and keeps nothing,
+-- where a Shop App was about 27 KB on every Pocket that had one.
+function webpage.shop(domain)
+    local found, err, code = request("SHOP_SITE", { domain = domain }, true)
+    if not found then
+        ui.message(target, "error", code == "NO_SUCH_SITE" and "No such shop"
+            or "Cannot reach it", err or "The Bank did not answer", 2)
+        return
+    end
+    if not found.open then
+        ui.message(target, "error", ui.truncate(tostring(found.company_name
+            or domain), 20) .. " is closed", "Come back soon", 2)
+        return
+    end
+    local body
+    if installedApp("SHOP") then body = util.readFile(appPath("SHOP")) end
+    if not body then
+        local info = storeRequest("APP_INFO", { app_id = "SHOP" }, true)
+        body = info and info.app and fetchApp(info.app)
+    end
+    if not body then
+        ui.message(target, "error", "Cannot open it",
+            "No App Server is running", 2)
+        return
+    end
+    opening.play("ext:SHOP", { color = colors[tostring(found.color)]
+        or colors.orange, glyph = "$", name = found.domain })
+    runInstalledApp({ app_id = "SHOP", name = tostring(found.company_name
+        or domain), body = body, shop_store = found.company_id,
+        domain = found.domain })
+end
+
+-- Shop Apps became Shop Websites. One still on this Pocket comes off it,
+-- and its store's address, if the store has one, is saved in the Internet
+-- app instead.
+function webpage.retireShopApps()
+    local retired, saved = 0, {}
+    for index = #installed.list, 1, -1 do
+        local entry = installed.list[index]
+        local companyId = tostring(entry.app_id):match("^SA%-(.+)$")
+        if companyId then
+            local site = not offline() and request("SHOP_SITE",
+                { company_id = companyId }, true) or nil
+            removeApp(entry.app_id)
+            retired = retired + 1
+            if site and site.domain then saved[#saved + 1] = site.domain end
+        end
+    end
+    if retired == 0 then return end
+    if #saved > 0 then
+        local internet = appStoreLoad("NET")
+        internet.bookmarks = type(internet.bookmarks) == "table"
+            and internet.bookmarks or {}
+        for _, domain in ipairs(saved) do
+            local known = false
+            for _, mark in ipairs(internet.bookmarks) do
+                if mark == domain then known = true end
+            end
+            if not known then table.insert(internet.bookmarks, 1, domain) end
+        end
+        appStoreSave("NET", internet)
+    end
+    ui.message(target, "success", "Shop Apps are websites now", #saved > 0
+        and (table.concat(saved, ", ") .. " saved in Internet")
+        or "Find the stores in Shop", 2.4)
+end
+
+-- On a beta, the apps FoxyOS ships come from the beta too. The App Server
+-- runs the release and hands out the release's apps, so a Pocket on a beta
+-- fetches the beta's own copies of the ones it has, and keeps them out of
+-- the App Server's updates until it is on a release again.
+beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
+    SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
+    BUCK = "buckapp.lua", REVO = "revolution.lua" }
+
+function beta.syncApps()
+    if not beta.isBeta(config.version) or offline() then return end
+    local okLib, update = pcall(require, "lib.update")
+    local url = tostring(config.beta_manifest_url or "")
+    if not okLib or type(update) ~= "table" or url == "" then return end
+    local manifest = update.fetchManifest(url, update.PUBLISHED_FILES, "beta",
+        update.PUBLISHED_OPTIONAL)
+    -- Only the beta this Pocket is on: a newer one is an update to take
+    -- first, and its apps come with it.
+    if not manifest or manifest.version ~= config.version then return end
+    local byPath = {}
+    for _, file in ipairs(manifest.files) do byPath[file.path] = file end
+    local changed = false
+    for _, entry in ipairs(installed.list) do
+        local file = byPath[beta.APP_FILES[entry.app_id] or ""]
+        if file and (entry.beta ~= config.version or entry.beta_sum ~= file.checksum) then
+            local body = update.fetchFile(url, file, manifest.version)
+            if body and pcall(util.writeFile, appPath(entry.app_id), body) then
+                entry.beta, entry.beta_sum = config.version, file.checksum
+                entry.actions = declaredActions(entry.app_id)
+                changed = true
+            end
+        end
+    end
+    if changed then saveApps() end
+end
+
+-- The App Browser, FoxyOS 15 -------------------------------------------------------
+-- A front page: the newest apps and the ones being downloaded most this
+-- week, each in a carousel that turns by itself, and Explore for every app
+-- there is, in a list with search. Shop Apps are not here any more: stores
+-- are websites now.
+
 -- `wanted` is a search: "search" opens the box, anything else is the term
 -- itself, which is how a systemwide search hands its query over.
 appBrowser = function(wanted)
     -- Only a developer sees the delete button, and only on their own apps.
     local mine = request("DEV_MINE", {}, true)
-    local page, reload = 1, true
-    local everything, apps = {}, {}
+    local everything, reload = {}, true
+    local latest, trending = {}, {}
+    local turn = { latest = 1, trending = 1 }
+
+    -- A colour per app, the same every time it is drawn.
+    local PALETTE = { colors.orange, colors.purple, colors.lime, colors.pink,
+        colors.lightBlue, colors.yellow }
+    local function appColor(app)
+        local sum = 0
+        for index = 1, #tostring(app.app_id) do
+            sum = sum + tostring(app.app_id):byte(index) * index
+        end
+        return PALETTE[sum % #PALETTE + 1]
+    end
+
+    local function fetchList()
+        local listed = storeRequest("APP_LIST", {}, true)
+        everything = {}
+        for _, app in ipairs(listed and listed.apps or {}) do
+            if not app.shop_app and not tostring(app.app_id):match("^SA%-") then
+                everything[#everything + 1] = app
+            end
+        end
+        latest, trending = {}, {}
+        for index, app in ipairs(everything) do
+            latest[index], trending[index] = app, app
+        end
+        table.sort(latest, function(a, b)
+            if (a.added or 0) ~= (b.added or 0) then
+                return (a.added or 0) > (b.added or 0)
+            end
+            return (a.published_day or 0) > (b.published_day or 0)
+        end)
+        table.sort(trending, function(a, b)
+            if (a.trending or 0) ~= (b.trending or 0) then
+                return (a.trending or 0) > (b.trending or 0)
+            end
+            return (a.downloads or 0) > (b.downloads or 0)
+        end)
+        while #latest > 5 do table.remove(latest) end
+        while #trending > 5 do table.remove(trending) end
+        turn.latest, turn.trending = 1, 1
+        reload = false
+    end
+
+    local function openDetail(app)
+        local developer = mine and mine.developer_id and account
+            and app.author == account.name and mine or nil
+        if appDetail(app, developer) then reload = true end
+    end
+
+    -- Every app, in a list. What the App Browser was before 15.
+    local function explore(filter)
+        local page = 1
+        while running do
+            if reload then fetchList() end
+            local apps = {}
+            local needle = filter and string.lower(filter) or nil
+            for _, app in ipairs(everything) do
+                if not needle
+                    or string.lower(tostring(app.name)):find(needle, 1, true)
+                    or string.lower(tostring(app.description or ""))
+                        :find(needle, 1, true) then
+                    apps[#apps + 1] = app
+                end
+            end
+            table.sort(apps, function(a, b)
+                return string.lower(tostring(a.name)) < string.lower(tostring(b.name))
+            end)
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Explore", filter and (#apps .. " found")
+                or (#apps .. " apps"), util.formatClock())
+            local scene = ui.scene(target)
+            scene:button("find", 2, 4, width - 2, 1,
+                ui.truncate(filter and ("Q  " .. filter) or "Q  Search apps",
+                    width - 4),
+                { background = filter and ui.theme.accentDark or ui.theme.panel })
+            local shown, actualPage, pages = util.page(apps, page, 4)
+            page = actualPage
+            if #apps == 0 then
+                ui.center(target, 9, filter and "Nothing matches"
+                    or "Nothing published yet", ui.theme.ink)
+                ui.wrappedText(target, 2, 11, filter
+                    and "No app here is called that. Try a shorter word."
+                    or "Apps come from the App Server. Publish one from"
+                        .. " Dev Mode.", width - 2, 4, ui.theme.muted)
+            end
+            for index, app in ipairs(shown) do
+                local here = installedApp(app.app_id)
+                local mark = here and (here.version == app.version and "*" or "^")
+                    or "+"
+                scene:button("open:" .. app.app_id, 2, 6 + (index - 1) * 3,
+                    width - 2, 2,
+                    mark .. " " .. ui.truncate(app.name, width - 6) .. "\n"
+                        .. ui.truncate(app.description or "", width - 6),
+                    { background = here and ui.theme.accentDark or ui.theme.panel })
+            end
+            scene:button("back", 1, height, 8, 1, "< Back",
+                { background = ui.theme.panel })
+            if pages > 1 then
+                scene:button("prev", width - 8, height, 3, 1, "<",
+                    { background = ui.theme.panel, disabled = page <= 1 })
+                scene:button("next", width - 4, height, 3, 1, ">",
+                    { background = ui.theme.panel, disabled = page >= pages })
+            end
+            local action = scene:wait({ tickRate = 5 })
+            if action == "back" or action == "__terminate" then return action end
+            if action == "find" then
+                local typed = ui.input(target, "Search apps", {
+                    hint = "Leave it empty to see all", initial = filter,
+                    maxLength = 20, allowSpace = true,
+                })
+                filter = typed and util.trim(typed) ~= "" and util.trim(typed)
+                    or nil
+                page = 1
+            elseif action == "prev" then page = page - 1
+            elseif action == "next" then page = page + 1
+            else
+                local id = action and action:match("^open:(.+)$")
+                for _, app in ipairs(apps) do
+                    if app.app_id == id then openDetail(app) break end
+                end
+            end
+        end
+    end
+
+    -- One card of a carousel, its left edge at `left` -- which may be off
+    -- either side while it slides -- and cut to the space between the edges.
+    local function card(app, left, top, chip)
+        local width = target.getSize()
+        local x1, x2, cw = 2, width - 1, width - 2
+        local function fill(x, y, w, h, color)
+            local a, b = math.max(x, x1), math.min(x + w - 1, x2)
+            if b >= a then ui.fill(target, a, y, b - a + 1, h, color) end
+        end
+        local function text(x, y, value, color)
+            value = tostring(value or "")
+            local a, b = math.max(x, x1), math.min(x + #value - 1, x2)
+            if b >= a then
+                ui.text(target, a, y, value:sub(a - x + 1, b - x + 1), color,
+                    ui.theme.panel)
+            end
+        end
+        fill(left, top, cw, 4, ui.theme.panel)
+        fill(left, top, 2, 4, appColor(app))
+        text(left + 3, top, ui.truncate(app.name, cw - 10), ui.theme.ink)
+        text(left + 3, top + 1, ui.truncate("by " .. tostring(app.author
+            or "Unknown"), cw - 4), ui.theme.muted)
+        text(left + 3, top + 2, ui.truncate(app.description or "", cw - 4),
+            ui.theme.muted)
+        local here = installedApp(app.app_id)
+        local state = here and (here.version == app.version and "Open" or "Update")
+            or "Get"
+        text(left + cw - #state - 1, top + 3, state, ui.theme.accent)
+        if chip then text(left + cw - #chip - 1, top, chip, ui.theme.warning) end
+    end
+
+    local function chipOf(kind, index)
+        return kind == "trending" and ("#" .. index) or (index == 1 and "NEW" or nil)
+    end
+
+    -- The next card pushes the last one out, the way a carousel turns.
+    local function slide(list, kind, top, from, to, direction)
+        local width = target.getSize()
+        local cw = width - 2
+        for frame = 1, 4 do
+            local shift = math.floor(cw * frame / 4)
+            card(list[from], 2 - shift * direction, top, chipOf(kind, from))
+            card(list[to], 2 + (cw - shift) * direction, top, chipOf(kind, to))
+            sleep(0.04)
+        end
+        card(list[to], 2, top, chipOf(kind, to))
+    end
+
+    local function carousel(scene, kind, label, list, top)
+        local width = target.getSize()
+        ui.text(target, 2, top, label, ui.theme.muted)
+        local at = turn[kind]
+        local dots = ""
+        for index = 1, #list do dots = dots .. (index == at and "o" or ".") end
+        ui.text(target, 3 + #label, top, dots, ui.theme.accent)
+        if #list > 1 then
+            scene:button(kind .. ":prev", width - 7, top, 3, 1, "<",
+                { background = ui.theme.panel })
+            scene:button(kind .. ":next", width - 3, top, 3, 1, ">",
+                { background = ui.theme.panel })
+        end
+        card(list[at], 2, top + 1, chipOf(kind, at))
+        scene:hotspot(kind .. ":open", 2, top + 1, width - 2, 4)
+    end
+
+    local function step(kind, list, top, direction)
+        if #list < 2 then return end
+        local from = turn[kind]
+        local to = (from - 1 + direction) % #list + 1
+        turn[kind] = to
+        slide(list, kind, top + 1, from, to, direction)
+    end
+
     local filter = wanted and wanted ~= "search" and util.trim(wanted) or nil
     if wanted == "search" then
         filter = ui.input(target, "Search apps",
@@ -6124,85 +6457,61 @@ appBrowser = function(wanted)
               allowSpace = true })
         filter = filter and util.trim(filter) ~= "" and util.trim(filter)
             or nil
+        if not filter then return end
     end
+    if filter then
+        if explore(filter) == "__terminate" then return end
+    end
+
+    local ticks = 0
     while running do
-        if reload then
-            local listed = storeRequest("APP_LIST", {}, true)
-            everything = listed and listed.apps or {}
-            reload = false
-        end
-        apps = {}
-        local needle = filter and string.lower(filter) or nil
-        for _, app in ipairs(everything) do
-            if not needle
-                or string.lower(tostring(app.name)):find(needle, 1, true)
-                or string.lower(tostring(app.description or ""))
-                    :find(needle, 1, true) then
-                apps[#apps + 1] = app
-            end
-        end
+        if reload then fetchList() end
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "App Browser", filter and (#apps .. " found")
-            or (#apps .. " available"), util.formatClock())
+        ui.header(target, "App Browser", #everything .. " apps",
+            util.formatClock())
         local scene = ui.scene(target)
-        scene:button("find", 2, 4, width - 2, 1,
-            ui.truncate(filter and ("Q  " .. filter) or "Q  Search apps",
-                width - 4),
-            { background = filter and ui.theme.accentDark or ui.theme.panel })
-        local shown, actualPage, pages = util.page(apps, page, 4)
-        page = actualPage
-        if #apps == 0 then
-            ui.center(target, 9, filter and "Nothing matches"
-                or "Nothing published yet", ui.theme.ink)
-            ui.wrappedText(target, 2, 11, filter
-                and "No app here is called that. Try a shorter word."
-                or "Apps come from the App Server. Ask a shopkeeper to"
-                    .. " publish one from Dev Mode.", width - 2, 4,
-                ui.theme.muted)
+        scene:button("find", 2, 4, width - 2, 1, "Q  Search apps",
+            { background = ui.theme.panel })
+        if #everything == 0 then
+            ui.center(target, 9, "Nothing published yet", ui.theme.ink)
+            ui.wrappedText(target, 2, 11, "Apps come from the App Server."
+                .. " Is one running?", width - 2, 3, ui.theme.muted)
+        else
+            carousel(scene, "latest", "LATEST", latest, 6)
+            carousel(scene, "trending", "TRENDING", trending, 12)
         end
-        for index, app in ipairs(shown) do
-            local here = installedApp(app.app_id)
-            local mark = here and (here.version == app.version and "*" or "^")
-                or "+"
-            scene:button("open:" .. app.app_id, 2, 6 + (index - 1) * 3,
-                width - 2, 2,
-                mark .. " " .. ui.truncate(app.name, width - 6) .. "\n"
-                    .. ui.truncate(app.description or "", width - 6),
-                { background = here and ui.theme.accentDark or ui.theme.panel })
-        end
+        scene:button("explore", 2, height - 2, width - 2, 2, "Explore",
+            { background = ui.theme.accent, foreground = ui.theme.accentInk,
+              shadow = true })
         scene:button("back", 1, height, 8, 1, "< Home",
             { background = ui.theme.panel })
-        scene:button("refresh", math.floor(width / 2) - 4, height, 9, 1,
-            "Refresh", { background = ui.theme.panel })
-        if pages > 1 then
-            scene:button("prev", width - 8, height, 3, 1, "<",
-                { background = ui.theme.panel, disabled = page <= 1 })
-            scene:button("next", width - 4, height, 3, 1, ">",
-                { background = ui.theme.panel, disabled = page >= pages })
-        end
-        local action = scene:wait({ tickRate = 5 })
-        if action == "back" or action == "__terminate" then return
+        scene:button("refresh", width - 8, height, 9, 1, "Refresh",
+            { background = ui.theme.panel })
+        local action = scene:wait({ tickRate = 3 })
+        if action == "back" or action == "__terminate" then return end
+        local kind, verb = (action or ""):match("^(%a+):(%a+)$")
+        if action == "__tick" then
+            -- The two take turns, so the page is never all moving at once.
+            ticks = ticks + 1
+            if ticks % 2 == 1 then step("latest", latest, 6, 1)
+            else step("trending", trending, 12, 1) end
         elseif action == "refresh" then reload = true
+        elseif action == "explore" then
+            if explore(nil) == "__terminate" then return end
         elseif action == "find" then
-            local typed = ui.input(target, "Search apps", {
-                hint = "Leave it empty to see all", initial = filter,
-                maxLength = 20, allowSpace = true,
-            })
-            filter = typed and util.trim(typed) ~= "" and util.trim(typed)
-                or nil
-            page = 1
-        elseif action == "prev" then page = page - 1
-        elseif action == "next" then page = page + 1
-        else
-            local id = action and action:match("^open:(.+)$")
-            for _, app in ipairs(apps) do
-                if app.app_id == id then
-                    local developer = mine and mine.developer_id
-                        and app.author == account.name and mine or nil
-                    if appDetail(app, developer) then reload = true end
-                    break
-                end
+            local typed = ui.input(target, "Search apps",
+                { hint = "What are you after?", maxLength = 20,
+                  allowSpace = true })
+            typed = typed and util.trim(typed) ~= "" and util.trim(typed) or nil
+            if typed and explore(typed) == "__terminate" then return end
+        elseif kind == "latest" or kind == "trending" then
+            local list = kind == "latest" and latest or trending
+            local top = kind == "latest" and 6 or 12
+            if verb == "open" and list[turn[kind]] then
+                openDetail(list[turn[kind]])
+            elseif verb == "next" then step(kind, list, top, 1)
+            elseif verb == "prev" then step(kind, list, top, -1)
             end
         end
     end
@@ -6598,9 +6907,17 @@ local function updateApps(force)
     -- on an App Server that is not there.
     local listed = storeRequest("APP_LIST", {}, true, 2)
     local updated = {}
+    local onBeta = beta.isBeta(config.version)
     for _, app in ipairs(listed and listed.apps or {}) do
         local here = installedApp(app.app_id)
-        if here and app.kind ~= "game" and here.version ~= app.version then
+        -- FoxyOS 15: an app this Pocket has from its beta stays the beta's
+        -- while it is on one, and goes back to the App Server's once it is
+        -- on a release. Shop Apps are websites now and are not fetched.
+        local pinned = here and here.beta and onBeta
+        local leftBeta = here and here.beta and not onBeta
+        if here and app.kind ~= "game" and not pinned
+            and not tostring(app.app_id):match("^SA%-")
+            and (here.version ~= app.version or leftBeta) then
             local width = target.getSize()
             ui.fill(target, 1, 1, width, 1, ui.theme.accent)
             ui.text(target, 2, 1, ui.truncate("Updating " .. tostring(app.name),
@@ -7132,6 +7449,9 @@ local function mainMenu()
     APPS.reminders.open = agenda.reminders
     APPS.quick.open = agenda.quick
     pcall(ensureFoxy)
+    -- FoxyOS 15: Shop Apps are websites now, and a beta brings its own apps.
+    pcall(webpage.retireShopApps)
+    pcall(beta.syncApps)
     refreshInstalledApps()
 
     local blink, tick, page, alertOffset = true, 0, 1, 0
@@ -7281,7 +7601,10 @@ pcall(webpage.sweep)
 if type(ui.pocketStart) == "function" then
     -- FoxyOS 14: three rounds of circles in the Pocket's colour, POCKET on
     -- black, then what it runs on.
-    ui.pocketStart(target, config.version)
+    -- A beta says which it is: "Powered by FoxyOS 15 Beta".
+    ui.pocketStart(target, beta.isBeta(config.version)
+        and (tostring(config.release_name or config.version):gsub("^FoxyOS ", ""))
+        or config.version)
 elseif type(ui.splash) == "function" then
     -- FoxyOS 12: the Pocket, on FoxyOS.
     ui.splash(target, "POCKET", ui.osLabel and ui.osLabel(config) or "FoxyOS",

@@ -1,5 +1,28 @@
 # Changelog
 
+## 14.5.0
+
+FoxyOS 15 Beta, for Pockets signed up to Beta Updates. Not tested yet: that
+is what the beta is for.
+
+**Shop Websites.** Shop Apps are websites now: a store's address is
+name.shop, set on its page in the Company app. Type it into Internet and
+the store opens as itself, held in memory for the visit instead of 27 KB
+on your Pocket. Shop Apps still on a Pocket come off it, their address
+saved in Internet.
+
+**Notices are banners.** A notice is a banner across the middle of the
+screen that opens from a line, green when something went right and red
+when it did not.
+
+**Foxy opens straight away.** No intro. The Foxy Bank card drops in from
+the top in two seconds, once each time Foxy is opened.
+
+**A new App Browser.** The newest apps and this week's most downloaded,
+in two carousels that turn by themselves. Explore lists every app.
+
+**Beta apps.** On a beta, the apps FoxyOS ships come from the beta too.
+
 ## 14.1.0
 
 FoxyOS 14.1, a quick one: Beta Updates, and the Bank and App Server getting

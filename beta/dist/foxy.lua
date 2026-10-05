@@ -1,0 +1,1182 @@
+-- PUMPE APP: Foxy
+-- PUMPE APP ACTION: bank | Foxy Bank | Your balance and accounts
+-- PUMPE APP ACTION: cash | Foxy Cash | Send money to a friend
+-- PUMPE APP ACTION: wallet | Bet Wallet | Game money
+-- PUMPE APP ACTION: activity | Activity | What you have spent
+-- PUMPE APP ACTION: id | Account ID | Your sixteen digits
+-- PUMPE APP ACTION: security | Foxy Security | Confirm it is you at a pickup
+
+
+
+
+
+
+
+return function(api)
+local ui, util, target = api.ui, api.util, api.target
+local money, request = api.money, api.request
+local colors = api.colors
+
+local FOX = colors.orange
+local INK = colors.white
+local TABS = { { id = "bank", label = "Bank" },
+{ id = "security", label = "Security", short = "Safe" },
+{ id = "account", label = "Account", short = "Me" } }
+
+local function running()
+return api.running()
+end
+
+
+
+
+
+
+local function progressPulse(row, label)
+local width = target.getSize()
+local barWidth = width - 6
+for step = 1, barWidth do
+ui.fill(target, 4, row, barWidth, 1, ui.theme.panel)
+ui.fill(target, 4, row, step, 1, FOX)
+ui.center(target, row - 2, label, INK, ui.theme.background)
+sleep(0.012)
+end
+end
+
+
+
+
+
+local function cardNumber(overview)
+local personal = tostring(overview.personal_number or ""):gsub("%D", "")
+local account = tostring(overview.card_id or ""):gsub("%D", "")
+local raw = "40" .. personal .. account:sub(-5)
+while #raw < 12 do raw = raw .. "0" end
+raw = raw:sub(1, 12)
+return table.concat({
+raw:sub(1, 4), raw:sub(5, 8), raw:sub(9, 12),
+}, " ")
+end
+
+
+
+local function drawCard(overview, y, clip)
+local width = target.getSize()
+local cardWidth = width - 2
+clip = clip or 1
+local top = math.max(y, clip)
+if y + 5 >= top then
+ui.fill(target, 2, top, cardWidth, y + 6 - top, colors.brown)
+end
+local function at(row, x, text, color)
+if row >= clip then ui.text(target, x, row, text, color, colors.brown) end
+end
+at(y, 3, "FOXY", FOX)
+at(y, cardWidth - 2, "[]", colors.yellow)
+at(y + 2, 3, cardNumber(overview), INK)
+at(y + 4, 3, ui.truncate(string.upper(overview.name or ""), cardWidth - 8), INK)
+at(y + 4, cardWidth - 4, ui.truncate(tostring(overview.personal_number or ""), 5),
+ui.theme.muted)
+end
+
+
+
+
+local cardDropped = false
+local function dropCard(overview, rest)
+local width = target.getSize()
+local frames = 40
+for frame = 1, frames do
+local t = frame / frames
+local fall
+if t < 0.7 then
+fall = 1 - (1 - t / 0.7) ^ 3
+else
+fall = 1 + math.sin((t - 0.7) / 0.3 * math.pi) * 0.15
+end
+local y = math.floor(rest - 6 + 6 * fall + 0.5)
+ui.fill(target, 1, rest, width, 7, ui.theme.background)
+drawCard(overview, y, rest)
+sleep(0.05)
+end
+ui.fill(target, 1, rest, width, 7, ui.theme.background)
+drawCard(overview, rest)
+cardDropped = true
+end
+
+
+
+local function amountPrompt(title, hint)
+local raw = ui.input(target, title, {
+hint = hint, mode = "number", maxLength = 12,
+})
+if not raw then return nil end
+local amount = tonumber(raw)
+if not amount or amount <= 0 then
+ui.message(target, "error", "Not an amount", "Try again", 1)
+return nil
+end
+return amount
+end
+
+local function pickAccount(title, options)
+local width, height = target.getSize()
+local page = 1
+while running() do
+local shown, actualPage, pages = util.page(options, page, 4)
+page = actualPage
+ui.clear(target)
+ui.header(target, title, "Where to?", util.formatClock())
+local scene = ui.scene(target)
+for index, option in ipairs(shown) do
+scene:button("pick:" .. option.id, 2, 4 + (index - 1) * 3,
+width - 2, 2,
+option.name .. "\n" .. money(option.balance),
+{ background = option.id == "main" and FOX
+or ui.theme.panel,
+foreground = option.id == "main" and colors.black
+or INK })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+if pages > 1 then
+scene:button("prev", width - 11, height, 4, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.text(target, width - 6, height, page .. "/" .. pages,
+ui.theme.muted)
+scene:button("next", width - 2, height, 2, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return nil
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local id = action and action:match("^pick:(.+)$")
+if id then return id end
+end
+end
+end
+
+local function moveMoney(overview, fromId, fromName, available)
+local options = {}
+if fromId ~= "main" then
+options[#options + 1] = { id = "main", name = "Main account",
+balance = overview.balance }
+end
+for _, pot in ipairs(overview.pots) do
+if pot.pot_id ~= fromId then
+options[#options + 1] = { id = pot.pot_id, name = pot.name,
+balance = pot.balance }
+end
+end
+if #options == 0 then
+ui.message(target, "info", "Nowhere to move it",
+"Make another account first", 1.4)
+return false
+end
+local toId = pickAccount("Move from " .. fromName, options)
+if not toId then return false end
+local amount = amountPrompt("How much?",
+money(available) .. " available")
+if not amount then return false end
+local moved, err = request("FOXY_POT_MOVE", {
+from_pot = fromId, to_pot = toId, amount = amount,
+}, true)
+if not moved then
+ui.message(target, "error", "Could not move it", err, 1.6)
+return false
+end
+ui.clear(target)
+ui.header(target, "Moving", fromName, util.formatClock())
+progressPulse(11, money(amount))
+ui.message(target, "success", "Moved " .. money(amount),
+fromName .. " to your other account", 1.2)
+return true
+end
+
+local function potScreen(overview, pot)
+while running() do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, pot.name, "Foxy account", util.formatClock())
+ui.card(target, 2, 5, width - 2, 5, FOX)
+ui.text(target, 4, 6, "BALANCE", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 8, money(pot.balance), INK, ui.theme.panel,
+width - 6)
+local scene = ui.scene(target)
+scene:button("move", 2, 11, width - 2, 3, "Move money",
+{ background = FOX, foreground = colors.black, shadow = true })
+scene:button("close", 2, 15, width - 2, 2, "Close this account",
+{ background = ui.theme.panel })
+scene:button("back", 1, height, 8, 1, "< Bank",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "move" then
+if moveMoney(overview, pot.pot_id, pot.name, pot.balance) then
+return
+end
+elseif action == "close" then
+if ui.confirm(target, "Close account",
+money(pot.balance) .. " goes back to Main.",
+"Close", "Keep") then
+request("FOXY_POT_CLOSE", { pot_id = pot.pot_id }, true)
+return
+end
+end
+end
+end
+
+
+
+local function foxyCash(overview)
+local friends = request("FRIEND_OVERVIEW", {}, true)
+local list = friends and friends.friends or {}
+if #list == 0 then
+ui.clear(target)
+ui.header(target, "Foxy Cash", "Friends only", util.formatClock())
+local width, height = target.getSize()
+ui.card(target, 2, 5, width - 2, 8, FOX)
+ui.wrappedText(target, 4, 6,
+"Foxy Cash only reaches your friends. Add someone in Friends"
+.. " first, then send instantly.",
+width - 6, 5, ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("back", 1, height, 10, 1, "< Bank",
+{ background = ui.theme.panel })
+scene:wait()
+return
+end
+local options = {}
+for _, friend in ipairs(list) do
+options[#options + 1] = { id = friend.account_id,
+name = friend.name, balance = 0 }
+end
+local width, height = target.getSize()
+local page = 1
+local chosen
+while running() and not chosen do
+local shown, actualPage, pages = util.page(options, page, 4)
+page = actualPage
+ui.clear(target)
+ui.header(target, "Foxy Cash", "Send to a friend",
+util.formatClock())
+local scene = ui.scene(target)
+for index, option in ipairs(shown) do
+scene:button("pick:" .. option.id, 2, 4 + (index - 1) * 3,
+width - 2, 2, option.name,
+{ background = ui.theme.panel })
+end
+scene:button("back", 1, height, 8, 1, "< Bank",
+{ background = ui.theme.panel })
+if pages > 1 then
+scene:button("prev", width - 11, height, 4, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.text(target, width - 6, height, page .. "/" .. pages,
+ui.theme.muted)
+scene:button("next", width - 2, height, 2, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else chosen = action and action:match("^pick:(.+)$") end
+end
+if not chosen then return end
+local amount = amountPrompt("Send how much?", "No daily limit")
+if not amount then return end
+local quote, quoteError = request("FOXY_CASH_QUOTE",
+{ account_id = chosen, amount = amount }, true)
+if not quote then
+ui.message(target, "error", "Cannot send that", quoteError, 1.8)
+return
+end
+ui.clear(target)
+ui.header(target, "Foxy Cash", quote.recipient, util.formatClock())
+ui.card(target, 2, 5, width - 2, 8, FOX)
+ui.text(target, 4, 6, "THEY GET", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 7, money(quote.amount), INK, ui.theme.panel,
+width - 6)
+ui.text(target, 4, 9, "FEE  " .. money(quote.fee) .. "  ("
+.. math.floor(quote.fee_rate * 100) .. "%)",
+ui.theme.muted, ui.theme.panel, width - 6)
+ui.text(target, 4, 11, "YOU PAY  " .. money(quote.total),
+INK, ui.theme.panel, width - 6)
+local scene = ui.scene(target)
+scene:button("send", 2, 14, width - 2, 3, "Send instantly",
+{ background = FOX, foreground = colors.black, shadow = true })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+if scene:wait() ~= "send" then return end
+local pin = ui.pin(target, "Confirm Foxy Cash", true)
+if not pin then return end
+local sent, sendError = request("FOXY_CASH_SEND",
+{ account_id = chosen, amount = amount, pin = pin }, true)
+if not sent then
+ui.message(target, "error", "Not sent", sendError, 1.8)
+return
+end
+
+ui.clear(target)
+ui.header(target, "Foxy Cash", quote.recipient, util.formatClock())
+for step = 1, width - 4 do
+ui.fill(target, 2, 10, width - 2, 1, ui.theme.background)
+ui.text(target, 1 + step, 10, "$", FOX, ui.theme.background)
+sleep(0.015)
+end
+ui.message(target, "success", "Sent " .. money(sent.amount),
+quote.recipient .. " has it now", 1.4)
+end
+
+
+
+
+
+
+
+
+
+local function bankFooter(scene, page, pages)
+local width, height = scene.width, scene.height
+scene:button("back", 1, height, 8, 1, "< Bank",
+{ background = ui.theme.panel })
+if pages and pages > 1 then
+scene:button("prev", width - 15, height, 4, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.text(scene.target, width - 10, height,
+page .. "/" .. pages, ui.theme.muted)
+scene:button("next", width - 4, height, 4, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+end
+
+local function heldReleaseText(hold)
+if hold.status ~= "holding" then return "Released" end
+return "Day " .. tostring(hold.release_day or "?")
+.. " " .. tostring(hold.release_time or "")
+end
+
+local accountIdScreen
+
+
+
+
+
+
+local function withdrawScreen()
+while running() do
+local code = ui.input(target, "Cash out", {
+hint = "Withdrawal code from the kiosk",
+mode = "code", maxLength = 8,
+})
+if not code then return end
+local preview, previewError =
+request("PAY_CODE_PREVIEW", { code = code })
+if not preview then
+ui.message(target, "error", "Bad code", previewError, 2.2)
+elseif preview.kind ~= "withdrawal" then
+ui.message(target, "warning", "That is a payment",
+"Stand at the kiosk and pay with Foxy Pay instead", 2.6)
+else
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Cash out", preview.merchant,
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 6, FOX)
+ui.text(target, 4, 6, "YOU RECEIVE", ui.theme.muted,
+ui.theme.panel)
+ui.text(target, 4, 7, money(preview.amount), INK,
+ui.theme.panel)
+ui.wrappedText(target, 4, 9,
+preview.description or "Kiosk withdrawal", width - 6, 2,
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("take", 2, height - 5, width - 2, 2,
+"Take " .. money(preview.amount),
+{ background = ui.theme.success,
+foreground = colors.black })
+scene:button("back", 1, height, 8, 1, "< Bank",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "take" then
+local pin
+if preview.pin_required then
+pin = ui.pin(target, "Confirm", true)
+if not pin then return end
+end
+local took, takeError = request("PAY_CODE_CONFIRM",
+{ code = code, pin = pin })
+if took then
+api.refresh()
+ui.message(target, "success", "Received",
+money(preview.amount) .. " from "
+.. preview.merchant, 1.8)
+return
+end
+ui.message(target, "error", "Not taken", takeError, 2.4)
+end
+end
+end
+end
+
+local function historyScreen()
+local result = request("HISTORY")
+if not result then return end
+local items, page, blink = result.transactions, 1, true
+while true do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Activity", #items .. " transactions", util.formatClock(blink))
+local pageItems, actualPage, pages = util.page(items, page, 1)
+page = actualPage
+for index, tx in ipairs(pageItems) do
+local y = 4 + (index - 1) * 14
+local color = tx.amount >= 0 and ui.theme.success or ui.theme.danger
+ui.card(target, 2, y, width - 2, 14, color)
+ui.wrappedText(target, 4, y, tx.description,
+width - 6, 11, ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 11, "Day " .. tx.day .. " " .. tx.time,
+ui.theme.muted, ui.theme.panel)
+local amountText = (tx.amount >= 0 and "+" or "") .. money(tx.amount)
+ui.text(target, 4, y + 12, amountText, color, ui.theme.panel)
+end
+local scene = ui.scene(target)
+bankFooter(scene, page, pages)
+local action = scene:wait({ tickRate = 0.5 })
+blink = not blink
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1 end
+end
+end
+
+local function betHoldingScreen(holds)
+local pending = {}
+for _, hold in ipairs(holds or {}) do
+if hold.status == "holding" then pending[#pending + 1] = hold end
+end
+local page = 1
+while true do
+local width, height = target.getSize()
+local visible, current, pages = util.page(pending, page, 2)
+page = current
+ui.clear(target)
+ui.header(target, "Holding", #pending .. " CCG payouts",
+util.formatClock())
+if #visible == 0 then
+ui.center(target, 8, "Nothing is holding", ui.theme.ink)
+ui.center(target, 10, "Wins appear here for one day",
+ui.theme.muted)
+end
+for index, hold in ipairs(visible) do
+local y = 5 + (index - 1) * 6
+ui.card(target, 2, y, width - 2, 5, colors.purple)
+ui.text(target, 4, y, ui.truncate(
+hold.game_name or "CCG WIN", width - 6),
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, y + 1, money(hold.amount),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 3, "UNLOCKS " .. heldReleaseText(hold),
+ui.theme.warning, ui.theme.panel)
+end
+local scene = ui.scene(target)
+scene:button("prev", 2, height - 2, 6, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+scene:button("next", width - 7, height - 2, 6, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+scene:button("back", 1, height, 10, 1, "< Wallet",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "prev" then page = math.max(1, page - 1)
+elseif action == "next" then page = math.min(pages, page + 1)
+elseif action == "back" or action == "__terminate" then return end
+end
+end
+
+local function betActivityScreen(items)
+local page = 1
+while true do
+local width, height = target.getSize()
+local visible, current, pages = util.page(items or {}, page, 3)
+page = current
+ui.clear(target)
+ui.header(target, "Bet Activity", #items .. " entries",
+util.formatClock())
+if #visible == 0 then
+ui.center(target, 9, "No Bet Wallet activity", ui.theme.muted)
+end
+for index, item in ipairs(visible) do
+local y = 5 + (index - 1) * 4
+ui.text(target, 3, y, ui.truncate(item.description, width - 5),
+ui.theme.ink)
+local amountText = money(math.abs(item.amount or 0))
+if (item.amount or 0) < 0 then amountText = "-" .. amountText end
+ui.text(target, 3, y + 1, amountText,
+(item.amount or 0) >= 0 and ui.theme.success
+or ui.theme.warning)
+ui.text(target, width - 8, y + 1,
+"D" .. tostring(item.day or "?"), ui.theme.muted)
+end
+local scene = ui.scene(target)
+scene:button("prev", 2, height - 2, 6, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+scene:button("next", width - 7, height - 2, 6, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+scene:button("back", 1, height, 10, 1, "< Wallet",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "prev" then page = math.max(1, page - 1)
+elseif action == "next" then page = math.min(pages, page + 1)
+elseif action == "back" or action == "__terminate" then return end
+end
+end
+
+local function betWalletMove(action, available)
+local adding = action == "BET_WALLET_DEPOSIT"
+local amountText = ui.input(target,
+adding and "Add to Bet Wallet" or "Send to Foxy Account", {
+hint = "Available " .. money(available),
+mode = "number",
+maxLength = 12,
+})
+if not amountText then return nil end
+local amount = tonumber(amountText)
+if not amount or amount <= 0 then
+ui.message(target, "error", "Invalid Amount", "Enter a number above zero")
+return nil
+end
+local pin = ui.pin(target, "Confirm with PIN", true)
+if not pin then return nil end
+local result, err = request(action, { amount = amount, pin = pin }, true)
+if result then
+api.refresh()
+ui.message(target, "success",
+adding and "MONEY ADDED" or "MONEY TRANSFERRED",
+money(amount), 0.9)
+return result.wallet
+end
+ui.message(target, "error", "TRANSFER FAILED", err, 1.1)
+return nil
+end
+
+local function betWalletScreen()
+local result = request("BET_WALLET_SUMMARY")
+if not result then return end
+local wallet = result.wallet
+while running() do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Bet Wallet", "CCG game balance", util.formatClock())
+ui.card(target, 2, 4, width - 2, 4, colors.magenta)
+ui.text(target, 4, 4, "AVAILABLE", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, money(wallet.available),
+ui.theme.ink, ui.theme.panel)
+ui.card(target, 2, 9, width - 2, 3, colors.purple)
+ui.text(target, 4, 9, "HOLDING FOR 1 DAY", ui.theme.muted,
+ui.theme.panel)
+ui.text(target, 4, 10, money(wallet.held),
+ui.theme.warning, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("add", 2, 13, 11, 2, "+ ADD",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("withdraw", width - 12, 13, 11, 2, "CASH OUT",
+{ background = ui.theme.accentDark })
+scene:button("holding", 2, 16, 11, 2,
+"HOLDING " .. tostring(wallet.hold_count or 0),
+{ background = colors.purple })
+scene:button("activity", width - 12, 16, 11, 2, "ACTIVITY",
+{ background = ui.theme.panel })
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 1 })
+if action == "add" then
+wallet = betWalletMove("BET_WALLET_DEPOSIT",
+api.account().balance)
+or wallet
+elseif action == "withdraw" then
+wallet = betWalletMove("BET_WALLET_WITHDRAW", wallet.available)
+or wallet
+elseif action == "holding" then
+betHoldingScreen(wallet.holds)
+elseif action == "activity" then
+betActivityScreen(wallet.activity)
+elseif action == "__tick" then
+local refreshed = request("BET_WALLET_SUMMARY", {}, true)
+if refreshed then wallet = refreshed.wallet end
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function bankTransferScreen(identity)
+local typed = ui.input(target, "Their Account ID", {
+hint = "16 digits from the other bank",
+mode = "number", maxLength = 19, allowSpace = true,
+})
+if not typed then return false end
+local quote, err = request("BANK_TRANSFER_QUOTE",
+{ bank_account_id = typed }, true)
+if not quote then
+ui.message(target, "error", "Cannot send there", err, 2)
+return false
+end
+
+
+
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Move your money", quote.bank_name, util.formatClock())
+ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
+ui.text(target, 4, 5, "TO", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate(quote.name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 7, ui.truncate(quote.bank_name, width - 6),
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 9, "AMOUNT", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 10, money(quote.amount), ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 2, 13, "All of it goes, and your Bank here closes"
+.. " until you transfer money back.", width - 2, 3, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("go", 2, height - 5, width - 2, 2, "Move it all",
+{ background = ui.theme.danger })
+scene:button("no", 2, height - 2, width - 2, 2, "Keep it here",
+{ background = ui.theme.panel })
+if scene:wait({ tickRate = 5 }) ~= "go" then return false end
+
+local pin = ui.pin(target, "Confirm with PIN", true)
+if not pin then return false end
+local moved, moveError, code = request("BANK_TRANSFER_CONFIRM", {
+bank_account_id = quote.bank_account_id, pin = pin,
+}, true)
+if not moved then
+ui.message(target, code == "TRANSFER_PENDING" and "warning" or "error",
+code == "TRANSFER_PENDING" and "Held safely" or "Not moved",
+moveError, 2.4)
+return false
+end
+ui.message(target, "success", "Moved to " .. moved.bank_name,
+money(moved.moved) .. " transferred", 2)
+api.refresh()
+return true
+end
+
+accountIdScreen = function()
+while running() do
+local width, height = target.getSize()
+local identity = request("BANK_IDENTITY", {}, true)
+if not identity then return end
+ui.clear(target)
+ui.header(target, "Account ID", identity.bank_name,
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 5, ui.theme.accent)
+ui.text(target, 4, 5, "YOUR ACCOUNT ID", ui.theme.muted,
+ui.theme.panel)
+
+
+ui.text(target, 4, 7, identity.formatted:sub(1, 9),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8, identity.formatted:sub(11),
+ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 2, 11, "Give this to another bank to have"
+.. " money sent here. It works at every bank on the network.",
+width - 2, 4, ui.theme.muted)
+local scene = ui.scene(target)
+if identity.bank_closed then
+ui.wrappedText(target, 2, 15, "Your money is at "
+.. tostring(identity.moved_to_name or "another bank")
+.. ". Transfer it back from there.", width - 2, 3,
+ui.theme.warning)
+else
+scene:button("move", 2, height - 5, width - 2, 2,
+"Move my money to another bank",
+{ background = ui.theme.warning, foreground = colors.black })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "move" then
+if bankTransferScreen(identity) then return end
+end
+end
+end
+
+
+
+
+
+
+local function bringMoneyIn(preferredName)
+if type(api.banks) ~= "function" or type(api.handoff) ~= "function" then
+ui.message(target, "info", "Not on this Pocket",
+"This phone is on an older release", 1.8)
+return false
+end
+local identity = request("BANK_IDENTITY", {}, true)
+if not identity then return false end
+local banks = {}
+for _, bank in ipairs(api.banks() or {}) do
+if bank.id ~= "FOXY" then banks[#banks + 1] = bank end
+end
+
+
+if preferredName then
+for _, bank in ipairs(banks) do
+if bank.name == preferredName then banks = { bank } break end
+end
+end
+if #banks == 0 then
+ui.message(target, "info", "No other bank here",
+preferredName and ("Install " .. preferredName .. " first")
+or "Nothing else holds money for you", 2.2)
+return false
+end
+
+local choice = banks[1]
+if #banks > 1 then
+while running() do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Bring it home", "Foxy", util.formatClock())
+ui.wrappedText(target, 2, 5, "Open a bank and move everything"
+.. " it holds into this account.", width - 2, 4,
+ui.theme.muted)
+local scene = ui.scene(target)
+for index, bank in ipairs(banks) do
+if index > 3 then break end
+scene:button("bank:" .. index, 2, 10 + (index - 1) * 3,
+width - 2, 2, ui.truncate(bank.name, width - 4),
+{ background = FOX, foreground = colors.black })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then
+return false
+end
+local pick = tonumber(action and action:match("^bank:(%d+)$"))
+if pick and banks[pick] then choice = banks[pick] break end
+end
+if not choice then return false end
+end
+
+local moved, err = api.handoff({
+bank = choice.id,
+account_id = identity.bank_account_id,
+bank_name = identity.bank_name or "Foxy",
+})
+if not moved then
+ui.message(target, "warning", "Nothing moved",
+err or "That bank would not release it", 2.2)
+return false
+end
+api.refresh()
+ui.message(target, "success", "Back at Foxy",
+money(moved.moved) .. " arrived", 2)
+return true
+end
+
+local function bankScreen()
+local offset = 0
+while running() do
+
+
+
+local here = api.account()
+if here.bank_closed then
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Foxy Bank", "Closed", util.formatClock())
+ui.card(target, 2, 5, width - 2, 6, ui.theme.warning)
+ui.wrappedText(target, 4, 6, "Your money is at "
+.. tostring(here.moved_to_name or "another bank") .. ".",
+width - 6, 3, ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 9, "Transfer it back from there to"
+.. " use this account again.", width - 6, 2,
+ui.theme.muted, ui.theme.panel)
+local closed = ui.scene(target)
+closed:button("bringback", 2, height - 8, width - 2, 2,
+"Bring it back here",
+{ background = FOX, foreground = colors.black })
+closed:button("id", 2, height - 5, width - 2, 2,
+"Show my Account ID", { background = ui.theme.panel })
+ui.tabBar(closed, target, TABS, "bank", FOX)
+local closedAction = closed:wait({ tickRate = 5 })
+if closedAction == "bringback" then
+bringMoneyIn(here.moved_to_name)
+elseif closedAction == "id" then accountIdScreen()
+elseif closedAction == "home" or closedAction == "__terminate"
+or (closedAction or ""):match("^tab:") then
+return closedAction
+end
+else
+local overview = request("FOXY_OVERVIEW", {}, true)
+if not overview then return end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Foxy Bank", overview.name, util.formatClock())
+if cardDropped then drawCard(overview, 4) end
+ui.text(target, 2, 11, "BALANCE", ui.theme.muted)
+ui.text(target, 2, 12, money(overview.balance), INK)
+if overview.saved > 0 then
+local saved = "SAVED " .. money(overview.saved)
+ui.text(target, math.max(2, width - #saved), 12, saved,
+ui.theme.muted)
+end
+
+
+
+local rows = { { kind = "main", name = "Main account",
+balance = overview.balance } }
+for _, pot in ipairs(overview.pots) do
+rows[#rows + 1] = { kind = "pot", pot = pot,
+name = pot.name, balance = pot.balance }
+end
+rows[#rows + 1] = { kind = "new" }
+rows[#rows + 1] = { kind = "cash" }
+rows[#rows + 1] = { kind = "wallet" }
+rows[#rows + 1] = { kind = "activity" }
+rows[#rows + 1] = { kind = "cashout" }
+rows[#rows + 1] = { kind = "bringin" }
+rows[#rows + 1] = { kind = "id" }
+
+
+local demand = request("TAX_DEMAND_STATUS", {}, true)
+demand = demand and demand.demand or nil
+if demand then
+table.insert(rows, 1, { kind = "demand", demand = demand })
+end
+
+
+
+local bottom = type(ui.contentBottom) == "function"
+and ui.contentBottom(target) or height - 2
+offset = math.max(0, math.min(offset, #rows - 1))
+local scene = ui.scene(target)
+local y, lastShown = 13, offset
+for index = offset + 1, #rows do
+local row = rows[index]
+local tall = (row.kind == "main" or row.kind == "pot") and 2 or 1
+if y + tall - 1 > bottom then break end
+lastShown = index
+local function line(text) return ui.truncate(text, width - 4) end
+do
+if row.kind == "new" then
+scene:button("new", 2, y, width - 2, 1,
+"+  New account",
+{ background = ui.theme.panel })
+elseif row.kind == "cash" then
+scene:button("cash", 2, y, width - 2, 1,
+line("Foxy Cash  "
+.. math.floor(overview.fee_rate * 100)
+.. "%  friends"),
+{ background = FOX, foreground = colors.black })
+elseif row.kind == "demand" then
+scene:button("demand", 2, y, width - 2, 1,
+line("Tax demand " .. money(row.demand.amount) .. ": MyID"),
+{ background = ui.theme.warning,
+foreground = colors.black })
+elseif row.kind == "wallet" then
+scene:button("wallet", 2, y, width - 2, 1,
+"Bet Wallet", { background = colors.purple })
+elseif row.kind == "activity" then
+scene:button("activity", 2, y, width - 2, 1,
+"Activity", { background = ui.theme.panel })
+elseif row.kind == "cashout" then
+scene:button("cashout", 2, y, width - 2, 1,
+"Cash out with a code",
+{ background = ui.theme.panel })
+elseif row.kind == "bringin" then
+scene:button("bringin", 2, y, width - 2, 1,
+"Bring money in", { background = ui.theme.panel })
+elseif row.kind == "id" then
+scene:button("id", 2, y, width - 2, 1,
+"Account ID + Transfer",
+{ background = ui.theme.accentDark })
+else
+scene:button(row.kind == "main" and "main"
+or ("pot:" .. row.pot.pot_id), 2, y,
+width - 2, 2,
+ui.truncate(row.name, width - 11)
+.. "\n" .. money(row.balance),
+{ background = ui.theme.panel })
+end
+end
+y = y + tall
+end
+
+scene:button("up", width - 8, 11, 3, 1, "^",
+{ background = ui.theme.panel, disabled = offset <= 0 })
+scene:button("down", width - 4, 11, 3, 1, "v",
+{ background = ui.theme.panel,
+disabled = lastShown >= #rows })
+ui.tabBar(scene, target, TABS, "bank", FOX)
+
+if not cardDropped then dropCard(overview, 4) end
+local action = scene:wait({ tickRate = 5 })
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+elseif action == "up" then offset = offset - 1
+elseif action == "down" then offset = offset + 1
+elseif action == "cash" then foxyCash(overview)
+elseif action == "demand" then
+
+
+ui.message(target, "warning", "Pay it in MyID",
+"Tax demands are in MyID on your Pocket now. Until it is"
+.. " paid, this account cannot spend.", 3)
+elseif action == "wallet" then betWalletScreen()
+elseif action == "activity" then historyScreen()
+elseif action == "cashout" then withdrawScreen()
+elseif action == "bringin" then bringMoneyIn()
+elseif action == "id" then accountIdScreen()
+elseif action == "main" then
+moveMoney(overview, "main", "Main account", overview.balance)
+elseif action == "new" then
+local name = ui.input(target, "New account", {
+hint = "Savings, Rent, Holiday...",
+maxLength = 18, allowSpace = true, minLength = 2,
+})
+if name then
+local made, err = request("FOXY_POT_CREATE",
+{ name = name }, true)
+if made then
+ui.message(target, "success", "Account opened",
+name, 1.1)
+else
+ui.message(target, "error", "Not opened", err, 1.6)
+end
+end
+else
+local potId = action and action:match("^pot:(.+)$")
+for _, pot in ipairs(overview.pots) do
+if pot.pot_id == potId then
+potScreen(overview, pot)
+break
+end
+end
+end
+end
+end
+end
+
+
+
+
+
+
+
+
+local function confirmWithPin(parcel, ahead)
+local pin = ui.pin(target, "Your PIN", true)
+if not pin then return end
+local done, err = request("SECURITY_CONFIRM",
+{ order_id = parcel.order_id, pin = pin }, true)
+if not done then
+ui.message(target, "error", "Not confirmed", err, 1.8)
+elseif done.answered then
+ui.message(target, "success", "Confirmed",
+"It is coming out now", 1.6)
+else
+ui.message(target, "success", "Pre-confirmed",
+ahead and "For " .. ahead .. " minutes" or "Go and get it", 1.8)
+end
+end
+
+local function securityAnswer(parcel, minutes)
+local status = parcel.security and parcel.security.status
+local where = tostring(parcel.company_name) .. " at "
+.. tostring(parcel.point_name)
+if status == "asked" then
+if ui.confirm(target, "Is this you?", "Somebody is collecting your "
+.. where .. " right now.", "It's me", "Not me") then
+confirmWithPin(parcel)
+else
+local denied = request("SECURITY_DENY",
+{ order_id = parcel.order_id }, true)
+if denied and denied.code then
+ui.message(target, "warning", "Kept it in",
+"Your new code is " .. denied.code, 2.4)
+end
+end
+elseif status == "confirmed" then
+if ui.confirm(target, "Take it back?", "Right now your code opens "
+.. where .. " without asking you.", "Take back", "Keep") then
+request("SECURITY_DENY", { order_id = parcel.order_id }, true)
+end
+elseif ui.confirm(target, "Pre-confirm?", "For " .. minutes
+.. " minutes, whoever types your code at " .. where
+.. " gets it without asking you.", "Confirm", "Back") then
+confirmWithPin(parcel, minutes)
+end
+end
+
+local function securityScreen()
+while running() do
+local listed = request("SECURITY_LIST", {}, true)
+local parcels = listed and listed.parcels or {}
+local minutes = math.floor((listed and listed.preconfirm_ms
+or 1800000) / 60000)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Foxy Security", listed and (#parcels
+.. " at pickup points") or "Offline", util.formatClock())
+local scene = ui.scene(target)
+if #parcels == 0 then
+ui.wrappedText(target, 2, 5, listed and ("Nothing waiting."
+.. " When a parcel reaches a pickup point, whoever types"
+.. " its code is checked with you here first.")
+or "Cannot reach the Bank.", width - 2, 6, ui.theme.muted)
+end
+local per = math.max(1, math.floor((height - 6) / 3))
+for slot = 1, math.min(per, #parcels) do
+local parcel = parcels[slot]
+local status = parcel.security and parcel.security.status
+local left = parcel.security and math.ceil(
+(parcel.security.expires_in_ms or 0) / 60000) or 0
+scene:button("parcel:" .. slot, 2, 2 + slot * 3, width - 2, 2,
+ui.truncate(tostring(parcel.company_name) .. ", "
+.. tostring(parcel.point_name), width - 4) .. "\n"
+.. ui.truncate(status == "asked"
+and "Somebody is there now"
+or status == "confirmed" and ("Pre-confirmed, "
+.. left .. " min") or "Tap to pre-confirm",
+width - 4),
+{ background = status == "asked" and ui.theme.warning
+or status == "confirmed" and ui.theme.success
+or ui.theme.panel,
+foreground = status and colors.black or colors.white })
+end
+ui.tabBar(scene, target, TABS, "security", FOX)
+local action = scene:wait({ tickRate = 3 })
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+local slot = tonumber(action and action:match("^parcel:(%d+)$"))
+if slot and parcels[slot] then
+securityAnswer(parcels[slot], minutes)
+end
+end
+end
+
+
+
+local function accountScreen()
+while running() do
+local account = api.account()
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Your Account", account.name, util.formatClock())
+ui.card(target, 2, 5, width - 2, 6, FOX)
+ui.text(target, 4, 5, "FOXY ACCOUNT", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate(account.name, width - 6),
+INK, ui.theme.panel)
+ui.text(target, 4, 8, "ID  " .. tostring(account.account_id),
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 9, "NO  " .. tostring(account.personal_number),
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("name", 2, 12, width - 2, 2, "Change your name",
+{ background = ui.theme.panel })
+scene:button("pin", 2, 14, width - 2, 2, "Change your PIN",
+{ background = ui.theme.panel })
+ui.wrappedText(target, 2, 17, "More coming to your account soon.",
+width - 2, 2, ui.theme.muted)
+ui.tabBar(scene, target, TABS, "account", FOX)
+local action = scene:wait({ tickRate = 5 })
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+if action == "name" then
+local name = ui.input(target, "Change your name", {
+hint = "2-20 characters", initial = account.name,
+maxLength = 20, allowSpace = true, minLength = 2,
+})
+if name then
+local pin = ui.pin(target, "Confirm with PIN", true)
+if pin then
+local ok, err = request("FOXY_SET_ACCOUNT",
+{ name = name, pin = pin }, true)
+if ok then
+api.refresh()
+ui.message(target, "success", "Name changed",
+name, 1.2)
+else
+ui.message(target, "error", "Not changed",
+err, 1.6)
+end
+end
+end
+elseif action == "pin" then
+local current = ui.pin(target, "Your current PIN", true)
+if current then
+local fresh = ui.pin(target, "Your new PIN", true)
+if fresh then
+local again = ui.pin(target, "Repeat new PIN", true)
+if again ~= fresh then
+ui.message(target, "error", "PINs do not match",
+"Nothing changed", 1.4)
+else
+local ok, err = request("FOXY_SET_ACCOUNT",
+{ pin = current, new_pin = fresh }, true)
+ui.message(target, ok and "success" or "error",
+ok and "PIN changed" or "Not changed",
+ok and "Use it from now on" or err, 1.4)
+end
+end
+end
+end
+end
+end
+
+
+
+
+
+
+local wanted = type(api.action) == "function" and api.action() or nil
+
+
+local startTab = (wanted == "bank" or wanted == "security"
+or wanted == "account") and wanted or nil
+if wanted and not startTab then
+local jump = {
+cash = function()
+local overview = request("FOXY_OVERVIEW", {}, true)
+if overview then foxyCash(overview) end
+end,
+wallet = betWalletScreen,
+activity = historyScreen,
+id = accountIdScreen,
+}
+if jump[wanted] then
+jump[wanted]()
+return
+end
+end
+
+
+
+local tab = startTab or "bank"
+while running() do
+local switched
+if tab == "account" then
+switched = accountScreen()
+elseif tab == "security" then
+switched = securityScreen()
+else
+switched = bankScreen()
+end
+local nextTab = type(switched) == "string"
+and switched:match("^tab:(.+)$")
+if not nextTab then return end
+tab = nextTab
+end
+end

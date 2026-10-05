@@ -7,6 +7,46 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 15 Beta (14.5.0)
+
+Only Pockets signed up to Beta Updates get this. The Bank, the App Server and everything else stay on 14.1. If the beta will not start, run `installer` on the Pocket and install the Pocket again: that puts the release back.
+
+### Getting it
+
+- [ ] Settings → Beta: *FoxyOS 15 Beta, Version 14.5.0* with **Get FoxyOS 15 Beta**. It downloads under the circles, asks under POCKET, installs, restarts.
+- [ ] The start-up ends on *Powered by FoxyOS 15 Beta*.
+- [ ] After signing in, Foxy, FoxMail, Company, Shop, Internet and INVT are the beta's copies (Foxy has no intro: that is the quickest tell), and the App Server's ten-minute app updates leave them alone.
+
+### Banners
+
+- [ ] Something that works (a payment, *Signed up*): a banner opens from a line across the middle, **green** border and words, over the screen that was there.
+- [ ] Something that does not (a wrong PIN, *No such shop*): the same, **red**. Warnings and plain information are red too.
+- [ ] Long messages fit inside the banner on a Pocket, and on a 51x19 computer.
+
+### Foxy
+
+- [ ] Opening Foxy shows the Bank at once: no FOXY wordmark first, and no opening animation from the Pocket.
+- [ ] The card drops in from under the header, settles in about two seconds, then sits still.
+- [ ] Security, then back to Bank: no drop. Close Foxy and open it again: it drops again.
+
+### App Browser
+
+- [ ] The front page: a search bar, **LATEST** and **TRENDING** carousels (up to five each, with dots), **Explore** at the bottom.
+- [ ] The carousels turn by themselves, taking turns, every few seconds; **<** and **>** turn them by hand; tapping a card opens that app.
+- [ ] Explore lists every app, A to Z, four a page, with search. Back returns to the front page.
+- [ ] No Shop Apps anywhere in it.
+- [ ] Searching *apps* from the Home Screen still works.
+
+### Shop Websites
+
+- [ ] Company → a company → Store → **Put it on the web**: choose an address (pre-filled from the company name), and it shows *YOUR ADDRESS foxyshopping.shop*. A closed store is refused.
+- [ ] A second store cannot take the same address.
+- [ ] Internet → Go to: the keyboard has a full stop; typing *foxyshopping.shop* opens the store's own front door, the address where the tagline was.
+- [ ] The same on a Pocket without Shop installed: it opens, and nothing new is on the Pocket afterwards (Settings → Storage).
+- [ ] A closed store, or an address nobody has, says so in a red banner.
+- [ ] A Pocket that had a Shop App installed loses it at sign-in, with a green banner, and the store's address (if it has one) is in Internet → Saved.
+- [ ] **Open it** on the Shop Website page opens the store; **Take it down** frees the address.
+
 ## FoxyOS 14.1 (14.1.0)
 
 - [ ] Settings on a Pocket has four tabs: Phone, Apps, **Beta**, Me. Beta shows *Not signed up*, this Pocket's release, and *No beta right now* until one is out.

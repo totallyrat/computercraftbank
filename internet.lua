@@ -10,6 +10,7 @@
 -- a thing an app should be able to do on its own.
 --
 -- 12.0: tabs -- Go, Saved, Recent -- and More, which searches both lists.
+-- FoxyOS 15: name.shop is a store, opened by the Pocket as the store itself.
 -- What you visited and saved is kept on the phone now; it used to be
 -- forgotten every time the app closed.
 
@@ -54,9 +55,11 @@ return function(api)
     end
 
     local function ask(initial)
+        -- FoxyOS 15: a store's address ends in .shop, so the keyboard has a
+        -- full stop and the box room for one.
         local typed, picked = ui.input(target, "Go to", {
-            hint = "A domain, like foxden", initial = initial,
-            maxLength = 20,
+            hint = "foxden, or a store.shop", initial = initial,
+            maxLength = 25, mode = "domain",
             -- 12.0 Final: the sites you know, as you type.
             suggest = function(value)
                 local found, seen = {}, {}
@@ -128,7 +131,7 @@ return function(api)
                 -- nobody asked for, and a front page belonging to whoever
                 -- happened to publish first.
                 ui.wrappedText(target, 2, 10, "Websites are made in Website"
-                    .. " Crafter. Ask somebody for theirs, or make one.",
+                    .. " Crafter. Stores are at name.shop: try one.",
                     width - 2, 5, ui.theme.muted)
             else
                 ui.text(target, 2, 10, "RECENTLY", ui.theme.muted)

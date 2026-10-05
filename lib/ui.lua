@@ -1376,57 +1376,70 @@ function ui.boot(target, product, subtitle)
     end
 end
 
+-- FoxyOS 15: a notice is a banner across the middle of the screen, over
+-- whatever was there, instead of a screen of its own. It opens from a line
+-- drawn out from the centre; its border and its words are green when
+-- something went right and red when it did not.
 function ui.message(target, kind, title, body, duration)
     target = surface(target)
     local width, height = target.getSize()
-    local color = kind == "success" and ui.theme.success
-        or kind == "warning" and ui.theme.warning
-        or kind == "error" and ui.theme.danger
-        or ui.theme.accent
-    local mark = kind == "success" and "OK"
-        or kind == "error" and "!"
-        or kind == "warning" and "!"
-        or "i"
+    local color = kind == "success" and ui.theme.success or ui.theme.danger
+    local inside = ui.theme.background
 
-    -- Wrap first, then centre the finished block, so long messages read the
-    -- same way on a 26x20 pocket screen and a wide kiosk.
-    local contentWidth = math.max(4, width - 4)
-    local titleLines = ui.wrap(title, contentWidth)
-    local bodyLines = body and ui.wrap(body, contentWidth) or {}
-    local function blockHeight()
-        return 3 + #titleLines + (#bodyLines > 0 and 1 + #bodyLines or 0)
-    end
+    -- Wrap first, then fit: the words sit inside a border with a space on
+    -- either side, and the banner never grows past the screen.
+    local left, right = 2, math.max(2, width - 1)
+    local textWidth = math.max(4, right - left - 3)
+    local titleLines = ui.wrap(title, textWidth)
+    local bodyLines = body and body ~= "" and ui.wrap(body, textWidth) or {}
+    local function bannerHeight() return 4 + #titleLines + #bodyLines end
     local function trimTo(lines)
-        lines[#lines] = ui.truncate(lines[#lines] .. "..", contentWidth)
+        lines[#lines] = ui.truncate(lines[#lines] .. "..", textWidth)
     end
-    while blockHeight() > height and #bodyLines > 0 do
+    while bannerHeight() > height and #bodyLines > 0 do
         table.remove(bodyLines)
         if #bodyLines > 0 then trimTo(bodyLines) end
     end
-    while blockHeight() > height and #titleLines > 1 do
+    while bannerHeight() > height and #titleLines > 1 do
         table.remove(titleLines)
         trimTo(titleLines)
     end
+    local tall = math.min(height, bannerHeight())
+    local top = math.max(1, math.floor((height - tall) / 2) + 1)
+    local bottom = top + tall - 1
+    local middle = math.floor((top + bottom) / 2)
+    local span = right - left + 1
 
-    ui.fill(target, 1, 1, width, height, ui.theme.background)
-    local y = math.max(1, math.floor((height - blockHeight()) / 2) + 1)
-    for size = 1, 3 do
-        ui.fill(target, math.floor((width - size * 3) / 2) + 1, y, size * 3, 2,
-            color)
-        sleep(0.05)
+    -- A line drawn out from the centre...
+    for step = 1, 3 do
+        local reach = math.max(1, math.floor(span * step / 3))
+        ui.fill(target, left + math.floor((span - reach) / 2), middle, reach, 1, color)
+        sleep(0.03)
     end
-    ui.center(target, y, mark, colors.black, color)
-    local row = y + 3
-    for _, line in ipairs(titleLines) do
-        ui.center(target, row, line, color)
-        row = row + 1
-    end
-    if #bodyLines > 0 then
-        row = row + 1
-        for _, line in ipairs(bodyLines) do
-            ui.center(target, row, line, ui.theme.muted)
-            row = row + 1
+    -- ...that opens into the banner.
+    local opened = 0
+    while true do
+        local upper = math.max(top, middle - opened)
+        local lower = math.min(bottom, middle + opened + 1)
+        ui.fill(target, left, upper, span, lower - upper + 1, inside)
+        ui.fill(target, left, upper, span, 1, color)
+        ui.fill(target, left, lower, span, 1, color)
+        if lower - upper > 1 then
+            ui.fill(target, left, upper, 1, lower - upper + 1, color)
+            ui.fill(target, right, upper, 1, lower - upper + 1, color)
         end
+        if upper == top and lower == bottom then break end
+        opened = opened + 1
+        sleep(0.03)
+    end
+    local row = top + 2
+    for _, line in ipairs(titleLines) do
+        ui.center(target, row, line, color, inside)
+        row = row + 1
+    end
+    for _, line in ipairs(bodyLines) do
+        ui.center(target, row, line, color, inside)
+        row = row + 1
     end
     sleep(duration or 0.8)
 end
@@ -1442,6 +1455,10 @@ local function keyboardRows(mode)
     end
     if mode == "text" then
         return { "1234567890", "QWERTYUIOP", "ASDFGHJKL'", "ZXCVBNM,.?<" }
+    end
+    -- FoxyOS 15: a web address, which can end in .shop.
+    if mode == "domain" then
+        return { "1234567890", "QWERTYUIOP", "ASDFGHJKL.", "ZXCVBNM-<" }
     end
     return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_<" }
 end
@@ -1580,6 +1597,10 @@ function ui.input(target, title, options)
                     end
                 elseif options.mode == "code" then
                     if character:match("[%w]") then value = value .. string.upper(character) end
+                elseif options.mode == "domain" then
+                    if character:match("[%w%.%-]") then
+                        value = value .. string.lower(character)
+                    end
                 elseif (options.mode == "email" or options.mode == "text") and key then
                     -- The keys are drawn in capitals; people write mail in
                     -- lower case. A real keyboard types what it types.
