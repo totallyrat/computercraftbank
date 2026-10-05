@@ -1,5 +1,26 @@
 # Changelog
 
+## 15.5.0
+
+FoxyOS 16 Beta, for devices signed up to Beta Updates. Not tested yet: that
+is what the beta is for.
+
+**Calls are banners.** An incoming call is a banner at the top of the
+screen, in the look of the new notices, with Accept and Decline in it. The
+Pocket keeps working under it: whatever is open stays open and usable.
+
+**Messages.** An app of its own on the Home Screen, with chats as bubbles:
+yours on the right in your theme colour, theirs on the left.
+
+**Money in the chat.** A request for money is a bubble, with Pay and No on
+it for everybody else, and a payment is a bubble too. No separate menu.
+
+**A money tab.** The money button slides a keypad up from the bottom of
+the chat to request or send, over the chat rather than a new screen.
+
+**Faster chats.** An open chat syncs twice a second, and a request paid or
+turned down shows as it is now.
+
 ## 15.1.0
 
 FoxyOS 15.1: Beta Updates on every device, ahead of FoxyOS 16 Beta.

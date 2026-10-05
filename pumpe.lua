@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.1.0"
+local PROGRAM_VERSION = "15.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -337,7 +337,17 @@ do
         return front(x + y * 1.5, t * (c.w + c.h * 1.5 + 2), 2)
     end
 
-    local BUILT_IN = { friends = "ripple", tickets = "tear", myid = "scan",
+    -- Messages, FoxyOS 16: speech bubbles rising from the bottom.
+    function STYLES.bubble(c, x, y, t)
+        local rise = t * (c.h + 4)
+        for _, spot in ipairs({ 0.25, 0.6, 0.85 }) do
+            local d = near(c, x, y, c.w * spot, c.h + 2 - rise * (0.8 + spot * 0.4))
+            if d <= 2 + t * 6 then return d > 1 + t * 6 and 2 or 1 end
+        end
+        return front(c.h - y + 1, rise - 2, 1)
+    end
+
+    local BUILT_IN = { friends = "ripple", messages = "bubble", tickets = "tear", myid = "scan",
         ccg = "arcade", subs = "wave", reminders = "shake", quick = "bolt",
         browser = "tiles", settings = "shutter" }
     -- FoxyOS 15: Foxy has none. It opens straight onto the Bank, whose
@@ -3201,82 +3211,209 @@ local function pendingRequestFor(items, accountId)
     return nil
 end
 
-local function chatMoneyMenu(conversation, items)
-    local pending = pendingRequestFor(items, account.account_id)
-    local width, height = target.getSize()
-    ui.clear(target)
-    ui.header(target, "Money", conversation.title, util.formatClock())
-    local scene = ui.scene(target)
-    -- In a Government thread only the state moves money. You can settle what
-    -- it asks for, but you cannot send it money or bill it.
-    local official = conversation.kind == "government"
-    if official then
-        ui.wrappedText(target, 2, 5,
-            "Only the Government can move money in this chat.",
-            width - 2, 3, ui.theme.muted)
+-- Messages, FoxyOS 16 -----------------------------------------------------------
+-- A chat is bubbles now: yours on the right in your theme colour, theirs on
+-- the left, the sender's name over a group's. Money is in the chat too:
+-- asking for some is a bubble with Pay and No on it for everybody else, and
+-- what was paid is a bubble of its own. Money is asked for and sent from a
+-- tab that slides up from the bottom, over the chat, rather than a screen
+-- of its own. An open chat syncs twice a second, and reads the whole chat
+-- again every few seconds so a request paid elsewhere shows it.
+local chat = { syncTicks = 10 }
+
+-- One bubble: its lines, its colours, and which side it sits on.
+function chat.bubble(item, width)
+    local mine = account and item.sender_id == account.account_id
+    local textWidth = math.max(6, width - 10)
+    local lines, background, ink
+    if item.kind == "system" then
+        return { system = true, lines = ui.wrap(tostring(item.body or ""), width - 4) }
+    elseif item.kind == "money_request" then
+        lines = { "Asks for " .. money(item.amount) }
+        if item.body and item.body ~= "" then
+            for _, line in ipairs(ui.wrap(item.body, textWidth)) do lines[#lines + 1] = line end
+        end
+        local state = item.status == "paid" and "Paid"
+            or item.status == "declined" and "Declined"
+            or (mine and "Waiting" or nil)
+        if state then lines[#lines + 1] = state end
+        background = item.status == "paid" and ui.theme.success
+            or item.status == "declined" and ui.theme.panel or ui.theme.warning
+        ink = item.status == "declined" and ui.theme.muted or colors.black
+    elseif item.kind == "money_sent" then
+        lines = ui.wrap(tostring(item.body or ("sent " .. money(item.amount))), textWidth)
+        background, ink = ui.theme.success, colors.black
     else
-        scene:button("send", 2, 5, width - 2, 3, "Send money",
-            { background = ui.theme.success, foreground = colors.black })
-        scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
-            { background = ui.theme.warning, foreground = colors.black })
+        lines = ui.wrap(tostring(item.body or ""), textWidth)
+        background = mine and ui.theme.accent or ui.theme.panel
+        ink = mine and (ui.theme.accentInk or ui.inkOn(ui.theme.accent)) or ui.theme.ink
     end
-    if pending then
-        scene:button("pay", 2, official and 9 or 13, width - 2, 3,
-            "Pay " .. money(pending.amount)
-                .. (official and "" or (" to " .. pending.sender_name)),
-            { background = ui.theme.accentDark })
-    end
-    scene:button("back", 1, height, 8, 1, "< Back",
-        { background = ui.theme.panel })
-    local action = scene:wait()
-    if action == "send" then
-        local recipientId
-        if conversation.kind == "group" then
-            local overview = request("FRIEND_OVERVIEW", {}, true)
-            local members = {}
-            for _, friend in ipairs(overview and overview.friends or {}) do
-                for _, name in ipairs(conversation.member_names or {}) do
-                    if name == friend.name then members[#members + 1] = friend end
+    local widest = 0
+    for _, line in ipairs(lines) do widest = math.max(widest, #line) end
+    -- Somebody else's request still waiting: Pay and No, under it.
+    local asking = item.kind == "money_request" and item.status == "pending" and not mine
+    if asking then widest = math.max(widest, 9) end
+    return { lines = lines, background = background, ink = ink, mine = mine,
+        width = widest + 2, asking = asking, item = item,
+        height = #lines + (asking and 1 or 0) }
+end
+
+-- Draws the chat from the newest up, `scroll` bubbles back from the end.
+-- Returns whether there is more above.
+function chat.draw(scene, items, conversation, top, bottom, scroll)
+    local width = target.getSize()
+    local group = conversation.kind == "group"
+    local y = bottom
+    local index = #items - scroll
+    while index >= 1 and y >= top do
+        local item = items[index]
+        local bubble = chat.bubble(item, width)
+        if bubble.system then
+            for line = #bubble.lines, 1, -1 do
+                if y >= top then
+                    ui.center(target, y, bubble.lines[line], ui.theme.muted)
+                end
+                y = y - 1
+            end
+        else
+            local x = bubble.mine and (width - bubble.width) or 2
+            local first = y - bubble.height + 1
+            for line, text in ipairs(bubble.lines) do
+                local row = first + line - 1
+                if row >= top then
+                    ui.fill(target, x, row, bubble.width, 1, bubble.background)
+                    ui.text(target, x + 1, row, text, bubble.ink, bubble.background)
                 end
             end
-            local chosen = pickFriend("Pay who?", members)
-            if not chosen then return end
-            recipientId = chosen.account_id
+            if bubble.asking and y >= top then
+                local half = math.floor((bubble.width - 1) / 2)
+                scene:button("pay:" .. item.seq, x, y, half, 1, "Pay",
+                    { background = ui.theme.success, foreground = colors.black })
+                scene:button("no:" .. item.seq, x + half + 1, y, bubble.width - half - 1, 1,
+                    "No", { background = ui.theme.danger })
+            end
+            y = first - 1
+            -- In a group, who said it, over the first of theirs in a row.
+            local previous = items[index - 1]
+            if group and not bubble.mine and y >= top and (not previous
+                or previous.sender_id ~= item.sender_id or previous.kind == "system") then
+                ui.text(target, 2, y, ui.truncate(tostring(item.sender_name), width - 3),
+                    ui.theme.muted)
+                y = y - 1
+            end
         end
-        local amount = socialAmount("Send how much?")
-        if not amount then return end
-        local pin = ui.pin(target, "Confirm with PIN", true)
-        if not pin then return end
-        local sent = request("CHAT_SEND_MONEY", {
-            conversation_id = conversation.conversation_id,
-            to_account_id = recipientId,
-            amount = amount,
-            pin = pin,
-        })
-        if sent then
-            ui.message(target, "success", "Sent " .. money(sent.quote.amount),
-                "Fee " .. money(sent.quote.fee), 1.2)
+        -- A line between people; none between one person's messages.
+        local previous = items[index - 1]
+        if previous and previous.sender_id ~= item.sender_id then y = y - 1 end
+        index = index - 1
+    end
+    if #items == 0 then
+        ui.center(target, math.floor((top + bottom) / 2), "Say hello", ui.theme.muted)
+    end
+    return index >= 1
+end
+
+-- The money tab: a keypad sliding up from the bottom, over the chat. Ask
+-- for money (a bubble everybody else can pay) or send it (with the PIN).
+-- `redraw()` paints the chat behind it; `sync()` keeps it current.
+function chat.moneyTab(conversation, redraw, sync)
+    local official = conversation.kind == "government"
+    local amount = ""
+    local tall = 10
+    local function paint(scene, rows)
+        local width, height = target.getSize()
+        local top = height - rows + 1
+        ui.fill(target, 1, top, width, rows, ui.theme.panel)
+        ui.fill(target, 1, top, width, 1, ui.theme.accent)
+        if rows < tall then return end
+        ui.text(target, 2, top, "MONEY", ui.theme.accentInk or colors.black, ui.theme.accent)
+        scene:button("close", width - 3, top, 3, 1, "x",
+            { background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+        ui.center(target, top + 1, config.currency .. (amount ~= "" and amount or "0"),
+            ui.theme.ink, ui.theme.panel)
+        local keysWide = math.floor((width - 4) / 3)
+        for row, keysRow in ipairs({ { "1", "2", "3" }, { "4", "5", "6" },
+            { "7", "8", "9" }, { ".", "0", "<" } }) do
+            for column, key in ipairs(keysRow) do
+                scene:button("key:" .. key, 2 + (column - 1) * (keysWide + 1),
+                    top + 1 + row, keysWide, 1, key, { background = ui.theme.background,
+                        foreground = ui.theme.ink, flash = false })
+            end
         end
-    elseif action == "ask" then
-        local amount = socialAmount("Ask for how much?")
-        if not amount then return end
-        if request("CHAT_REQUEST_MONEY", {
-            conversation_id = conversation.conversation_id,
-            amount = amount,
-        }) then
-            ui.message(target, "success", "Request sent", nil, 1)
+        if official then
+            ui.center(target, top + 7, "Only the state sends here",
+                ui.theme.muted, ui.theme.panel)
+        else
+            local half = math.floor((width - 3) / 2)
+            scene:button("ask", 2, top + 7, half, 2, "Request",
+                { background = ui.theme.warning, foreground = colors.black })
+            scene:button("send", 3 + half, top + 7, width - 3 - half, 2, "Send",
+                { background = ui.theme.success, foreground = colors.black })
         end
-    elseif action == "pay" and pending then
-        local pin = ui.pin(target, "Pay " .. money(pending.amount), true)
-        if not pin then return end
-        local paid = request("CHAT_PAY_REQUEST", {
-            conversation_id = conversation.conversation_id,
-            seq = pending.seq,
-            pin = pin,
-        })
-        if paid then
-            ui.message(target, "success", "Paid " .. money(paid.quote.amount),
-                "Fee " .. money(paid.quote.fee), 1.2)
+    end
+    -- It slides up.
+    for rows = 2, tall, 2 do
+        redraw()
+        paint(ui.scene(target), rows)
+        sleep(0.03)
+    end
+    while running do
+        redraw()
+        local scene = ui.scene(target)
+        paint(scene, tall)
+        local action = scene:wait({ tickRate = 0.5, flash = false,
+            onChar = function(character)
+                if character:match("[%d%.]") then return "key:" .. character end
+            end,
+            keys = type(keys) == "table" and { [keys.backspace] = "key:<",
+                [keys.enter] = "ask" } or nil })
+        local key = action and action:match("^key:(.)$")
+        if action == "close" or action == "__terminate" or action == "back" then return end
+        if key == "<" then
+            amount = amount:sub(1, -2)
+        elseif key == "." then
+            if not amount:find(".", 1, true) and #amount < 8 then
+                amount = (amount == "" and "0" or amount) .. "."
+            end
+        elseif key then
+            if #amount < 9 then amount = amount .. key end
+        elseif action == "__tick" then
+            sync()
+        elseif (action == "ask" or action == "send") and not official then
+            local value = tonumber(amount)
+            if not value or value <= 0 then
+                ui.message(target, "warning", "Type an amount", nil, 0.8)
+            elseif action == "ask" then
+                if request("CHAT_REQUEST_MONEY", {
+                    conversation_id = conversation.conversation_id, amount = value,
+                }) then
+                    sync()
+                    return
+                end
+            else
+                local recipientId
+                if conversation.kind == "group" then
+                    local overview = request("FRIEND_OVERVIEW", {}, true)
+                    local members = {}
+                    for _, friend in ipairs(overview and overview.friends or {}) do
+                        for _, name in ipairs(conversation.member_names or {}) do
+                            if name == friend.name then members[#members + 1] = friend end
+                        end
+                    end
+                    local chosen = pickFriend("Pay who?", members)
+                    recipientId = chosen and chosen.account_id
+                end
+                if conversation.kind ~= "group" or recipientId then
+                    local pin = ui.pin(target, "Send " .. money(value), true)
+                    if pin and request("CHAT_SEND_MONEY", {
+                        conversation_id = conversation.conversation_id,
+                        to_account_id = recipientId, amount = value, pin = pin,
+                    }) then
+                        sync()
+                        return
+                    end
+                end
+            end
         end
     end
 end
@@ -3289,55 +3426,110 @@ conversationScreen = function(summary)
     local items = opened.messages
     local conversation = opened.conversation
     local nextSeq = opened.next_seq
-    local blink = true
-    while true do
+    local blink, scroll, ticks = true, 0, 0
+
+    -- New messages since the last look, and now and then the whole chat,
+    -- so a request paid or turned down shows as it is now.
+    local function sync(whole)
+        local update = request("CHAT_OPEN", {
+            conversation_id = conversation.conversation_id,
+            after_seq = whole and 0 or (nextSeq - 1),
+        }, true)
+        if not update then return end
+        local changed = false
+        if whole then
+            items = update.messages
+        else
+            for _, item in ipairs(update.messages) do
+                items[#items + 1] = item
+                -- A payment, or "declined", follows a request changing.
+                if item.kind == "money_sent" or item.kind == "system" then
+                    changed = true
+                end
+            end
+        end
+        while #items > 60 do table.remove(items, 1) end
+        nextSeq = update.next_seq
+        conversation = update.conversation
+        if changed then sync(true) end
+    end
+
+    local function draw(scene)
         local width, height = target.getSize()
         ui.clear(target)
         ui.header(target, conversation.title,
             conversation.kind == "group"
                 and (conversation.member_count .. " people") or "Direct",
             util.formatClock(blink))
-        drawTranscript(items, 4, height - 4, width)
+        return chat.draw(scene or ui.scene(target), items, conversation, 4, height - 3, scroll)
+    end
+
+    while running do
+        local width, height = target.getSize()
         local scene = ui.scene(target)
-        local half = math.floor((width - 3) / 2)
-        scene:button("type", 2, height - 3, half, 2, "Message",
-            { background = ui.theme.accentDark })
-        scene:button("money", 2 + half + 1, height - 3, width - 3 - half, 2,
-            "Money", { background = ui.theme.success,
-                foreground = colors.black })
+        local more = draw(scene)
+        scene:button("type", 2, height - 1, width - 7, 1, "Message...",
+            { background = ui.theme.panel, foreground = ui.theme.muted })
+        scene:button("money", width - 4, height - 1, 4, 1, config.currency,
+            { background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
         scene:button("back", 1, height, 8, 1, "< Back",
-            { background = ui.theme.panel })
-        local action = scene:wait({ tickRate = 1 })
+            { background = ui.theme.background })
+        if more then
+            scene:button("older", width - 8, height, 3, 1, "^",
+                { background = ui.theme.panel })
+        end
+        if scroll > 0 then
+            scene:button("newer", width - 4, height, 3, 1, "v",
+                { background = ui.theme.panel })
+        end
+        local action = scene:wait({ tickRate = 0.5 })
         blink = not blink
         if action == "back" or action == "__terminate" then return end
+        local paySeq = tonumber(action and action:match("^pay:(%d+)$"))
+        local noSeq = tonumber(action and action:match("^no:(%d+)$"))
         if action == "type" then
             local body = ui.input(target, "Message", {
-                hint = conversation.title,
-                maxLength = 120,
-                allowSpace = true,
+                hint = conversation.title, maxLength = 120, allowSpace = true,
+                mode = "text",
             })
-            if body then
+            if body and util.trim(body) ~= "" then
                 request("CHAT_SEND", {
-                    conversation_id = conversation.conversation_id,
-                    body = body,
+                    conversation_id = conversation.conversation_id, body = body,
                 })
+                scroll = 0
             end
         elseif action == "money" then
-            chatMoneyMenu(conversation, items)
-        end
-        -- Pull only what is new, so an open chat stays cheap and current.
-        local update = request("CHAT_OPEN", {
-            conversation_id = conversation.conversation_id,
-            after_seq = nextSeq - 1,
-        }, true)
-        if update then
-            for _, item in ipairs(update.messages) do
-                items[#items + 1] = item
+            chat.moneyTab(conversation, function() draw() end, function() sync(true) end)
+            scroll = 0
+        elseif action == "older" then
+            scroll = math.min(#items - 1, scroll + 1)
+        elseif action == "newer" then
+            scroll = math.max(0, scroll - 1)
+        elseif paySeq then
+            for _, item in ipairs(items) do
+                if item.seq == paySeq then
+                    local pin = ui.pin(target, "Pay " .. money(item.amount), true)
+                    if pin then
+                        local paid = request("CHAT_PAY_REQUEST", {
+                            conversation_id = conversation.conversation_id,
+                            seq = paySeq, pin = pin,
+                        })
+                        if paid then
+                            ui.message(target, "success", "Paid " .. money(paid.quote.amount),
+                                paid.quote.recipient, 1)
+                        end
+                    end
+                end
             end
-            while #items > 60 do table.remove(items, 1) end
-            nextSeq = update.next_seq
-            conversation = update.conversation
+            sync(true)
+        elseif noSeq then
+            request("CHAT_DECLINE_REQUEST", {
+                conversation_id = conversation.conversation_id, seq = noSeq,
+            })
+            sync(true)
         end
+        ticks = ticks + 1
+        sync(ticks % chat.syncTicks == 0)
     end
 end
 
@@ -3430,10 +3622,13 @@ local function messagesScreen(tabs)
             local y = 7 + (index - 1) * 4
             local label = item.title
             if item.unread > 0 then label = "(" .. item.unread .. ") " .. label end
+            -- FoxyOS 16: unread chats in your theme colour.
             scene:button("open:" .. item.conversation_id, 2, y, width - 2, 3,
                 label .. "\n" .. ui.truncate(item.last_preview, width - 6), {
-                    background = item.unread > 0 and ui.theme.accentDark
+                    background = item.unread > 0 and ui.theme.accent
                         or ui.theme.panel,
+                    foreground = item.unread > 0 and (ui.theme.accentInk
+                        or ui.inkOn(ui.theme.accent)) or ui.theme.ink,
                 })
         end
         pageFooter(scene, page, pages, tabs)
@@ -3984,6 +4179,56 @@ end
 
 
 -- The one OS poll: it rings an Urgent Contact and banners a new alert.
+-- FoxyOS 16: Interactive Notifications. An incoming call is a banner at the
+-- top, over whatever is open, with Accept and Decline in it, and the Pocket
+-- carries on under it: only the banner's own row is taken. Accepting opens
+-- the call; declining, or the caller giving up, takes the banner down. A
+-- Pocket whose lib/ui is older still rings the old way, on a whole screen.
+local ringing = { frame = 0 }
+
+function ringing.draw(where, drop)
+    local call = ringing.call
+    if not call then return nil end
+    local dots = ({ "*  ", " * ", "  *" })[ringing.frame % 3 + 1]
+    return ui.topBanner(where, {
+        title = ui.truncate(tostring(call.other_name), 14) .. "  " .. dots,
+        body = call.app_name and ("Calling on " .. call.app_name) or "Urgent Contact",
+        color = ui.theme.accent,
+        buttons = { { id = "accept", label = "Accept", color = ui.theme.success },
+            { id = "decline", label = "Decline", color = ui.theme.danger } },
+    }, drop)
+end
+
+function ringing.stop()
+    ringing.call = nil
+    ui.setOverlay(nil)
+end
+
+function ringing.tap(id)
+    local call = ringing.call
+    ringing.stop()
+    if not call then return end
+    if id == "accept" then
+        local answered = request("URGENT_ANSWER", { call_id = call.call_id, accept = true })
+        if answered then urgentCallScreen(answered.call) end
+    else
+        request("URGENT_ANSWER", { call_id = call.call_id, accept = false }, true)
+    end
+end
+
+function ringing.start(call)
+    ringing.call, ringing.frame = call, 0
+    -- It slides down from above the screen.
+    for step = 1, 4 do
+        ringing.draw(target, step / 4)
+        sleep(0.04)
+    end
+    local layout = ringing.draw(target, 1)
+    ui.setOverlay({ target = target, top = layout.top, bottom = layout.bottom,
+        buttons = layout.buttons, tap = ringing.tap,
+        draw = function(where) ringing.draw(where, 1) end })
+end
+
 watchForUrgentCalls = function()
     if not sessionToken or inCall then return false end
     local poll = request("PUMPE_POLL", { position = net.locate(1) }, true)
@@ -4013,7 +4258,21 @@ watchForUrgentCalls = function()
     end
     if poll.call then
         if latest then lastBannerId = latest.notification_id end
-        incomingCallScreen(poll.call)
+        if type(ui.setOverlay) ~= "function" or type(ui.topBanner) ~= "function" then
+            incomingCallScreen(poll.call)
+            return true
+        end
+        if ringing.call and ringing.call.call_id == poll.call.call_id then
+            -- Still ringing: the dots move on the next time it is drawn.
+            ringing.frame = ringing.frame + 1
+            return false
+        end
+        ringing.start(poll.call)
+        return true
+    end
+    -- The caller gave up, or somebody answered elsewhere.
+    if ringing.call then
+        ringing.stop()
         return true
     end
     if latest and latest.notification_id ~= lastBannerId then
@@ -6520,6 +6779,10 @@ end
 -- QuickAction is a list of them, so the one list below is what makes both
 -- work without either knowing anything about the apps themselves.
 local APPS = {
+    -- FoxyOS 16: Messages, an app of its own. The same chats are on the
+    -- Friends hub's Chats tab.
+    messages = { name = "Messages", glyph = "\"", color = colors.green,
+        open = function() messagesScreen() end },
     friends = { name = "Friends", glyph = "@", color = colors.cyan,
         open = friendsApp, actions = {
             { id = "messages", label = "Messages", hint = "Open a chat" },
@@ -6560,7 +6823,7 @@ local APPS = {
     settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
-    "friends", "tickets", "myid", "ccg", "subs",
+    "friends", "messages", "tickets", "myid", "ccg", "subs",
     "reminders", "quick", "browser", "settings",
 }
 
@@ -6619,9 +6882,12 @@ end
 local DOCK_SLOTS = 4
 
 local function appBadge(id, poll)
-    if id == "friends" then
-        local total = (poll.unread_messages or 0) + (poll.friend_requests or 0)
-        if total > 0 then return total end
+    -- FoxyOS 16: unread messages on Messages, friend requests on Friends.
+    if id == "messages" and (poll.unread_messages or 0) > 0 then
+        return poll.unread_messages
+    end
+    if id == "friends" and (poll.friend_requests or 0) > 0 then
+        return poll.friend_requests
     end
     return nil
 end

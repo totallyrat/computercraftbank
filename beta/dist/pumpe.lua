@@ -1,0 +1,7907 @@
+local ROOT = fs.getDir(shell.getRunningProgram())
+if ROOT == "" then ROOT = "." end
+package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
+.. ";" .. fs.combine(ROOT, "?/init.lua")
+
+
+
+local PROGRAM_VERSION = "15.5.0"
+local config = require("config")
+local util = require("lib.util")
+local net = require("lib.net")
+local ui = require("lib.ui")
+
+local target = term.current()
+local client = net.client(config)
+local sessionToken
+local betAccessToken
+local account
+local running = true
+local deviceFile = fs.combine(ROOT, "pumpe_device.dat")
+local device = util.loadTable(deviceFile, {
+last_name = "",
+onboarding_complete = false,
+
+
+modem_on = true,
+update_mode = "ask",
+})
+if device.onboarding_complete == nil then device.onboarding_complete = false end
+if device.modem_on == nil then device.modem_on = true end
+
+
+
+
+
+if device.update_mode ~= "auto" then device.update_mode = "ask" end
+device.reminders = device.reminders or {}
+device.shortcuts = device.shortcuts or {}
+
+
+
+
+do
+local renamed, seen = { bet = "ccg", tax = "myid", customs = "myid" }, {}
+for index = #(device.favorites or {}), 1, -1 do
+local id = renamed[device.favorites[index]] or device.favorites[index]
+if seen[id] then table.remove(device.favorites, index)
+else seen[id], device.favorites[index] = true, id end
+end
+end
+for _, item in pairs(device.shortcuts) do
+for _, step in ipairs(type(item) == "table" and item.steps or {}) do
+if step.app == "bet" then
+step.app, step.action = "ccg", "bet"
+elseif step.app == "tax" then
+step.app, step.action = "myid", "tax"
+elseif step.app == "customs" then
+step.app = "myid"
+step.action = step.action == "territories" and "countries" or "visas"
+end
+end
+end
+
+
+
+
+
+local function offline() return device.modem_on == false end
+
+
+
+if offline() then pcall(net.closeModems) end
+
+
+
+
+local function cachedProfile()
+return {
+name = device.last_name ~= "" and device.last_name or "Pocket",
+offline = true,
+}
+end
+
+
+
+
+do
+local realRequest = client.request
+
+
+
+client.request = function(self, action, payload, timeout)
+if device.modem_on == false then
+return nil, "Modem is off", "MODEM_OFF"
+end
+return realRequest(self, action, payload, timeout)
+end
+end
+
+
+
+local appsDir = fs.combine(ROOT, "apps")
+local appsFile = fs.combine(ROOT, "pumpe_apps.dat")
+local installed = util.loadTable(appsFile, { list = {} })
+installed.list = installed.list or {}
+
+ui.usePhoneStyle(true)
+
+
+
+local hasColors = type(ui.useMainColor) == "function"
+if hasColors then ui.useMainColor(ROOT) end
+
+local disableDeviceLock
+
+local favouritesPicker
+
+
+
+local appBrowser
+local connectedApps
+local appSettingsScreen
+
+
+local agenda
+
+local function request(action, payload, silent)
+payload = payload or {}
+if sessionToken and not payload.session_token then
+payload.session_token = sessionToken
+end
+local result, err, code = client:request(action, payload)
+if not result and not silent then
+if code == "MODEM_OFF" then
+
+
+ui.message(target, "warning", "Modem is off",
+"Turn it on in Settings", 1.4)
+return result, err, code
+end
+if code == "SESSION_EXPIRED" then
+sessionToken, betAccessToken, account = nil, nil, nil
+disableDeviceLock()
+end
+ui.networkError(target, err)
+end
+return result, err, code
+end
+
+local function saveDevice()
+util.saveTable(deviceFile, device)
+end
+
+
+
+
+local function present(kind, ref)
+if not sessionToken then return end
+request("PRESENT",
+{ kind = kind, ref = ref, position = net.locate(1) }, true)
+end
+
+local function stopPresenting()
+if not sessionToken then return end
+request("PRESENT", {}, true)
+end
+
+local function money(value)
+return util.money(value, config.currency)
+end
+
+local function refreshSummary(silent)
+local result = request("ACCOUNT_SUMMARY", {}, silent)
+if result then account = result.account end
+return result
+end
+
+local function phoneTransition(title, color)
+local width, height = target.getSize()
+color = color or ui.theme.accentDark
+for column = 1, width, 3 do
+ui.fill(target, column, 1, math.min(3, width - column + 1),
+height, column % 2 == 0 and ui.theme.background or color)
+sleep(0.015)
+end
+ui.clear(target)
+ui.center(target, math.floor(height / 2), title or "Pocket", ui.theme.ink)
+sleep(0.08)
+end
+
+
+
+
+
+
+
+
+local opening = { spots = {} }
+do
+
+local function hash(x, y, seed)
+local value = math.sin(x * 12.9898 + y * 78.233 + seed * 37.719) * 43758.5453
+return value - math.floor(value)
+end
+
+
+
+
+
+local STYLES = {}
+local function near(c, x, y, ox, oy)
+local dx, dy = x - ox, (y - oy) * 1.5
+return math.sqrt(dx * dx + dy * dy)
+end
+local function reach(c) return math.sqrt(c.w * c.w + (c.h * 1.5) ^ 2) end
+local function front(value, limit, width)
+if value <= limit - (width or 1.5) then return 1 end
+if value <= limit then return 2 end
+return nil
+end
+
+
+function STYLES.ripple(c, x, y, t)
+local d, r = near(c, x, y, c.ox, c.oy), t * reach(c)
+if t < 1 and math.abs(d - r * 0.55) < 0.8 then return 2 end
+return front(d, r, 2)
+end
+
+function STYLES.tear(c, x, y, t)
+local half = t * (c.h / 2 + 1)
+if t > 0.5 and t < 1 and math.abs(y - (c.h + 1) / 2) < 1 then
+return x % 2 == 0 and 2 or 1
+end
+if y <= half or y > c.h - half then return 1 end
+end
+
+function STYLES.scan(c, x, y, t)
+local edge = t * (c.w + 2)
+if t < 1 and x <= edge and y == math.floor(t * c.h) + 1 then return 2 end
+return front(x, edge, 1)
+end
+
+function STYLES.arcade(c, x, y, t)
+local r = hash(math.floor((x - 1) / 2), y, c.seed)
+if r < t - 0.18 then return 1 end
+if r < t then return 2 end
+end
+
+function STYLES.wave(c, x, y, t)
+local level = c.h - t * (c.h + 3) + math.sin(x / 2.5 + t * 8) * 1.5
+if y > level + 1 then return 1 end
+if y > level then return 2 end
+end
+
+function STYLES.shake(c, x, y, t)
+local jitter = (c.frame % 2 == 0 and 1 or -1) * math.floor((1 - t) * 3)
+return front(math.abs(x - c.ox + jitter), t * (c.w + 1), 1)
+end
+
+function STYLES.bolt(c, x, y, t)
+local zig = ({ 0, 2, 4, 2 })[y % 4 + 1]
+return front(x + zig + y * 0.5, t * (c.w + c.h * 0.5 + 6), 2)
+end
+
+function STYLES.tiles(c, x, y, t)
+local columns = math.ceil(c.w / 6)
+local rows = math.ceil(c.h / 4)
+if (x - 1) % 6 == 5 or (y - 1) % 4 == 3 then
+return t >= 1 and 1 or nil
+end
+local index = math.floor((y - 1) / 4) * columns + math.floor((x - 1) / 6)
+local at = index / (columns * rows)
+if at < t - 1 / (columns * rows) then return 1 end
+if at < t then return 2 end
+end
+
+function STYLES.shutter(c, x, y, t)
+local edge = math.min(x - 1, c.w - x, (y - 1) * 1.5, (c.h - y) * 1.5)
+return front(edge, t * (c.w / 2 + 1), 1)
+end
+
+function STYLES.envelope(c, x, y, t)
+return front(y + math.abs(x - c.w / 2) * 0.6, t * (c.h + c.w / 3 + 1), 1.5)
+end
+
+function STYLES.awning(c, x, y, t)
+local stripe = math.floor((x - 1) / 3) % 2
+return front(c.h - y + 1 + stripe * 2, t * (c.h + 3), 1)
+end
+
+function STYLES.blinds(c, x, y, t)
+return front((y - 1) % 3, t * 3.2, 0.5)
+end
+
+function STYLES.radar(c, x, y, t)
+local d = near(c, x, y, c.w / 2, c.h / 2)
+local r = t * reach(c) / 2 + 1
+if d <= r and (y % 2 == 1 or t > 0.5) then
+return d > r - 1.5 and 2 or 1
+end
+end
+
+function STYLES.typewriter(c, x, y, t)
+return front((y - 1) * c.w + x, t * c.w * c.h * 1.05, c.w)
+end
+
+function STYLES.coin(c, x, y, t)
+return front(math.abs(x - c.w / 2), t * (c.w / 2 + 1), 1)
+end
+
+function STYLES.spin(c, x, y, t)
+local band = ((x + y * 2) % 8) / 8
+if band < t - 0.125 then return 1 end
+if band < t then return 2 end
+end
+
+function STYLES.unfold(c, x, y, t)
+return front(math.abs(y - (c.h + 1) / 2) * 1.5, t * (c.h * 0.75 + 1), 1.5)
+end
+
+function STYLES.diamond(c, x, y, t)
+return front(math.abs(x - c.ox) + math.abs(y - c.oy) * 1.5,
+t * (c.w + c.h * 1.5), 2)
+end
+function STYLES.iris(c, x, y, t)
+return front(near(c, x, y, c.w / 2, c.h / 2), t * reach(c) / 2 + 1, 1.5)
+end
+function STYLES.doors(c, x, y, t)
+local half = t * (c.w / 2 + 1)
+if x <= half - 1 or x > c.w - half + 1 then return 1 end
+if x <= half or x > c.w - half then return 2 end
+end
+function STYLES.rise(c, x, y, t)
+return front(c.h - y + 1, t * (c.h + 1), 1)
+end
+function STYLES.diagonal(c, x, y, t)
+return front(x + y * 1.5, t * (c.w + c.h * 1.5 + 2), 2)
+end
+
+
+function STYLES.bubble(c, x, y, t)
+local rise = t * (c.h + 4)
+for _, spot in ipairs({ 0.25, 0.6, 0.85 }) do
+local d = near(c, x, y, c.w * spot, c.h + 2 - rise * (0.8 + spot * 0.4))
+if d <= 2 + t * 6 then return d > 1 + t * 6 and 2 or 1 end
+end
+return front(c.h - y + 1, rise - 2, 1)
+end
+
+local BUILT_IN = { friends = "ripple", messages = "bubble", tickets = "tear", myid = "scan",
+ccg = "arcade", subs = "wave", reminders = "shake", quick = "bolt",
+browser = "tiles", settings = "shutter" }
+
+
+local SHIPPED = { FOXY = "none", MAIL = "envelope", SHOP = "awning",
+COMPANY = "blinds", NET = "radar", WC = "typewriter", BUCK = "coin",
+REVO = "spin", INVT = "unfold" }
+local OTHERS = { "diamond", "iris", "doors", "rise", "diagonal" }
+
+function opening.style(id)
+id = tostring(id or "")
+if BUILT_IN[id] then return BUILT_IN[id] end
+local appId = id:match("^ext:(.+)$")
+if appId and SHIPPED[appId] then return SHIPPED[appId] end
+local sum = 0
+for index = 1, #id do sum = sum + id:byte(index) * index end
+return OTHERS[sum % #OTHERS + 1]
+end
+
+function opening.play(id, app)
+if opening.style(id) == "none" then return end
+local width, height = target.getSize()
+local color = app.color or ui.theme.accentDark
+local edge = color == colors.white and colors.lightGray or colors.white
+local spot = opening.spots[id]
+or { math.floor(width / 2), math.floor(height / 2) }
+local c = { w = width, h = height, ox = spot[1], oy = spot[2],
+seed = #tostring(id), frame = 0 }
+local paint = STYLES[opening.style(id)]
+for frame = 1, 6 do
+c.frame = frame
+local t = frame / 6
+for y = 1, height do
+local start, kind = 1, nil
+for x = 1, width + 1 do
+local now = x <= width and paint(c, x, y, t) or nil
+if now ~= kind then
+if kind then
+ui.fill(target, start, y, x - start, 1,
+kind == 2 and edge or color)
+end
+start, kind = x, now
+end
+end
+end
+sleep(0.05)
+end
+
+local middle = math.floor(height / 2)
+ui.fill(target, 1, 1, width, height, color)
+ui.fill(target, math.floor(width / 2) - 2, middle - 3, 5, 3, edge)
+ui.center(target, middle - 2, tostring(app.glyph or "?"), color, edge)
+ui.center(target, middle + 1, ui.truncate(app.name or "", width - 2),
+ui.inkOn(color), color)
+sleep(0.15)
+end
+end
+
+if rawget(_G, "PUMPE_OPENING_TEST") == true then return opening end
+
+local function preparationAnimation(newAccount)
+local width, height = target.getSize()
+local stages = {
+{
+title = "Setting up your",
+detail = "Foxy Account",
+work = function() saveDevice() end,
+},
+{
+title = "Securing your details",
+detail = "Encrypted by your PIN",
+work = function() refreshSummary(true) end,
+},
+{
+title = "Preparing your Pocket",
+detail = "Installing your apps",
+work = function() client:discover() end,
+},
+}
+if not newAccount then
+stages[1].title = "Opening your"
+stages[1].detail = "Foxy Account"
+end
+for index, stage in ipairs(stages) do
+if stage.work then pcall(stage.work) end
+for frame = 1, 4 do
+ui.clear(target)
+ui.center(target, 5, "Pocket", ui.theme.ink)
+ui.center(target, 8, stage.title, ui.theme.ink)
+ui.center(target, 9, stage.detail, ui.theme.muted)
+local dots = string.rep(".", (frame - 1) % 4)
+ui.center(target, 11, dots, ui.theme.accent)
+ui.progress(target, 3, height - 4, width - 5,
+(index - 1) * 4 + frame, #stages * 4,
+ui.theme.accent, ui.theme.panel)
+sleep(0.07)
+end
+end
+phoneTransition("Ready.", ui.theme.success)
+end
+
+local function unlockAnimation()
+local width, height = target.getSize()
+for row = height, 1, -2 do
+ui.fill(target, 1, row, width, math.min(2, height - row + 1),
+ui.theme.background)
+sleep(0.015)
+end
+end
+
+
+
+local function drawLockScreen(name, blink, prompt, promptColor)
+local width, height = target.getSize()
+ui.clear(target)
+ui.text(target, 2, 1, "Pocket", ui.theme.muted, ui.theme.background)
+ui.text(target, width - 2, 1, "[]", ui.theme.success, ui.theme.background)
+local clock = util.formatClock(blink)
+if not ui.wordmark(target, 4, clock, nil, ui.theme.accent) then
+ui.center(target, 5, clock, ui.theme.ink)
+end
+ui.center(target, 10, "Day " .. util.ingameDay(), ui.theme.muted)
+ui.center(target, 13, ui.truncate(name, width - 4), ui.theme.ink)
+ui.center(target, 14, offline() and "Offline" or "Foxy Account",
+ui.theme.muted)
+local pillWidth = math.min(width - 4, #prompt + 6)
+local x = math.floor((width - pillWidth) / 2) + 1
+ui.fill(target, x, height - 2, pillWidth, 1, promptColor)
+ui.center(target, height - 2, prompt, ui.inkOn(promptColor), promptColor)
+end
+
+local function lockScreen(forcePin)
+if not account then return end
+local blink = true
+while running and (sessionToken or offline()) do
+
+
+
+
+local pinRequired = not offline() and (forcePin
+or ui.idleForMs()
+>= (tonumber(config.pumpe_pin_seconds) or 120) * 1000)
+drawLockScreen(account.name, blink,
+pinRequired and "PIN to unlock" or "Tap to open",
+pinRequired and ui.theme.accent or ui.theme.panel)
+
+os.startTimer(0.5)
+local event = { os.pullEvent() }
+if event[1] == "timer" then
+blink = not blink
+elseif event[1] == "terminate" then
+running = false
+return
+elseif event[1] == "mouse_click" or event[1] == "monitor_touch"
+or event[1] == "key" or event[1] == "char" then
+local mustUsePin = not offline() and (forcePin
+or ui.idleForMs()
+>= (tonumber(config.pumpe_pin_seconds) or 120) * 1000)
+if mustUsePin then
+local pin = ui.pin(target, "Unlock Pocket", true)
+if pin then
+local result, err = client:request("LOGIN", {
+name = account.name,
+pin = pin,
+})
+if result then
+sessionToken = result.session_token
+account = result.account
+ui.noteActivity()
+unlockAnimation()
+return
+end
+ui.message(target, "error", "Pocket Locked",
+err or "Incorrect PIN", 0.8)
+end
+else
+ui.noteActivity()
+unlockAnimation()
+return
+end
+end
+end
+end
+
+
+
+
+
+local function lockedStart()
+local blink = true
+while running and not sessionToken do
+drawLockScreen(device.last_name, blink, "PIN to unlock", ui.theme.accent)
+os.startTimer(0.5)
+local event = { os.pullEvent() }
+if event[1] == "timer" then
+blink = not blink
+elseif event[1] == "terminate" then
+running = false
+return false
+elseif event[1] == "mouse_click" or event[1] == "monitor_touch"
+or event[1] == "key" or event[1] == "char" then
+local pin = ui.pin(target, "Unlock Pocket", true)
+if pin then
+local result, err = client:request("LOGIN", {
+name = device.last_name, pin = pin })
+if result then
+sessionToken = result.session_token
+account = result.account
+ui.noteActivity()
+unlockAnimation()
+return true
+end
+ui.message(target, "error", "Pocket Locked",
+err or "Incorrect PIN", 0.8)
+end
+end
+end
+return sessionToken ~= nil
+end
+
+local watchForUrgentCalls
+
+
+
+
+local canRingAnywhere = type(ui.setBackgroundTask) == "function"
+
+local function enableDeviceLock()
+ui.setIdleLock(tonumber(config.pumpe_lock_seconds) or 60, function()
+lockScreen(false)
+end)
+
+
+if canRingAnywhere then
+ui.setBackgroundTask(
+tonumber(config.urgent_ring_poll_seconds) or 3,
+function() return watchForUrgentCalls() end)
+end
+end
+
+disableDeviceLock = function()
+ui.setIdleLock(nil)
+if canRingAnywhere then ui.setBackgroundTask(nil) end
+end
+
+
+
+
+local function pageFooter(scene, page, pages, tabs)
+local width, height = scene.width, scene.height
+local row = tabs and height - 2 or height
+if tabs then
+ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+else
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+end
+if pages and pages > 1 then
+scene:button("prev", width - 15, row, 4, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.text(scene.target or target, width - 10, row,
+page .. "/" .. pages, ui.theme.muted)
+scene:button("next", width - 4, row, 4, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+end
+
+local function login()
+local name = ui.input(target, "Foxy Account", {
+hint = "Your account name",
+initial = device.last_name,
+maxLength = 20,
+allowSpace = true,
+})
+if not name then return false end
+local pin = ui.pin(target, "Your PIN", true)
+if not pin then return false end
+local result, err = client:request("LOGIN", { name = name, pin = pin })
+if not result then
+ui.message(target, "error", "Could Not Sign In", err, 1.1)
+return false
+end
+sessionToken = result.session_token
+account = result.account
+device.last_name = account.name
+device.onboarding_complete = true
+saveDevice()
+preparationAnimation(false)
+enableDeviceLock()
+return true
+end
+
+
+
+
+
+local GUIDE = {
+{ "Your home screen",
+"Apps in the grid, favourites in the dock. Search finds anything." },
+{ "Your money",
+"Foxy is your bank: your balance, Foxy Cash and Foxy Pay." },
+{ "Your apps",
+"Get more in the App Browser. They update themselves. Your PIN locks"
+.. " the phone." },
+}
+
+local function guideScreen()
+local page = 1
+while running do
+local width, height = target.getSize()
+local scene
+ui.clear(target)
+if page > #GUIDE then
+
+local top = math.max(2, math.floor(height / 2) - 6)
+local drawn = ui.wordmark(target, top, "FOXY", nil, ui.theme.accent)
+local y = drawn and top + 7 or top + 2
+ui.center(target, y, "Welcome to Foxy", ui.theme.ink)
+ui.center(target, y + 2, ui.truncate(account and account.name
+or "Your Pocket is ready", width - 2), ui.theme.muted)
+scene = ui.scene(target)
+scene:button("next", 3, height - 4, width - 5, 3, "Start",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk,
+shadow = true })
+else
+local entry = GUIDE[page]
+ui.header(target, "How Pocket Works",
+"Step " .. page .. " of " .. #GUIDE, util.formatClock())
+ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
+ui.text(target, 4, 6, entry[1], ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 8, entry[2], width - 6, 5,
+ui.theme.muted, ui.theme.panel)
+scene = ui.scene(target)
+scene:button("next", 3, 15, width - 5, 3, "Next",
+{ background = ui.theme.accentDark, shadow = true })
+local dots = {}
+for index = 1, #GUIDE + 1 do
+dots[index] = index == page and "o" or "."
+end
+ui.center(target, height - 1, table.concat(dots, " "),
+ui.theme.muted, ui.theme.background)
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel, disabled = page == 1 })
+end
+local action = scene:wait()
+if action == "next" then
+if page > #GUIDE then return end
+page = page + 1
+elseif action == "back" then
+page = math.max(1, page - 1)
+elseif action == "__terminate" then
+return
+end
+end
+end
+
+local function createAccount()
+local name = ui.input(target, "Create Foxy Account", {
+hint = "Choose a username",
+maxLength = 20,
+allowSpace = true,
+})
+if not name then return false end
+local pin = ui.pin(target, "Create a PIN", true)
+if not pin then return false end
+local confirmPin = ui.pin(target, "Repeat Your PIN", true)
+if not confirmPin then return false end
+if pin ~= confirmPin then
+ui.message(target, "error", "PINs Do Not Match", "Please try again", 1)
+return false
+end
+local result, err = client:request("REGISTER", { name = name, pin = pin })
+if not result then
+ui.message(target, "error", "Account Not Created", err, 1.1)
+return false
+end
+sessionToken = result.session_token
+account = result.account
+device.last_name = account.name
+device.onboarding_complete = true
+saveDevice()
+preparationAnimation(true)
+guideScreen()
+enableDeviceLock()
+return true
+end
+
+
+local function welcomeScreen()
+local blink = true
+while running and not sessionToken do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Welcome", "Let us get you started",
+util.formatClock(blink))
+ui.card(target, 2, 5, width - 2, 6, ui.theme.accent)
+ui.text(target, 4, 6, "Pocket", ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 7,
+"Your money, your friends and your tickets, in one pocket.",
+width - 6, 4, ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("create", 3, 12, width - 5, 3, "I need an account",
+{ background = ui.theme.accentDark, shadow = true })
+scene:button("login", 3, 16, width - 5, 3, "I already have one",
+{ background = ui.theme.panel })
+if device.last_name ~= "" then
+ui.center(target, height - 1,
+ui.truncate("Last used: " .. device.last_name, width),
+ui.theme.muted, ui.theme.background)
+end
+scene:button("exit", 1, height, 6, 1, "Exit",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 0.5 })
+if action == "__tick" or action == "__idle" then
+blink = not blink
+elseif action == "create" or action == "login" then
+return action
+elseif action == "exit" or action == "__terminate" then
+return "exit"
+end
+end
+return "exit"
+end
+
+local function welcome()
+while running and not sessionToken do
+disableDeviceLock()
+local action = welcomeScreen()
+if action == "login" then
+login()
+elseif action == "create" then
+createAccount()
+else
+running = false
+end
+end
+end
+
+local function reviewTransfer(quote)
+local blink = true
+while true do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Send Money", "Review transfer",
+util.formatClock(blink))
+ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
+ui.text(target, 4, 5, "TO", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate(quote.recipient, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8, "THEY RECEIVE", ui.theme.muted, ui.theme.panel)
+local receiveText = money(quote.amount)
+ui.text(target, width - #receiveText - 2, 8, receiveText,
+ui.theme.success, ui.theme.panel)
+local rate = math.floor((tonumber(config.send_money_fee_rate) or 0.10)
+* 100 + 0.5)
+ui.text(target, 4, 10, "FEE " .. rate .. "%", ui.theme.muted, ui.theme.panel)
+local feeText = money(quote.fee)
+ui.text(target, width - #feeText - 2, 10, feeText,
+ui.theme.warning, ui.theme.panel)
+ui.text(target, 4, 12, "YOU PAY", ui.theme.ink, ui.theme.panel)
+local totalText = money(quote.total)
+ui.text(target, width - #totalText - 2, 12, totalText,
+ui.theme.ink, ui.theme.panel)
+ui.center(target, 15, "Daily left: " .. money(quote.daily_remaining),
+ui.theme.muted)
+
+local scene = ui.scene(target)
+local buttonWidth = math.floor((width - 5) / 2)
+scene:button("back", 2, height - 3, buttonWidth, 2, "Back",
+{ background = ui.theme.panel })
+scene:button("send", width - buttonWidth, height - 3,
+buttonWidth, 2, "Send",
+{ background = ui.theme.accentDark })
+local action = scene:wait({ tickRate = 0.5 })
+if action == "send" then return true end
+if action == "back" or action == "__terminate" then return false end
+blink = not blink
+end
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+local eventsScreen
+do
+local function minutesSeconds(ms)
+local seconds = math.max(0, math.floor((ms or 0) / 1000))
+return string.format("%d:%02d", math.floor(seconds / 60), seconds % 60)
+end
+
+
+local function badge(event, mine)
+local status = mine and mine.status or event.queue_status
+if event.sold_out or (mine and mine.sold_out) then
+return "SOLD OUT", colors.red
+end
+if status == "waiting" or status == "shopping" then
+return "IN THE QUEUE", colors.cyan
+end
+local phase = event.phase or "general"
+if phase == "general" then
+return "ON SALE" .. (event.from_price
+and ("  from " .. money(event.from_price)) or ""), colors.lime
+end
+if phase == "presale" and event.invited then
+return "PRESALE OPEN FOR YOU", colors.magenta
+end
+if event.invited and event.presale_day and phase == "soon" then
+return "PRESALE DAY " .. event.presale_day .. " "
+.. tostring(event.presale_time), colors.magenta
+end
+return "ON SALE DAY " .. tostring(event.release_day) .. " "
+.. tostring(event.release_time), colors.yellow
+end
+
+
+
+local function crowd(y, frame, walking, door)
+local width = target.getSize()
+ui.fill(target, 2, y, width - 2, 1, ui.theme.panel)
+ui.fill(target, width - 1, y, 1, 1, door)
+local span = width - 5
+for index = 0, 4 do
+local x
+if walking then
+x = 3 + (index * 5 + frame) % span
+else
+x = 3 + index * 5 + ((frame + index) % 3 == 0 and 1 or 0)
+end
+ui.fill(target, x, y, 1, 1, ui.theme.ink)
+end
+end
+
+local function leaveQueue(eventId)
+request("QUEUE_LEAVE", { event_id = eventId }, true)
+end
+
+
+local function celebrate(event, count)
+local width, height = target.getSize()
+local top = height - 12
+for step = 1, 6 do
+ui.clear(target)
+local y = math.max(top - 2, height - step * 2)
+ui.fill(target, 3, y, width - 4, math.min(8, height - y + 1), colors.white)
+sleep(0.04)
+end
+ui.clear(target)
+ui.center(target, 2, "You're going!", ui.theme.success)
+ui.fill(target, 3, top - 2, width - 4, 8, colors.white)
+ui.fill(target, 3, top + 1, width - 4, 1, colors.lightGray)
+ui.center(target, top - 1, ui.truncate(event.title, width - 6),
+colors.black, colors.white)
+ui.center(target, top, "Day " .. tostring(event.event_day) .. "  "
+.. tostring(event.event_time), colors.gray, colors.white)
+ui.center(target, top + 3, count .. (count == 1 and " TICKET" or " TICKETS"),
+colors.black, colors.white)
+ui.center(target, top + 4, "In My tickets", colors.gray, colors.white)
+local scene = ui.scene(target)
+scene:button("mine", 2, height - 4, width - 2, 2, "See my tickets",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("done", 2, height - 1, width - 2, 1, "Done",
+{ background = ui.theme.panel })
+local action = scene:wait()
+return action == "mine" and "tab:mine" or nil
+end
+
+
+local function turnScreen(event, mine)
+local details = request("EVENT_DETAILS", { event_id = event.event_id }, true)
+local types = details and details.ticket_types or {}
+mine = details and details.mine or mine or {}
+local endsAt = util.nowMs() + (mine.turn_left_ms or 120000)
+local turnMs = mine.turn_ms or 120000
+local chosen, page, ticks = {}, 1, 0
+while running and sessionToken do
+ui.noteActivity()
+local width, height = target.getSize()
+local room = math.max(0, (mine.limit or 1) - (mine.bought or 0))
+local count, total = 0, 0
+for _, item in ipairs(types) do
+local quantity = chosen[item.ticket_type_id] or 0
+count, total = count + quantity, total + quantity * item.price
+end
+local leftMs = endsAt - util.nowMs()
+ui.clear(target)
+ui.header(target, "Your turn", ui.truncate(event.title, width - 3),
+minutesSeconds(leftMs))
+ui.progress(target, 2, 4, width - 2, math.max(0, leftMs), turnMs,
+leftMs < 30000 and colors.red or colors.lime, ui.theme.panel)
+ui.text(target, 2, 5, ui.truncate("Choose up to " .. room
+.. (room == 1 and " ticket" or " tickets"), width - 3), ui.theme.muted)
+local scene = ui.scene(target)
+local per = 3
+local pages = math.max(1, math.ceil(#types / per))
+page = math.max(1, math.min(page, pages))
+for slot = 1, per do
+local index = (page - 1) * per + slot
+local item = types[index]
+if not item then break end
+local y = 4 + slot * 3
+local quantity = chosen[item.ticket_type_id] or 0
+local available = item.available_quantity
+or (item.total_quantity - item.sold_quantity)
+ui.card(target, 2, y, width - 2, 2, available > 0 and colors.orange
+or colors.red)
+ui.text(target, 4, y, ui.truncate(item.name, width - 14),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 1, ui.truncate(available <= 0 and "Sold out"
+or (money(item.price) .. (available <= 5
+and ("  " .. available .. " left") or "")), width - 14),
+available > 0 and ui.theme.muted or colors.red, ui.theme.panel)
+scene:button("minus:" .. index, width - 9, y, 3, 2, "-",
+{ background = colors.gray, disabled = quantity <= 0 })
+ui.text(target, width - 5, y, tostring(quantity), ui.theme.ink,
+ui.theme.panel)
+scene:button("plus:" .. index, width - 3, y, 3, 2, "+",
+{ background = colors.orange, foreground = colors.black,
+disabled = count >= room or quantity >= available })
+end
+if pages > 1 then
+scene:button("prev", 2, 16, 4, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.text(target, 7, 16, page .. "/" .. pages, ui.theme.muted)
+scene:button("next", 11, 16, 4, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+scene:button("buy", 2, height - 2, width - 2, 2,
+count > 0 and ("Buy " .. count .. "  " .. money(total))
+or "Pick your tickets",
+{ background = ui.theme.success, foreground = colors.black,
+disabled = count <= 0 })
+scene:button("leave", width - 7, 16, 7, 1, "Leave",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 0.5, flash = false })
+if action == "__terminate" then leaveQueue(event.event_id) return nil end
+if action == "__tick" then ticks = ticks + 1 end
+
+
+if (action == "__tick" and ticks % 6 == 0) or leftMs <= 0 then
+local polled = request("QUEUE_STATUS", { event_id = event.event_id }, true)
+if polled then
+mine = polled.queue
+if mine.status ~= "shopping" then
+ui.message(target, "warning", "Your turn ran out",
+"Join the queue again for another", 1.8)
+return nil
+end
+endsAt = util.nowMs() + (mine.turn_left_ms or 0)
+end
+end
+local minus = tonumber(action and action:match("^minus:(%d+)$"))
+local plus = tonumber(action and action:match("^plus:(%d+)$"))
+if minus and types[minus] then
+local id = types[minus].ticket_type_id
+chosen[id] = math.max(0, (chosen[id] or 0) - 1)
+elseif plus and types[plus] then
+local id = types[plus].ticket_type_id
+chosen[id] = (chosen[id] or 0) + 1
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+elseif action == "leave" then
+if ui.confirm(target, "Leave the queue?",
+"Your turn goes to the next person", "Leave", "Stay") then
+leaveQueue(event.event_id)
+return nil
+end
+elseif action == "buy" and count > 0 then
+local pin = ui.pin(target, "Pay " .. money(total), true)
+if pin then
+local got, failure = 0, nil
+for _, item in ipairs(types) do
+local quantity = chosen[item.ticket_type_id] or 0
+if quantity > 0 and not failure then
+local result, err = request("BUY_TICKETS", {
+event_id = event.event_id,
+ticket_type_id = item.ticket_type_id,
+quantity = quantity, pin = pin,
+}, true)
+if result then
+got = got + quantity
+if account then account.balance = result.balance end
+mine = result.queue or mine
+else
+failure = err
+end
+end
+end
+if got > 0 then
+if mine.status == "shopping" then leaveQueue(event.event_id) end
+if failure then
+ui.message(target, "warning", "Not all of them", failure, 1.8)
+end
+return celebrate(event, got)
+end
+ui.message(target, "error", "Not bought", failure, 1.8)
+end
+end
+end
+return nil
+end
+
+
+
+local function queueScreen(event, mine)
+local frame, firstAhead = 0, nil
+while running and sessionToken do
+ui.noteActivity()
+if mine.status == "shopping" then return turnScreen(event, mine) end
+if mine.status ~= "waiting" then
+if mine.status == "expired" then
+ui.message(target, "warning", "Your turn ran out",
+"Join the queue again for another", 1.8)
+elseif mine.sold_out then
+ui.message(target, "warning", "Sold out",
+"Every ticket has gone", 1.8)
+elseif mine.status == "left" then
+ui.message(target, "warning", "You left the queue",
+"Keep the screen open to keep your place", 1.8)
+end
+return nil
+end
+local width, height = target.getSize()
+ui.clear(target)
+local scene = ui.scene(target)
+if mine.waiting_room then
+local opens = mine.queue_phase == "presale"
+and { event.presale_day, event.presale_time }
+or { event.release_day, event.release_time }
+local countdown = opens[1] and util.eventCountdown(opens[1], opens[2])
+or "soon"
+ui.header(target, "Waiting room", ui.truncate(event.title, width - 3))
+ui.center(target, 5, mine.queue_phase == "presale"
+and "THE PRESALE OPENS IN" or "THE SALE OPENS IN", ui.theme.muted)
+ui.center(target, 7, countdown, colors.yellow)
+ui.center(target, 8, "Day " .. tostring(opens[1]) .. "  "
+.. tostring(opens[2]), ui.theme.muted)
+crowd(10, frame, false, colors.yellow)
+ui.center(target, 12, (mine.in_room or 1) .. " waiting with you",
+ui.theme.ink)
+ui.wrappedText(target, 2, 14, "When it opens, everybody here"
+.. " gets a random place in line.", width - 2, 3, ui.theme.muted)
+else
+local ahead = mine.ahead or 0
+firstAhead = math.max(firstAhead or ahead, ahead)
+ui.header(target, "In the queue", ui.truncate(event.title, width - 3))
+ui.center(target, 5, ahead == 0 and "YOU'RE NEXT" or tostring(ahead),
+ahead == 0 and colors.lime or ui.theme.ink)
+ui.center(target, 6, ahead == 0 and "Any moment now"
+or (ahead == 1 and "person ahead of you" or "people ahead of you"),
+ui.theme.muted)
+ui.progress(target, 3, 8, width - 4, firstAhead - ahead + 1,
+firstAhead + 1, colors.cyan, ui.theme.panel)
+crowd(10, frame, true, colors.lime)
+ui.center(target, 12, "About " .. math.max(1,
+math.ceil((mine.wait_ms or 60000) / 60000)) .. " min", ui.theme.ink)
+ui.wrappedText(target, 2, 14, "A few people choose at a time,"
+.. " " .. minutesSeconds(mine.turn_ms) .. " each.",
+width - 2, 2, ui.theme.muted)
+end
+ui.center(target, height - 3, "Keep this screen open", ui.theme.accent)
+scene:button("leave", 2, height - 1, width - 2, 1, "Leave the queue",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 0.5, flash = false })
+frame = frame + 1
+if action == "__terminate" then leaveQueue(event.event_id) return nil end
+if action == "leave" then
+if ui.confirm(target, "Leave the queue?", "You lose your place",
+"Leave", "Stay") then
+leaveQueue(event.event_id)
+return nil
+end
+end
+
+if frame % 2 == 0 or action ~= "__tick" then
+local polled = request("QUEUE_STATUS", { event_id = event.event_id }, true)
+if polled then mine = polled.queue end
+end
+end
+return nil
+end
+
+
+local function eventPage(eventId)
+local blink = true
+while running and sessionToken do
+local details, err = request("EVENT_DETAILS", { event_id = eventId }, true)
+if not details then
+ui.message(target, "error", "Cannot open it", err, 1.6)
+return nil
+end
+local event, types = details.event, details.ticket_types or {}
+local mine = details.mine or { status = "none", limit = 5, bought = 0 }
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Event", "In " .. util.eventCountdown(event.event_day,
+event.event_time), util.formatClock(blink))
+ui.wrappedText(target, 2, 4, event.title, width - 2, 2, ui.theme.ink)
+ui.text(target, 2, 6, ui.truncate("Day " .. event.event_day .. "  "
+.. event.event_time .. "  " .. tostring(event.location or ""),
+width - 2), ui.theme.muted)
+if event.organizer_name then
+ui.text(target, 2, 7, ui.truncate("By " .. event.organizer_name,
+width - 2), ui.theme.muted)
+end
+local y = 9
+for index, item in ipairs(types) do
+if index > 3 then break end
+local left = item.available_quantity
+or (item.total_quantity - item.sold_quantity)
+local note = left <= 0 and "Sold out"
+or left <= math.max(2, item.total_quantity / 5) and "Few left" or ""
+ui.text(target, 2, y, ui.truncate(item.name, width - 18), ui.theme.ink)
+ui.text(target, width - 16, y, ui.truncate(money(item.price), 7),
+ui.theme.ink)
+ui.text(target, width - 8, y, note, left <= 0 and colors.red
+or colors.orange)
+y = y + 1
+end
+if #types == 0 then
+ui.text(target, 2, y, "No tickets yet", ui.theme.muted)
+end
+local label, color = badge(event, mine)
+ui.fill(target, 2, 13, width - 2, 1, color)
+ui.center(target, 13, ui.truncate(label, width - 2), colors.black, color)
+local note
+if (event.phase or "general") ~= "general" then
+local presale = event.invited and event.phase == "soon"
+and event.presale_day
+note = presale and ("Presale in " .. util.eventCountdown(
+event.presale_day, event.presale_time))
+or ("Sale in " .. util.eventCountdown(event.release_day,
+event.release_time))
+if event.phase == "presale" and not event.invited then
+note = "Presale is invite only"
+end
+end
+note = note or ("Up to " .. (mine.limit or 5) .. " each"
+.. ((mine.bought or 0) > 0 and ("  you have " .. mine.bought) or ""))
+ui.center(target, 14, ui.truncate(note, width - 2), ui.theme.muted)
+
+local scene = ui.scene(target)
+local cta, enabled = "Get tickets", true
+if mine.status == "shopping" then
+cta = "It's your turn"
+elseif mine.status == "waiting" then
+cta = "Back to the queue"
+elseif event.sold_out or mine.sold_out or #types == 0 then
+cta, enabled = event.sold_out and "Sold out" or "Not on sale yet", false
+elseif (mine.bought or 0) >= (mine.limit or 5) then
+cta, enabled = "You have " .. mine.bought .. " of " .. mine.limit, false
+elseif event.phase == "presale" and event.invited then
+cta = "Join the presale"
+elseif (event.phase or "general") ~= "general" then
+cta = "Join the waiting room"
+end
+scene:button("join", 2, 16, width - 2, 2, cta,
+{ background = ui.theme.success, foreground = colors.black,
+disabled = not enabled, shadow = enabled })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 1 })
+blink = not blink
+if action == "back" or action == "__terminate" then return nil end
+if action == "join" then
+local joined, joinError = request("QUEUE_JOIN", { event_id = eventId }, true)
+if not joined then
+ui.message(target, "error", "Cannot join", joinError, 1.8)
+else
+local switched = queueScreen(event, joined.queue)
+if switched then return switched end
+end
+end
+end
+return nil
+end
+
+function eventsScreen(tabs)
+local result = request("LIST_EVENTS")
+if not result then return end
+local events, page, blink = result.events, 1, true
+while running and sessionToken do
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, "Events", "What's on", util.formatClock(blink))
+local pageItems, actualPage, pages = util.page(events, page, 2)
+page = actualPage
+local scene = ui.scene(target)
+if #events == 0 then
+ui.center(target, 9, "No upcoming events", ui.theme.muted)
+end
+for index, event in ipairs(pageItems) do
+local y = 4 + (index - 1) * 7
+local label, color = badge(event)
+scene:hotspot("event:" .. event.event_id, 2, y, width - 2, 6)
+ui.card(target, 2, y, width - 2, 6, color)
+ui.wrappedText(target, 4, y, event.title, width - 6, 2,
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 2, ui.truncate("IN " .. string.upper(
+util.eventCountdown(event.event_day, event.event_time))
+.. "  DAY " .. event.event_day, width - 6), ui.theme.accent,
+ui.theme.panel)
+ui.text(target, 4, y + 3, ui.truncate(tostring(event.location or ""),
+width - 6), ui.theme.muted, ui.theme.panel)
+ui.fill(target, 4, y + 4, width - 6, 1, color)
+ui.text(target, 5, y + 4, ui.truncate(label, width - 8),
+colors.black, color)
+end
+pageFooter(scene, page, pages, tabs)
+local action = scene:wait({ tickRate = 1, flash = false })
+blink = not blink
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+return action
+end
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local eventId = action and action:match("^event:(.+)$")
+if eventId then
+ui.wipe(target, "EVENT")
+local switched = eventPage(eventId)
+if switched and tabs then return switched end
+result = request("LIST_EVENTS", {}, true) or result
+events = result.events
+end
+end
+end
+end
+end
+
+local function drawTicket(ticket, blink)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "My Ticket", "Entry pass", util.formatClock(blink))
+local countdown = util.eventCountdown(ticket.event_day, ticket.event_time)
+local titleLines = ui.wrap(ticket.event_title, width - 4)
+for index = 1, math.min(3, #titleLines) do
+ui.center(target, 3 + index,
+ui.truncate(titleLines[index], width - 4), ui.theme.ink)
+end
+ui.center(target, 7, "IN " .. string.upper(countdown), ui.theme.accent)
+ui.wrappedText(target, 2, 8, ticket.ticket_type_name,
+width - 4, 2, ui.theme.muted)
+ui.fill(target, 2, 10, width - 2, 6, colors.white)
+ui.center(target, 11, "ENTRY CODE", colors.gray, colors.white)
+local code = ticket.qr_code
+local spaced = table.concat({ code:sub(1, 4), code:sub(5, 8) }, " ")
+ui.center(target, 13, spaced, colors.black, colors.white)
+ui.center(target, 15, ticket.used and "ALREADY USED" or "READY TO SCAN",
+ticket.used and colors.red or colors.green, colors.white)
+ui.center(target, 16, "Day " .. ticket.event_day .. "  " .. ticket.event_time,
+ui.theme.muted)
+local locationLines = ui.wrap(ticket.location, width - 4)
+for index = 1, math.min(3, #locationLines) do
+ui.center(target, 16 + index,
+ui.truncate(locationLines[index], width - 4), ui.theme.muted)
+end
+end
+
+local function myTicketsScreen(tabs)
+local result = request("MY_TICKETS")
+if not result then return end
+local tickets = result.tickets
+if #tickets == 0 then
+if not tabs then
+ui.message(target, "info", "NO TICKETS YET",
+"Find one under Events", 1.2)
+return
+end
+
+
+while true do
+ui.clear(target)
+ui.header(target, "My Tickets", "Nothing yet", util.formatClock())
+ui.center(target, 9, "NO TICKETS YET", ui.theme.ink)
+ui.center(target, 11, "Find one under Events", ui.theme.muted)
+local scene = ui.scene(target)
+ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+local action = scene:wait()
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+end
+end
+local index, blink = 1, true
+while true do
+local ticket = tickets[index]
+
+if not ticket.used then present("ticket", ticket.ticket_id) end
+drawTicket(ticket, blink)
+local width, height = target.getSize()
+local scene = ui.scene(target)
+local row = tabs and height - 2 or height
+if tabs then
+ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+else
+scene:button("back", 1, height, 7, 1, "<Back",
+{ background = ui.theme.panel })
+end
+scene:button("prev", width - 12, row, 4, 1, "<",
+{ background = ui.theme.panel, disabled = index <= 1 })
+ui.text(target, width - 7, row, index .. "/" .. #tickets, ui.theme.muted)
+scene:button("next", width - 3, row, 3, 1, ">",
+{ background = ui.theme.panel, disabled = index >= #tickets })
+local action = scene:wait({ tickRate = 0.5 })
+blink = not blink
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+stopPresenting()
+return action
+end
+if action == "back" or action == "__terminate" then
+stopPresenting()
+return
+elseif action == "prev" then index = math.max(1, index - 1)
+elseif action == "next" then index = math.min(#tickets, index + 1) end
+end
+end
+
+local function subscriptionsScreen()
+local result = request("LIST_SUBSCRIPTIONS")
+if not result then return end
+local items, page, blink = result.subscriptions, 1, true
+while true do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Subscriptions", "Daily billing", util.formatClock(blink))
+local pageItems, actualPage, pages = util.page(items, page, 1)
+page = actualPage
+local scene = ui.scene(target)
+if #items == 0 then ui.center(target, 9, "No subscriptions", ui.theme.muted) end
+for index, item in ipairs(pageItems) do
+local y = 4 + (index - 1) * 12
+ui.card(target, 2, y, width - 2, 12,
+item.active and ui.theme.accent or colors.gray)
+ui.wrappedText(target, 4, y, item.description,
+width - 6, 6, ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 6, money(item.amount) .. " per day",
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, y + 7, "Next: day " .. item.next_charge_day,
+ui.theme.muted, ui.theme.panel)
+if item.active then
+scene:button("cancel:" .. item.subscription_id,
+4, y + 9, width - 7, 2, "Cancel Subscription",
+{ background = ui.theme.danger })
+else
+ui.text(target, 4, y + 9, "CANCELLED",
+ui.theme.muted, ui.theme.panel)
+end
+end
+pageFooter(scene, page, pages)
+local action = scene:wait({ tickRate = 0.5 })
+blink = not blink
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local id = action and action:match("^cancel:(.+)$")
+if id and ui.confirm(target, "CANCEL SUBSCRIPTION",
+"Future charges will stop", "CANCEL", "KEEP") then
+local cancelled, err = request("CANCEL_SUBSCRIPTION",
+{ subscription_id = id }, true)
+if cancelled then
+ui.message(target, "success", "CANCELLED", "No more charges", 0.8)
+result = request("LIST_SUBSCRIPTIONS", {}, true) or result
+items = result.subscriptions
+else
+ui.message(target, "error", "COULD NOT CANCEL", err)
+end
+end
+end
+end
+end
+
+local function taxScreen()
+local result = request("DECLARATION_STATUS")
+if not result then return end
+if not result.period then
+ui.message(target, "info", "NO OPEN PERIOD", "Nothing to file right now", 1.1)
+return
+end
+if result.declaration and result.declaration.status == "submitted" then
+if (result.declaration.difference or 0) > 0 then
+local difference = result.declaration.difference
+if ui.confirm(target, "TAX DIFFERENCE DUE",
+"Pay " .. money(difference) .. " now?", "PAY", "BACK") then
+local pin = ui.pin(target, "CONFIRM WITH PIN", true)
+if pin then
+local settled, err = request("PAY_TAX_DIFFERENCE", {
+period_id = result.period.period_id,
+pin = pin,
+}, true)
+if settled then
+account.balance = settled.balance
+ui.message(target, "success", "TAX SETTLED",
+"Paid " .. money(settled.paid), 1)
+else
+ui.message(target, "error", "PAYMENT FAILED", err, 1.1)
+end
+end
+end
+else
+ui.message(target, "success", "ALREADY FILED",
+"Paid " .. money(result.declaration.declared_amount), 1.2)
+end
+return
+end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Tax Declaration", "Period " .. result.period.period_id,
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 5, ui.theme.warning)
+ui.text(target, 4, 6, "DUE BY DAY " .. result.period.end_day,
+ui.theme.warning, ui.theme.panel)
+ui.text(target, 4, 7, "Personal rate " .. result.period.personal_rate .. "%",
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8, "Smart fee " .. money(config.smart_declare_fee),
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("declare", 2, 12, width - 2, 2, "DECLARE AMOUNT",
+{ background = ui.theme.panel })
+scene:button("smart", 2, 15, width - 2, 2,
+result.smart_lifetime and "SMART DECLARE - INCLUDED"
+or "SMART DECLARE - " .. money(config.smart_declare_fee),
+{ background = ui.theme.accentDark })
+scene:button("back", 1, height, 7, 1, "<Back",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "declare" then
+local amountText = ui.input(target, "DECLARE TAX", {
+hint = "Enter the amount due",
+mode = "number", maxLength = 12,
+})
+if not amountText then return end
+local pin = ui.pin(target, "CONFIRM WITH PIN", true)
+if not pin then return end
+local filed, err = request("FILE_DECLARATION", {
+period_id = result.period.period_id,
+amount = tonumber(amountText),
+pin = pin,
+}, true)
+if filed then
+account.balance = filed.balance
+ui.message(target, "success", "DECLARATION FILED",
+"Paid " .. money(filed.declaration.declared_amount), 1.1)
+else ui.message(target, "error", "FILING FAILED", err, 1.1) end
+elseif action == "smart" then
+local buyLifetime = false
+if not result.smart_lifetime then
+buyLifetime = ui.confirm(target, "SMART DECLARE",
+"Lifetime for " .. money(config.lifetime_smart_declare_fee)
+.. "? No = one-time", "LIFETIME", "ONE-TIME")
+end
+local pin = ui.pin(target, "CONFIRM WITH PIN", true)
+if not pin then return end
+local filed, err = request("SMART_DECLARE", {
+period_id = result.period.period_id,
+buy_lifetime = buyLifetime,
+pin = pin,
+}, true)
+if filed then
+account.balance = filed.balance
+ui.message(target, "success", "SMART FILED",
+"Exact tax " .. money(filed.declaration.declared_amount), 1.1)
+else ui.message(target, "error", "FILING FAILED", err, 1.1) end
+end
+end
+
+
+local function travelDocumentScreen(documents)
+local page = 1
+while sessionToken do
+local width, height = target.getSize()
+local document = documents[page]
+
+if document and document.visa_id then
+present("visa", document.visa_id)
+end
+ui.clear(target)
+ui.header(target, "Travel Documents",
+#documents == 0 and "No documents"
+or (page .. " of " .. #documents), util.formatClock())
+local scene = ui.scene(target)
+if not document then
+ui.card(target, 2, 6, width - 2, 7, ui.theme.warning)
+ui.center(target, 8, "NO VISAS YET", ui.theme.ink)
+ui.center(target, 10, "Apply from the Visas app",
+ui.theme.muted)
+else
+local kind = document.kind == "citizenship"
+and "CITIZENSHIP" or "TEMPORARY VISA"
+ui.card(target, 2, 5, width - 2, 11,
+document.permanent and ui.theme.success or colors.purple)
+ui.text(target, 4, 6, kind,
+document.permanent and ui.theme.success or colors.purple,
+ui.theme.panel, width - 6)
+ui.text(target, 4, 8,
+ui.truncate(document.territory_name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 10, "CODE", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 11, document.code,
+ui.theme.ink, ui.theme.panel)
+local stay = document.permanent and "Permanent stay"
+or tostring(document.duration_days) .. " day stay"
+ui.text(target, 4, 13, stay,
+ui.theme.muted, ui.theme.panel, width - 6)
+local visit = document.visits and document.visits[1]
+if visit then
+ui.text(target, 4, 14,
+visit.permanent and "Visiting - permanent"
+or ("Leave by day " .. visit.due_day),
+visit.permanent and ui.theme.success or ui.theme.warning,
+ui.theme.panel, width - 6)
+elseif document.free_roam and #document.free_roam > 0 then
+ui.text(target, 4, 14,
+"Free Roam: " .. ui.truncate(
+document.free_roam[1].territory_name, width - 17),
+ui.theme.success, ui.theme.panel, width - 6)
+else
+ui.text(target, 4, 14, string.upper(document.status),
+ui.theme.muted, ui.theme.panel, width - 6)
+end
+end
+scene:button("back", 1, height, 8, 1, "< Visa",
+{ background = ui.theme.panel })
+scene:button("prev", width - 12, height, 4, 1, "<", {
+background = ui.theme.panel,
+disabled = page <= 1,
+})
+scene:button("next", width - 3, height, 3, 1, ">", {
+background = ui.theme.panel,
+disabled = page >= #documents,
+})
+local action = scene:wait({ tickRate = 5 })
+if action == "prev" then
+page = math.max(1, page - 1)
+elseif action == "next" then
+page = math.min(#documents, page + 1)
+elseif action == "back" or action == "__terminate" then
+stopPresenting()
+return
+end
+end
+end
+
+local function visaApplicationsScreen(applications)
+local page = 1
+while sessionToken do
+local width, height = target.getSize()
+local application = applications[page]
+ui.clear(target)
+ui.header(target, "Visa Applications",
+#applications == 0 and "Nothing submitted"
+or (page .. " of " .. #applications), util.formatClock())
+local scene = ui.scene(target)
+if not application then
+ui.card(target, 2, 6, width - 2, 7, ui.theme.accent)
+ui.center(target, 8, "NO APPLICATIONS", ui.theme.ink)
+ui.center(target, 10, "Choose Apply for Visa",
+ui.theme.muted)
+else
+local statusColor = application.status == "approved"
+and ui.theme.success
+or application.status == "denied" and ui.theme.danger
+or ui.theme.warning
+ui.card(target, 2, 5, width - 2, 10, statusColor)
+ui.text(target, 4, 6,
+ui.truncate(application.territory_name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8,
+application.requested_days .. " day stay",
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 10, string.upper(application.status),
+statusColor, ui.theme.panel)
+ui.text(target, 4, 12,
+"Applied day " .. application.created_day,
+ui.theme.muted, ui.theme.panel)
+end
+scene:button("back", 1, height, 8, 1, "< Visa",
+{ background = ui.theme.panel })
+scene:button("prev", width - 12, height, 4, 1, "<", {
+background = ui.theme.panel,
+disabled = page <= 1,
+})
+scene:button("next", width - 3, height, 3, 1, ">", {
+background = ui.theme.panel,
+disabled = page >= #applications,
+})
+local action = scene:wait()
+if action == "prev" then
+page = math.max(1, page - 1)
+elseif action == "next" then
+page = math.min(#applications, page + 1)
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function visaApplyScreen(overview)
+local available = {}
+for _, territory in ipairs(overview.territories or {}) do
+if territory.can_apply then available[#available + 1] = territory end
+end
+local page = 1
+while sessionToken do
+local width, height = target.getSize()
+local visible, current, pages = util.page(available, page, 3)
+page = current
+ui.clear(target)
+ui.header(target, "Apply for Visa",
+#available .. " available", util.formatClock())
+local scene = ui.scene(target)
+if #available == 0 then
+ui.card(target, 2, 6, width - 2, 7, ui.theme.success)
+ui.center(target, 8, "NO VISA NEEDED", ui.theme.ink)
+ui.center(target, 10, "No open destinations",
+ui.theme.muted)
+else
+for index, territory in ipairs(visible) do
+local y = 5 + (index - 1) * 4
+scene:button("apply:" .. territory.territory_id,
+2, y, width - 2, 3,
+ui.truncate(territory.name, width - 4)
+.. "\nRequest a stay", {
+background = index == 1
+and colors.purple or ui.theme.panel,
+shadow = true,
+})
+end
+end
+scene:button("back", 1, height, 8, 1, "< Visa",
+{ background = ui.theme.panel })
+if pages > 1 then
+scene:button("prev", width - 12, height, 4, 1, "<", {
+background = ui.theme.panel,
+disabled = page == 1,
+})
+scene:button("next", width - 3, height, 3, 1, ">", {
+background = ui.theme.panel,
+disabled = page == pages,
+})
+end
+local action = scene:wait()
+local territoryId = action and action:match("^apply:(.+)$")
+if territoryId then
+local territory
+for _, candidate in ipairs(available) do
+if candidate.territory_id == territoryId then
+territory = candidate
+break
+end
+end
+if territory then
+local days = ui.input(target, "Length of Stay", {
+hint = overview.visa_min_days .. "-"
+.. overview.visa_max_days .. " in-game days",
+mode = "number",
+maxLength = 2,
+minLength = 1,
+})
+if days and ui.confirm(target, "Apply for Visa",
+territory.name .. " for " .. days .. " day(s)?",
+"APPLY", "BACK") then
+local result = request("VISA_APPLY", {
+territory_id = territory.territory_id,
+requested_days = days,
+})
+if result then
+phoneTransition("Application Sent", colors.purple)
+ui.message(target, "success", "APPLICATION SENT",
+"The country's owner will review it", 1.1)
+return
+end
+end
+end
+elseif action == "prev" then
+page = math.max(1, page - 1)
+elseif action == "next" then
+page = math.min(pages, page + 1)
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function visasScreen(tabs)
+while sessionToken do
+local overview = request("VISA_OVERVIEW")
+if not overview then return end
+local width, height = target.getSize()
+local pending = 0
+for _, application in ipairs(overview.applications or {}) do
+if application.status == "pending" then pending = pending + 1 end
+end
+ui.clear(target)
+ui.header(target, "Visas", "Your travel wallet", util.formatClock())
+ui.card(target, 2, 5, width - 2, 4, colors.purple)
+ui.text(target, 4, 6,
+#overview.documents .. " document(s)",
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 7, pending .. " awaiting review",
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("documents", 2, 10, width - 2, 2,
+"My Documents", { background = colors.purple })
+scene:button("apply", 2, 13, width - 2, 2,
+"Apply for Visa", { background = ui.theme.accentDark })
+scene:button("applications", 2, 16, width - 2, 2,
+"Applications", { background = ui.theme.panel })
+if tabs then
+ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+else
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+end
+local action = scene:wait()
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+return action
+end
+if action == "documents" then
+travelDocumentScreen(overview.documents)
+elseif action == "apply" then
+visaApplyScreen(overview)
+elseif action == "applications" then
+visaApplicationsScreen(overview.applications)
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function customsCitizensScreen(territoryId)
+local page = 1
+while sessionToken do
+local detail = request("CUSTOMS_DETAIL", {
+territory_id = territoryId,
+})
+if not detail then return end
+local citizens = detail.citizens or {}
+page = math.max(1, math.min(page, math.max(1, #citizens)))
+local citizen = citizens[page]
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Citizens",
+#citizens .. " in " .. ui.truncate(detail.territory.name, 12),
+util.formatClock())
+if citizen then
+ui.card(target, 2, 5, width - 2, 8, ui.theme.success)
+ui.text(target, 4, 6, ui.truncate(citizen.name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8, "PERMANENT CODE",
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 9, citizen.code,
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 11, "Since day " .. citizen.issued_day,
+ui.theme.muted, ui.theme.panel)
+end
+local scene = ui.scene(target)
+scene:button("issue", 2, 14, width - 2, 3,
+"Grant Citizenship\nPermanent VISA", {
+background = ui.theme.accentDark,
+shadow = true,
+})
+scene:button("back", 1, height, 8, 1, "< Cust",
+{ background = ui.theme.panel })
+scene:button("prev", width - 12, height, 4, 1, "<", {
+background = ui.theme.panel,
+disabled = page <= 1,
+})
+scene:button("next", width - 3, height, 3, 1, ">", {
+background = ui.theme.panel,
+disabled = page >= #citizens,
+})
+local action = scene:wait()
+if action == "issue" then
+local username = ui.input(target, "Grant Citizenship", {
+hint = "Foxy Account username",
+maxLength = 20,
+minLength = 2,
+allowSpace = true,
+})
+if username then
+local pin = ui.pin(target, "Confirm with PIN", true)
+if pin then
+local result = request("CUSTOMS_ISSUE_CITIZENSHIP", {
+territory_id = territoryId,
+username = username,
+pin = pin,
+})
+if result then
+phoneTransition("Citizenship Ready", ui.theme.success)
+ui.message(target, "success", "CITIZENSHIP GRANTED",
+result.citizen_name, 1.1)
+end
+end
+end
+elseif action == "prev" then
+page = math.max(1, page - 1)
+elseif action == "next" then
+page = math.min(#citizens, page + 1)
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function customsApplicationsScreen(territoryId)
+local page = 1
+while sessionToken do
+local detail = request("CUSTOMS_DETAIL", {
+territory_id = territoryId,
+})
+if not detail then return end
+local pending = {}
+for _, application in ipairs(detail.applications or {}) do
+if application.status == "pending" then
+pending[#pending + 1] = application
+end
+end
+page = math.max(1, math.min(page, math.max(1, #pending)))
+local application = pending[page]
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Visa Requests",
+#pending .. " pending", util.formatClock())
+local scene = ui.scene(target)
+if not application then
+ui.card(target, 2, 6, width - 2, 7, ui.theme.success)
+ui.center(target, 8, "ALL CAUGHT UP", ui.theme.ink)
+ui.center(target, 10, "No visa requests", ui.theme.muted)
+else
+ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
+ui.text(target, 4, 6,
+ui.truncate(application.applicant_name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8,
+application.requested_days .. " day stay",
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 10,
+"Applied day " .. application.created_day,
+ui.theme.muted, ui.theme.panel)
+scene:button("approve", 2, 13, width - 2, 2,
+"Approve VISA", { background = ui.theme.success,
+foreground = colors.black })
+scene:button("deny", 2, 16, width - 2, 2,
+"Decline", { background = ui.theme.danger })
+end
+scene:button("back", 1, height, 8, 1, "< Cust",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "approve" or action == "deny" then
+local pin = ui.pin(target, "Review with PIN", true)
+if pin then
+local result = request("CUSTOMS_REVIEW_APPLICATION", {
+application_id = application.application_id,
+approved = action == "approve",
+pin = pin,
+})
+if result then
+ui.message(target,
+action == "approve" and "success" or "warning",
+action == "approve" and "VISA APPROVED"
+or "VISA DECLINED",
+application.applicant_name, 1.1)
+end
+end
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function customsFreeRoamScreen(territoryId)
+local page = 1
+while sessionToken do
+local detail = request("CUSTOMS_DETAIL", {
+territory_id = territoryId,
+})
+if not detail then return end
+local territories = detail.other_territories or {}
+page = math.max(1, math.min(page, math.max(1, #territories)))
+local partner = territories[page]
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Free Roam",
+#territories == 0 and "No partner countries"
+or (page .. " of " .. #territories), util.formatClock())
+local scene = ui.scene(target)
+if not partner then
+ui.card(target, 2, 6, width - 2, 7, ui.theme.accent)
+ui.center(target, 8, "NO OTHER COUNTRIES", ui.theme.ink)
+ui.center(target, 10, "A partner must register",
+ui.theme.muted)
+else
+ui.card(target, 2, 5, width - 2, 8,
+partner.free_roam and ui.theme.success or ui.theme.warning)
+ui.text(target, 4, 6,
+ui.truncate(partner.name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 9,
+partner.free_roam and "PERMANENT ENTRY ON"
+or "ENTRY NOT ALLOWED",
+partner.free_roam and ui.theme.success or ui.theme.warning,
+ui.theme.panel, width - 6)
+scene:button("toggle", 2, 14, width - 2, 3,
+partner.free_roam and "Remove Free Roam"
+or "Allow Permanent Entry", {
+background = partner.free_roam
+and ui.theme.danger or ui.theme.success,
+foreground = partner.free_roam
+and colors.white or colors.black,
+shadow = true,
+})
+end
+scene:button("back", 1, height, 8, 1, "< Cust",
+{ background = ui.theme.panel })
+scene:button("prev", width - 12, height, 4, 1, "<", {
+background = ui.theme.panel,
+disabled = page <= 1,
+})
+scene:button("next", width - 3, height, 3, 1, ">", {
+background = ui.theme.panel,
+disabled = page >= #territories,
+})
+local action = scene:wait()
+if action == "toggle" then
+local pin = ui.pin(target, "Confirm with PIN", true)
+if pin then
+local result = request("CUSTOMS_SET_FREE_ROAM", {
+territory_id = territoryId,
+source_territory_id = partner.territory_id,
+enabled = not partner.free_roam,
+pin = pin,
+})
+if result then
+ui.message(target, "success", "FREE ROAM UPDATED",
+partner.name, 1.0)
+end
+end
+elseif action == "prev" then
+page = math.max(1, page - 1)
+elseif action == "next" then
+page = math.min(#territories, page + 1)
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function customsTerritoryScreen(territoryId)
+while sessionToken do
+local detail = request("CUSTOMS_DETAIL", {
+territory_id = territoryId,
+})
+if not detail then return end
+local territory = detail.territory
+local pending = 0
+for _, application in ipairs(detail.applications or {}) do
+if application.status == "pending" then pending = pending + 1 end
+end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(territory.name, width - 3),
+territory.citizen_count .. " citizens  " .. pending .. " requests",
+util.formatClock())
+local scene = ui.scene(target)
+scene:button("citizens", 2, 5, width - 2, 3,
+"Citizenships\nPermanent VISAs", {
+background = ui.theme.success,
+foreground = colors.black,
+shadow = true,
+})
+scene:button("applications", 2, 9, width - 2, 3,
+"Visa Requests\n" .. pending .. " awaiting review", {
+background = colors.purple,
+shadow = true,
+})
+scene:button("roam", 2, 13, width - 2, 3,
+"Free Roam\n" .. territory.free_roam_count .. " partners", {
+background = ui.theme.accentDark,
+shadow = true,
+})
+scene:button("back", 1, height, 8, 1, "< Cust",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "citizens" then
+customsCitizensScreen(territoryId)
+elseif action == "applications" then
+customsApplicationsScreen(territoryId)
+elseif action == "roam" then
+customsFreeRoamScreen(territoryId)
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+local function createTerritory()
+local name = ui.input(target, "Create Country", {
+hint = "3-24 letters or numbers",
+maxLength = 24,
+minLength = 3,
+allowSpace = true,
+})
+if not name then return end
+local pin = ui.pin(target, "Confirm with PIN", true)
+if not pin then return end
+local result = request("CUSTOMS_CREATE_TERRITORY", {
+name = name,
+pin = pin,
+})
+if result then
+phoneTransition("Country Ready", colors.lightBlue)
+ui.message(target, "success", "COUNTRY CREATED",
+result.territory.name, 1.2)
+end
+end
+
+local function customsScreen(tabs)
+while sessionToken do
+local overview = request("CUSTOMS_OVERVIEW")
+if not overview then return end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Countries", "The countries you run", util.formatClock())
+local scene = ui.scene(target)
+if #overview.territories == 0 then
+ui.card(target, 2, 5, width - 2, 7, colors.lightBlue)
+ui.center(target, 7, "CREATE A COUNTRY", ui.theme.ink)
+ui.center(target, 9, "Manage borders and VISAs",
+ui.theme.muted)
+scene:button("create", 2, 14, width - 2, 3,
+"Create Country", {
+background = ui.theme.accentDark,
+shadow = true,
+})
+else
+for index, territory in ipairs(overview.territories) do
+local y = 5 + (index - 1) * 4
+scene:button("territory:" .. territory.territory_id,
+2, y, width - 2, 3,
+ui.truncate(territory.name, width - 4)
+.. "\n" .. territory.citizen_count
+.. " citizens  " .. territory.pending_count
+.. " requests", {
+background = index == 1
+and colors.lightBlue or ui.theme.panel,
+shadow = true,
+})
+end
+if #overview.territories < overview.maximum_territories then
+scene:button("create", 2, 17, width - 2, 2,
+"+ New Country", { background = ui.theme.panel })
+end
+end
+if tabs then
+ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
+else
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+end
+local action = scene:wait()
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+return action
+end
+local territoryId = action
+and action:match("^territory:(.+)$")
+if territoryId then
+customsTerritoryScreen(territoryId)
+elseif action == "create" then
+createTerritory()
+elseif action == "back" or action == "__terminate" then
+return
+end
+end
+end
+
+
+
+local ccgApp
+do
+
+local betColors = {
+red = colors.red,
+orange = colors.orange,
+yellow = colors.yellow,
+green = colors.lime,
+blue = colors.lightBlue,
+purple = colors.purple,
+}
+
+
+
+
+
+local ccgClient
+local function betRequest(action, payload, silent)
+payload = payload or {}
+payload.bet_token = betAccessToken
+if action:find("^BET_WALLET") or action == "BET_UNLOCK" then
+return request(action, payload, silent)
+end
+if device.modem_on == false then
+if not silent then
+ui.message(target, "warning", "Modem is off",
+"Turn it on in Settings", 1.4)
+end
+return nil, "Modem is off", "MODEM_OFF"
+end
+ccgClient = ccgClient or net.client({
+protocol = config.ccg_protocol or "PUMPE_CCG_V1",
+hostname = config.ccg_hostname or "CCG_SERVER",
+})
+if sessionToken then payload.session_token = sessionToken end
+local result, err, code = ccgClient:request(action, payload)
+if not result and not silent then
+ui.message(target, "error", "CCG unavailable",
+code == "BANK_OFFLINE" and err
+or (err or "No CCG Server is running"), 1.8)
+end
+return result, err, code
+end
+
+
+
+
+
+
+local function chooseBetSelection(lobby)
+local width, height = target.getSize()
+if lobby.game == "survivor" then
+ui.clear(target)
+ui.header(target, "Survivor", "Interactive // 3X", util.formatClock())
+ui.card(target, 2, 5, width - 2, 8, colors.purple)
+ui.center(target, 7, "LAST ONE STANDING", ui.theme.ink)
+ui.wrappedText(target, 4, 9,
+"Use the touch joystick. Get close and PUSH opponents off the ring.",
+width - 6, 3, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("continue", 2, 15, width - 2, 3,
+"SET WAGER", { background = colors.purple })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+return scene:wait() == "continue" and "survivor" or nil
+end
+while true do
+ui.clear(target)
+ui.header(target, lobby.game_name,
+"Choose your pick // " .. lobby.multiplier .. "X",
+util.formatClock())
+local scene = ui.scene(target)
+if lobby.game == "heads_tails" then
+scene:button("pick:heads", 2, 6, width - 2, 5,
+"H\nHEADS", { background = colors.orange,
+foreground = colors.black })
+scene:button("pick:tails", 2, 12, width - 2, 5,
+"T\nTAILS", { background = colors.blue })
+else
+local choices = {
+"red", "orange", "yellow", "green", "blue", "purple",
+}
+local buttonWidth = math.floor((width - 5) / 2)
+for index, name in ipairs(choices) do
+local column = (index - 1) % 2
+local row = math.floor((index - 1) / 2)
+local x = column == 0 and 2 or width - buttonWidth
+local y = 5 + row * 4
+scene:button("pick:" .. name, x, y, buttonWidth, 3,
+string.upper(name), {
+background = betColors[name],
+foreground = (name == "yellow" or name == "orange"
+or name == "green") and colors.black or colors.white,
+})
+end
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait()
+local selection = action and action:match("^pick:(.+)$")
+if selection then return selection end
+if action == "back" or action == "__terminate" then return nil end
+end
+end
+
+local function betResultScreen(result)
+local lobby, player, wallet = result.lobby, result.player, result.wallet
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, player.won and "YOU WON" or "ROUND COMPLETE",
+lobby.game_name, util.formatClock())
+ui.card(target, 2, 5, width - 2, 8,
+player.won and ui.theme.success or ui.theme.warning)
+if player.won then
+ui.center(target, 7, money(player.payout), ui.theme.ink)
+ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
+local release = "One full in-game day"
+for _, hold in ipairs(wallet.holds or {}) do
+if hold.hold_id == player.hold_id then
+release = "Day " .. hold.release_day .. " " .. hold.release_time
+break
+end
+end
+ui.center(target, 11, release, ui.theme.muted)
+else
+ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
+ui.center(target, 9,
+lobby.game == "survivor" and (lobby.winner_name .. " survived")
+or "Result: " .. string.upper(lobby.outcome or "?"),
+ui.theme.muted)
+ui.center(target, 11, "BET WALLET " .. money(wallet.available),
+ui.theme.muted)
+end
+local scene = ui.scene(target)
+scene:button("done", 2, height - 3, width - 2, 2, "DONE",
+{ background = ui.theme.accentDark })
+scene:wait()
+end
+
+local function survivorController(code, initial)
+local status, pulse = initial, false
+while status and status.lobby.status == "running" do
+local lobby, player = status.lobby, status.player
+local width, height = target.getSize()
+ui.clear(target, colors.black)
+ui.header(target, "Survivor", player.alive and "YOU ARE IN" or "SPECTATING",
+util.formatClock())
+ui.center(target, 5,
+player.alive and "MOVE + PUSH" or "YOU WERE PUSHED OUT",
+player.alive and colors.lime or colors.red)
+local scene = ui.scene(target)
+if player.alive then
+scene:button("move:0:-1", 10, 7, 7, 2, "UP",
+{ background = colors.gray })
+scene:button("move:-1:0", 2, 10, 7, 3, "LEFT",
+{ background = colors.gray })
+scene:button("move:0:1", 10, 10, 7, 3, "DOWN",
+{ background = colors.gray })
+scene:button("move:1:0", 18, 10, width - 18, 3, "RIGHT",
+{ background = colors.gray })
+scene:button("push", 4, 15, width - 7, 3,
+pulse and "PUSH // LOCKED" or "PUSH!", {
+background = pulse and colors.gray or colors.magenta,
+})
+else
+ui.center(target, 10, "Waiting for a winner...", ui.theme.muted)
+end
+local action = scene:wait({ tickRate = 0.25, flash = false })
+local dx, dy = action and action:match("^move:([%-0-9]+):([%-0-9]+)$")
+if dx then
+betRequest("BET_CONTROL", {
+code = code, dx = tonumber(dx), dy = tonumber(dy),
+}, true)
+elseif action == "push" then
+local pushed = betRequest("BET_CONTROL", {
+code = code, dx = 0, dy = 0, push = true,
+}, true)
+pulse = pushed and pushed.pushed == true
+elseif action == "__terminate" then
+running = false
+return nil
+end
+status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+if not status then return nil end
+if pulse and action == "__tick" then pulse = false end
+end
+return status
+end
+
+local function waitForBetResult(code, initial)
+local status, frame = initial, 0
+while status and status.lobby.status == "lobby" do
+local lobby, player = status.lobby, status.player
+local width, height = target.getSize()
+ui.clear(target, colors.black)
+ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
+ui.center(target, 6, ui.truncate(lobby.code, width - 4),
+colors.cyan, colors.black)
+ui.center(target, 8, player.display_name, colors.white, colors.black)
+ui.center(target, 10,
+string.upper(player.selection) .. " // " .. money(player.wager),
+betColors[player.selection] or colors.magenta, colors.black)
+ui.center(target, 13,
+"WAITING FOR START" .. string.rep(".", frame % 4),
+colors.lightGray, colors.black)
+local scene = ui.scene(target)
+scene:button("leave", 2, height - 3, width - 2, 2,
+"LEAVE + REFUND", { background = colors.red })
+local action = scene:wait({ tickRate = 0.5 })
+if action == "leave" then
+if ui.confirm(target, "Leave Lobby?",
+"Your wager returns to Bet Wallet", "LEAVE", "STAY") then
+betRequest("BET_LEAVE", { code = code }, true)
+return nil
+end
+elseif action == "__terminate" then
+betRequest("BET_LEAVE", { code = code }, true)
+running = false
+return nil
+end
+frame = frame + 1
+status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+if not status then return nil end
+end
+if status and status.lobby.status == "running"
+and status.lobby.game == "survivor" then
+return survivorController(code, status)
+end
+while status and status.lobby.status == "running" do
+local width, height = target.getSize()
+ui.clear(target, colors.black)
+ui.header(target, status.lobby.game_name, "BET LOCKED",
+util.formatClock())
+local symbols = status.lobby.game == "race"
+and { ">--", "->-", "-->", ">>-" }
+or { "H", "T", "H", "T" }
+ui.center(target, 8, symbols[frame % #symbols + 1], colors.magenta,
+colors.black)
+ui.center(target, 11, "GAME IN PROGRESS" .. string.rep(".", frame % 4),
+colors.lightGray, colors.black)
+ui.progress(target, 3, 15, width - 5, frame % 12, 12,
+colors.cyan, colors.gray)
+sleep(0.35)
+frame = frame + 1
+status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+end
+return status
+end
+
+local function betApp()
+local pin = ui.pin(target, "Unlock Bet", true)
+if not pin then return end
+local unlocked, unlockError = request("BET_UNLOCK", { pin = pin }, true)
+if not unlocked then
+ui.message(target, "error", "BET LOCKED", unlockError, 1.1)
+return
+end
+betAccessToken = unlocked.bet_token
+if (unlocked.wallet.available or 0) <= 0 then
+ui.message(target, "warning", "BET WALLET EMPTY",
+"Add money in Foxy > Bank > Bet Wallet", 1.4)
+end
+local code = ui.input(target, "Join CCG", {
+hint = "Letters + numbers",
+mode = "code",
+maxLength = math.huge,
+scrollToEnd = true,
+})
+if not code then return end
+code = string.upper(util.trim(code))
+if not code:match("^[A-Z0-9]+$") then
+ui.message(target, "error", "INVALID CODE",
+"Use letters and numbers only", 1.1)
+return
+end
+local name = ui.input(target, "Player Name", {
+hint = "Shown on the big screen",
+maxLength = 14,
+minLength = 2,
+allowSpace = true,
+initial = account.name,
+})
+if not name then return end
+local joined, joinError = betRequest("BET_JOIN", {
+code = code,
+display_name = name,
+}, true)
+if not joined then
+ui.message(target, "error", "CANNOT JOIN", joinError, 1.1)
+return
+end
+local selection = chooseBetSelection(joined.lobby)
+if not selection then
+betRequest("BET_LEAVE", { code = code }, true)
+return
+end
+local amountText = ui.input(target, "Set Wager", {
+hint = joined.lobby.multiplier .. "X if you win // Wallet "
+.. money(unlocked.wallet.available),
+mode = "number",
+maxLength = 12,
+})
+if not amountText then
+betRequest("BET_LEAVE", { code = code }, true)
+return
+end
+local placed, placeError = betRequest("BET_PLACE_WAGER", {
+code = code,
+selection = selection,
+amount = tonumber(amountText),
+}, true)
+if not placed then
+ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
+betRequest("BET_LEAVE", { code = code }, true)
+return
+end
+local final = waitForBetResult(code, placed)
+if final and final.lobby.status == "finished" then
+betResultScreen(final)
+elseif final and final.lobby.status == "cancelled" then
+ui.message(target, "warning", "LOBBY CANCELLED",
+"Your wager returned to Bet Wallet", 1.1)
+end
+end
+
+
+
+
+
+
+local HOME_PROTOCOL = "PUMPE_CCG_HOME"
+local HOME_NAMES = { snake = "Snake", meteors = "Meteors", simon = "Simon",
+["2048"] = "2048" }
+local HOME_ORDER = { "snake", "meteors", "simon", "2048" }
+ccgApp = function(action)
+device.ccg_scores = type(device.ccg_scores) == "table" and device.ccg_scores
+or {}
+
+device.ccg_names = type(device.ccg_names) == "table" and device.ccg_names or {}
+local home
+
+
+
+local function remember(state)
+for _, game in ipairs(type(state.games) == "table" and state.games or {}) do
+local best = tonumber(game.best) or 0
+local id = tostring(game.id)
+if not HOME_NAMES[id] and game.label and device.ccg_names[id] == nil then
+device.ccg_names[id] = ui.truncate(tostring(game.label), 16)
+saveDevice()
+end
+if best > (device.ccg_scores[id] or 0) then
+device.ccg_scores[id] = best
+saveDevice()
+end
+end
+end
+
+
+
+
+local function ask(homeAction, payload, timeout)
+if not home then return nil, "Not paired", "NOT_PAIRED" end
+payload = payload or {}
+payload.token = home.token
+local result, err, code = home.client:request(homeAction, payload, timeout or 3)
+local state = result and (result.screen and result or result.state)
+if state and state.screen then
+home.state, home.misses = state, 0
+remember(state)
+elseif code == "NOT_PAIRED" or (not result and not code
+and (home.misses or 0) >= 2) then
+home = nil
+ui.message(target, "warning", "CCG disconnected",
+err or "Pair it again with its code", 1.6)
+elseif not result and not code then
+home.misses = (home.misses or 0) + 1
+end
+return result, err, code
+end
+
+local function pair()
+if device.modem_on == false then
+ui.message(target, "warning", "Modem is off", "Turn it on in Settings", 1.4)
+return
+end
+local code = ui.input(target, "Pairing code", {
+hint = "Six digits on the CCG", mode = "integer",
+maxLength = 6, minLength = 6 })
+if not code then return end
+local client = net.client({ protocol = HOME_PROTOCOL,
+hostname = "CCGHOME_" .. code })
+if not client:discover() then
+ui.message(target, "error", "No CCG found",
+"Press HOME MODE on the CCG and check the code", 1.8)
+return
+end
+local result, err = client:request("HOME_PAIR", { code = code,
+name = account and account.name or "Player" }, 3)
+if not result then
+ui.message(target, "error", "Not paired", err or "The CCG did not answer",
+1.6)
+return
+end
+home = { client = client, token = result.token, state = result.state }
+remember(result.state)
+ui.message(target, "success", "Paired", tostring(result.state.console), 1)
+end
+
+
+local KEYS = {}
+if type(keys) == "table" then
+KEYS[keys.up or -1], KEYS[keys.down or -2] = "key:up", "key:down"
+KEYS[keys.left or -3], KEYS[keys.right or -4] = "key:left", "key:right"
+KEYS[keys.space or -5], KEYS[keys.enter or -6] = "key:a", "key:a"
+end
+
+
+
+local function gameDetail(game)
+while running and sessionToken and home do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(tostring(game.name), width - 9),
+"by " .. ui.truncate(tostring(game.author or "?"), width - 6),
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 6, colors.magenta)
+ui.wrappedText(target, 4, 6, tostring(game.description or ""),
+width - 6, 4, ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 10, "v" .. tostring(game.version) .. "  "
+.. math.ceil((tonumber(game.size) or 0) / 1024) .. " KiB",
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+if game.here and not game.update then
+scene:button("play", 2, 12, width - 2, 2, "Play",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk })
+scene:button("remove", 2, 15, width - 2, 1, "Remove from the CCG",
+{ background = ui.theme.panel })
+else
+scene:button("get", 2, 12, width - 2, 2,
+game.here and "Update" or "Get it",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk })
+end
+scene:button("back", 1, height, 9, 1, "< Games",
+{ background = ui.theme.panel })
+local pressed = scene:wait()
+if pressed == "back" or pressed == "__terminate" then return end
+if pressed == "get" then
+ui.clear(target)
+ui.center(target, 9, "The CCG is fetching it", ui.theme.ink)
+local done, err = ask("HOME_GET", { app_id = game.app_id }, 30)
+if done then
+game.here, game.update = true, false
+ui.message(target, "success", "On the CCG", tostring(game.name), 1)
+else
+ui.message(target, "error", "Not fetched", err, 1.8)
+end
+elseif pressed == "play" then
+ask("HOME_PLAY", { game = game.app_id })
+return "played"
+elseif pressed == "remove" and ui.confirm(target, "Remove it?",
+tostring(game.name) .. " comes off the CCG. Its best score stays.",
+"Remove", "Keep") then
+local gone, err = ask("HOME_REMOVE", { app_id = game.app_id })
+if gone then
+game.here, game.update = false, false
+return
+end
+ui.message(target, "error", "Not removed", err, 1.6)
+end
+end
+end
+
+local function gameBrowser()
+local listed, err = ask("HOME_BROWSE", {}, 10)
+if not listed then
+if home then ui.message(target, "error", "No games", err, 1.8) end
+return
+end
+local games, page = listed.games or {}, 1
+while running and sessionToken and home do
+local width, height = target.getSize()
+local per = math.max(1, math.floor((height - 6) / 3))
+local pages = math.max(1, math.ceil(#games / per))
+page = math.max(1, math.min(page, pages))
+ui.clear(target)
+ui.header(target, "Game Browser", #games .. " for the CCG",
+util.formatClock())
+local scene = ui.scene(target)
+if #games == 0 then
+ui.wrappedText(target, 2, 5, "No games on the App Server yet."
+.. " A game is published from Dev Mode, in Settings,"
+.. " as a game.", width - 2, 5, ui.theme.muted)
+end
+for slot = 1, per do
+local game = games[(page - 1) * per + slot]
+if not game then break end
+local mark = game.update and "^ " or game.here and "* " or "+ "
+scene:button("game:" .. ((page - 1) * per + slot), 2, 1 + slot * 3,
+width - 2, 2, ui.truncate(mark .. tostring(game.name), width - 4)
+.. "\n" .. ui.truncate(tostring(game.description or ""),
+width - 4),
+{ background = game.here and ui.theme.accentDark or ui.theme.panel })
+end
+if pages > 1 then
+scene:button("prev", width - 8, height, 3, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+scene:button("next", width - 4, height, 3, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+scene:button("back", 1, height, 8, 1, "< CCG",
+{ background = ui.theme.panel })
+local pressed = scene:wait()
+if pressed == "back" or pressed == "__terminate" then return end
+if pressed == "prev" then
+page = page - 1
+elseif pressed == "next" then
+page = page + 1
+else
+local index = tonumber((pressed or ""):match("^game:(%d+)$"))
+if index and games[index]
+and gameDetail(games[index]) == "played" then
+return
+end
+end
+end
+end
+
+local function homePage(spec)
+local page = 1
+while running and sessionToken do
+local width = target.getSize()
+local bottom = ui.contentBottom(target)
+ui.clear(target)
+local scene = ui.scene(target)
+local state = home and home.state
+if not state then
+ui.header(target, "Home Mode", "Free, on your own CCG",
+util.formatClock())
+ui.wrappedText(target, 2, 5, "On the CCG, press HOME MODE and"
+.. " enter its PIN. Type the code it shows here: this"
+.. " Pocket is its controller.", width - 2, 5, ui.theme.muted)
+scene:button("pair", 2, 11, width - 2, 3, "Enter pairing code",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk })
+elseif state.screen == "menu" then
+local games = state.games or {}
+local per = math.max(1, math.floor((bottom - 7) / 3))
+local pages = math.max(1, math.ceil(#games / per))
+page = math.max(1, math.min(page, pages))
+ui.header(target, ui.truncate(tostring(state.console), width - 9),
+pages > 1 and ("Pick a game  " .. page .. "/" .. pages)
+or "Pick a game", util.formatClock())
+for slot = 1, per do
+local game = games[(page - 1) * per + slot]
+if not game then break end
+scene:button("play:" .. game.id, 2, 1 + slot * 3, width - 2, 2,
+ui.truncate(tostring(game.label) .. "  best " .. (game.best or 0),
+width - 4) .. "\n" .. ui.truncate(tostring(game.hint or ""),
+width - 4), { background = game.fetched
+and ui.theme.accentDark or ui.theme.panel })
+end
+local browseWidth = pages > 1 and width - 10 or width - 2
+scene:button("browse", 2, bottom - 2, browseWidth, 1, "Game Browser",
+{ background = colors.magenta })
+if pages > 1 then
+scene:button("prev", width - 7, bottom - 2, 3, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+scene:button("next", width - 3, bottom - 2, 3, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+scene:button("leave", 2, bottom, width - 2, 1, "Unpair",
+{ background = ui.theme.danger })
+else
+local over = state.screen == "over"
+ui.header(target, ui.truncate(tostring(state.label), width - 9),
+"Score " .. (state.score or 0) .. "  best " .. (state.best or 0),
+util.formatClock())
+ui.center(target, 4, ui.truncate(over and ((state.record
+and "New best! " or "Game over. ") .. tostring(state.status or ""))
+or tostring(state.status or "Playing"), width - 2),
+over and ui.theme.warning or ui.theme.muted)
+
+local pad = math.floor((width - 4) / 3)
+local left, middle, right = 2, 3 + pad, 4 + pad * 2
+scene:button("key:up", middle, 6, pad, 2, "^",
+{ background = ui.theme.panel, flash = false })
+scene:button("key:left", left, 9, pad, 2, "<",
+{ background = ui.theme.panel, flash = false })
+scene:button("key:a", middle, 9, pad, 2, over and "Again" or "A",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk,
+flash = false })
+scene:button("key:right", right, 9, width - right, 2, ">",
+{ background = ui.theme.panel, flash = false })
+scene:button("key:down", middle, 12, pad, 2, "v",
+{ background = ui.theme.panel, flash = false })
+scene:button("menu", 2, bottom, width - 2, 1, "Games",
+{ background = ui.theme.panel })
+end
+ui.tabBar(scene, target, spec.list, spec.active)
+local pressed = scene:wait({ tickRate = home and 0.5 or nil, keys = KEYS })
+if pressed == "home" or pressed == "__terminate"
+or (pressed or ""):match("^tab:") then
+return pressed
+end
+local game = (pressed or ""):match("^play:(.+)$")
+local key = (pressed or ""):match("^key:(.+)$")
+if pressed == "pair" then
+pair()
+elseif pressed == "__tick" then
+ask("HOME_STATE")
+elseif game then
+ask("HOME_PLAY", { game = game })
+elseif key and home then
+ask("HOME_INPUT", { key = key })
+elseif pressed == "menu" then
+ask("HOME_MENU")
+elseif pressed == "browse" then
+gameBrowser()
+elseif pressed == "prev" then
+page = page - 1
+elseif pressed == "next" then
+page = page + 1
+elseif pressed == "leave" then
+ask("HOME_LEAVE")
+home = nil
+end
+end
+return "home"
+end
+
+local function betPage(spec)
+while running and sessionToken do
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, "Bet Play", "Wager at a CCG", util.formatClock())
+ui.wrappedText(target, 2, 5, "Join a lobby on a CCG with its code."
+.. " Wagers come from your Bet Wallet; winnings are held a"
+.. " day.", width - 2, 5, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("join", 2, 11, width - 2, 3, "Join a lobby",
+{ background = colors.magenta })
+ui.tabBar(scene, target, spec.list, spec.active)
+local pressed = scene:wait()
+if pressed == "join" then
+betApp()
+else
+return pressed
+end
+end
+return "home"
+end
+
+local function scoresPage(spec)
+while running and sessionToken do
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, "Scores", "Your best at home", util.formatClock())
+
+local rows = {}
+for _, id in ipairs(HOME_ORDER) do rows[#rows + 1] = { HOME_NAMES[id], id } end
+local fetched = {}
+for id, name in pairs(device.ccg_names) do
+if (device.ccg_scores[id] or 0) > 0 then fetched[#fetched + 1] = { name, id } end
+end
+table.sort(fetched, function(a, b) return a[1] < b[1] end)
+for _, row in ipairs(fetched) do rows[#rows + 1] = row end
+local bottom = ui.contentBottom(target)
+for index, row in ipairs(rows) do
+local y = 3 + index * 2
+if y > bottom - 4 then break end
+ui.text(target, 3, y, ui.truncate(row[1], width - 10), ui.theme.ink)
+local best = tostring(device.ccg_scores[row[2]] or 0)
+ui.text(target, width - #best - 1, y, best, ui.theme.accent)
+end
+ui.wrappedText(target, 2, bottom - 2, "Kept on the CCG you play on,"
+.. " and here once you have played.", width - 2, 3, ui.theme.muted)
+local scene = ui.scene(target)
+ui.tabBar(scene, target, spec.list, spec.active)
+return scene:wait()
+end
+return "home"
+end
+
+ui.runTabs({
+title = "CCG",
+list = { { id = "home", label = "Home" }, { id = "bet", label = "Bet" },
+{ id = "scores", label = "Scores" } },
+start = (action == "bet" or action == "scores") and action or "home",
+pages = { home = homePage, bet = betPage, scores = scoresPage },
+running = function() return running and sessionToken ~= nil end,
+})
+
+if home then pcall(ask, "HOME_LEAVE") end
+end
+end
+
+
+
+local conversationScreen
+
+local urgentCallScreen
+local appUrgentCall
+local inCall = false
+local lastBannerId
+
+
+
+local function showBanner(item)
+local width = target.getSize()
+local color = item.kind == "warning" and ui.theme.warning
+or item.kind == "urgent" and ui.theme.danger
+or item.kind == "money" and ui.theme.success
+or ui.theme.accent
+ui.fill(target, 1, 1, width, 3, color)
+
+
+local title = item.app_name
+and (ui.truncate(item.app_name, 10) .. "  " .. item.title)
+or item.title
+ui.text(target, 2, 1, ui.truncate(title, width - 2), colors.black, color)
+ui.wrappedText(target, 2, 2, item.body, width - 2, 2, colors.black, color)
+sleep(1.6)
+end
+
+
+
+
+local function showFullscreenAlert(item)
+local shown = 0
+
+
+
+local asking = item.security_order
+
+
+local lookup = item.security_lookup
+local question = asking or lookup
+while running and shown < (question and 120 or 8) do
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
+ui.center(target, 3, ui.truncate(
+tostring(item.app_name or "Notification"):upper(), width - 2),
+colors.white, ui.theme.accentDark)
+ui.wrappedText(target, 2, 5, item.title, width - 2, 2,
+colors.white, ui.theme.accentDark)
+
+
+
+ui.wrappedText(target, 2, 8, item.body, width - 2,
+height - (question and 14 or 11), colors.white, ui.theme.accentDark)
+local scene = ui.scene(target)
+if question then
+local half = math.floor((width - 3) / 2)
+scene:button("mine", 2, height - 5, half, 2, "It's me",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("notme", 3 + half, height - 5, width - 3 - half, 2,
+"Not me", { background = ui.theme.danger })
+end
+scene:button("ok", 2, height - 2, width - 2, 2,
+asking and "Later, in Foxy" or lookup and "Not now" or "Got it",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 1 })
+shown = shown + 1
+if action == "ok" or action == "__terminate" then return end
+if action == "mine" and lookup then
+local pin = ui.pin(target, "Your PIN", true)
+if pin then
+local done, err = request("SECURITY_LOOKUP_CONFIRM",
+{ request_id = lookup, pin = pin }, true)
+ui.message(target, done and "success" or "error",
+done and "Confirmed" or "Not confirmed",
+done and "Your orders are on the counter's screen" or err, 1.6)
+if done then return end
+end
+elseif action == "notme" and lookup then
+local denied, err = request("SECURITY_LOOKUP_DENY",
+{ request_id = lookup }, true)
+ui.message(target, denied and "warning" or "error",
+denied and "Kept private" or "Not done", denied
+and "The counter shows nothing" or err, 2)
+if denied then return end
+elseif action == "mine" then
+local pin = ui.pin(target, "Your PIN", true)
+if pin then
+local done, err = request("SECURITY_CONFIRM",
+{ order_id = asking, pin = pin }, true)
+ui.message(target, done and "success" or "error",
+done and "Confirmed" or "Not confirmed",
+done and "It is coming out now" or err, 1.6)
+if done then return end
+end
+elseif action == "notme" then
+local denied, err = request("SECURITY_DENY",
+{ order_id = asking }, true)
+ui.message(target, denied and "warning" or "error",
+denied and "Kept it in" or "Not done", denied
+and ("Your new code is " .. tostring(denied.code)) or err,
+2.4)
+if denied then return end
+end
+end
+end
+
+local function socialAmount(title)
+local raw = ui.input(target, title, {
+hint = "Amount in " .. config.currency,
+mode = "number",
+maxLength = 9,
+})
+if not raw then return nil end
+local amount = tonumber(raw)
+if not amount or amount <= 0 then
+ui.message(target, "warning", "Enter an amount", nil, 1)
+return nil
+end
+return amount
+end
+
+local function pickFriend(title, friends, hint)
+if #friends == 0 then
+ui.message(target, "info", "No friends yet",
+"Add someone in the Friends app first", 1.4)
+return nil
+end
+local page = 1
+while true do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, title, hint or (#friends .. " friends"),
+util.formatClock())
+local scene = ui.scene(target)
+local pageItems, actualPage, pages = util.page(friends, page, 4)
+page = actualPage
+for index, friend in ipairs(pageItems) do
+scene:button("friend:" .. friend.account_id, 2, 4 + (index - 1) * 4,
+width - 2, 3, friend.name, { background = ui.theme.accentDark })
+end
+pageFooter(scene, page, pages)
+local action = scene:wait({ tickRate = 0.5 })
+if action == "back" or action == "__terminate" then return nil
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local id = action and action:match("^friend:(.+)$")
+if id then
+for _, friend in ipairs(friends) do
+if friend.account_id == id then return friend end
+end
+end
+end
+end
+end
+
+local function friendSearchScreen()
+local query = ui.input(target, "Find a Foxy Account", {
+hint = "Type part of their name",
+maxLength = 20,
+minLength = 2,
+allowSpace = true,
+})
+if not query then return end
+local result = request("FRIEND_SEARCH", { query = query })
+if not result then return end
+local results, page = result.results, 1
+while true do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Search", #results .. " found", util.formatClock())
+if #results == 0 then
+ui.center(target, 9, "Nobody matched", ui.theme.muted)
+end
+local scene = ui.scene(target)
+local pageItems, actualPage, pages = util.page(results, page, 4)
+page = actualPage
+for index, item in ipairs(pageItems) do
+local state = item.friend and "Friend"
+or item.requested and "Asked"
+or item.incoming and "Wants you"
+or "Tap to add"
+scene:button("add:" .. item.account_id, 2, 4 + (index - 1) * 4,
+width - 2, 3, item.name .. "\n" .. state, {
+background = item.friend and ui.theme.success
+or ui.theme.accentDark,
+foreground = item.friend and colors.black or colors.white,
+disabled = item.friend,
+})
+end
+pageFooter(scene, page, pages)
+local action = scene:wait({ tickRate = 0.5 })
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local id = action and action:match("^add:(.+)$")
+if id then
+local sent = request("FRIEND_REQUEST", { account_id = id })
+if sent then
+ui.message(target, "success",
+sent.status == "friends" and "Now friends"
+or "Request sent", sent.name, 1.2)
+result = request("FRIEND_SEARCH", { query = query }, true)
+results = result and result.results or results
+end
+end
+end
+end
+end
+
+local function friendRequestsScreen(incoming)
+local page = 1
+while #incoming > 0 do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Requests", #incoming .. " waiting", util.formatClock())
+local scene = ui.scene(target)
+local pageItems, actualPage, pages = util.page(incoming, page, 2)
+page = actualPage
+for index, item in ipairs(pageItems) do
+local y = 4 + (index - 1) * 7
+ui.card(target, 2, y, width - 2, 3, ui.theme.accent)
+ui.wrappedText(target, 4, y + 1, item.name, width - 6, 2,
+ui.theme.ink, ui.theme.panel)
+scene:button("yes:" .. item.account_id, 2, y + 4,
+math.floor((width - 3) / 2), 2, "Accept",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no:" .. item.account_id,
+2 + math.floor((width - 3) / 2) + 1, y + 4,
+width - 3 - math.floor((width - 3) / 2), 2, "Decline",
+{ background = ui.theme.danger })
+end
+pageFooter(scene, page, pages)
+local action = scene:wait({ tickRate = 0.5 })
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local yesId = action and action:match("^yes:(.+)$")
+local noId = action and action:match("^no:(.+)$")
+local id = yesId or noId
+if id then
+local answered = request("FRIEND_RESPOND", {
+account_id = id,
+accept = yesId ~= nil,
+})
+if answered then
+ui.message(target, yesId and "success" or "info",
+yesId and "Now friends" or "Declined",
+answered.name, 1)
+local refreshed = request("FRIEND_OVERVIEW", {}, true)
+incoming = refreshed and refreshed.incoming or {}
+end
+end
+end
+end
+end
+
+local function friendsScreen(tabs)
+local page = 1
+while true do
+local overview = request("FRIEND_OVERVIEW")
+if not overview then return end
+local friends, incoming = overview.friends, overview.incoming
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Friends", #friends .. " friends", util.formatClock())
+local scene = ui.scene(target)
+scene:button("add", 2, 4, math.floor((width - 3) / 2), 2, "Add",
+{ background = ui.theme.accentDark })
+scene:button("requests", 2 + math.floor((width - 3) / 2) + 1, 4,
+width - 3 - math.floor((width - 3) / 2), 2,
+#incoming > 0 and ("Requests " .. #incoming) or "Requests", {
+background = #incoming > 0 and ui.theme.warning
+or ui.theme.panel,
+foreground = #incoming > 0 and colors.black or colors.white,
+})
+if #friends == 0 then
+ui.center(target, 10, "No friends yet", ui.theme.muted)
+ui.center(target, 12, "Tap Add to search", ui.theme.muted)
+end
+local pageItems, actualPage, pages = util.page(friends, page, 3)
+page = actualPage
+for index, friend in ipairs(pageItems) do
+local y = 7 + (index - 1) * 4
+scene:button("open:" .. friend.account_id, 2, y,
+width - 9, 3, friend.name, { background = ui.theme.panel })
+scene:button("drop:" .. friend.account_id, width - 6, y, 6, 3,
+"X", { background = ui.theme.danger })
+end
+pageFooter(scene, page, pages, tabs)
+local action = scene:wait({ tickRate = 0.5 })
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+return action
+end
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+elseif action == "add" then friendSearchScreen()
+elseif action == "requests" then friendRequestsScreen(incoming)
+else
+local dropId = action and action:match("^drop:(.+)$")
+local openId = action and action:match("^open:(.+)$")
+if dropId then
+local name = "this friend"
+for _, friend in ipairs(friends) do
+if friend.account_id == dropId then name = friend.name end
+end
+if ui.confirm(target, "Remove friend",
+"Remove " .. name .. " from your friends?",
+"Remove", "Keep") then
+request("FRIEND_REMOVE", { account_id = dropId })
+end
+elseif openId then
+local started = request("CHAT_START", { account_ids = { openId } })
+if started then
+conversationScreen(started.conversation)
+end
+end
+end
+end
+end
+
+
+
+local function messageLines(item, width)
+local prefix = item.kind == "system" and "* " or (item.sender_name .. ": ")
+local body = item.body
+if item.kind == "money_request" then
+body = "asks " .. money(item.amount)
+.. (item.status == "paid" and " (paid)"
+or item.status == "declined" and " (declined)" or "")
+if item.body ~= "" then body = body .. " - " .. item.body end
+elseif item.kind == "money_sent" then
+body = item.body
+end
+return ui.wrap(prefix .. body, width)
+end
+
+local function drawTranscript(items, top, bottom, width)
+local lines = {}
+for _, item in ipairs(items) do
+for _, line in ipairs(messageLines(item, width - 3)) do
+lines[#lines + 1] = { text = line, item = item }
+end
+end
+local visible = bottom - top + 1
+local first = math.max(1, #lines - visible + 1)
+local row = top
+for index = first, #lines do
+local entry = lines[index]
+local color = ui.theme.ink
+if entry.item.kind == "system" then color = ui.theme.muted
+elseif entry.item.kind == "money_request" then color = ui.theme.warning
+elseif entry.item.kind == "money_sent" then color = ui.theme.success end
+ui.text(target, 2, row, entry.text, color)
+row = row + 1
+end
+if #lines == 0 then
+ui.center(target, math.floor((top + bottom) / 2), "No messages yet",
+ui.theme.muted)
+end
+end
+
+local function pendingRequestFor(items, accountId)
+for index = #items, 1, -1 do
+local item = items[index]
+if item.kind == "money_request" and item.status == "pending"
+and item.sender_id ~= accountId then
+return item
+end
+end
+return nil
+end
+
+
+
+
+
+
+
+
+
+local chat = { syncTicks = 10 }
+
+
+function chat.bubble(item, width)
+local mine = account and item.sender_id == account.account_id
+local textWidth = math.max(6, width - 10)
+local lines, background, ink
+if item.kind == "system" then
+return { system = true, lines = ui.wrap(tostring(item.body or ""), width - 4) }
+elseif item.kind == "money_request" then
+lines = { "Asks for " .. money(item.amount) }
+if item.body and item.body ~= "" then
+for _, line in ipairs(ui.wrap(item.body, textWidth)) do lines[#lines + 1] = line end
+end
+local state = item.status == "paid" and "Paid"
+or item.status == "declined" and "Declined"
+or (mine and "Waiting" or nil)
+if state then lines[#lines + 1] = state end
+background = item.status == "paid" and ui.theme.success
+or item.status == "declined" and ui.theme.panel or ui.theme.warning
+ink = item.status == "declined" and ui.theme.muted or colors.black
+elseif item.kind == "money_sent" then
+lines = ui.wrap(tostring(item.body or ("sent " .. money(item.amount))), textWidth)
+background, ink = ui.theme.success, colors.black
+else
+lines = ui.wrap(tostring(item.body or ""), textWidth)
+background = mine and ui.theme.accent or ui.theme.panel
+ink = mine and (ui.theme.accentInk or ui.inkOn(ui.theme.accent)) or ui.theme.ink
+end
+local widest = 0
+for _, line in ipairs(lines) do widest = math.max(widest, #line) end
+
+local asking = item.kind == "money_request" and item.status == "pending" and not mine
+if asking then widest = math.max(widest, 9) end
+return { lines = lines, background = background, ink = ink, mine = mine,
+width = widest + 2, asking = asking, item = item,
+height = #lines + (asking and 1 or 0) }
+end
+
+
+
+function chat.draw(scene, items, conversation, top, bottom, scroll)
+local width = target.getSize()
+local group = conversation.kind == "group"
+local y = bottom
+local index = #items - scroll
+while index >= 1 and y >= top do
+local item = items[index]
+local bubble = chat.bubble(item, width)
+if bubble.system then
+for line = #bubble.lines, 1, -1 do
+if y >= top then
+ui.center(target, y, bubble.lines[line], ui.theme.muted)
+end
+y = y - 1
+end
+else
+local x = bubble.mine and (width - bubble.width) or 2
+local first = y - bubble.height + 1
+for line, text in ipairs(bubble.lines) do
+local row = first + line - 1
+if row >= top then
+ui.fill(target, x, row, bubble.width, 1, bubble.background)
+ui.text(target, x + 1, row, text, bubble.ink, bubble.background)
+end
+end
+if bubble.asking and y >= top then
+local half = math.floor((bubble.width - 1) / 2)
+scene:button("pay:" .. item.seq, x, y, half, 1, "Pay",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no:" .. item.seq, x + half + 1, y, bubble.width - half - 1, 1,
+"No", { background = ui.theme.danger })
+end
+y = first - 1
+
+local previous = items[index - 1]
+if group and not bubble.mine and y >= top and (not previous
+or previous.sender_id ~= item.sender_id or previous.kind == "system") then
+ui.text(target, 2, y, ui.truncate(tostring(item.sender_name), width - 3),
+ui.theme.muted)
+y = y - 1
+end
+end
+
+local previous = items[index - 1]
+if previous and previous.sender_id ~= item.sender_id then y = y - 1 end
+index = index - 1
+end
+if #items == 0 then
+ui.center(target, math.floor((top + bottom) / 2), "Say hello", ui.theme.muted)
+end
+return index >= 1
+end
+
+
+
+
+function chat.moneyTab(conversation, redraw, sync)
+local official = conversation.kind == "government"
+local amount = ""
+local tall = 10
+local function paint(scene, rows)
+local width, height = target.getSize()
+local top = height - rows + 1
+ui.fill(target, 1, top, width, rows, ui.theme.panel)
+ui.fill(target, 1, top, width, 1, ui.theme.accent)
+if rows < tall then return end
+ui.text(target, 2, top, "MONEY", ui.theme.accentInk or colors.black, ui.theme.accent)
+scene:button("close", width - 3, top, 3, 1, "x",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+ui.center(target, top + 1, config.currency .. (amount ~= "" and amount or "0"),
+ui.theme.ink, ui.theme.panel)
+local keysWide = math.floor((width - 4) / 3)
+for row, keysRow in ipairs({ { "1", "2", "3" }, { "4", "5", "6" },
+{ "7", "8", "9" }, { ".", "0", "<" } }) do
+for column, key in ipairs(keysRow) do
+scene:button("key:" .. key, 2 + (column - 1) * (keysWide + 1),
+top + 1 + row, keysWide, 1, key, { background = ui.theme.background,
+foreground = ui.theme.ink, flash = false })
+end
+end
+if official then
+ui.center(target, top + 7, "Only the state sends here",
+ui.theme.muted, ui.theme.panel)
+else
+local half = math.floor((width - 3) / 2)
+scene:button("ask", 2, top + 7, half, 2, "Request",
+{ background = ui.theme.warning, foreground = colors.black })
+scene:button("send", 3 + half, top + 7, width - 3 - half, 2, "Send",
+{ background = ui.theme.success, foreground = colors.black })
+end
+end
+
+for rows = 2, tall, 2 do
+redraw()
+paint(ui.scene(target), rows)
+sleep(0.03)
+end
+while running do
+redraw()
+local scene = ui.scene(target)
+paint(scene, tall)
+local action = scene:wait({ tickRate = 0.5, flash = false,
+onChar = function(character)
+if character:match("[%d%.]") then return "key:" .. character end
+end,
+keys = type(keys) == "table" and { [keys.backspace] = "key:<",
+[keys.enter] = "ask" } or nil })
+local key = action and action:match("^key:(.)$")
+if action == "close" or action == "__terminate" or action == "back" then return end
+if key == "<" then
+amount = amount:sub(1, -2)
+elseif key == "." then
+if not amount:find(".", 1, true) and #amount < 8 then
+amount = (amount == "" and "0" or amount) .. "."
+end
+elseif key then
+if #amount < 9 then amount = amount .. key end
+elseif action == "__tick" then
+sync()
+elseif (action == "ask" or action == "send") and not official then
+local value = tonumber(amount)
+if not value or value <= 0 then
+ui.message(target, "warning", "Type an amount", nil, 0.8)
+elseif action == "ask" then
+if request("CHAT_REQUEST_MONEY", {
+conversation_id = conversation.conversation_id, amount = value,
+}) then
+sync()
+return
+end
+else
+local recipientId
+if conversation.kind == "group" then
+local overview = request("FRIEND_OVERVIEW", {}, true)
+local members = {}
+for _, friend in ipairs(overview and overview.friends or {}) do
+for _, name in ipairs(conversation.member_names or {}) do
+if name == friend.name then members[#members + 1] = friend end
+end
+end
+local chosen = pickFriend("Pay who?", members)
+recipientId = chosen and chosen.account_id
+end
+if conversation.kind ~= "group" or recipientId then
+local pin = ui.pin(target, "Send " .. money(value), true)
+if pin and request("CHAT_SEND_MONEY", {
+conversation_id = conversation.conversation_id,
+to_account_id = recipientId, amount = value, pin = pin,
+}) then
+sync()
+return
+end
+end
+end
+end
+end
+end
+
+conversationScreen = function(summary)
+local opened = request("CHAT_OPEN", {
+conversation_id = summary.conversation_id,
+})
+if not opened then return end
+local items = opened.messages
+local conversation = opened.conversation
+local nextSeq = opened.next_seq
+local blink, scroll, ticks = true, 0, 0
+
+
+
+local function sync(whole)
+local update = request("CHAT_OPEN", {
+conversation_id = conversation.conversation_id,
+after_seq = whole and 0 or (nextSeq - 1),
+}, true)
+if not update then return end
+local changed = false
+if whole then
+items = update.messages
+else
+for _, item in ipairs(update.messages) do
+items[#items + 1] = item
+
+if item.kind == "money_sent" or item.kind == "system" then
+changed = true
+end
+end
+end
+while #items > 60 do table.remove(items, 1) end
+nextSeq = update.next_seq
+conversation = update.conversation
+if changed then sync(true) end
+end
+
+local function draw(scene)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, conversation.title,
+conversation.kind == "group"
+and (conversation.member_count .. " people") or "Direct",
+util.formatClock(blink))
+return chat.draw(scene or ui.scene(target), items, conversation, 4, height - 3, scroll)
+end
+
+while running do
+local width, height = target.getSize()
+local scene = ui.scene(target)
+local more = draw(scene)
+scene:button("type", 2, height - 1, width - 7, 1, "Message...",
+{ background = ui.theme.panel, foreground = ui.theme.muted })
+scene:button("money", width - 4, height - 1, 4, 1, config.currency,
+{ background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.background })
+if more then
+scene:button("older", width - 8, height, 3, 1, "^",
+{ background = ui.theme.panel })
+end
+if scroll > 0 then
+scene:button("newer", width - 4, height, 3, 1, "v",
+{ background = ui.theme.panel })
+end
+local action = scene:wait({ tickRate = 0.5 })
+blink = not blink
+if action == "back" or action == "__terminate" then return end
+local paySeq = tonumber(action and action:match("^pay:(%d+)$"))
+local noSeq = tonumber(action and action:match("^no:(%d+)$"))
+if action == "type" then
+local body = ui.input(target, "Message", {
+hint = conversation.title, maxLength = 120, allowSpace = true,
+mode = "text",
+})
+if body and util.trim(body) ~= "" then
+request("CHAT_SEND", {
+conversation_id = conversation.conversation_id, body = body,
+})
+scroll = 0
+end
+elseif action == "money" then
+chat.moneyTab(conversation, function() draw() end, function() sync(true) end)
+scroll = 0
+elseif action == "older" then
+scroll = math.min(#items - 1, scroll + 1)
+elseif action == "newer" then
+scroll = math.max(0, scroll - 1)
+elseif paySeq then
+for _, item in ipairs(items) do
+if item.seq == paySeq then
+local pin = ui.pin(target, "Pay " .. money(item.amount), true)
+if pin then
+local paid = request("CHAT_PAY_REQUEST", {
+conversation_id = conversation.conversation_id,
+seq = paySeq, pin = pin,
+})
+if paid then
+ui.message(target, "success", "Paid " .. money(paid.quote.amount),
+paid.quote.recipient, 1)
+end
+end
+end
+end
+sync(true)
+elseif noSeq then
+request("CHAT_DECLINE_REQUEST", {
+conversation_id = conversation.conversation_id, seq = noSeq,
+})
+sync(true)
+end
+ticks = ticks + 1
+sync(ticks % chat.syncTicks == 0)
+end
+end
+
+local function newGroupScreen(friends)
+if #friends < 2 then
+ui.message(target, "info", "Need two friends",
+"A group needs at least two other people", 1.4)
+return
+end
+local chosen, chosenIds, page = {}, {}, 1
+while true do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "New group", #chosen .. " chosen", util.formatClock())
+local scene = ui.scene(target)
+local pageItems, actualPage, pages = util.page(friends, page, 3)
+page = actualPage
+for index, friend in ipairs(pageItems) do
+scene:button("pick:" .. friend.account_id, 2, 4 + (index - 1) * 4,
+width - 2, 3, (chosenIds[friend.account_id] and "* " or "")
+.. friend.name, {
+background = chosenIds[friend.account_id]
+and ui.theme.success or ui.theme.panel,
+foreground = chosenIds[friend.account_id]
+and colors.black or colors.white,
+})
+end
+scene:button("create", 2, height - 3, width - 2, 2, "Create group",
+{ background = ui.theme.accentDark, disabled = #chosen < 2 })
+pageFooter(scene, page, pages)
+local action = scene:wait({ tickRate = 0.5 })
+if action == "back" or action == "__terminate" then return end
+if action == "prev" then page = page - 1 end
+if action == "next" then page = page + 1 end
+if action == "create" and #chosen >= 2 then
+local title = ui.input(target, "Group name", {
+hint = "Shown to everyone",
+maxLength = 20,
+allowSpace = true,
+})
+if title then
+local created = request("CHAT_START", {
+account_ids = chosen,
+title = title,
+})
+if created then
+conversationScreen(created.conversation)
+return
+end
+end
+else
+local id = action and action:match("^pick:(.+)$")
+if id then
+if chosenIds[id] then
+chosenIds[id] = nil
+for index = #chosen, 1, -1 do
+if chosen[index] == id then table.remove(chosen, index) end
+end
+elseif #chosen < 7 then
+chosenIds[id] = true
+chosen[#chosen + 1] = id
+end
+end
+end
+end
+end
+
+local function messagesScreen(tabs)
+local page = 1
+while true do
+local list = request("CHAT_LIST")
+if not list then return end
+local conversations = list.conversations
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Messages", #conversations .. " chats",
+util.formatClock())
+local scene = ui.scene(target)
+local half = math.floor((width - 3) / 2)
+scene:button("new", 2, 4, half, 2, "New chat",
+{ background = ui.theme.accentDark })
+scene:button("group", 2 + half + 1, 4, width - 3 - half, 2, "New group",
+{ background = ui.theme.panel })
+if #conversations == 0 then
+ui.center(target, 11, "No chats yet", ui.theme.muted)
+end
+local pageItems, actualPage, pages = util.page(conversations, page, 3)
+page = actualPage
+for index, item in ipairs(pageItems) do
+local y = 7 + (index - 1) * 4
+local label = item.title
+if item.unread > 0 then label = "(" .. item.unread .. ") " .. label end
+
+scene:button("open:" .. item.conversation_id, 2, y, width - 2, 3,
+label .. "\n" .. ui.truncate(item.last_preview, width - 6), {
+background = item.unread > 0 and ui.theme.accent
+or ui.theme.panel,
+foreground = item.unread > 0 and (ui.theme.accentInk
+or ui.inkOn(ui.theme.accent)) or ui.theme.ink,
+})
+end
+pageFooter(scene, page, pages, tabs)
+local action = scene:wait({ tickRate = 0.5 })
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+return action
+end
+if action == "back" or action == "__terminate" then return
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+elseif action == "new" or action == "group" then
+local overview = request("FRIEND_OVERVIEW")
+if overview then
+if action == "new" then
+local friend = pickFriend("Chat with", overview.friends)
+if friend then
+local started = request("CHAT_START", {
+account_ids = { friend.account_id },
+})
+if started then conversationScreen(started.conversation) end
+end
+else
+newGroupScreen(overview.friends)
+end
+end
+else
+local id = action and action:match("^open:(.+)$")
+if id then
+for _, item in ipairs(conversations) do
+if item.conversation_id == id then conversationScreen(item) end
+end
+end
+end
+end
+end
+
+
+
+local function urgentMoneyMenu(call, items)
+local pending = pendingRequestFor(items, account.account_id)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Urgent money", call.other_name, util.formatClock())
+local scene = ui.scene(target)
+scene:button("send", 2, 5, width - 2, 3, "Send money",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
+{ background = ui.theme.warning, foreground = colors.black })
+if pending then
+scene:button("pay", 2, 13, width - 2, 3,
+"Pay " .. money(pending.amount),
+{ background = ui.theme.accentDark })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "send" then
+local amount = socialAmount("Send how much?")
+if not amount then return end
+local pin = ui.pin(target, "Confirm with PIN", true)
+if not pin then return end
+local sent = request("URGENT_SEND_MONEY", {
+call_id = call.call_id, amount = amount, pin = pin,
+})
+if sent then
+ui.message(target, "success", "Sent " .. money(sent.quote.amount),
+"Fee " .. money(sent.quote.fee), 1.1)
+end
+elseif action == "ask" then
+local amount = socialAmount("Ask for how much?")
+if not amount then return end
+request("URGENT_REQUEST_MONEY", {
+call_id = call.call_id, amount = amount,
+})
+elseif action == "pay" and pending then
+local pin = ui.pin(target, "Pay " .. money(pending.amount), true)
+if not pin then return end
+local paid = request("URGENT_PAY_REQUEST", {
+call_id = call.call_id, seq = pending.seq, pin = pin,
+})
+if paid then
+ui.message(target, "success", "Paid " .. money(paid.quote.amount),
+nil, 1.1)
+end
+end
+end
+
+urgentCallScreen = function(call)
+inCall = true
+local items, nextSeq, blink = {}, 0, true
+while running do
+local width, height = target.getSize()
+ui.clear(target)
+local saveLabel = call.i_saved and ("Saved " .. call.save_votes .. "/2")
+or "Save"
+ui.header(target, call.other_name,
+call.status == "active" and "Urgent Contact" or call.status,
+util.formatClock(blink))
+local scene = ui.scene(target)
+scene:button("save", width - 10, 2, 10, 1, saveLabel, {
+background = call.save_votes and call.save_votes > 0
+and ui.theme.success or ui.theme.panel,
+foreground = call.save_votes and call.save_votes > 0
+and colors.black or colors.white,
+})
+drawTranscript(items, 5, height - 4, width)
+local half = math.floor((width - 3) / 2)
+scene:button("type", 2, height - 3, half, 2, "Type",
+{ background = ui.theme.accentDark })
+scene:button("money", 2 + half + 1, height - 3, width - 3 - half, 2,
+"Money", { background = ui.theme.success,
+foreground = colors.black })
+scene:button("hang", 2, height, width - 2, 1, "Hang up",
+{ background = ui.theme.danger })
+local action = scene:wait({ tickRate = 0.4 })
+blink = not blink
+if action == "hang" or action == "__terminate" then
+request("URGENT_END", { call_id = call.call_id }, true)
+inCall = false
+return
+elseif action == "type" then
+local body = ui.input(target, "Say something", {
+hint = call.other_name .. " sees it at once",
+maxLength = 120,
+allowSpace = true,
+})
+if body then
+request("URGENT_SEND", { call_id = call.call_id, body = body })
+end
+elseif action == "money" then
+urgentMoneyMenu(call, items)
+elseif action == "save" then
+local voted = request("URGENT_SAVE", { call_id = call.call_id })
+if voted then call = voted.call end
+end
+local update = request("URGENT_STATE", {
+call_id = call.call_id,
+after_seq = nextSeq,
+}, true)
+if not update then
+ui.message(target, "warning", "Urgent Contact ended", nil, 1.2)
+inCall = false
+return
+end
+call = update.call
+for _, item in ipairs(update.messages) do
+items[#items + 1] = item
+nextSeq = math.max(nextSeq, item.seq)
+end
+while #items > 60 do table.remove(items, 1) end
+if call.status ~= "active" then
+ui.message(target, call.saved and "success" or "info",
+call.saved and "Saved to Messages" or "Urgent Contact ended",
+call.other_name, 1.4)
+inCall = false
+return
+end
+end
+inCall = false
+end
+
+
+local function incomingCallScreen(call)
+inCall = true
+local frame = 0
+while running do
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, ui.theme.danger)
+ui.center(target, 4, call.app_name and ui.truncate(
+call.app_name:upper() .. " CALL", width - 2) or "URGENT CONTACT",
+colors.white, ui.theme.danger)
+ui.center(target, 6, frame % 2 == 0 and "* * *" or "  *  ",
+colors.white, ui.theme.danger)
+ui.wrappedText(target, 2, 9, call.other_name, width - 2, 3,
+colors.white, ui.theme.danger)
+ui.center(target, 13, call.app_name and ("is calling on "
+.. ui.truncate(call.app_name, width - 16)) or "wants to reach you",
+colors.white, ui.theme.danger)
+local scene = ui.scene(target)
+scene:button("accept", 2, height - 5, width - 2, 2, "Accept",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("decline", 2, height - 2, width - 2, 2, "Decline",
+{ background = colors.gray })
+local action = scene:wait({ tickRate = 0.5 })
+frame = frame + 1
+if action == "accept" then
+local answered = request("URGENT_ANSWER", {
+call_id = call.call_id, accept = true,
+})
+inCall = false
+if answered then urgentCallScreen(answered.call) end
+return
+elseif action == "decline" or action == "__terminate" then
+request("URGENT_ANSWER", { call_id = call.call_id, accept = false },
+true)
+inCall = false
+return
+elseif action == "__tick" then
+local still = request("URGENT_RING", {}, true)
+if not still or not still.call
+or still.call.call_id ~= call.call_id then
+inCall = false
+return
+end
+end
+end
+inCall = false
+end
+
+
+
+local function placeUrgentCall(name, accountId, appId)
+local started = request("URGENT_CALL",
+{ account_id = accountId, app_id = appId })
+if not started then return end
+local call = started.call
+inCall = true
+local frame = 0
+while running do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Reaching", name, util.formatClock())
+ui.center(target, 8, name, ui.theme.ink)
+ui.center(target, 10, string.rep(".", frame % 4 + 1), ui.theme.accent)
+ui.center(target, 12, "Waiting for an answer", ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("cancel", 2, height - 2, width - 2, 2, "Cancel",
+{ background = ui.theme.danger })
+local action = scene:wait({ tickRate = 0.5 })
+frame = frame + 1
+if action == "cancel" or action == "__terminate" then
+request("URGENT_END", { call_id = call.call_id }, true)
+inCall = false
+return
+end
+local update = request("URGENT_STATE", { call_id = call.call_id }, true)
+if not update then
+ui.message(target, "warning", "No answer", name, 1.2)
+inCall = false
+return
+end
+call = update.call
+if call.status == "active" then
+inCall = false
+urgentCallScreen(call)
+return
+elseif call.status ~= "ringing" then
+ui.message(target, "info",
+call.status == "declined" and "Declined" or "No answer",
+name, 1.3)
+inCall = false
+return
+end
+end
+inCall = false
+end
+
+local function urgentScreen()
+local overview = request("FRIEND_OVERVIEW")
+if not overview then return end
+local friend = pickFriend("Urgent Contact", overview.friends,
+"Reach a friend now")
+if not friend then return end
+return placeUrgentCall(friend.name, friend.account_id)
+end
+
+
+
+
+
+
+local function portableBasketScreen(offer)
+while running and sessionToken do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Your Basket", offer.merchant, util.formatClock())
+local row = 5
+local items = offer.items or {}
+for _, item in ipairs(items) do
+if row > height - 8 then
+ui.text(target, 2, row, "...", ui.theme.muted)
+break
+end
+local line = item.quantity .. "x " .. item.name
+ui.text(target, 2, row, ui.truncate(line, width - 10), ui.theme.ink)
+ui.text(target, width - 7, row,
+ui.truncate(money(item.price * item.quantity), 7),
+ui.theme.muted)
+row = row + 1
+end
+if #items == 0 then
+ui.center(target, 8, offer.description or "Purchase", ui.theme.muted)
+end
+ui.fill(target, 2, height - 7, width - 2, 1, ui.theme.panel)
+ui.text(target, 2, height - 6, "TOTAL", ui.theme.muted)
+ui.text(target, width - 1 - #money(offer.amount), height - 6,
+money(offer.amount), ui.theme.ink)
+local scene = ui.scene(target)
+scene:button("pay", 2, height - 4, width - 2, 3,
+"Continue  " .. money(offer.amount),
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no", 1, height, 10, 1, "< Cancel",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 2 })
+if action == "pay" then
+
+
+
+local preview = request("FOXY_PAY_PREVIEW",
+{ offer_id = offer.offer_id })
+if not preview then return end
+local pin
+if preview.pin_required then
+pin = ui.pin(target, "Confirm Foxy Pay", true)
+if not pin then return end
+end
+local paid = request("FOXY_PAY_CONFIRM",
+{ offer_id = offer.offer_id, pin = pin })
+if paid then
+ui.message(target, "success", "Paid " .. money(offer.amount),
+offer.merchant, 1.4)
+end
+return
+elseif action == "no" or action == "__terminate" then
+request("PROXIMITY_DECLINE", { offer_id = offer.offer_id }, true)
+return
+end
+end
+end
+
+local function portableClaimScreen(offer)
+inCall = true
+local frame = 0
+local claimed = false
+while running and sessionToken do
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
+ui.center(target, 3, claimed and "RINGING UP" or "PAYING HERE?",
+colors.white, ui.theme.accentDark)
+ui.center(target, 5, frame % 2 == 0 and "( ( ( ) ) )" or "  ( ( ) )  ",
+colors.white, ui.theme.accentDark)
+ui.wrappedText(target, 2, 7, offer.merchant, width - 2, 2,
+colors.white, ui.theme.accentDark)
+ui.wrappedText(target, 2, 10, claimed
+and "Wait while your items are added. The basket arrives here."
+or "This till is asking whether you are the customer.",
+width - 2, 4, colors.lightGray, ui.theme.accentDark)
+if offer.distance and not claimed then
+ui.center(target, 15, offer.distance .. " blocks away",
+colors.lightGray, ui.theme.accentDark)
+end
+local scene = ui.scene(target)
+if claimed then
+scene:button("no", 2, height - 2, width - 2, 2, "Cancel",
+{ background = colors.gray })
+else
+scene:button("yes", 2, height - 5, width - 2, 2, "That is me",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no", 2, height - 2, width - 2, 2, "Not me",
+{ background = colors.gray })
+end
+local action = scene:wait({ tickRate = 1 })
+frame = frame + 1
+if action == "yes" then
+local taken, err = request("PROXIMITY_ACCEPT",
+{ offer_id = offer.offer_id }, true)
+if not taken then
+inCall = false
+ui.message(target, "error", "Could not take it",
+err or "The till moved on", 1.6)
+return
+end
+claimed = true
+elseif action == "no" or action == "__terminate" then
+request("PROXIMITY_DECLINE", { offer_id = offer.offer_id }, true)
+inCall = false
+return
+elseif action == "__tick" then
+local poll = request("PUMPE_POLL", {}, true)
+local live = poll and poll.offer
+if not live or live.offer_id ~= offer.offer_id then
+inCall = false
+return
+end
+if live.status == "offered" and live.code then
+inCall = false
+portableBasketScreen(live)
+return
+end
+end
+end
+inCall = false
+end
+
+local function proximityOfferScreen(offer)
+inCall = true
+local frame = 0
+while running and sessionToken do
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, ui.theme.accentDark)
+ui.center(target, 3, "FOXY PAY", colors.white, ui.theme.accentDark)
+ui.center(target, 5, frame % 2 == 0 and "( ( ( ) ) )" or "  ( ( ) )  ",
+colors.white, ui.theme.accentDark)
+ui.wrappedText(target, 2, 7, offer.merchant, width - 2, 2,
+colors.white, ui.theme.accentDark)
+ui.center(target, 10, money(offer.amount), colors.white,
+ui.theme.accentDark)
+ui.wrappedText(target, 2, 12, offer.description or "", width - 2, 2,
+colors.lightGray, ui.theme.accentDark)
+if offer.distance then
+ui.center(target, 15, offer.distance .. " blocks away",
+colors.lightGray, ui.theme.accentDark)
+end
+local scene = ui.scene(target)
+scene:button("pay", 2, height - 5, width - 2, 2, "Pay " .. money(offer.amount),
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no", 2, height - 2, width - 2, 2, "Not mine",
+{ background = colors.gray })
+local action = scene:wait({ tickRate = 0.5 })
+frame = frame + 1
+if action == "pay" then
+inCall = false
+
+
+
+local preview = request("FOXY_PAY_PREVIEW",
+{ offer_id = offer.offer_id })
+if preview then
+local pin
+if preview.pin_required then
+pin = ui.pin(target, "Confirm Foxy Pay", true)
+if not pin then return end
+end
+local paid = request("FOXY_PAY_CONFIRM",
+{ offer_id = offer.offer_id, pin = pin })
+if paid then
+ui.message(target, "success", "Paid " .. money(offer.amount),
+offer.merchant, 1.4)
+end
+end
+return
+elseif action == "no" or action == "__terminate" then
+request("PROXIMITY_DECLINE", { offer_id = offer.offer_id }, true)
+inCall = false
+return
+elseif action == "__tick" then
+
+local poll = request("PUMPE_POLL", {}, true)
+if not poll or not poll.offer
+or poll.offer.offer_id ~= offer.offer_id then
+inCall = false
+return
+end
+end
+end
+inCall = false
+end
+
+
+
+local function scanScreen(scan)
+inCall = true
+local frame = 0
+local visa = scan.kind == "visa"
+local accent = visa and colors.purple or ui.theme.accentDark
+while running and sessionToken do
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, accent)
+ui.center(target, 3, visa and "BORDER CHECK" or "TICKET CHECK",
+colors.white, accent)
+ui.center(target, 5, frame % 2 == 0 and "[ * ]" or "[   ]",
+colors.white, accent)
+ui.wrappedText(target, 2, 7, scan.detail or "", width - 2, 3,
+colors.white, accent)
+if visa then
+ui.wrappedText(target, 2, 11,
+"The gate opens for two seconds, so stand close before you"
+.. " accept.", width - 2, 3, colors.lightGray, accent)
+elseif scan.distance then
+ui.center(target, 11, scan.distance .. " blocks away",
+colors.lightGray, accent)
+end
+local scene = ui.scene(target)
+scene:button("yes", 2, height - 5, width - 2, 2,
+visa and "Open the gate" or "Scan my ticket",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no", 2, height - 2, width - 2, 2, "Not now",
+{ background = colors.gray })
+local action = scene:wait({ tickRate = 0.5 })
+frame = frame + 1
+if action == "yes" then
+local result, err = request("SCAN_ACCEPT",
+{ request_id = scan.request_id }, true)
+inCall = false
+stopPresenting()
+if result then
+ui.message(target, "success",
+visa and "Gate opening" or "Admitted",
+visa and "Walk through now" or "Enjoy the event", 1.5)
+else
+ui.message(target, "error", "Not accepted",
+err or "Try again at the desk", 1.8)
+end
+return
+elseif action == "no" or action == "__terminate" then
+request("SCAN_DECLINE", { request_id = scan.request_id }, true)
+inCall = false
+return
+elseif action == "__tick" then
+
+local poll = request("PUMPE_POLL", {}, true)
+if not poll or not poll.scan
+or poll.scan.request_id ~= scan.request_id then
+inCall = false
+return
+end
+end
+end
+inCall = false
+end
+
+
+
+local function announcementScreen(item)
+inCall = true
+while running and sessionToken do
+local width, height = target.getSize()
+ui.fill(target, 1, 1, width, height, ui.theme.danger)
+ui.center(target, 3, "ANNOUNCEMENT", colors.white, ui.theme.danger)
+ui.fill(target, 2, 5, width - 2, 1, colors.white)
+ui.wrappedText(target, 2, 7, item.title, width - 2, 3,
+colors.white, ui.theme.danger)
+ui.wrappedText(target, 2, 11, item.body or "", width - 2, 6,
+colors.lightGray, ui.theme.danger)
+local scene = ui.scene(target)
+scene:button("ok", 2, height - 2, width - 2, 2, "Continue",
+{ background = colors.white, foreground = colors.black })
+local action = scene:wait({ tickRate = 2 })
+if action == "ok" or action == "__terminate" then
+request("ANNOUNCEMENT_ACK",
+{ announcement_id = item.announcement_id }, true)
+inCall = false
+return
+end
+end
+inCall = false
+end
+
+
+
+
+
+
+
+
+local ringing = { frame = 0 }
+
+function ringing.draw(where, drop)
+local call = ringing.call
+if not call then return nil end
+local dots = ({ "*  ", " * ", "  *" })[ringing.frame % 3 + 1]
+return ui.topBanner(where, {
+title = ui.truncate(tostring(call.other_name), 14) .. "  " .. dots,
+body = call.app_name and ("Calling on " .. call.app_name) or "Urgent Contact",
+color = ui.theme.accent,
+buttons = { { id = "accept", label = "Accept", color = ui.theme.success },
+{ id = "decline", label = "Decline", color = ui.theme.danger } },
+}, drop)
+end
+
+function ringing.stop()
+ringing.call = nil
+ui.setOverlay(nil)
+end
+
+function ringing.tap(id)
+local call = ringing.call
+ringing.stop()
+if not call then return end
+if id == "accept" then
+local answered = request("URGENT_ANSWER", { call_id = call.call_id, accept = true })
+if answered then urgentCallScreen(answered.call) end
+else
+request("URGENT_ANSWER", { call_id = call.call_id, accept = false }, true)
+end
+end
+
+function ringing.start(call)
+ringing.call, ringing.frame = call, 0
+
+for step = 1, 4 do
+ringing.draw(target, step / 4)
+sleep(0.04)
+end
+local layout = ringing.draw(target, 1)
+ui.setOverlay({ target = target, top = layout.top, bottom = layout.bottom,
+buttons = layout.buttons, tap = ringing.tap,
+draw = function(where) ringing.draw(where, 1) end })
+end
+
+watchForUrgentCalls = function()
+if not sessionToken or inCall then return false end
+local poll = request("PUMPE_POLL", { position = net.locate(1) }, true)
+if not poll then return false end
+local latest = poll.latest
+local announcement = poll.announcement
+if announcement and announcement.mode == "modal" then
+if latest then lastBannerId = latest.notification_id end
+announcementScreen(announcement)
+return true
+end
+if poll.scan then
+if latest then lastBannerId = latest.notification_id end
+scanScreen(poll.scan)
+return true
+end
+if poll.offer then
+if latest then lastBannerId = latest.notification_id end
+if poll.offer.portable and poll.offer.status ~= "offered" then
+portableClaimScreen(poll.offer)
+elseif poll.offer.portable then
+portableBasketScreen(poll.offer)
+else
+proximityOfferScreen(poll.offer)
+end
+return true
+end
+if poll.call then
+if latest then lastBannerId = latest.notification_id end
+if type(ui.setOverlay) ~= "function" or type(ui.topBanner) ~= "function" then
+incomingCallScreen(poll.call)
+return true
+end
+if ringing.call and ringing.call.call_id == poll.call.call_id then
+
+ringing.frame = ringing.frame + 1
+return false
+end
+ringing.start(poll.call)
+return true
+end
+
+if ringing.call then
+ringing.stop()
+return true
+end
+if latest and latest.notification_id ~= lastBannerId then
+lastBannerId = latest.notification_id
+if latest.style == "fullscreen" then
+showFullscreenAlert(latest)
+return true
+end
+showBanner(latest)
+end
+return false
+end
+
+
+
+
+
+local function networkScreen()
+while running do
+local width, height = target.getSize()
+local on = device.modem_on ~= false
+ui.clear(target)
+ui.header(target, "Network", on and "Connected" or "Off",
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 5, on and ui.theme.success
+or ui.theme.danger)
+ui.text(target, 4, 5, "MODEM", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, on and "On" or "Off", ui.theme.ink,
+ui.theme.panel)
+ui.wrappedText(target, 4, 8, on and "On the bank network."
+or "Signed in, but off the network.", width - 6, 2,
+ui.theme.muted, ui.theme.panel)
+ui.wrappedText(target, 2, 11, "With the modem off your money, your"
+.. " messages and anything else that needs a server stop. You"
+.. " stay signed in, and everything already on the phone still"
+.. " opens.", width - 2, 7, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("toggle", 2, height - 4, width - 2, 2,
+on and "Turn the modem off" or "Turn the modem on",
+{ background = on and ui.theme.danger or ui.theme.success,
+foreground = on and colors.white or colors.black })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "toggle" then
+if on then
+if ui.confirm(target, "Turn the modem off",
+"Anything needing the Bank stops.", "Turn off",
+"Keep on") then
+device.modem_on = false
+saveDevice()
+net.closeModems()
+
+
+
+
+
+ui.message(target, "warning", "Modem off",
+"Your apps still work", 1.4)
+return
+end
+else
+device.modem_on = true
+saveDevice()
+local ok = pcall(net.openModems)
+if not ok then
+device.modem_on = false
+saveDevice()
+ui.message(target, "error", "No modem",
+"Attach a wireless or Ender modem", 1.8)
+else
+client:discover()
+ui.message(target, "success", "Modem on",
+"Back on the network", 1.2)
+end
+end
+end
+end
+end
+
+local function storageScreen()
+while running do
+local width, height = target.getSize()
+local free = type(fs.getFreeSpace) == "function"
+and fs.getFreeSpace(ROOT) or nil
+local appBytes = 0
+for _, entry in ipairs(installed.list) do
+local path = fs.combine(appsDir, entry.app_id .. ".lua")
+if fs.exists(path) then appBytes = appBytes + fs.getSize(path) end
+end
+local function kb(bytes)
+if type(bytes) ~= "number" then return "?" end
+return math.floor(bytes / 1024) .. " KB"
+end
+ui.clear(target)
+ui.header(target, "Storage", kb(free) .. " free", util.formatClock())
+ui.card(target, 2, 5, width - 2, 4, ui.theme.accent)
+ui.text(target, 4, 5, "FREE SPACE", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, kb(free), ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 7, ui.truncate(type(free) == "number"
+and (math.floor(free / 10240) .. "% of a computer free")
+or "Not reported here", width - 6),
+ui.theme.muted, ui.theme.panel, width - 6)
+ui.text(target, 2, 10, "WHAT IS ON THIS POCKET", ui.theme.muted)
+ui.text(target, 2, 11, #installed.list .. " installed app"
+.. (#installed.list == 1 and "" or "s") .. "   " .. kb(appBytes),
+ui.theme.ink)
+local row = 13
+for index, entry in ipairs(installed.list) do
+if row > height - 4 then break end
+local path = fs.combine(appsDir, entry.app_id .. ".lua")
+local size = fs.exists(path) and fs.getSize(path) or 0
+ui.text(target, 2, row,
+ui.truncate(entry.name, width - 11), ui.theme.muted)
+ui.text(target, width - 8, row, kb(size), ui.theme.muted)
+row = row + 1
+end
+if #installed.list == 0 then
+ui.wrappedText(target, 2, 13, "Nothing installed from the App"
+.. " Browser yet.", width - 2, 2, ui.theme.muted)
+end
+local scene = ui.scene(target)
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+if scene:wait({ tickRate = 5 }) then return end
+end
+end
+
+
+
+
+
+
+
+local updateDeferred
+
+
+
+
+local function updateInstalled()
+if type(ui.pocketInstalling) == "function" then
+ui.pocketInstalling(target, 15)
+else
+ui.updateFrame(target, 1, true, "Restarting")
+sleep(0.4)
+end
+end
+
+
+
+local function confirmUpdate(found)
+if device.update_mode == "auto" and not found.beta then return true end
+if updateDeferred == found.version then return false end
+local size = tonumber(found.bytes)
+local wanted = ui.updateReady(target, {
+word = "POCKET",
+title = found.label or "FoxyOS",
+version = found.version,
+what = "For this Pocket" .. (size and ("  " .. math.ceil(size / 1024) .. " KiB") or ""),
+})
+if wanted then return true end
+updateDeferred = found.version
+return false
+end
+
+
+
+
+
+
+
+
+local function checkForUpdate(force, betaOnly)
+if device.modem_on == false then return false end
+local asking = device.update_mode ~= "auto"
+if asking and updateDeferred and not force then return false end
+if force then updateDeferred = nil end
+local function look(url)
+return net.autoUpdate(config, "pumpe", ROOT, client, {
+force = force or nil,
+programVersion = force and not url and PROGRAM_VERSION or nil,
+confirm = (asking or url) and confirmUpdate or nil,
+target = target,
+
+updating = ui.pocketUpdating,
+onInstalled = updateInstalled,
+beta = device.beta == true,
+manifestUrl = url, channel = url and "beta" or nil,
+})
+end
+if not betaOnly and look(nil) then return true end
+local betaUrl = tostring(config.beta_manifest_url or "")
+if device.beta == true and betaUrl ~= "" then return look(betaUrl) end
+return false
+end
+
+local function updatesScreen()
+while running do
+local width, height = target.getSize()
+local auto = device.update_mode == "auto"
+ui.clear(target)
+ui.header(target, "Updates", "v" .. tostring(config.version),
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 5, auto and ui.theme.success
+or ui.theme.accent)
+ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
+ui.theme.panel)
+ui.text(target, 4, 6, auto and "Install it" or "Ask me first",
+ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 8, auto
+and "New releases install themselves."
+or "You choose each time.", width - 6, 2,
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 2, 11, "THIS POCKET", ui.theme.muted)
+ui.text(target, 2, 12, ui.truncate(tostring(config.release_name
+or ("v" .. tostring(config.version))), width - 2), ui.theme.ink)
+ui.wrappedText(target, 2, 14, device.modem_on == false
+and "The modem is off, so this Pocket is not looking for releases."
+or (updateDeferred and ("Version " .. updateDeferred
+.. " is waiting. Check now to see it again.")
+or "Checked every half minute while you are on the network."),
+width - 2, 4, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("mode", 2, height - 7, width - 2, 2,
+auto and "Ask me instead" or "Install automatically",
+{ background = ui.theme.panel })
+scene:button("check", 2, height - 4, width - 2, 2, "Check now",
+{ background = ui.theme.accentDark,
+disabled = device.modem_on == false })
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "mode" then
+device.update_mode = auto and "ask" or "auto"
+saveDevice()
+ui.message(target, "info",
+device.update_mode == "auto" and "Automatic" or "Ask first",
+device.update_mode == "auto"
+and "New releases install themselves"
+or "You choose, every time", 1.2)
+elseif action == "check" then
+
+
+if not checkForUpdate(true) then
+ui.message(target, "info", "Up to date",
+"This Pocket is on the newest release", 1.2)
+end
+end
+end
+end
+
+
+
+
+
+
+
+
+local beta = { checked = false }
+
+function beta.isBeta(version)
+return tostring(version or ""):match("^%d+%.5%.%d+") ~= nil
+end
+
+
+function beta.look()
+beta.checked, beta.seen, beta.why = true, nil, nil
+if device.modem_on == false then
+beta.why = "The modem is off"
+return
+end
+local url = tostring(config.beta_manifest_url or "")
+local okLib, update = pcall(require, "lib.update")
+if url == "" or not okLib or type(update) ~= "table"
+or type(update.fetchManifest) ~= "function" then
+beta.why = "This Pocket cannot read betas"
+return
+end
+local found, err = update.fetchManifest(url, update.PUBLISHED_FILES,
+"beta", update.PUBLISHED_OPTIONAL)
+if found then beta.seen = found else beta.why = err end
+end
+
+
+
+function beta.page(spec)
+while running do
+if not beta.checked then beta.look() end
+local width, height = target.getSize()
+local joined = device.beta == true
+local seen = beta.seen
+local newer = seen and net.isNewerVersion(seen.version, config.version)
+ui.clear(target)
+ui.header(target, "Beta Updates", joined and "Signed up"
+or "Not signed up", util.formatClock())
+ui.card(target, 2, 4, width - 2, 4, joined and ui.theme.success
+or ui.theme.accent)
+ui.text(target, 4, 4, "BETA UPDATES", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 5, joined and "You are signed up"
+or "Get what is next first", ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 6, "Untested, so things can break.",
+width - 6, 2, ui.theme.muted, ui.theme.panel)
+ui.text(target, 2, 9, "THIS POCKET", ui.theme.muted)
+ui.text(target, 2, 10, ui.truncate(tostring(config.release_name
+or "FoxyOS") .. "  v" .. tostring(config.version), width - 2),
+beta.isBeta(config.version) and ui.theme.warning or ui.theme.ink)
+ui.text(target, 2, 12, "NEWEST BETA", ui.theme.muted)
+if seen then
+ui.text(target, 2, 13, ui.truncate(tostring(seen.label
+or "FoxyOS Beta"), width - 2), ui.theme.ink)
+ui.text(target, 2, 14, ui.truncate("Version " .. tostring(seen.version)
+.. (newer and "" or seen.version == config.version and "  (you have it)"
+or "  (yours is newer)"), width - 2), ui.theme.muted)
+else
+ui.text(target, 2, 13, "No beta right now", ui.theme.ink)
+ui.text(target, 2, 14, ui.truncate(tostring(beta.why or ""), width - 2),
+ui.theme.muted)
+end
+local scene = ui.scene(target)
+local bottom = spec and ui.contentBottom(target) or height - 1
+if not joined then
+scene:button("join", 2, bottom - 2, width - 2, 2, "Sign up",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk })
+elseif newer then
+scene:button("get", 2, bottom - 2, width - 2, 2,
+ui.truncate("Get " .. tostring(seen.label or "the beta"),
+width - 4),
+{ background = ui.theme.success, foreground = colors.black })
+else
+scene:button("check", 2, bottom - 2, width - 2, 2, "Check again",
+{ background = ui.theme.accentDark,
+disabled = device.modem_on == false })
+end
+if joined then
+scene:button("leave", 2, bottom, width - 2, 1, "Leave Beta Updates",
+{ background = ui.theme.panel })
+end
+if spec then
+ui.tabBar(scene, target, spec.list, spec.active)
+else
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+end
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+if action == "join" then
+if ui.confirm(target, "Sign up?", "Betas come before testing is"
+.. " done, so things may break. Leave any time.", "Sign up",
+"Back") then
+device.beta = true
+saveDevice()
+beta.look()
+ui.message(target, "success", "Signed up",
+"Betas show up here first", 1.2)
+end
+elseif action == "leave" then
+local keeping = beta.isBeta(config.version)
+if ui.confirm(target, "Leave Beta Updates?", keeping
+and "This beta stays until the full release comes out."
+or "No more betas on this Pocket.", "Leave", "Stay") then
+device.beta = false
+saveDevice()
+end
+elseif action == "check" then
+beta.look()
+elseif action == "get" then
+if not checkForUpdate(true, true) then
+ui.message(target, "info", "Not installed",
+net.lastUpdateError or "Nothing was changed", 1.6)
+beta.look()
+end
+end
+end
+end
+
+
+local developerScreen
+
+
+
+
+local SETTINGS_ACTIONS = {
+{ id = "color", label = "Main colour", hint = "How your Pocket looks",
+tab = "phone" },
+{ id = "network", label = "Network", hint = "Modem on or off", tab = "phone" },
+{ id = "updates", label = "Updates", hint = "Ask first, or automatic",
+tab = "phone" },
+{ id = "storage", label = "Storage", hint = "What is on this Pocket",
+tab = "phone" },
+
+{ id = "beta", label = "Beta Updates", hint = "Try what is next first",
+tab = "beta" },
+{ id = "apps", label = "App Settings", hint = "What apps may do", tab = "apps" },
+{ id = "connected", label = "Connected Apps", hint = "Who you signed in",
+tab = "apps" },
+{ id = "dock", label = "Edit Your Dock", hint = "Your favourites", tab = "apps" },
+
+{ id = "developer", label = "Dev Mode", hint = "Publish apps and games",
+tab = "apps" },
+{ id = "guide", label = "How Pocket Works", hint = "The tour", tab = "account" },
+{ id = "logout", label = "Remove account", hint = "Take it off this Pocket",
+tab = "account" },
+{ id = "close", label = "Close Pocket", hint = "Stop the program",
+tab = "account" },
+}
+
+
+
+
+
+local function settingsScreen(wanted)
+local function settingValue(id)
+if id == "network" then
+return device.modem_on == false and "Off" or "On",
+device.modem_on == false
+elseif id == "updates" then
+return device.update_mode == "auto" and "Auto" or "Ask", false
+elseif id == "color" then
+for _, entry in ipairs(ui.MAIN_COLORS) do
+if entry.id == ui.mainColor then return entry.label, false end
+end
+end
+return "", false
+end
+
+
+
+local function openSetting(id)
+if id == "network" then
+networkScreen()
+if not sessionToken and not offline() then return "exit" end
+elseif id == "color" then ui.pickMainColor(target, ROOT)
+elseif id == "storage" then storageScreen()
+elseif id == "updates" then updatesScreen()
+elseif id == "apps" then appSettingsScreen()
+elseif id == "connected" then connectedApps()
+elseif id == "guide" then guideScreen()
+elseif id == "dock" then favouritesPicker()
+elseif id == "developer" then developerScreen()
+elseif id == "beta" then beta.page()
+elseif id == "logout" then
+
+
+
+if ui.confirm(target, "Remove account",
+"Take " .. (account and account.name or "this account")
+.. " off this Pocket? It will ask who it belongs to next.",
+"Remove", "Back") then
+sessionToken, betAccessToken, account = nil, nil, nil
+device.last_name = ""
+device.onboarding_complete = false
+saveDevice()
+disableDeviceLock()
+return "exit"
+end
+elseif id == "close" then
+if ui.confirm(target, "Close Pocket", "Shut down the Pocket app?",
+"CLOSE", "BACK") then
+running = false
+return "exit"
+end
+end
+end
+
+if wanted then
+for _, item in ipairs(SETTINGS_ACTIONS) do
+if item.id == wanted then
+openSetting(wanted)
+return
+end
+end
+end
+
+local closed = false
+local function page(tabId, title)
+return function(spec)
+while running and (sessionToken or offline()) and not closed do
+if not account then account = cachedProfile() end
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, title, account.name, util.formatClock())
+local scene = ui.scene(target)
+local y = 5
+if tabId == "account" then
+ui.card(target, 2, y, width - 2, 3, ui.theme.accent)
+ui.text(target, 4, y, "FOXY ACCOUNT", ui.theme.muted,
+ui.theme.panel)
+ui.text(target, 4, y + 1, ui.truncate(account.name, width - 6),
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, y + 2, ui.truncate(account.personal_number
+and ("NO " .. tostring(account.personal_number))
+or "Offline", width - 6), ui.theme.muted, ui.theme.panel)
+y = y + 4
+end
+for _, item in ipairs(SETTINGS_ACTIONS) do
+if item.tab == tabId and y + 1 <= ui.contentBottom(target) then
+local danger = item.id == "logout"
+local background = danger and ui.theme.danger or ui.theme.panel
+scene:button(item.id, 2, y, width - 2, 2, "", {
+background = background })
+ui.text(target, 4, y, item.label, ui.theme.ink, background)
+ui.text(target, 4, y + 1, ui.truncate(item.hint, width - 6),
+danger and ui.theme.ink or ui.theme.muted, background)
+local value, warn = settingValue(item.id)
+if value ~= "" then
+ui.text(target, width - #value - 1, y, value,
+warn and ui.theme.warning or ui.theme.accent,
+background)
+end
+y = y + 3
+end
+end
+ui.tabBar(scene, target, spec.list, spec.active)
+local action = scene:wait()
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+if openSetting(action) == "exit" then
+closed = true
+return "home"
+end
+end
+return "home"
+end
+end
+
+ui.runTabs({
+title = "Settings",
+list = { { id = "phone", label = "Phone" },
+{ id = "apps", label = "Apps" },
+{ id = "beta", label = "Beta Updates", short = "Beta" },
+{ id = "account", label = "Account", short = "Me" } },
+pages = { phone = page("phone", "Settings"), apps = page("apps", "Apps"),
+beta = function(spec)
+if not (running and (sessionToken or offline()) and not closed) then
+return "home"
+end
+return beta.page(spec)
+end,
+account = page("account", "Account") },
+running = function()
+return running and (sessionToken or offline()) and not closed
+end,
+})
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+local function friendsApp(action)
+if action == "urgent" then urgentScreen() return end
+ui.runTabs({
+list = { { id = "messages", label = "Chats" },
+{ id = "people", label = "Friends", short = "Pals" },
+{ id = "urgent", label = "Urgent", short = "SOS" } },
+color = colors.cyan,
+start = action == "people" and "people" or "messages",
+pages = { messages = messagesScreen, people = friendsScreen,
+urgent = urgentScreen },
+once = { urgent = true },
+running = function() return running and sessionToken ~= nil end,
+
+
+refresh = function(spec)
+local poll = request("PUMPE_POLL", {}, true) or {}
+local unread = poll.unread_messages or 0
+spec.list[1].label = unread > 0
+and ("Chats " .. math.min(unread, 9)) or "Chats"
+spec.list[1].short = unread > 0 and ("Chat" .. math.min(unread, 9))
+or nil
+end,
+})
+end
+
+local function ticketsApp(action)
+ui.runTabs({
+list = { { id = "events", label = "Events" },
+{ id = "mine", label = "My tickets", short = "Mine" } },
+color = colors.orange,
+start = action == "mine" and "mine" or "events",
+pages = { events = eventsScreen, mine = myTicketsScreen },
+running = function() return running and sessionToken ~= nil end,
+})
+end
+
+
+
+
+
+local myIdApp
+do
+local ID_BLUE = colors.lightBlue
+
+local function signUp(current)
+local name = ui.input(target, "Name on your ID", {
+hint = "As people know you", initial = current and current.name
+or (account and account.name), allowSpace = true,
+maxLength = 24, minLength = 2 })
+if not name then return end
+local pin = ui.pin(target, "Your PIN", true)
+if not pin then return end
+local asked, err = request("MYID_APPLY", { name = name, pin = pin }, true)
+if asked then
+ui.message(target, "success", "Asked for",
+"The government confirms it at an Admin Terminal", 1.8)
+else
+ui.message(target, "error", "Not asked for", err, 1.8)
+end
+end
+
+
+local function showCode(id)
+while running do
+local width, height = target.getSize()
+local middle = math.floor(height / 2)
+ui.clear(target)
+ui.fill(target, 1, middle - 3, width, 7, ID_BLUE)
+ui.center(target, middle - 2, "MYID CODE", colors.black, ID_BLUE)
+ui.center(target, middle, id.code, colors.black, ID_BLUE)
+ui.center(target, middle + 2, ui.truncate(id.name, width - 2),
+colors.black, ID_BLUE)
+local scene = ui.scene(target)
+scene:button("done", 2, height - 2, width - 2, 2, "Done",
+{ background = ui.theme.panel })
+local action = scene:wait()
+if action == "done" or action == "__terminate" then return end
+end
+end
+
+local function idPage(spec)
+while running and sessionToken do
+local status, err = request("MYID_STATUS", {}, true)
+local id = status and status.myid
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, "Digital ID", account and account.name or "",
+util.formatClock())
+local scene = ui.scene(target)
+if not status then
+ui.wrappedText(target, 2, 5, tostring(err or "The Bank is not answering"),
+width - 2, 3, ui.theme.muted)
+elseif not id then
+ui.card(target, 2, 5, width - 2, 6, ID_BLUE)
+ui.text(target, 4, 5, "NO DIGITAL ID YET", ui.theme.muted,
+ui.theme.panel)
+ui.wrappedText(target, 4, 6, "It proves who you are, at a till"
+.. " or a door. Visas need one.", width - 6, 4, ui.theme.ink,
+ui.theme.panel)
+scene:button("signup", 2, 12, width - 2, 3, "Get a Digital ID",
+{ background = ID_BLUE, foreground = colors.black, shadow = true })
+else
+local active = id.status == "active"
+local color = active and ui.theme.success
+or id.status == "pending" and ui.theme.warning or ui.theme.danger
+ui.card(target, 2, 5, width - 2, 7, color)
+ui.text(target, 4, 5, "DIGITAL ID", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate(id.name, width - 6), ui.theme.ink,
+ui.theme.panel)
+ui.text(target, 4, 8, "MYID CODE", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 9, id.code, ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 10, ui.truncate(active
+and ("Confirmed, day " .. tostring(id.confirmed_day))
+or id.status == "pending" and "Waiting for the government"
+or ("Refused: " .. tostring(id.reason or "")), width - 6),
+color, ui.theme.panel)
+if active then
+scene:button("show", 2, 13, width - 2, 3, "Show my MyID Code",
+{ background = ID_BLUE, foreground = colors.black,
+shadow = true })
+elseif id.status == "pending" then
+ui.wrappedText(target, 2, 13, "The government confirms it at"
+.. " an Admin Terminal. You are told when it is.",
+width - 2, 3, ui.theme.muted)
+else
+scene:button("signup", 2, 13, width - 2, 3, "Ask again",
+{ background = ID_BLUE, foreground = colors.black })
+end
+end
+ui.tabBar(scene, target, spec.list, spec.active, spec.color)
+local action = scene:wait({ tickRate = 10 })
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+if action == "signup" then
+signUp(id)
+elseif action == "show" and id then
+showCode(id)
+end
+end
+return "home"
+end
+
+
+local function taxPage(spec)
+while running and sessionToken do
+local filing = request("DECLARATION_STATUS", {}, true)
+local demand = request("TAX_DEMAND_STATUS", {}, true)
+demand = demand and demand.demand
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, "Tax", filing and filing.period
+and ("Period " .. tostring(filing.period.period_id))
+or "No open period", util.formatClock())
+local scene = ui.scene(target)
+local y = 5
+if demand then
+ui.card(target, 2, y, width - 2, 4, ui.theme.warning)
+ui.text(target, 4, y, "TAX DEMAND", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, y + 1, money(demand.amount), ui.theme.ink,
+ui.theme.panel)
+ui.text(target, 4, y + 2, ui.truncate(tostring(demand.reason or ""),
+width - 6), ui.theme.muted, ui.theme.panel)
+scene:button("demand", 2, y + 5, width - 2, 2, "Pay "
+.. money(demand.amount), { background = ui.theme.success,
+foreground = colors.black })
+y = y + 8
+end
+local period = filing and filing.period
+local filed = filing and filing.declaration
+and filing.declaration.status == "submitted"
+ui.card(target, 2, y, width - 2, 3, ID_BLUE)
+ui.text(target, 4, y, "THIS PERIOD", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, y + 1, ui.truncate(not period and "Nothing to file"
+or filed and "Filed" or ("Due by day " .. tostring(period.end_day)),
+width - 6), ui.theme.ink, ui.theme.panel)
+if period then
+scene:button("file", 2, y + 4, width - 2, 2,
+filed and "My declaration" or "File my tax",
+{ background = ui.theme.accentDark })
+end
+ui.tabBar(scene, target, spec.list, spec.active, spec.color)
+local action = scene:wait({ tickRate = 10 })
+if action == "home" or action == "__terminate"
+or (action or ""):match("^tab:") then
+return action
+end
+if action == "file" then
+taxScreen()
+elseif action == "demand" and demand then
+local pin = ui.pin(target, "Confirm tax payment", true)
+if pin then
+local paid, err = request("PAY_TAX_DEMAND", { pin = pin }, true)
+if paid then
+if account then account.balance = paid.balance end
+ui.message(target, "success", "Tax settled",
+money(demand.amount), 1.4)
+else
+ui.message(target, "error", "Not paid", err, 1.6)
+end
+end
+end
+end
+return "home"
+end
+
+local PAGES = { id = true, visas = true, tax = true, countries = true }
+function myIdApp(action)
+ui.runTabs({
+list = { { id = "id", label = "ID" },
+{ id = "visas", label = "Visas" },
+{ id = "tax", label = "Tax" },
+{ id = "countries", label = "Countries", short = "Land" } },
+color = ID_BLUE,
+start = PAGES[action] and action or "id",
+pages = { id = idPage, visas = visasScreen, tax = taxPage,
+countries = customsScreen },
+running = function() return running and sessionToken ~= nil end,
+})
+end
+end
+
+
+
+
+
+
+local function saveApps()
+util.saveTable(appsFile, installed)
+end
+
+local function appPath(appId)
+return fs.combine(appsDir, appId .. ".lua")
+end
+
+local function installedApp(appId)
+for _, entry in ipairs(installed.list) do
+if entry.app_id == appId then return entry end
+end
+return nil
+end
+
+
+
+
+local function forgetApp(appId)
+for index = #installed.list, 1, -1 do
+if installed.list[index].app_id == appId then
+table.remove(installed.list, index)
+end
+end
+saveApps()
+end
+
+
+
+local function removeApp(appId)
+forgetApp(appId)
+if fs.exists(appPath(appId)) then pcall(fs.delete, appPath(appId)) end
+local kept = fs.combine(appsDir, appId .. ".dat")
+if fs.exists(kept) then pcall(fs.delete, kept) end
+end
+
+
+
+
+
+
+
+local SCOPE_LABELS = {
+name = "Your account name",
+number = "Your personal number",
+friends = "Who your friends are",
+balance = "Your balance",
+}
+
+local function loginConsent(appName, scopes)
+local width, height = target.getSize()
+
+for row = height, 5, -1 do
+ui.fill(target, 1, row, width, 1, colors.brown)
+sleep(0.012)
+end
+while running and sessionToken do
+ui.clear(target)
+ui.header(target, "Sign in", "with Foxy", util.formatClock())
+ui.fill(target, 1, 4, width, height - 3, colors.brown)
+ui.text(target, 2, 5, "FOXY", colors.orange, colors.brown)
+ui.wrappedText(target, 2, 7, appName .. " wants to use your Foxy"
+.. " Account.", width - 2, 3, colors.white, colors.brown)
+ui.text(target, 2, 11, "IT WILL SEE", colors.lightGray, colors.brown)
+local row = 12
+for _, scope in ipairs(scopes) do
+if row <= height - 6 then
+ui.text(target, 2, row,
+ui.truncate("- " .. (SCOPE_LABELS[scope] or scope),
+width - 3), colors.white, colors.brown)
+row = row + 1
+end
+end
+local scene = ui.scene(target)
+scene:button("yes", 2, height - 4, width - 2, 2, "Continue as "
+.. ui.truncate(account.name, width - 16),
+{ background = colors.orange, foreground = colors.black })
+scene:button("no", 2, height - 1, width - 2, 1, "Not now",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "yes" then return true end
+if action == "no" or action == "__terminate" then return false end
+end
+return false
+end
+
+
+local function foxyLogin(appId, spec)
+spec = type(spec) == "table" and spec or {}
+local scopes = { "name" }
+local seen = { name = true }
+for _, scope in ipairs(type(spec.scopes) == "table" and spec.scopes or {}) do
+if SCOPE_LABELS[scope] and not seen[scope] then
+seen[scope] = true
+scopes[#scopes + 1] = scope
+end
+end
+local appName = ui.truncate(tostring(spec.name or appId), 18)
+local status = request("FOXY_LOGIN_STATUS", { app_id = appId }, true)
+
+if status and status.approved and #(status.scopes or {}) == #scopes then
+local same = true
+for index, scope in ipairs(scopes) do
+if status.scopes[index] ~= scope then same = false end
+end
+if same then return status.profile end
+end
+if not loginConsent(appName, scopes) then return nil end
+local approved, err = request("FOXY_LOGIN_APPROVE", {
+app_id = appId, app_name = appName, scopes = scopes,
+}, true)
+if not approved then
+ui.message(target, "error", "Could not sign in", err, 1.8)
+return nil
+end
+ui.message(target, "success", "Signed in", appName, 0.9)
+return approved.profile
+end
+
+
+connectedApps = function()
+while running and sessionToken do
+local width, height = target.getSize()
+local listed = request("FOXY_LOGIN_LIST", {}, true)
+local apps = listed and listed.apps or {}
+ui.clear(target)
+ui.header(target, "Connected Apps", #apps .. " signed in",
+util.formatClock())
+local scene = ui.scene(target)
+if #apps == 0 then
+ui.center(target, 9, "Nothing signed in", ui.theme.ink)
+ui.wrappedText(target, 2, 11,
+"Apps you sign into with Foxy appear here, with what they"
+.. " can see.", width - 2, 4, ui.theme.muted)
+end
+for index, app in ipairs(apps) do
+if index <= 4 then
+scene:button("revoke:" .. app.app_id, 2, 4 + (index - 1) * 3,
+width - 2, 2,
+app.app_name .. "\n" .. #app.scopes .. " things shared",
+{ background = ui.theme.panel })
+end
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+local appId = action and action:match("^revoke:(.+)$")
+if appId then
+for _, app in ipairs(apps) do
+if app.app_id == appId and ui.confirm(target,
+"Sign out of " .. app.app_name,
+"It will ask again next time.", "Sign out", "Keep") then
+request("FOXY_LOGIN_REVOKE", { app_id = appId }, true)
+end
+end
+end
+end
+end
+
+
+
+
+
+local function appPin(appId, reason)
+local pin = ui.pin(target, ui.truncate(tostring(reason or "Confirm"), 22),
+true)
+if not pin then return false end
+local ok, err = request("PIN_CHECK", { app_id = appId, pin = pin }, true)
+if not ok then
+ui.message(target, "error", "Not unlocked", err or "Incorrect PIN", 1.4)
+return false
+end
+return true
+end
+
+
+
+
+
+local function notificationConsent(appName)
+appName = ui.truncate(tostring(appName or "That app"), 18)
+while running and sessionToken do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Notifications", appName, util.formatClock())
+ui.card(target, 2, 5, width - 2, 9, ui.theme.accent)
+ui.wrappedText(target, 4, 6, appName
+.. " wants to send you notifications.", width - 6, 3,
+ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 10, "Banners only. Fullscreen is off"
+.. " until you turn it on in App Settings.", width - 6, 4,
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("yes", 2, height - 5, width - 2, 2, "Allow",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no", 2, height - 2, width - 2, 2, "Not now",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "yes" then return true end
+if action == "no" or action == "__terminate" then return false end
+end
+return false
+end
+
+
+
+local function appNotifyPermission(appId, appName, ask)
+local current = request("APP_PERMISSION_ASK",
+{ app_id = appId, app_name = appName }, true)
+local decided = current and current.permission
+if decided and decided.notifications ~= "unset" then
+return decided.notifications == "granted", decided
+end
+if not ask then return false, decided end
+local allow = notificationConsent(appName)
+local answered = request("APP_PERMISSION_ASK", {
+app_id = appId, app_name = appName, allow = allow,
+}, true)
+return allow, answered and answered.permission
+end
+
+
+
+
+
+appUrgentCall = function(entry, spec)
+spec = type(spec) == "table" and spec or {}
+local accountId = spec.account_id and tostring(spec.account_id) or nil
+if not accountId or accountId == "" then
+ui.message(target, "warning", "Nobody to call",
+"That app did not say who", 1.4)
+return false
+end
+placeUrgentCall(ui.truncate(tostring(spec.name or "Contact"), 18),
+accountId, entry.app_id)
+return true
+end
+
+
+
+
+
+local function appPermissionScreen(app)
+local current = app
+while running and sessionToken do
+local width, height = target.getSize()
+local allowed = current.notifications == "granted"
+ui.clear(target)
+ui.header(target, current.app_name, "Permissions", util.formatClock())
+ui.card(target, 2, 5, width - 2, 4, allowed and ui.theme.success
+or ui.theme.panel)
+ui.text(target, 4, 5, "NOTIFICATIONS", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, allowed and "Allowed" or "Blocked",
+ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 7, allowed
+and (current.fullscreen and "Banners and fullscreen"
+or "Banners only")
+or "This app cannot interrupt you", width - 6, 2,
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("notify", 2, 10, width - 2, 2,
+allowed and "Block notifications" or "Allow notifications",
+{ background = allowed and ui.theme.danger or ui.theme.success,
+foreground = allowed and colors.white or colors.black })
+scene:button("full", 2, 13, width - 2, 2,
+current.fullscreen and "Fullscreen: on" or "Fullscreen: off",
+{ background = current.fullscreen and ui.theme.accentDark
+or ui.theme.panel, disabled = not allowed })
+if not allowed then
+ui.text(target, 2, 15, "Allow notifications first", ui.theme.muted)
+end
+scene:button("forget", 2, height - 2, width - 2, 2, "Forget this app",
+{ background = ui.theme.panel })
+scene:button("back", 1, height, 8, 1, "< Apps",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "notify" then
+local set = request("APP_PERMISSION_SET", {
+app_id = current.app_id, notifications = not allowed,
+}, true)
+if set then current = set.permission end
+elseif action == "full" then
+local set = request("APP_PERMISSION_SET", {
+app_id = current.app_id, fullscreen = not current.fullscreen,
+}, true)
+if set then current = set.permission end
+elseif action == "forget" then
+if ui.confirm(target, "Forget " .. current.app_name,
+"It will ask again next time.", "Forget", "Keep") then
+request("APP_PERMISSION_FORGET",
+{ app_id = current.app_id }, true)
+return
+end
+end
+end
+end
+
+appSettingsScreen = function()
+local page = 1
+while running and sessionToken do
+local width, height = target.getSize()
+local listed = request("APP_PERMISSION_LIST", {}, true)
+local apps = listed and listed.apps or {}
+local perPage = 4
+local pages = math.max(1, math.ceil(#apps / perPage))
+page = math.max(1, math.min(page, pages))
+ui.clear(target)
+ui.header(target, "App Settings",
+#apps == 0 and "Nothing yet" or (#apps .. " apps"),
+util.formatClock())
+local scene = ui.scene(target)
+if #apps == 0 then
+ui.center(target, 9, "No app has asked", ui.theme.ink)
+ui.wrappedText(target, 2, 11,
+"When an app asks to send you notifications it appears here,"
+.. " and you can change your mind at any time.",
+width - 2, 5, ui.theme.muted)
+end
+for slot = 1, perPage do
+local app = apps[(page - 1) * perPage + slot]
+if not app then break end
+local allowed = app.notifications == "granted"
+scene:button("open:" .. app.app_id, 2, 4 + (slot - 1) * 3,
+width - 2, 2, app.app_name .. "\n" .. (allowed
+and (app.fullscreen and "Banners + fullscreen"
+or "Banners only")
+or (app.notifications == "denied" and "Blocked"
+or "Not answered")),
+{ background = allowed and ui.theme.accentDark
+or ui.theme.panel })
+end
+if pages > 1 then
+scene:button("prev", 2, height - 2, 8, 2, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+ui.center(target, height - 1, page .. "/" .. pages, ui.theme.muted)
+scene:button("next", width - 7, height - 2, 8, 2, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local appId = action and action:match("^open:(.+)$")
+for _, app in ipairs(apps) do
+if app.app_id == appId then appPermissionScreen(app) end
+end
+end
+end
+end
+
+
+
+
+
+
+
+local function purchaseSheet(quote, appName)
+while running and sessionToken do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, quote.period and "Subscribe" or "Buy", appName,
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 7, ui.theme.accent)
+ui.wrappedText(target, 4, 6, quote.name, width - 6, 2,
+ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 9, money(quote.amount)
+.. (quote.period == "day" and " a day" or ""),
+ui.theme.ink, ui.theme.panel, width - 6)
+ui.text(target, 4, 10, ui.truncate("To " .. quote.seller, width - 6),
+ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 11, ui.truncate("Tax " .. money(quote.tax),
+width - 6), ui.theme.muted, ui.theme.panel)
+ui.wrappedText(target, 2, 13, quote.period == "day"
+and "Charged every in-game day until you cancel it in Settings."
+or "A one-off purchase.", width - 2, 3, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("buy", 2, height - 5, width - 2, 2,
+quote.period and "Subscribe" or "Buy",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("no", 2, height - 2, width - 2, 2, "Not now",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "buy" then return true end
+if action == "no" or action == "__terminate" then return false end
+end
+return false
+end
+
+local function appPurchase(entry, spec)
+spec = type(spec) == "table" and spec or {}
+local productId = tostring(spec.id or spec.product_id or "")
+if productId == "" then
+ui.message(target, "warning", "Nothing to buy",
+"That app did not say what", 1.4)
+return false
+end
+local ask = {
+app_id = entry.app_id,
+product_id = productId,
+name = spec.name or productId,
+amount = spec.amount,
+period = spec.period,
+target = spec.target,
+}
+local quote, err = request("APP_PURCHASE_QUOTE", ask, true)
+if not quote then
+ui.message(target, "error", "Cannot buy that", err, 1.8)
+return false
+end
+if not purchaseSheet(quote, entry.name) then return false end
+local pin = ui.pin(target, "Confirm with PIN", true)
+if not pin then return false end
+ask.pin = pin
+local bought, buyError = request("APP_PURCHASE", ask, true)
+if not bought then
+ui.message(target, "error", "Not bought", buyError, 2)
+return false
+end
+ui.message(target, "success", quote.period and "Subscribed" or "Bought",
+money(bought.paid) .. " paid", 1.2)
+refreshSummary(true)
+return true
+end
+
+
+
+
+
+
+
+
+
+
+
+local transferIntent, transferMoved
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+local function appHeader(appId)
+local ok, body = pcall(util.readFile, appPath(appId))
+return ok and type(body) == "string" and body or nil
+end
+
+local function declaredActions(appId)
+local body = appHeader(appId)
+if not body then return {} end
+local found = {}
+for line in body:sub(1, 2000):gmatch("[^\r\n]+") do
+local id, label, hint = line:match(
+"^%-%-%s*PUMPE APP ACTION:%s*([%w_]+)%s*|%s*([^|]+)|?(.*)$")
+if id and #found < 8 then
+found[#found + 1] = {
+id = id,
+label = util.trim(label),
+hint = util.trim(hint or ""),
+}
+end
+end
+return found
+end
+
+local function declaredBank(appId)
+local body = appHeader(appId)
+if not body then return nil end
+local name = body:sub(1, 400):match("%-%-%s*PUMPE BANK APP:%s*([^\r\n]+)")
+return name and util.trim(name) or nil
+end
+
+
+
+
+local function bankList(exceptAppId)
+local list = {}
+if account and account.bank_account_id and exceptAppId ~= "FOXY" then
+list[#list + 1] = {
+id = "FOXY",
+name = account.bank_name or config.bank_name or "Foxy",
+account_id = account.bank_account_id,
+balance = account.balance,
+open = not account.bank_closed,
+}
+end
+for _, entry in ipairs(installed.list) do
+
+
+
+local bankName = entry.app_id ~= exceptAppId and entry.app_id ~= "FOXY"
+and (entry.bank_name or declaredBank(entry.app_id)) or nil
+if bankName then
+list[#list + 1] = {
+id = entry.app_id, name = bankName, app = entry.name,
+open = true,
+}
+end
+end
+return list
+end
+
+
+
+local function fastTransfer(spec)
+if not sessionToken then return nil, "Sign in first" end
+local wanted = tostring(spec.account_id or ""):gsub("%D", "")
+if #wanted ~= 16 then return nil, "That is not an Account ID" end
+local quote, quoteError = request("BANK_TRANSFER_QUOTE",
+{ bank_account_id = wanted }, true)
+if not quote then return nil, quoteError end
+
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Move your money", quote.bank_name, util.formatClock())
+ui.card(target, 2, 5, width - 2, 7, ui.theme.warning)
+ui.text(target, 4, 5, "FROM", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate(account.bank_name
+or config.bank_name or "Foxy", width - 6), ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 8, "TO", ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 9, ui.truncate(quote.name .. " at " .. quote.bank_name,
+width - 6), ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 10, money(quote.amount), ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 2, 13, "All of it goes, and your Foxy bank closes"
+.. " until you move money back.", width - 2, 3, ui.theme.muted)
+local scene = ui.scene(target)
+scene:button("go", 2, height - 4, width - 2, 2, "Move it all",
+{ background = ui.theme.danger })
+scene:button("no", 2, height - 1, width - 2, 2, "Not now",
+{ background = ui.theme.panel })
+if scene:wait({ tickRate = 5 }) ~= "go" then return nil, "Cancelled" end
+
+local pin = ui.pin(target, "Confirm with PIN", true)
+if not pin then return nil, "Cancelled" end
+local moved, moveError, code = request("BANK_TRANSFER_CONFIRM",
+{ bank_account_id = quote.bank_account_id, pin = pin }, true)
+if not moved then return nil, moveError, code end
+refreshSummary(true)
+return { moved = moved.moved, bank_name = moved.bank_name }
+end
+
+
+
+
+
+
+local MAX_APP_STORE_BYTES = 8 * 1024
+
+
+local webClient
+
+local function appStorePath(appId)
+return fs.combine(appsDir, appId .. ".dat")
+end
+
+local function appStoreSave(appId, value)
+if type(value) ~= "table" then return false end
+local body = textutils.serialize(value)
+if type(body) ~= "string" or #body > MAX_APP_STORE_BYTES then
+return false, "That is too big to keep on the phone"
+end
+if not fs.exists(appsDir) then fs.makeDir(appsDir) end
+local ok = pcall(util.writeFile, appStorePath(appId), body)
+return ok == true
+end
+
+local function appStoreLoad(appId)
+return util.loadTable(appStorePath(appId), {})
+end
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+local webpage = {}
+local webDir = fs.combine(ROOT, "web")
+
+
+
+function webpage.sweep()
+if fs.exists(webDir) then pcall(fs.delete, webDir) end
+end
+
+function webpage.environment(api)
+return {
+api = api,
+assert = assert, error = error, ipairs = ipairs, pairs = pairs,
+next = next, pcall = pcall, select = select, tonumber = tonumber,
+tostring = tostring, type = type, unpack = unpack,
+setmetatable = setmetatable,
+math = math, string = string, table = table,
+sleep = sleep, colors = colors,
+os = { time = os.time, day = os.day, clock = os.clock,
+epoch = os.epoch },
+}
+end
+
+
+
+function webpage.ui()
+local safe = {}
+for key, value in pairs(ui) do
+if key ~= "pin" and key ~= "setIdleLock"
+and key ~= "setBackgroundTask" then
+safe[key] = value
+end
+end
+return safe
+end
+
+function webpage.api(domain)
+return {
+ui = webpage.ui(),
+util = util,
+target = target,
+colors = colors,
+money = money,
+domain = domain,
+running = function() return running and sessionToken ~= nil end,
+
+
+
+
+
+
+
+
+
+
+login = function(spec)
+spec = type(spec) == "table" and spec or {}
+return foxyLogin("WEB-" .. tostring(domain), {
+name = tostring(spec.name or domain),
+scopes = { "name" },
+})
+end,
+
+
+
+
+
+
+
+data = function(action, payload)
+local verb = string.upper(tostring(action or ""))
+if verb ~= "PUT" and verb ~= "LIST" and verb ~= "READ"
+and verb ~= "DELETE" and verb ~= "REACT" then
+return nil, "A page can PUT, LIST, READ, DELETE or REACT",
+"BAD_ACTION"
+end
+local scoped = {}
+for key, value in pairs(type(payload) == "table" and payload
+or {}) do
+scoped[key] = value
+end
+scoped.app_id = "WEB-" .. tostring(domain)
+scoped.audience = nil
+if verb == "PUT" and scoped.private and account then
+scoped.audience = { account.account_id }
+end
+scoped.private = nil
+return request("APP_DATA_" .. verb, scoped, true)
+end,
+}
+end
+
+
+
+
+function webpage.run(domain, source)
+local path = fs.combine(webDir, tostring(domain) .. ".lua")
+if not fs.exists(webDir) then fs.makeDir(webDir) end
+if not pcall(util.writeFile, path, source) then
+ui.message(target, "error", "No room for it",
+"This Pocket has no space to open a page", 2)
+return
+end
+local body = util.readFile(path)
+local api = webpage.api(domain)
+local built, err = load(tostring(body or ""), "@" .. tostring(domain),
+"t", webpage.environment(api))
+if not built then
+pcall(fs.delete, path)
+ui.message(target, "error", "This page is broken",
+ui.truncate(tostring(err), 60), 2.4)
+return
+end
+local ok, result = pcall(built)
+pcall(fs.delete, path)
+if ok and type(result) == "function" then
+ok, result = pcall(result, api)
+end
+if not ok then
+ui.message(target, "error",
+ui.truncate(tostring(domain), 12) .. " stopped",
+ui.truncate(tostring(result), 60), 2.4)
+end
+end
+
+
+
+
+function webpage.browse(domain)
+domain = string.lower(util.trim(tostring(domain or "")))
+if domain == "" then return end
+if offline() then
+ui.message(target, "warning", "Modem is off",
+"Turn it on in Settings", 1.4)
+return
+end
+
+
+
+if domain:match("%.shop$") then return webpage.shop(domain) end
+webClient = webClient or net.client({
+protocol = config.web_protocol or "PUMPE_WEB_V1",
+hostname = config.web_hostname or "INTERNET_SERVER",
+})
+local found, err, code = webClient:request("WEB_SITE",
+{ domain = domain }, 6)
+if not found then
+ui.message(target, "error",
+code == "NO_SUCH_DOMAIN" and "No such site" or "Cannot reach it",
+err or "No Internet Server is running", 2.4)
+return
+end
+if found.needs_update then
+ui.message(target, "warning", ui.truncate(domain, 12),
+"Made before the new web. Its owner has to publish it again.",
+2.6)
+return
+end
+if found.preparing then
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(domain, 14), "Preparing",
+util.formatClock())
+ui.card(target, 2, 6, width - 2, 6, ui.theme.warning)
+ui.wrappedText(target, 4, 7, "We're still preparing. Come back soon.",
+width - 6, 3, ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 10, ui.truncate(tostring(found.owner_name
+or "Somebody") .. " is building it", width - 6),
+ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+scene:wait({ tickRate = 5 })
+return
+end
+webpage.run(domain, tostring(found.source or ""))
+end
+
+local function runInstalledApp(entry, wantedAction)
+
+
+local loader, loadError
+if type(entry.body) == "string" then
+loader, loadError = load(entry.body, "@" .. tostring(entry.domain
+or entry.app_id), "t")
+else
+loader, loadError = loadfile(appPath(entry.app_id))
+end
+if not loader then
+ui.message(target, "error", entry.name .. " is damaged",
+"Reinstall it from the App Browser", 2)
+return
+end
+local built, factory = pcall(loader)
+if not built or type(factory) ~= "function" then
+ui.message(target, "error", entry.name .. " will not start",
+"That app is not built for this Pocket", 2)
+return
+end
+local ok, err = pcall(factory, {
+ui = ui, util = util, target = target, config = config,
+colors = colors, money = money,
+
+
+
+request = function(action, payload, silent)
+local scoped = {}
+for key, value in pairs(type(payload) == "table" and payload or {}) do
+scoped[key] = value
+end
+scoped.app_id = entry.app_id
+return request(action, scoped, silent)
+end,
+account = function() return account end,
+refresh = function() return refreshSummary(true) end,
+running = function()
+return running and (sessionToken ~= nil or offline())
+end,
+
+
+login = function(spec) return foxyLogin(entry.app_id, spec) end,
+
+pin = function(reason) return appPin(entry.app_id, reason) end,
+
+
+notifications = {
+ask = function()
+return (appNotifyPermission(entry.app_id, entry.name, true))
+end,
+allowed = function()
+return (appNotifyPermission(entry.app_id, entry.name, false))
+end,
+send = function(spec)
+spec = type(spec) == "table" and spec or {}
+return request("APP_NOTIFY", {
+app_id = entry.app_id,
+account_id = spec.account_id,
+title = spec.title, body = spec.body,
+style = spec.style,
+}, true)
+end,
+},
+
+call = function(spec) return appUrgentCall(entry, spec) end,
+
+
+
+position = function() return net.locate(1) end,
+
+
+
+screens = function()
+local found = {}
+if type(peripheral) ~= "table" or not peripheral.getNames then
+return found
+end
+for _, name in ipairs(peripheral.getNames()) do
+local monitor = peripheral.getType(name) == "monitor"
+and peripheral.wrap(name)
+if monitor and monitor.isColor and monitor.isColor() then
+pcall(monitor.setTextScale, 0.5)
+if ui.customerScreen then ui.customerScreen(name) end
+local drawable = {}
+for _, method in ipairs({ "write", "blit", "clear",
+"clearLine", "setCursorPos", "getCursorPos",
+"setCursorBlink", "getSize", "isColor", "isColour",
+"setTextColor", "setTextColour", "setBackgroundColor",
+"setBackgroundColour", "getTextColor", "getTextColour",
+"getBackgroundColor", "getBackgroundColour", "scroll" }) do
+drawable[method] = monitor[method]
+end
+found[#found + 1] = drawable
+end
+end
+return found
+end,
+
+
+
+purchase = function(spec) return appPurchase(entry, spec) end,
+entitlements = function()
+local owned = request("APP_ENTITLEMENTS",
+{ app_id = entry.app_id }, true)
+return owned and owned.entitlements or {}
+end,
+cancel = function(productId)
+return request("APP_SUBSCRIPTION_CANCEL", {
+app_id = entry.app_id, product_id = tostring(productId or ""),
+}, true) ~= nil
+end,
+
+
+
+banks = function() return bankList(entry.app_id) end,
+transfer = function(spec)
+return fastTransfer(type(spec) == "table" and spec or {})
+end,
+
+
+handoff = function(spec)
+spec = type(spec) == "table" and spec or {}
+if transferIntent then return nil, "Already moving money" end
+local other = installedApp(tostring(spec.bank or ""))
+if not other then return nil, "That bank is not installed" end
+transferIntent = {
+app_id = other.app_id,
+bank_account_id =
+tostring(spec.account_id or ""):gsub("%D", ""),
+bank_name = tostring(spec.bank_name or "your bank"),
+}
+transferMoved = nil
+local ranOk = pcall(runInstalledApp, other)
+transferIntent = nil
+local moved = transferMoved
+transferMoved = nil
+if not ranOk then return nil, "That bank stopped" end
+if not moved then return nil, "Nothing was moved" end
+return { moved = moved }
+end,
+
+intent = function()
+if not transferIntent
+or transferIntent.app_id ~= entry.app_id then
+return nil
+end
+return {
+bank_account_id = transferIntent.bank_account_id,
+bank_name = transferIntent.bank_name,
+}
+end,
+transferred = function(amount)
+if transferIntent and transferIntent.app_id == entry.app_id then
+transferMoved = tonumber(amount) or 0
+end
+end,
+
+
+
+web = function(action, payload)
+if offline() then return nil, "Modem is off", "MODEM_OFF" end
+webClient = webClient or net.client({
+protocol = config.web_protocol or "PUMPE_WEB_V1",
+hostname = config.web_hostname or "INTERNET_SERVER",
+})
+return webClient:request(tostring(action), payload or {}, 6)
+end,
+
+
+browse = function(domain) return webpage.browse(domain) end,
+
+
+
+mail = {
+send = function(spec)
+spec = type(spec) == "table" and spec or {}
+return request("MAIL_APP_SEND", {
+app_id = entry.app_id, from = spec.from, to = spec.to,
+subject = spec.subject, body = spec.body,
+}, true)
+end,
+},
+
+save = function(value) return appStoreSave(entry.app_id, value) end,
+load = function() return appStoreLoad(entry.app_id) end,
+
+
+
+
+bank = function(action, payload)
+
+
+if offline() then return nil, "Modem is off", "MODEM_OFF" end
+local client = net.client({
+protocol = config.tpb_protocol or "PUMPE_TPB_V1",
+hostname = "TPBANK_" .. entry.app_id,
+})
+return client:request(tostring(action), payload or {}, 6)
+end,
+
+
+
+action = function() return wantedAction end,
+app_id = entry.app_id,
+
+
+shop_store = entry.shop_store,
+domain = entry.domain,
+})
+if not ok then
+ui.message(target, "error", entry.name .. " stopped",
+ui.truncate(tostring(err), 60), 2.2)
+end
+refreshSummary(true)
+end
+
+
+
+
+
+local appClient
+
+local function appServer()
+if not appClient then
+appClient = net.client({
+protocol = config.app_protocol,
+hostname = config.app_hostname,
+})
+end
+return appClient
+end
+
+local function storeRequest(action, payload, silent, timeout)
+
+
+if offline() then
+if not silent then
+ui.message(target, "warning", "Modem is off",
+"Turn it on in Settings", 1.4)
+end
+return nil, "Modem is off", "MODEM_OFF"
+end
+local result, err, code = appServer():request(action, payload or {}, timeout)
+if not result and not silent then
+ui.message(target, "error", "App Server offline",
+err or "Nobody is hosting apps", 1.8)
+end
+return result, err, code
+end
+
+
+
+
+
+
+
+
+
+
+
+function developerScreen()
+local devDir = "/apps"
+if type(device.published) ~= "table" then
+device.published = {}
+
+local old = util.loadTable(fs.combine(ROOT, "service_kiosk_device.dat"), {})
+for name, appId in pairs(type(old.published) == "table" and old.published or {}) do
+device.published[name] = { id = appId,
+kind = (old.published_kinds or {})[name] or "app" }
+end
+saveDevice()
+end
+while running and sessionToken do
+local mine = request("DEV_MINE", {}, true)
+local width, height = target.getSize()
+ui.clear(target)
+local scene = ui.scene(target)
+local files = {}
+if mine and mine.developer_id and fs.exists(devDir) and fs.isDir(devDir) then
+for _, name in ipairs(fs.list(devDir)) do
+if name:sub(-4) == ".lua" and not fs.isDir(fs.combine(devDir, name)) then
+files[#files + 1] = name
+end
+end
+table.sort(files)
+end
+if not mine or not mine.developer_id then
+ui.header(target, "Dev Mode", "Apps and games", util.formatClock())
+ui.card(target, 2, 5, width - 2, 6, colors.purple)
+ui.wrappedText(target, 4, 5, "Publish your own apps to the App"
+.. " Browser, and games to a CCG. The developer account is"
+.. " your Foxy Account's.", width - 6, 6, ui.theme.ink,
+ui.theme.panel)
+scene:button("register", 2, 12, width - 2, 3, "Become a developer",
+{ background = colors.purple, shadow = true })
+else
+ui.header(target, "Dev Mode", #files .. " in " .. devDir, util.formatClock())
+if #files == 0 then
+ui.wrappedText(target, 2, 5, "Put a .lua file in " .. devDir
+.. " on this computer. An app returns a function the"
+.. " Pocket calls with its api; a game returns a table.",
+width - 2, 6, ui.theme.muted)
+end
+for index, name in ipairs(files) do
+if index > 4 then break end
+local out = device.published[name]
+scene:button("file:" .. index, 2, 2 + index * 3, width - 2, 2,
+ui.truncate(name, width - 4) .. "\n" .. (out and ("Update the "
+.. (out.kind == "game" and "game" or "app")) or "Publish it"),
+{ background = ui.theme.panel })
+end
+end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait({ tickRate = 3 })
+if action == "back" or action == "__terminate" then return end
+if action == "register" then
+local pin = ui.pin(target, "Your PIN", true)
+if pin then
+local made, err = request("DEV_REGISTER", { pin = pin }, true)
+if made then
+pcall(fs.makeDir, devDir)
+ui.message(target, "success", made.existing and "Welcome back"
+or "You're a developer", "Put your app in " .. devDir, 2)
+else
+ui.message(target, "error", "Not registered", err, 1.8)
+end
+end
+end
+local name = files[tonumber(action and action:match("^file:(%d+)$")) or 0]
+if name then
+local out = device.published[name]
+local kind = out and out.kind
+if not kind then
+kind = ui.confirm(target, "What is it?", "An app for the Pocket,"
+.. " or a game for a CCG in Home Mode?", "App", "Game")
+and "app" or "game"
+end
+local title = ui.input(target, kind == "game" and "Game name" or "App name",
+{ hint = kind == "game" and "In the Game Browser" or "In the App Browser",
+maxLength = 18, allowSpace = true, minLength = 2 })
+local about = title and ui.input(target, "Description",
+{ hint = "One line about it", maxLength = 80, allowSpace = true,
+minLength = 0 })
+local body = about and util.readFile(fs.combine(devDir, name))
+if about and not body then
+ui.message(target, "error", "Cannot read it", name, 1.6)
+elseif body then
+local published, err = storeRequest("APP_PUBLISH", {
+developer_id = mine.developer_id,
+developer_token = mine.developer_token,
+app_id = out and out.id, kind = kind, name = title,
+description = about, body = body,
+}, true)
+if published then
+device.published[name] = { id = published.app.app_id,
+kind = published.app.kind or kind }
+saveDevice()
+ui.message(target, "success", kind == "game"
+and "In the Game Browser" or "In the App Browser",
+title .. "  v" .. tostring(published.app.version), 2)
+else
+ui.message(target, "error", "Not published", err, 2)
+end
+end
+end
+end
+end
+
+local function fetchApp(app, progress)
+local chunks, offset = {}, 0
+local size = tonumber(app.size) or 0
+while offset < size do
+local chunk, err = storeRequest("APP_CHUNK", {
+app_id = app.app_id, offset = offset,
+limit = config.app_chunk_size,
+}, true)
+if not chunk or type(chunk.data) ~= "string" or #chunk.data == 0 then
+return nil, err or "The App Server went quiet", "DOWNLOAD"
+end
+chunks[#chunks + 1] = chunk.data
+offset = chunk.next_offset
+if progress then progress(offset, size) end
+util.cooperativeYield()
+end
+local body = table.concat(chunks)
+if #body ~= size or util.checksum(body) ~= app.checksum then
+return nil, "The download was damaged", "DAMAGED"
+end
+return body
+end
+
+
+
+
+local function keepApp(app, body)
+if not fs.exists(appsDir) then fs.makeDir(appsDir) end
+local path = appPath(app.app_id)
+local fresh = path .. ".new"
+local roomy = pcall(util.writeFile, fresh, body)
+pcall(fs.delete, fresh)
+if not roomy or not pcall(util.writeFile, path, body) then return false end
+local record = {
+app_id = app.app_id, name = app.name, version = app.version,
+author = app.author, description = app.description,
+
+
+
+bank_name = app.bank_name,
+actions = declaredActions(app.app_id),
+}
+for index, entry in ipairs(installed.list) do
+if entry.app_id == app.app_id then
+installed.list[index] = record
+saveApps()
+return true
+end
+end
+installed.list[#installed.list + 1] = record
+saveApps()
+return true
+end
+
+
+local function installApp(app)
+local width, height = target.getSize()
+if #installed.list >= (tonumber(config.max_apps_installed) or 12)
+and not installedApp(app.app_id) then
+ui.message(target, "warning", "No room for it",
+"Remove an app first", 1.8)
+return false
+end
+ui.clear(target)
+ui.header(target, "Installing", app.name, util.formatClock())
+local barWidth = width - 6
+local body, err, code = fetchApp(app, function(offset, size)
+local filled = math.floor(barWidth * offset / math.max(1, size))
+ui.fill(target, 4, 11, barWidth, 1, ui.theme.panel)
+ui.fill(target, 4, 11, math.max(0, filled), 1, ui.theme.accent)
+ui.center(target, 9, math.floor(offset / math.max(1, size) * 100)
+.. "%", ui.theme.ink)
+end)
+if not body then
+if code == "DAMAGED" then
+ui.message(target, "error", "Download was damaged",
+"Nothing was installed", 1.8)
+else
+ui.message(target, "error", "Download stopped", err, 1.8)
+end
+return false
+end
+if not keepApp(app, body) then
+ui.message(target, "error", "No room on this Pocket",
+"Remove something first", 1.8)
+return false
+end
+
+if beta.isBeta(config.version) and beta.APP_FILES[app.app_id] then
+pcall(beta.syncApps)
+end
+
+ui.clear(target)
+ui.header(target, "Installed", app.name, util.formatClock())
+local midX, midY = math.floor(width / 2) - 2, 10
+for step = 1, 5 do
+if step <= 2 then
+ui.fill(target, midX + step - 1, midY + step - 1, 1, 1,
+ui.theme.success)
+else
+ui.fill(target, midX + step - 1, midY + 4 - step, 1, 1,
+ui.theme.success)
+end
+sleep(0.07)
+end
+ui.center(target, midY + 4, "Ready on your Home Screen", ui.theme.muted)
+sleep(0.8)
+return true
+end
+
+local function appDetail(app, mine)
+while running do
+local width, height = target.getSize()
+local here = installedApp(app.app_id)
+ui.clear(target)
+ui.header(target, app.name, "by " .. (app.author or "Unknown"),
+util.formatClock())
+ui.card(target, 2, 5, width - 2, 8, ui.theme.accent)
+ui.wrappedText(target, 4, 6, app.description or "No description",
+width - 6, 4, ui.theme.muted, ui.theme.panel)
+ui.text(target, 4, 11, "v" .. tostring(app.version) .. "  "
+.. math.ceil((app.size or 0) / 1024) .. " KiB",
+ui.theme.muted, ui.theme.panel, width - 6)
+local scene = ui.scene(target)
+if here and here.version == app.version then
+scene:button("open", 2, 14, width - 2, 2, "Open",
+{ background = ui.theme.success,
+foreground = colors.black })
+scene:button("remove", 2, 16, width - 2, 2, "Remove from Pocket",
+{ background = ui.theme.panel })
+else
+scene:button("get", 2, 14, width - 2, 3,
+here and "Update" or "Get", { background = ui.theme.accentDark,
+shadow = true })
+end
+if mine then
+scene:button("unpublish", 2, height - 2, width - 2, 2,
+"Delete from the store", { background = ui.theme.danger })
+end
+scene:button("back", 1, height, 8, 1, "< Apps",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "get" then
+if installApp(app) then return true end
+elseif action == "open" then
+runInstalledApp(here)
+elseif action == "remove" then
+if ui.confirm(target, "Remove " .. app.name,
+"It stays in the store.", "Remove", "Keep") then
+removeApp(app.app_id)
+return true
+end
+elseif action == "unpublish" then
+if ui.confirm(target, "Delete " .. app.name,
+"Nobody will be able to download it.", "Delete", "Keep") then
+local gone, err = storeRequest("APP_DELETE", {
+app_id = app.app_id,
+developer_id = mine.developer_id,
+developer_token = mine.developer_token,
+}, true)
+if gone then
+removeApp(app.app_id)
+ui.message(target, "success", "Deleted", app.name, 1.2)
+return true
+end
+ui.message(target, "error", "Not deleted", err, 1.8)
+end
+end
+end
+end
+
+
+
+
+
+
+
+function webpage.shop(domain)
+local found, err, code = request("SHOP_SITE", { domain = domain }, true)
+if not found then
+ui.message(target, "error", code == "NO_SUCH_SITE" and "No such shop"
+or "Cannot reach it", err or "The Bank did not answer", 2)
+return
+end
+if not found.open then
+ui.message(target, "error", ui.truncate(tostring(found.company_name
+or domain), 20) .. " is closed", "Come back soon", 2)
+return
+end
+local body
+if installedApp("SHOP") then body = util.readFile(appPath("SHOP")) end
+if not body then
+local info = storeRequest("APP_INFO", { app_id = "SHOP" }, true)
+body = info and info.app and fetchApp(info.app)
+end
+if not body then
+ui.message(target, "error", "Cannot open it",
+"No App Server is running", 2)
+return
+end
+opening.play("ext:SHOP", { color = colors[tostring(found.color)]
+or colors.orange, glyph = "$", name = found.domain })
+runInstalledApp({ app_id = "SHOP", name = tostring(found.company_name
+or domain), body = body, shop_store = found.company_id,
+domain = found.domain })
+end
+
+
+
+
+function webpage.retireShopApps()
+local retired, saved = 0, {}
+for index = #installed.list, 1, -1 do
+local entry = installed.list[index]
+local companyId = tostring(entry.app_id):match("^SA%-(.+)$")
+if companyId then
+local site = not offline() and request("SHOP_SITE",
+{ company_id = companyId }, true) or nil
+removeApp(entry.app_id)
+retired = retired + 1
+if site and site.domain then saved[#saved + 1] = site.domain end
+end
+end
+if retired == 0 then return end
+if #saved > 0 then
+local internet = appStoreLoad("NET")
+internet.bookmarks = type(internet.bookmarks) == "table"
+and internet.bookmarks or {}
+for _, domain in ipairs(saved) do
+local known = false
+for _, mark in ipairs(internet.bookmarks) do
+if mark == domain then known = true end
+end
+if not known then table.insert(internet.bookmarks, 1, domain) end
+end
+appStoreSave("NET", internet)
+end
+ui.message(target, "success", "Shop Apps are websites now", #saved > 0
+and (table.concat(saved, ", ") .. " saved in Internet")
+or "Find the stores in Shop", 2.4)
+end
+
+
+
+
+
+beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
+SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
+BUCK = "buckapp.lua", REVO = "revolution.lua" }
+
+function beta.syncApps()
+if not beta.isBeta(config.version) or offline() then return end
+local okLib, update = pcall(require, "lib.update")
+local url = tostring(config.beta_manifest_url or "")
+if not okLib or type(update) ~= "table" or url == "" then return end
+local manifest = update.fetchManifest(url, update.PUBLISHED_FILES, "beta",
+update.PUBLISHED_OPTIONAL)
+
+
+if not manifest or manifest.version ~= config.version then return end
+local byPath = {}
+for _, file in ipairs(manifest.files) do byPath[file.path] = file end
+local changed = false
+for _, entry in ipairs(installed.list) do
+local file = byPath[beta.APP_FILES[entry.app_id] or ""]
+if file and (entry.beta ~= config.version or entry.beta_sum ~= file.checksum) then
+local body = update.fetchFile(url, file, manifest.version)
+if body and pcall(util.writeFile, appPath(entry.app_id), body) then
+entry.beta, entry.beta_sum = config.version, file.checksum
+entry.actions = declaredActions(entry.app_id)
+changed = true
+end
+end
+end
+if changed then saveApps() end
+end
+
+
+
+
+
+
+
+
+
+appBrowser = function(wanted)
+
+local mine = request("DEV_MINE", {}, true)
+local everything, reload = {}, true
+local latest, trending = {}, {}
+local turn = { latest = 1, trending = 1 }
+
+
+local PALETTE = { colors.orange, colors.purple, colors.lime, colors.pink,
+colors.lightBlue, colors.yellow }
+local function appColor(app)
+local sum = 0
+for index = 1, #tostring(app.app_id) do
+sum = sum + tostring(app.app_id):byte(index) * index
+end
+return PALETTE[sum % #PALETTE + 1]
+end
+
+local function fetchList()
+local listed = storeRequest("APP_LIST", {}, true)
+everything = {}
+for _, app in ipairs(listed and listed.apps or {}) do
+if not app.shop_app and not tostring(app.app_id):match("^SA%-") then
+everything[#everything + 1] = app
+end
+end
+latest, trending = {}, {}
+for index, app in ipairs(everything) do
+latest[index], trending[index] = app, app
+end
+table.sort(latest, function(a, b)
+if (a.added or 0) ~= (b.added or 0) then
+return (a.added or 0) > (b.added or 0)
+end
+return (a.published_day or 0) > (b.published_day or 0)
+end)
+table.sort(trending, function(a, b)
+if (a.trending or 0) ~= (b.trending or 0) then
+return (a.trending or 0) > (b.trending or 0)
+end
+return (a.downloads or 0) > (b.downloads or 0)
+end)
+while #latest > 5 do table.remove(latest) end
+while #trending > 5 do table.remove(trending) end
+turn.latest, turn.trending = 1, 1
+reload = false
+end
+
+local function openDetail(app)
+local developer = mine and mine.developer_id and account
+and app.author == account.name and mine or nil
+if appDetail(app, developer) then reload = true end
+end
+
+
+local function explore(filter)
+local page = 1
+while running do
+if reload then fetchList() end
+local apps = {}
+local needle = filter and string.lower(filter) or nil
+for _, app in ipairs(everything) do
+if not needle
+or string.lower(tostring(app.name)):find(needle, 1, true)
+or string.lower(tostring(app.description or ""))
+:find(needle, 1, true) then
+apps[#apps + 1] = app
+end
+end
+table.sort(apps, function(a, b)
+return string.lower(tostring(a.name)) < string.lower(tostring(b.name))
+end)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Explore", filter and (#apps .. " found")
+or (#apps .. " apps"), util.formatClock())
+local scene = ui.scene(target)
+scene:button("find", 2, 4, width - 2, 1,
+ui.truncate(filter and ("Q  " .. filter) or "Q  Search apps",
+width - 4),
+{ background = filter and ui.theme.accentDark or ui.theme.panel })
+local shown, actualPage, pages = util.page(apps, page, 4)
+page = actualPage
+if #apps == 0 then
+ui.center(target, 9, filter and "Nothing matches"
+or "Nothing published yet", ui.theme.ink)
+ui.wrappedText(target, 2, 11, filter
+and "No app here is called that. Try a shorter word."
+or "Apps come from the App Server. Publish one from"
+.. " Dev Mode.", width - 2, 4, ui.theme.muted)
+end
+for index, app in ipairs(shown) do
+local here = installedApp(app.app_id)
+local mark = here and (here.version == app.version and "*" or "^")
+or "+"
+scene:button("open:" .. app.app_id, 2, 6 + (index - 1) * 3,
+width - 2, 2,
+mark .. " " .. ui.truncate(app.name, width - 6) .. "\n"
+.. ui.truncate(app.description or "", width - 6),
+{ background = here and ui.theme.accentDark or ui.theme.panel })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+if pages > 1 then
+scene:button("prev", width - 8, height, 3, 1, "<",
+{ background = ui.theme.panel, disabled = page <= 1 })
+scene:button("next", width - 4, height, 3, 1, ">",
+{ background = ui.theme.panel, disabled = page >= pages })
+end
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return action end
+if action == "find" then
+local typed = ui.input(target, "Search apps", {
+hint = "Leave it empty to see all", initial = filter,
+maxLength = 20, allowSpace = true,
+})
+filter = typed and util.trim(typed) ~= "" and util.trim(typed)
+or nil
+page = 1
+elseif action == "prev" then page = page - 1
+elseif action == "next" then page = page + 1
+else
+local id = action and action:match("^open:(.+)$")
+for _, app in ipairs(apps) do
+if app.app_id == id then openDetail(app) break end
+end
+end
+end
+end
+
+
+
+local function card(app, left, top, chip)
+local width = target.getSize()
+local x1, x2, cw = 2, width - 1, width - 2
+local function fill(x, y, w, h, color)
+local a, b = math.max(x, x1), math.min(x + w - 1, x2)
+if b >= a then ui.fill(target, a, y, b - a + 1, h, color) end
+end
+local function text(x, y, value, color)
+value = tostring(value or "")
+local a, b = math.max(x, x1), math.min(x + #value - 1, x2)
+if b >= a then
+ui.text(target, a, y, value:sub(a - x + 1, b - x + 1), color,
+ui.theme.panel)
+end
+end
+fill(left, top, cw, 4, ui.theme.panel)
+fill(left, top, 2, 4, appColor(app))
+text(left + 3, top, ui.truncate(app.name, cw - 10), ui.theme.ink)
+text(left + 3, top + 1, ui.truncate("by " .. tostring(app.author
+or "Unknown"), cw - 4), ui.theme.muted)
+text(left + 3, top + 2, ui.truncate(app.description or "", cw - 4),
+ui.theme.muted)
+local here = installedApp(app.app_id)
+local state = here and (here.version == app.version and "Open" or "Update")
+or "Get"
+text(left + cw - #state - 1, top + 3, state, ui.theme.accent)
+if chip then text(left + cw - #chip - 1, top, chip, ui.theme.warning) end
+end
+
+local function chipOf(kind, index)
+return kind == "trending" and ("#" .. index) or (index == 1 and "NEW" or nil)
+end
+
+
+local function slide(list, kind, top, from, to, direction)
+local width = target.getSize()
+local cw = width - 2
+for frame = 1, 4 do
+local shift = math.floor(cw * frame / 4)
+card(list[from], 2 - shift * direction, top, chipOf(kind, from))
+card(list[to], 2 + (cw - shift) * direction, top, chipOf(kind, to))
+sleep(0.04)
+end
+card(list[to], 2, top, chipOf(kind, to))
+end
+
+local function carousel(scene, kind, label, list, top)
+local width = target.getSize()
+ui.text(target, 2, top, label, ui.theme.muted)
+local at = turn[kind]
+local dots = ""
+for index = 1, #list do dots = dots .. (index == at and "o" or ".") end
+ui.text(target, 3 + #label, top, dots, ui.theme.accent)
+if #list > 1 then
+scene:button(kind .. ":prev", width - 7, top, 3, 1, "<",
+{ background = ui.theme.panel })
+scene:button(kind .. ":next", width - 3, top, 3, 1, ">",
+{ background = ui.theme.panel })
+end
+card(list[at], 2, top + 1, chipOf(kind, at))
+scene:hotspot(kind .. ":open", 2, top + 1, width - 2, 4)
+end
+
+local function step(kind, list, top, direction)
+if #list < 2 then return end
+local from = turn[kind]
+local to = (from - 1 + direction) % #list + 1
+turn[kind] = to
+slide(list, kind, top + 1, from, to, direction)
+end
+
+local filter = wanted and wanted ~= "search" and util.trim(wanted) or nil
+if wanted == "search" then
+filter = ui.input(target, "Search apps",
+{ hint = "What are you after?", maxLength = 20,
+allowSpace = true })
+filter = filter and util.trim(filter) ~= "" and util.trim(filter)
+or nil
+if not filter then return end
+end
+if filter then
+if explore(filter) == "__terminate" then return end
+end
+
+local ticks = 0
+while running do
+if reload then fetchList() end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "App Browser", #everything .. " apps",
+util.formatClock())
+local scene = ui.scene(target)
+scene:button("find", 2, 4, width - 2, 1, "Q  Search apps",
+{ background = ui.theme.panel })
+if #everything == 0 then
+ui.center(target, 9, "Nothing published yet", ui.theme.ink)
+ui.wrappedText(target, 2, 11, "Apps come from the App Server."
+.. " Is one running?", width - 2, 3, ui.theme.muted)
+else
+carousel(scene, "latest", "LATEST", latest, 6)
+carousel(scene, "trending", "TRENDING", trending, 12)
+end
+scene:button("explore", 2, height - 2, width - 2, 2, "Explore",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk,
+shadow = true })
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+scene:button("refresh", width - 8, height, 9, 1, "Refresh",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 3 })
+if action == "back" or action == "__terminate" then return end
+local kind, verb = (action or ""):match("^(%a+):(%a+)$")
+if action == "__tick" then
+
+ticks = ticks + 1
+if ticks % 2 == 1 then step("latest", latest, 6, 1)
+else step("trending", trending, 12, 1) end
+elseif action == "refresh" then reload = true
+elseif action == "explore" then
+if explore(nil) == "__terminate" then return end
+elseif action == "find" then
+local typed = ui.input(target, "Search apps",
+{ hint = "What are you after?", maxLength = 20,
+allowSpace = true })
+typed = typed and util.trim(typed) ~= "" and util.trim(typed) or nil
+if typed and explore(typed) == "__terminate" then return end
+elseif kind == "latest" or kind == "trending" then
+local list = kind == "latest" and latest or trending
+local top = kind == "latest" and 6 or 12
+if verb == "open" and list[turn[kind]] then
+openDetail(list[turn[kind]])
+elseif verb == "next" then step(kind, list, top, 1)
+elseif verb == "prev" then step(kind, list, top, -1)
+end
+end
+end
+end
+
+
+
+
+
+
+local APPS = {
+
+
+messages = { name = "Messages", glyph = "\"", color = colors.green,
+open = function() messagesScreen() end },
+friends = { name = "Friends", glyph = "@", color = colors.cyan,
+open = friendsApp, actions = {
+{ id = "messages", label = "Messages", hint = "Open a chat" },
+{ id = "people", label = "Friends", hint = "Add or find someone" },
+{ id = "urgent", label = "Urgent Contact",
+hint = "Reach a friend fast" },
+} },
+tickets = { name = "Tickets", glyph = "#", color = colors.orange,
+open = ticketsApp, actions = {
+{ id = "events", label = "Browse Events", hint = "What is on" },
+{ id = "mine", label = "My Tickets", hint = "What you hold" },
+} },
+
+myid = { name = "MyID", glyph = "I", color = colors.lightBlue,
+open = myIdApp, actions = {
+{ id = "id", label = "Digital ID", hint = "Your MyID Code" },
+{ id = "visas", label = "My Visas", hint = "Travel papers" },
+{ id = "tax", label = "Tax", hint = "File tax, pay a demand" },
+{ id = "countries", label = "Countries", hint = "Land you run" },
+} },
+
+ccg = { name = "CCG", glyph = "?", color = colors.magenta, actions = {
+{ id = "home", label = "Home Mode", hint = "Play free on your CCG" },
+{ id = "bet", label = "Bet Play", hint = "Join a lobby" },
+{ id = "scores", label = "CCG scores", hint = "Your best at home" },
+} },
+subs = { name = "Subs", glyph = "~", color = colors.magenta },
+browser = { name = "Apps", glyph = "+", color = colors.blue, actions = {
+{ id = "search", label = "Search apps", hint = "Find something new" },
+} },
+reminders = { name = "Reminders", glyph = "!", color = colors.yellow,
+actions = {
+{ id = "new", label = "New reminder", hint = "Something later" },
+} },
+quick = { name = "Quick", glyph = "&", color = colors.lime, actions = {
+{ id = "new", label = "New QuickAction", hint = "A few steps in a row" },
+} },
+settings = { name = "Settings", glyph = "*", color = colors.gray },
+}
+local APP_ORDER = {
+"friends", "messages", "tickets", "myid", "ccg", "subs",
+"reminders", "quick", "browser", "settings",
+}
+
+
+
+local EXTRA_COLORS = {
+colors.orange, colors.purple, colors.lime, colors.pink,
+colors.lightBlue, colors.yellow,
+}
+
+local function refreshInstalledApps()
+for id in pairs(APPS) do
+if id:sub(1, 4) == "ext:" or id:sub(1, 6) == "quick:" then
+APPS[id] = nil
+end
+end
+for index = #APP_ORDER, 1, -1 do
+local id = APP_ORDER[index]
+if id:sub(1, 4) == "ext:" or id:sub(1, 6) == "quick:" then
+table.remove(APP_ORDER, index)
+end
+end
+
+
+
+for index, item in ipairs(device.shortcuts or {}) do
+if item.on_home then
+local id = "quick:" .. index
+APPS[id] = {
+name = item.name,
+glyph = string.upper(tostring(item.name):sub(1, 1)),
+color = colors.lime,
+open = function() agenda.run(item) end,
+}
+table.insert(APP_ORDER, #APP_ORDER - 1, id)
+end
+end
+for index, entry in ipairs(installed.list) do
+local id = "ext:" .. entry.app_id
+
+
+if not entry.actions then
+entry.actions = declaredActions(entry.app_id)
+saveApps()
+end
+APPS[id] = {
+name = entry.name,
+glyph = string.upper(entry.name:sub(1, 1)),
+color = EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
+actions = entry.actions,
+open = function(action) runInstalledApp(entry, action) end,
+}
+table.insert(APP_ORDER, #APP_ORDER - 1, id)
+end
+end
+local DOCK_SLOTS = 4
+
+local function appBadge(id, poll)
+
+if id == "messages" and (poll.unread_messages or 0) > 0 then
+return poll.unread_messages
+end
+if id == "friends" and (poll.friend_requests or 0) > 0 then
+return poll.friend_requests
+end
+return nil
+end
+
+local function badgeText(count)
+return count > 9 and "9+" or (" " .. count)
+end
+
+
+
+local FAVOURITE_SLOTS = DOCK_SLOTS
+
+local function favouriteIds()
+local chosen = {}
+for _, id in ipairs(device.favorites or {}) do
+if APPS[id] and #chosen < FAVOURITE_SLOTS then
+chosen[#chosen + 1] = id
+end
+end
+return chosen
+end
+
+favouritesPicker = function()
+while running do
+local width, height = target.getSize()
+local chosen, lookup = favouriteIds(), {}
+for _, id in ipairs(chosen) do lookup[id] = true end
+ui.clear(target)
+ui.header(target, "Your Dock",
+#chosen .. " of " .. FAVOURITE_SLOTS .. " chosen",
+util.formatClock())
+local scene = ui.scene(target)
+local tileWidth = math.floor((width - 3) / 2)
+for index, id in ipairs(APP_ORDER) do
+local column = (index - 1) % 2
+local row = math.floor((index - 1) / 2)
+scene:button("pick:" .. id, 2 + column * (tileWidth + 1),
+4 + row * 3, tileWidth, 2,
+(lookup[id] and "*" or "") .. APPS[id].name, {
+background = lookup[id] and ui.theme.success
+or APPS[id].color,
+foreground = lookup[id] and colors.black or colors.white,
+})
+end
+scene:button("back", 1, height, 10, 1, "< Done",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 1 })
+if action == "back" or action == "__terminate" then return end
+local id = action and action:match("^pick:(.+)$")
+if id and APPS[id] then
+device.favorites = device.favorites or {}
+if lookup[id] then
+for index = #device.favorites, 1, -1 do
+if device.favorites[index] == id then
+table.remove(device.favorites, index)
+end
+end
+elseif #chosen < FAVOURITE_SLOTS then
+device.favorites[#device.favorites + 1] = id
+end
+saveDevice()
+end
+end
+end
+
+
+
+
+
+
+
+
+local function homeLayout(width, height)
+local columns = width >= 40 and 5 or 3
+local cell = math.max(4, math.floor((width - 1) / columns))
+local dockY = height - 3
+local top = 4
+local rows = math.max(1, math.floor((dockY - 1 - top) / 3))
+return {
+columns = columns,
+rows = rows,
+perPage = columns * rows,
+cell = cell,
+iconWidth = math.max(3, cell - 2),
+left = math.max(1, math.floor((width - cell * columns) / 2) + 1),
+top = top,
+dividerY = dockY - 1,
+dockY = dockY,
+listBottom = dockY - 2,
+
+
+dotsY = height - 1,
+navY = height - 1,
+}
+end
+
+
+
+local PILL_CAP = string.char(149)
+local function pill(y, rows, width)
+ui.fill(target, 3, y, math.max(0, width - 4), rows, ui.theme.panel)
+for row = y, y + rows - 1 do
+ui.text(target, 2, row, PILL_CAP, ui.theme.background, ui.theme.panel)
+ui.text(target, width - 1, row, PILL_CAP, ui.theme.panel,
+ui.theme.background)
+end
+end
+
+
+
+local function drawIcon(scene, action, app, x, y, layout, badge)
+scene:button(action, x, y, layout.iconWidth, 2, app.glyph,
+{ background = app.color, foreground = colors.white })
+opening.spots[action:match("^open:(.+)$") or ""] =
+{ x + math.floor(layout.iconWidth / 2), y + 1 }
+if badge then
+ui.text(target, x + layout.iconWidth - 2, y, badgeText(badge),
+colors.white, ui.theme.danger)
+end
+local name = ui.truncate(app.name, layout.cell)
+local nameX = math.max(1, math.min(scene.width - #name + 1,
+x + math.floor((layout.iconWidth - #name) / 2)))
+
+
+
+ui.text(target, nameX, y + 2, name, ui.theme.ink, ui.theme.background)
+scene:hotspot(action, nameX, y + 2, #name, 1)
+end
+
+
+
+local function drawDock(scene, layout, poll, width)
+pill(layout.dockY, 2, width)
+local slotWidth = math.max(3, math.floor((width - 4) / DOCK_SLOTS) - 1)
+local span = DOCK_SLOTS * (slotWidth + 1) - 1
+local left = math.max(3, math.floor((width - span) / 2) + 1)
+
+
+ui.fill(target, 2, layout.dividerY, width - 2, 1, ui.theme.panel)
+ui.text(target, 3, layout.dividerY, ui.truncate("Q  Search everything",
+width - 4), ui.theme.muted, ui.theme.panel)
+scene:hotspot("search", 2, layout.dividerY, width - 2, 1)
+local chosen = favouriteIds()
+for slot = 1, FAVOURITE_SLOTS do
+local x = left + (slot - 1) * (slotWidth + 1)
+local id = chosen[slot]
+if id then
+scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
+APPS[id].glyph, { background = APPS[id].color,
+corner = ui.theme.panel })
+opening.spots[id] = opening.spots[id]
+or { x + math.floor(slotWidth / 2), layout.dockY + 1 }
+local badge = appBadge(id, poll)
+if badge then
+ui.text(target, x + slotWidth - 2, layout.dockY,
+badgeText(badge), colors.white, ui.theme.danger)
+end
+else
+scene:button("edit", x, layout.dockY, slotWidth, 2, "+",
+{ background = ui.theme.panelAlt, foreground = colors.black,
+corner = ui.theme.panel })
+end
+end
+end
+
+local function alertColor(item)
+return item.kind == "warning" and ui.theme.warning
+or item.kind == "urgent" and ui.theme.danger
+or item.kind == "money" and ui.theme.success
+or ui.theme.accent
+end
+
+
+
+
+local function notificationDetail(item)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Notification",
+"Day " .. tostring(item.created_day or "?") .. "  "
+.. tostring(item.created_time or ""), util.formatClock())
+local cardHeight = math.max(4, height - 8)
+ui.card(target, 2, 5, width - 2, cardHeight, alertColor(item))
+ui.wrappedText(target, 4, 6, item.title, width - 6, 2,
+ui.theme.ink, ui.theme.panel)
+ui.wrappedText(target, 4, 9, item.body, width - 6,
+math.max(1, cardHeight - 5), ui.theme.muted, ui.theme.panel)
+local scene = ui.scene(target)
+scene:button("back", 1, height, 10, 1, "< Alerts",
+{ background = ui.theme.panel })
+scene:wait()
+end
+
+local function drawAlertsPage(scene, items, offset, width, layout)
+
+
+local perView = math.max(1, math.floor((layout.dividerY - 4) / 3))
+ui.fill(target, 2, layout.dividerY - 1, width - 2, 1, ui.theme.panel)
+scene:button("markread", 2, layout.dividerY, width - 9, 2,
+"Mark all read", { background = ui.theme.panel,
+disabled = #items == 0 })
+scene:button("scrollup", width - 6, layout.dividerY, 5, 1, "^",
+{ background = ui.theme.panel, disabled = offset <= 0 })
+scene:button("scrolldown", width - 6, layout.dividerY + 1, 5, 1, "v",
+{ background = ui.theme.panel,
+disabled = offset + perView >= #items })
+if #items == 0 then
+local middle = math.max(5, math.floor((layout.dividerY + 2) / 2))
+ui.center(target, middle - 1, "Nothing new", ui.theme.ink,
+ui.theme.background)
+ui.center(target, middle + 1, "Alerts land here", ui.theme.muted,
+ui.theme.background)
+return perView
+end
+for slot = 1, perView do
+local item = items[offset + slot]
+if not item then break end
+local row = 4 + (slot - 1) * 3
+local color = alertColor(item)
+
+
+
+ui.fill(target, 2, row, 1, 2, item.read and ui.theme.panel or color)
+ui.text(target, 4, row, ui.truncate(item.title, width - 10),
+item.read and ui.theme.muted or ui.theme.ink, ui.theme.background)
+ui.text(target, width - 5, row,
+ui.truncate(tostring(item.created_time or ""), 5),
+ui.theme.muted, ui.theme.background)
+ui.text(target, 4, row + 1,
+ui.truncate(ui.wrap(item.body, width - 5)[1] or "", width - 5),
+ui.theme.muted, ui.theme.background)
+scene:hotspot("note:" .. (offset + slot), 2, row, width - 2, 2)
+end
+return perView
+end
+
+
+
+
+
+
+
+
+
+
+
+local function ensureFoxy()
+local missing = {}
+for _, appId in ipairs({ "FOXY", "MAIL" }) do
+if not installedApp(appId) then missing[appId] = true end
+end
+if next(missing) == nil then return end
+local listed = storeRequest("APP_LIST", {}, true)
+local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
+for _, app in ipairs(listed and listed.apps or {}) do
+
+
+
+if missing[app.app_id] and (app.app_id == "FOXY" or room > 0) then
+if installApp(app) then room = room - 1 end
+end
+end
+end
+
+
+
+
+
+
+local APP_CHECK_MS = 10 * 60 * 1000
+local appsCheckedAt
+local function updateApps(force)
+if offline() or #installed.list == 0 then return {} end
+local now = os.clock() * 1000
+if not force and appsCheckedAt and now - appsCheckedAt < APP_CHECK_MS then
+return {}
+end
+appsCheckedAt = now
+
+
+local listed = storeRequest("APP_LIST", {}, true, 2)
+local updated = {}
+local onBeta = beta.isBeta(config.version)
+for _, app in ipairs(listed and listed.apps or {}) do
+local here = installedApp(app.app_id)
+
+
+
+local pinned = here and here.beta and onBeta
+local leftBeta = here and here.beta and not onBeta
+if here and app.kind ~= "game" and not pinned
+and (here.version ~= app.version or leftBeta) then
+local width = target.getSize()
+ui.fill(target, 1, 1, width, 1, ui.theme.accent)
+ui.text(target, 2, 1, ui.truncate("Updating " .. tostring(app.name),
+width - 2), ui.theme.accentInk or colors.black, ui.theme.accent)
+local body = fetchApp(app)
+if body and keepApp(app, body) then
+updated[#updated + 1] = tostring(app.name)
+end
+end
+end
+return updated
+end
+
+
+
+
+
+
+
+local function openApp(id, action)
+local app = APPS[id]
+if not app or not app.open then return false end
+opening.play(id, app)
+app.open(action)
+refreshInstalledApps()
+refreshSummary(true)
+return true
+end
+
+local finder = {}
+
+
+
+
+function finder.everything()
+local found = {}
+for _, id in ipairs(APP_ORDER) do
+local app = APPS[id]
+if app then
+found[#found + 1] = { label = app.name, hint = "Open the app",
+kind = "App", app = id }
+for _, item in ipairs(app.actions or {}) do
+found[#found + 1] = { label = item.label, app = id,
+hint = item.hint ~= "" and item.hint or app.name,
+kind = app.name, action = item.id }
+end
+end
+end
+for _, item in ipairs(SETTINGS_ACTIONS) do
+found[#found + 1] = { label = item.label, hint = item.hint,
+kind = "Settings", app = "settings", action = item.id }
+end
+return found
+end
+
+
+
+
+function finder.match(items, typed)
+local wanted = string.lower(util.trim(tostring(typed or "")))
+if wanted == "" then return {} end
+local hits = {}
+for _, item in ipairs(items) do
+local at = string.lower(item.label):find(wanted, 1, true)
+if at then
+item.rank = at == 1 and 1 or 2
+hits[#hits + 1] = item
+elseif string.lower(item.hint or ""):find(wanted, 1, true) then
+item.rank = 3
+hits[#hits + 1] = item
+end
+end
+table.sort(hits, function(a, b)
+if a.rank ~= b.rank then return a.rank < b.rank end
+return a.label < b.label
+end)
+return hits
+end
+
+
+
+function finder.rows(scene, hits, top, rows, width)
+for slot = 1, rows do
+local hit = hits[slot]
+if not hit then break end
+local y = top + (slot - 1) * 2
+ui.text(target, 2, y, ui.truncate(hit.label, width - 3), ui.theme.ink)
+ui.text(target, 2, y + 1,
+ui.truncate(tostring(hit.kind) .. "  " .. tostring(hit.hint or ""),
+width - 3), ui.theme.muted)
+scene:hotspot("hit:" .. slot, 2, y, width - 2, 2)
+end
+end
+
+
+
+function finder.ask(initial)
+local everything = finder.everything()
+return ui.input(target, "Search", {
+hint = "Apps, actions, settings", initial = initial,
+maxLength = 24, allowSpace = true,
+suggest = function(value)
+local hits = finder.match(everything, value)
+for _, hit in ipairs(hits) do hit.detail = hit.kind end
+return hits
+end,
+})
+end
+
+function finder.screen()
+local typed, picked = finder.ask()
+if picked then
+openApp(picked.app, picked.action)
+return
+end
+while running and typed do
+local hits = finder.match(finder.everything(), typed)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Search", #hits .. " result"
+.. (#hits == 1 and "" or "s"), util.formatClock())
+ui.text(target, 2, 5, ui.truncate(typed, width - 3), ui.theme.ink)
+local scene = ui.scene(target)
+local rows = math.max(1, math.floor((height - 12) / 2))
+finder.rows(scene, hits, 7, rows, width)
+if #hits == 0 then
+ui.wrappedText(target, 2, 8, "Nothing on this phone matches."
+.. " The App Browser might have it.", width - 2, 4,
+ui.theme.muted)
+end
+scene:button("store", 2, height - 5, width - 2, 2,
+"Look in the App Browser", { background = ui.theme.panel })
+scene:button("again", 2, height - 2, width - 2, 2, "New search",
+{ background = ui.theme.accentDark })
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "again" then
+typed, picked = finder.ask(typed)
+if picked then
+openApp(picked.app, picked.action)
+return
+end
+elseif action == "store" then
+openApp("browser", typed)
+else
+local index = tonumber(action and action:match("^hit:(%d+)$"))
+local hit = index and hits[index]
+if hit then openApp(hit.app, hit.action) end
+end
+end
+end
+
+
+
+
+
+
+
+agenda = {}
+
+function agenda.save()
+device.reminders = device.reminders or {}
+device.shortcuts = device.shortcuts or {}
+saveDevice()
+end
+
+function agenda.dueAt(day, hour)
+return day * 24 + hour
+end
+
+
+
+
+function agenda.hour()
+if type(util.ingameTime) ~= "function" then return 0 end
+return tonumber(util.ingameTime()) or 0
+end
+
+function agenda.now()
+return util.ingameDay() * 24 + agenda.hour()
+end
+
+function agenda.whenText(day, hour)
+local today = util.ingameDay()
+local when = string.format("%02d:00", math.floor(hour))
+if day == today then return "Today " .. when end
+if day == today + 1 then return "Tomorrow " .. when end
+return "Day " .. day .. " " .. when
+end
+
+
+
+
+function agenda.run(item)
+local index = 1
+while index <= #(item.steps or {}) do
+local step = item.steps[index]
+local after = item.steps[index + 1]
+local times = (after and after.kind == "repeat")
+and math.max(1, math.min(10, tonumber(after.times) or 1)) or 1
+if step.kind ~= "repeat" then
+for _ = 1, times do
+if step.kind == "open" then
+openApp(step.app, step.action)
+elseif step.kind == "notify" then
+showBanner({ kind = "info", app_name = item.name,
+title = item.name, body = tostring(step.text or "") })
+end
+end
+end
+index = index + ((after and after.kind == "repeat") and 2 or 1)
+end
+end
+
+
+
+function agenda.tick()
+local now, today = agenda.now(), util.ingameDay()
+local changed = false
+for _, item in ipairs(device.reminders or {}) do
+if not item.done and now >= agenda.dueAt(item.day, item.hour) then
+item.done = true
+changed = true
+local note = { kind = "warning", app_name = "Reminder",
+title = "Reminder", body = tostring(item.text or "") }
+if item.style == "alert" then
+showFullscreenAlert(note)
+else
+showBanner(note)
+end
+end
+end
+for _, item in ipairs(device.shortcuts or {}) do
+if item.trigger == "auto" and item.last_day ~= today
+and agenda.hour() >= (item.hour or 8) then
+item.last_day = today
+changed = true
+agenda.run(item)
+end
+end
+if changed then agenda.save() end
+end
+
+
+
+function agenda.newReminder()
+local text = ui.input(target, "Remind me to", {
+hint = "What should it say?", maxLength = 60,
+allowSpace = true, minLength = 1 })
+if not text then return end
+local hours = ui.input(target, "In how many hours?", {
+hint = "In-game hours, 1 to 240", mode = "number", maxLength = 3 })
+hours = math.max(1, math.min(240, tonumber(hours) or 0))
+local due = agenda.now() + hours
+device.reminders = device.reminders or {}
+device.reminders[#device.reminders + 1] = {
+text = util.trim(text),
+day = math.floor(due / 24),
+hour = math.floor(due % 24),
+style = ui.confirm(target, "How should it arrive?",
+"A banner drops in and goes. A full screen alert waits for you.",
+"Banner", "Full screen") and "banner" or "alert",
+}
+agenda.save()
+end
+
+function agenda.reminders(wanted)
+if wanted == "new" then agenda.newReminder() return end
+local width, height = target.getSize()
+while running do
+device.reminders = device.reminders or {}
+local list = device.reminders
+ui.clear(target)
+ui.header(target, "Reminders", #list .. " set", util.formatClock())
+local scene = ui.scene(target)
+local rows = math.max(1, math.floor((height - 9) / 2))
+if #list == 0 then
+ui.wrappedText(target, 2, 6, "Nothing to remember yet. Add one and"
+.. " the phone will tell you.", width - 2, 4, ui.theme.muted)
+end
+for slot = 1, rows do
+local item = list[slot]
+if not item then break end
+local y = 5 + (slot - 1) * 2
+ui.text(target, 2, y, ui.truncate(item.text, width - 3),
+item.done and ui.theme.muted or ui.theme.ink)
+ui.text(target, 2, y + 1, ui.truncate((item.done and "Done  "
+or agenda.whenText(item.day, item.hour) .. "  ")
+.. (item.style == "alert" and "Full screen" or "Banner"),
+width - 3), ui.theme.muted)
+scene:hotspot("item:" .. slot, 2, y, width - 2, 2)
+end
+scene:button("new", 2, height - 2, width - 2, 2, "New reminder",
+{ background = ui.theme.accentDark })
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "new" then
+agenda.newReminder()
+else
+local index = tonumber(action and action:match("^item:(%d+)$"))
+if index and list[index] then
+if ui.confirm(target, "Remove this?",
+ui.truncate(list[index].text, 60), "Remove", "Keep") then
+table.remove(list, index)
+agenda.save()
+end
+end
+end
+end
+end
+
+
+
+
+function agenda.edit(item)
+while running do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(item.name, 14),
+#item.steps .. " step" .. (#item.steps == 1 and "" or "s"),
+util.formatClock())
+local scene = ui.scene(target)
+local rows = math.max(1, math.floor((height - 13)))
+for slot = 1, rows do
+local step = item.steps[slot]
+if not step then break end
+local label = step.kind == "open" and ("Open  "
+.. tostring(step.label or ""))
+or step.kind == "notify" and ("Tell me  "
+.. tostring(step.text or ""))
+or ("Repeat above x" .. tostring(step.times or 1))
+ui.text(target, 2, 4 + slot, ui.truncate(label, width - 3),
+ui.theme.ink)
+end
+if #item.steps == 0 then
+ui.text(target, 2, 5, "No steps yet", ui.theme.muted)
+end
+local half = math.floor((width - 3) / 2)
+scene:button("open", 2, height - 8, half, 1, "+ Open",
+{ background = ui.theme.panel })
+scene:button("notify", 3 + half, height - 8, width - 3 - half, 1,
+"+ Tell me", { background = ui.theme.panel })
+scene:button("repeat", 2, height - 7, half, 1, "+ Repeat",
+{ background = ui.theme.panel, disabled = #item.steps == 0 })
+scene:button("drop", 3 + half, height - 7, width - 3 - half, 1,
+"- Last step", { background = ui.theme.panel,
+disabled = #item.steps == 0 })
+scene:button("when", 2, height - 5, width - 2, 2,
+item.trigger == "auto"
+and ("Every day at " .. string.format("%02d:00", item.hour))
+or "On demand only",
+{ background = item.trigger == "auto" and ui.theme.success
+or ui.theme.panel,
+foreground = item.trigger == "auto" and colors.black
+or colors.white })
+scene:button("home", 2, height - 2, width - 2, 2,
+item.on_home and "On the Home Screen" or "Not on the Home Screen",
+{ background = ui.theme.panel })
+scene:button("back", 1, height, 8, 1, "< Done",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then
+agenda.save()
+return
+end
+if action == "open" then
+local pick = agenda.pickAction()
+if pick then item.steps[#item.steps + 1] = pick end
+elseif action == "notify" then
+local text = ui.input(target, "Tell me", {
+hint = "What should it say?", maxLength = 60,
+allowSpace = true, minLength = 1 })
+if text then
+item.steps[#item.steps + 1] =
+{ kind = "notify", text = util.trim(text) }
+end
+elseif action == "repeat" then
+local times = ui.input(target, "How many times?", {
+hint = "2 to 10", mode = "number", maxLength = 2 })
+times = math.max(2, math.min(10, tonumber(times) or 2))
+item.steps[#item.steps + 1] = { kind = "repeat", times = times }
+elseif action == "drop" then
+table.remove(item.steps)
+elseif action == "when" then
+if item.trigger == "auto" then
+item.trigger = "demand"
+else
+local hour = ui.input(target, "At what hour?", {
+hint = "0 to 23, in-game", mode = "number",
+maxLength = 2 })
+item.trigger = "auto"
+item.hour = math.max(0, math.min(23, tonumber(hour) or 8))
+item.last_day = util.ingameDay()
+end
+elseif action == "home" then
+item.on_home = not item.on_home
+refreshInstalledApps()
+end
+agenda.save()
+end
+end
+
+
+
+
+function agenda.pickAction()
+local typed = ui.input(target, "Which action?", {
+hint = "Search apps and settings", maxLength = 20, allowSpace = true })
+if not typed then return nil end
+local hits = {}
+for _, hit in ipairs(finder.match(finder.everything(), typed)) do
+if hit.action then hits[#hits + 1] = hit end
+end
+while running do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Which action?", #hits .. " found",
+util.formatClock())
+local scene = ui.scene(target)
+local rows = math.max(1, math.floor((height - 8) / 2))
+finder.rows(scene, hits, 5, rows, width)
+if #hits == 0 then
+ui.text(target, 2, 6, "Nothing matches", ui.theme.muted)
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return nil end
+local index = tonumber(action and action:match("^hit:(%d+)$"))
+local hit = index and hits[index]
+if hit then
+return { kind = "open", app = hit.app, action = hit.action,
+label = hit.label }
+end
+end
+end
+
+function agenda.quick(wanted)
+if wanted == "new" then
+local name = ui.input(target, "Call it what?", {
+hint = "Morning, Payday...", maxLength = 18,
+allowSpace = true, minLength = 1 })
+if name then
+device.shortcuts = device.shortcuts or {}
+local made = { name = util.trim(name), steps = {},
+trigger = "demand", hour = 8 }
+device.shortcuts[#device.shortcuts + 1] = made
+agenda.save()
+agenda.edit(made)
+end
+return
+end
+while running do
+device.shortcuts = device.shortcuts or {}
+local list = device.shortcuts
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "QuickActions", #list .. " saved", util.formatClock())
+local scene = ui.scene(target)
+local rows = math.max(1, math.floor((height - 9) / 2))
+if #list == 0 then
+ui.wrappedText(target, 2, 6, "A QuickAction is a few app actions"
+.. " in a row. Run it yourself, or every day.", width - 2, 5,
+ui.theme.muted)
+end
+for slot = 1, rows do
+local item = list[slot]
+if not item then break end
+local y = 5 + (slot - 1) * 2
+scene:button("run:" .. slot, 2, y, width - 9, 1,
+ui.truncate(item.name, width - 11),
+{ background = ui.theme.accentDark })
+scene:button("edit:" .. slot, width - 6, y, 6, 1, "Edit",
+{ background = ui.theme.panel })
+ui.text(target, 2, y + 1, ui.truncate(#item.steps .. " step"
+.. (#item.steps == 1 and "" or "s") .. "  "
+.. (item.trigger == "auto"
+and ("daily " .. string.format("%02d:00", item.hour))
+or "on demand")
+.. (item.on_home and "  home" or ""), width - 3),
+ui.theme.muted)
+end
+scene:button("new", 2, height - 2, width - 2, 2, "New QuickAction",
+{ background = ui.theme.accentDark })
+scene:button("back", 1, height, 8, 1, "< Home",
+{ background = ui.theme.panel })
+local action = scene:wait({ tickRate = 5 })
+if action == "back" or action == "__terminate" then return end
+if action == "new" then
+local name = ui.input(target, "Call it what?", {
+hint = "Morning, Payday...", maxLength = 18,
+allowSpace = true, minLength = 1 })
+if name then
+local item = { name = util.trim(name), steps = {},
+trigger = "demand", hour = 8 }
+list[#list + 1] = item
+agenda.save()
+agenda.edit(item)
+end
+else
+local run = tonumber(action and action:match("^run:(%d+)$"))
+local edit = tonumber(action and action:match("^edit:(%d+)$"))
+if run and list[run] then
+agenda.run(list[run])
+elseif edit and list[edit] then
+if ui.confirm(target, list[edit].name, "Edit it, or delete it?",
+"Edit", "Delete") then
+agenda.edit(list[edit])
+else
+table.remove(list, edit)
+agenda.save()
+refreshInstalledApps()
+end
+end
+end
+end
+end
+
+local function mainMenu()
+
+APPS.ccg.open = ccgApp
+APPS.subs.open = subscriptionsScreen
+APPS.settings.open = settingsScreen
+APPS.browser.open = appBrowser
+APPS.reminders.open = agenda.reminders
+APPS.quick.open = agenda.quick
+pcall(ensureFoxy)
+
+pcall(webpage.retireShopApps)
+pcall(beta.syncApps)
+refreshInstalledApps()
+
+local blink, tick, page, alertOffset = true, 0, 1, 0
+local poll = request("PUMPE_POLL", {}, true) or {}
+lastBannerId = poll.latest and poll.latest.notification_id or lastBannerId
+local alerts, alertsLoaded, perView = {}, false, 1
+refreshSummary(offline())
+enableDeviceLock()
+
+while running and (sessionToken or offline()) do
+if not account then account = cachedProfile() end
+local width, height = target.getSize()
+local layout = homeLayout(width, height)
+
+local pages = math.max(1, math.ceil(#APP_ORDER / layout.perPage)) + 1
+page = math.max(1, math.min(page, pages))
+local onAlerts = page == pages
+local unread = poll.unread_notifications or 0
+
+
+if not onAlerts then
+alertsLoaded = false
+elseif not alertsLoaded then
+local loaded = request("NOTIFICATIONS", {}, true)
+alerts = loaded and loaded.notifications or {}
+alertsLoaded = true
+end
+
+ui.clear(target)
+if onAlerts then
+ui.header(target, "Notifications",
+unread > 0 and (unread .. " unread") or "All caught up",
+util.formatClock(blink))
+else
+
+
+
+ui.header(target, account.name,
+offline() and "Offline" or money(account.balance),
+util.formatClock(blink))
+end
+
+local scene = ui.scene(target)
+if onAlerts then
+perView = drawAlertsPage(scene, alerts, alertOffset, width, layout)
+else
+local first = (page - 1) * layout.perPage
+
+opening.spots = {}
+for slot = 1, layout.perPage do
+local id = APP_ORDER[first + slot]
+if id then
+local column = (slot - 1) % layout.columns
+local row = math.floor((slot - 1) / layout.columns)
+drawIcon(scene, "open:" .. id, APPS[id],
+layout.left + column * layout.cell
++ math.floor((layout.cell - layout.iconWidth) / 2),
+layout.top + row * 3, layout, appBadge(id, poll))
+end
+end
+drawDock(scene, layout, poll, width)
+end
+
+
+
+local dots = {}
+for dot = 1, pages do
+dots[dot] = dot == page and "o"
+or (dot == pages and unread > 0 and "!" or ".")
+end
+local middle = table.concat(dots, " ") .. "   ()"
+pill(layout.navY, 1, width)
+local middleX = math.floor((width - #middle) / 2) + 1
+ui.text(target, middleX, layout.navY, middle, ui.theme.muted,
+ui.theme.panel)
+ui.text(target, middleX + #middle - 2, layout.navY, "()",
+ui.theme.accent, ui.theme.panel)
+scene:hotspot("lock", middleX + #middle - 3, layout.navY, 4, 1)
+ui.text(target, 4, layout.navY, "<", page == 1 and ui.theme.shadow
+or ui.theme.ink, ui.theme.panel)
+ui.text(target, width - 3, layout.navY, ">", page == pages
+and ui.theme.shadow or ui.theme.ink, ui.theme.panel)
+if page > 1 then scene:hotspot("prev", 3, layout.navY, 4, 1) end
+if page < pages then scene:hotspot("next", width - 5, layout.navY, 4, 1) end
+
+local action = scene:wait({ tickRate = 0.5 })
+blink = not blink
+if action == "prev" then
+page, alertOffset = math.max(1, page - 1), 0
+elseif action == "next" then
+page, alertOffset = math.min(pages, page + 1), 0
+elseif action == "search" then finder.screen()
+elseif action == "lock" then lockScreen(true)
+elseif action == "edit" then favouritesPicker()
+elseif action == "scrollup" then
+alertOffset = math.max(0, alertOffset - perView)
+elseif action == "scrolldown" then
+alertOffset = alertOffset + perView
+elseif action == "markread" then
+request("MARK_NOTIFICATIONS_READ", {}, true)
+for _, item in ipairs(alerts) do item.read = true end
+poll.unread_notifications = 0
+elseif action == "__terminate" then
+running = false
+else
+local note = tonumber(action and action:match("^note:(%d+)$"))
+local id = action and action:match("^open:(.+)$")
+if note and alerts[note] then
+notificationDetail(alerts[note])
+elseif id and APPS[id] and APPS[id].open then
+opening.play(id, APPS[id])
+APPS[id].open()
+refreshInstalledApps()
+refreshSummary(true)
+end
+end
+
+if action == "__tick" or action == "__idle" or action == "__wake" then
+tick = tick + 1
+agenda.tick()
+checkForUpdate(false)
+local updated = updateApps(false)
+if #updated > 0 then
+refreshInstalledApps()
+showBanner({ title = #updated == 1 and "App updated"
+or (#updated .. " apps updated"),
+body = table.concat(updated, ", ") })
+end
+end
+
+if tick % 6 == 0 or (action ~= "__tick" and action ~= "__idle") then
+poll = request("PUMPE_POLL", {}, true) or poll
+if poll.balance and account then account.balance = poll.balance end
+if not sessionToken and not offline() then return end
+end
+end
+end
+
+
+
+
+
+
+
+pcall(webpage.sweep)
+
+if type(ui.pocketStart) == "function" then
+
+
+
+ui.pocketStart(target, beta.isBeta(config.version)
+and (tostring(config.release_name or config.version):gsub("^FoxyOS ", ""))
+or config.version)
+elseif type(ui.splash) == "function" then
+
+ui.splash(target, "POCKET", ui.osLabel and ui.osLabel(config) or "FoxyOS",
+{ footnote = "v" .. config.version, blinks = 0, hold = 2 })
+else
+ui.boot(target, "POCKET", "FoxyOS")
+end
+
+
+checkForUpdate(true)
+local online = client:discover()
+if not online then
+ui.message(target, "error", "BANK OFFLINE", "Check your wireless modem", 1.5)
+end
+
+while running do
+
+
+if not sessionToken and not offline() then
+
+
+if device.onboarding_complete and device.last_name ~= "" then
+lockedStart()
+else
+welcome()
+end
+
+
+if sessionToken and hasColors and not ui.hasMainColor(ROOT) then
+ui.pickMainColor(target, ROOT, "Pick your colour")
+if not ui.hasMainColor(ROOT) then ui.saveMainColor(ROOT, ui.mainColor) end
+end
+end
+if sessionToken or offline() then mainMenu() end
+end
+
+ui.clear(target)
+print("Pocket closed.")

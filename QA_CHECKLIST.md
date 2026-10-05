@@ -7,6 +7,33 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 16 Beta (15.5.0)
+
+Only devices signed up to Beta Updates get this. Sign up a Pocket in Settings → Beta (and any other device you want on it). If the beta will not start on a Pocket, run `installer` and install the Pocket again: that puts the release back. Two Pockets on the beta, friends with each other, make this easiest.
+
+### Getting it
+
+- [ ] Settings → Beta: *FoxyOS 16 Beta, Version 15.5.0*, **Get FoxyOS 16 Beta**. The start-up ends on *Powered by FoxyOS 16 Beta*.
+
+### Calls
+
+- [ ] Pocket A calls Pocket B (Friends → Urgent) while B is in another app: a banner slides down at the top of B's screen, theme-coloured border, the caller's name with moving dots, *Urgent Contact*, **Accept** and **Decline**.
+- [ ] B can keep using the app under it: scrolling, typing, tapping buttons outside the banner all work.
+- [ ] **Decline**: the banner goes, A sees *Declined*. **Accept**: the call opens on B.
+- [ ] A cancels before B answers: the banner goes by itself within a few seconds.
+- [ ] An app's call (the Urgent Contact API) says *Calling on <app>*.
+
+### Messages
+
+- [ ] **Messages** is on the Home Screen with an unread badge; Friends' badge is friend requests only.
+- [ ] A chat: your messages on the right in your theme colour, theirs on the left in grey; in a group, the sender's name over theirs. **^** and **v** scroll.
+- [ ] Messages from the other Pocket appear within about half a second.
+- [ ] The **$** button slides a keypad up from the bottom over the chat. Type an amount (or use the keyboard), **Request**: a yellow bubble *Asks for $5* appears.
+- [ ] On the other Pocket that bubble has **Pay** and **No**. **Pay** asks for the PIN, pays, and both sides see it turn green *Paid*, plus a green *paid $5* bubble. **No** turns it grey *Declined*.
+- [ ] **Send** in the tab asks for the PIN and sends; in a group it asks who first.
+- [ ] A Government chat's tab says *Only the state sends here*; its demands still show **Pay**.
+- [ ] The Friends hub's Chats tab opens the same new chats.
+
 ## FoxyOS 15.1 (15.1.0)
 
 - [ ] Every server's Server tab has **BETA UPDATES** (the Vault has none: it follows its Core). It opens Beta Updates: *Not signed up*, *Running v15.1.0*, **SIGN UP** and **BACK**.

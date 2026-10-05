@@ -122,6 +122,22 @@ function ui.setIdleLock(seconds, handler)
     ui.noteActivity()
 end
 
+-- FoxyOS 16: Interactive Notifications. A banner held over the top of the
+-- screen, with buttons of its own, while whatever is open keeps working
+-- under it: every Scene:wait on its screen draws it last, a tap on one of
+-- its buttons goes to it rather than to the screen, a tap elsewhere on it
+-- does nothing, and a tap anywhere else goes to the screen as usual.
+-- spec: target, top, bottom (the rows it covers), draw(target), buttons
+-- ({ id, x1, y1, x2, y2 }), tap(id) -- run in the wait, which then wakes
+-- its screen to redraw. nil takes it down.
+local overlay
+function ui.setOverlay(spec)
+    overlay = type(spec) == "table" and spec or nil
+    if overlay then overlay.target = surface(overlay.target) end
+end
+
+function ui.overlay() return overlay end
+
 -- A hook every Scene:wait polls, whatever screen is open. Urgent Contact uses
 -- it so an incoming call reaches the user from anywhere, the same way the
 -- idle lock already takes over from anywhere. The handler returns true when
@@ -453,15 +469,41 @@ function Scene:wait(options)
         return true
     end
 
+    -- FoxyOS 16: a banner held on top of this screen, drawn last.
+    local function onTop()
+        return overlay and overlay.target == self.target and overlay or nil
+    end
+    local function drawOverlay()
+        local shown = onTop()
+        if shown and shown.draw then pcall(shown.draw, self.target) end
+    end
+
     -- Run it before waiting too, so a screen that ticks faster than the
     -- interval still lets the task through.
     if runBackgroundTask() then return finish("__wake") end
+    drawOverlay()
     idleTimer = scheduleIdleTimer()
     backgroundTimer = scheduleBackgroundTimer()
     while true do
         local event = { os.pullEvent() }
+        local shown = (event[1] == "mouse_click" or event[1] == "monitor_touch")
+            and not customerScreens[event[2]] and onTop()
+        local onBanner = shown and event[4] >= (shown.top or 1)
+            and event[4] <= (shown.bottom or 0)
         if event[1] == "monitor_touch" and customerScreens[event[2]] then
             -- FoxyOS 13: a customer's screen. Their tap is theirs.
+        elseif onBanner then
+            -- FoxyOS 16: the banner's own buttons; the rest of it is not the
+            -- screen's to answer.
+            recordActivity()
+            for _, button in ipairs(shown.buttons or {}) do
+                if event[3] >= button.x1 and event[3] <= button.x2
+                    and event[4] >= button.y1 and event[4] <= button.y2 then
+                    local ok, err = pcall(shown.tap, button.id)
+                    if not ok then error(err, 0) end
+                    return finish("__wake")
+                end
+            end
         elseif event[1] == "mouse_click" or event[1] == "monitor_touch" then
             if handleIdle() then return finish("__idle") end
             recordActivity()
@@ -488,6 +530,7 @@ function Scene:wait(options)
         elseif backgroundTimer and event[1] == "timer"
             and event[2] == backgroundTimer then
             if runBackgroundTask() then return finish("__wake") end
+            drawOverlay()
             backgroundTimer = scheduleBackgroundTimer()
         elseif idleTimer and event[1] == "timer" and event[2] == idleTimer then
             if handleIdle() then return finish("__idle") end
@@ -1509,6 +1552,57 @@ function ui.message(target, kind, title, body, duration)
         row = row + 1
     end
     sleep(duration or 0.8)
+end
+
+-- FoxyOS 16: a banner at the top of the screen in the look of a notice --
+-- a border and a title in one colour -- with a line under the title and a
+-- row of buttons. `drop`, from 0 to 1, slides it down from above the screen.
+-- Returns what ui.setOverlay needs: the rows it covers and its buttons.
+-- spec: title, body, color, buttons ({ id, label, color }).
+function ui.topBanner(target, spec, drop)
+    target = surface(target)
+    local width = target.getSize()
+    local color = spec.color or ui.theme.accent
+    local inside = ui.theme.background
+    local left, right = 2, math.max(2, width - 1)
+    local span, tall = right - left + 1, 5
+    local top = 1 - math.floor((1 - util.clamp(tonumber(drop) or 1, 0, 1)) * tall + 0.5)
+    local function onScreen(row) return top + row - 1 >= 1 end
+    local function at(row) return top + row - 1 end
+    for row = 1, tall do
+        if onScreen(row) then
+            local edge = row == 1 or row == tall
+            ui.fill(target, left, at(row), span, 1, edge and color or inside)
+            ui.fill(target, left, at(row), 1, 1, color)
+            ui.fill(target, right, at(row), 1, 1, color)
+        end
+    end
+    if onScreen(2) then
+        ui.text(target, left + 2, at(2), ui.truncate(tostring(spec.title or ""), span - 4),
+            color, inside)
+    end
+    if onScreen(3) then
+        ui.text(target, left + 2, at(3), ui.truncate(tostring(spec.body or ""), span - 4),
+            ui.theme.muted, inside)
+    end
+    local buttons = {}
+    local list = spec.buttons or {}
+    local inner = span - 4
+    local each = math.floor((inner - (#list - 1)) / math.max(1, #list))
+    local x = left + 2
+    for index, entry in ipairs(list) do
+        local w = index == #list and (left + 2 + inner - x) or each
+        local label = ui.truncate(tostring(entry.label), w)
+        if onScreen(4) then
+            ui.fill(target, x, at(4), w, 1, entry.color or ui.theme.panel)
+            ui.text(target, x + math.floor((w - #label) / 2), at(4), label,
+                ui.inkOn(entry.color or ui.theme.panel), entry.color or ui.theme.panel)
+        end
+        buttons[#buttons + 1] = { id = entry.id, x1 = x, y1 = at(4), x2 = x + w - 1,
+            y2 = at(4) }
+        x = x + w + 1
+    end
+    return { top = 1, bottom = math.max(1, at(tall)), buttons = buttons }
 end
 
 local function keyboardRows(mode)
