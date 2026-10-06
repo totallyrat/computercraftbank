@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "15.2.0"
+local PROGRAM_VERSION = "16.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -337,14 +337,38 @@ function STYLES.diagonal(c, x, y, t)
 return front(x + y * 1.5, t * (c.w + c.h * 1.5 + 2), 2)
 end
 
-local BUILT_IN = { friends = "ripple", tickets = "tear", myid = "scan",
+
+function STYLES.bubble(c, x, y, t)
+local rise = t * (c.h + 4)
+for _, spot in ipairs({ 0.25, 0.6, 0.85 }) do
+local d = near(c, x, y, c.w * spot, c.h + 2 - rise * (0.8 + spot * 0.4))
+if d <= 2 + t * 6 then return d > 1 + t * 6 and 2 or 1 end
+end
+return front(c.h - y + 1, rise - 2, 1)
+end
+
+
+function STYLES.dots(c, x, y, t)
+if t < 0.5 then
+for index = 1, 3 do
+if t >= (index - 1) / 6
+and near(c, x, y, c.w * index / 4, c.h / 2) <= 1.5 then
+return 2
+end
+end
+return nil
+end
+return front(near(c, x, y, c.w / 2, c.h / 2), (t - 0.5) * 2 * (reach(c) / 2 + 1), 1.5)
+end
+
+local BUILT_IN = { friends = "ripple", messages = "bubble", tickets = "tear", myid = "scan",
 ccg = "arcade", subs = "wave", reminders = "shake", quick = "bolt",
 browser = "tiles", settings = "shutter" }
 
 
 local SHIPPED = { FOXY = "none", MAIL = "envelope", SHOP = "awning",
 COMPANY = "blinds", NET = "radar", WC = "typewriter", BUCK = "coin",
-REVO = "spin", INVT = "unfold" }
+REVO = "spin", INVT = "unfold", YAP = "dots" }
 local OTHERS = { "diamond", "iris", "doors", "rise", "diagonal" }
 
 function opening.style(id)
@@ -2233,20 +2257,29 @@ if action == "back" or action == "__terminate" then return nil end
 end
 end
 
-local function betResultScreen(result)
-local lobby, player, wallet = result.lobby, result.player, result.wallet
+
+
+
+
+local function betResultScreen(result, wallet, code)
 local width, height = target.getSize()
+local cancelled = result.status == "cancelled"
+while running do
 ui.clear(target)
-ui.header(target, player.won and "YOU WON" or "ROUND COMPLETE",
-lobby.game_name, util.formatClock())
-ui.card(target, 2, 5, width - 2, 8,
-player.won and ui.theme.success or ui.theme.warning)
-if player.won then
-ui.center(target, 7, money(player.payout), ui.theme.ink)
+ui.header(target, cancelled and "ROUND CANCELLED" or result.won and "YOU WON"
+or "ROUND COMPLETE", result.game_name, util.formatClock())
+ui.card(target, 2, 5, width - 2, 8, result.won and ui.theme.success
+or ui.theme.warning)
+if cancelled then
+ui.center(target, 7, "WAGER RETURNED", ui.theme.ink)
+ui.center(target, 9, ui.truncate(tostring(result.cancelled_reason
+or "Round stopped"), width - 6), ui.theme.muted)
+elseif result.won then
+ui.center(target, 7, money(result.payout), ui.theme.ink)
 ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
 local release = "One full in-game day"
-for _, hold in ipairs(wallet.holds or {}) do
-if hold.hold_id == player.hold_id then
+for _, hold in ipairs(wallet and wallet.holds or {}) do
+if hold.hold_id == result.hold_id then
 release = "Day " .. hold.release_day .. " " .. hold.release_time
 break
 end
@@ -2255,16 +2288,84 @@ ui.center(target, 11, release, ui.theme.muted)
 else
 ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
 ui.center(target, 9,
-lobby.game == "survivor" and (lobby.winner_name .. " survived")
-or "Result: " .. string.upper(lobby.outcome or "?"),
-ui.theme.muted)
-ui.center(target, 11, "BET WALLET " .. money(wallet.available),
+result.game == "survivor" and (tostring(result.winner_name) .. " survived")
+or "Result: " .. string.upper(result.outcome or "?"),
 ui.theme.muted)
 end
+if wallet then
+ui.center(target, 11 + (result.won and 3 or 0), "BET WALLET "
+.. money(wallet.available), ui.theme.muted)
+end
+ui.center(target, height - 5, ui.truncate("Same code: " .. tostring(code),
+width - 2), colors.cyan)
 local scene = ui.scene(target)
-scene:button("done", 2, height - 3, width - 2, 2, "DONE",
-{ background = ui.theme.accentDark })
-scene:wait()
+local half = math.floor((width - 3) / 2)
+scene:button("leave", 2, height - 3, half, 2, "LEAVE",
+{ background = ui.theme.danger })
+scene:button("stay", 3 + half, height - 3, width - 3 - half, 2, "NEXT GAME",
+{ background = ui.theme.accent,
+foreground = ui.theme.accentInk or ui.inkOn(ui.theme.accent) })
+local action = scene:wait({ tickRate = 2 })
+if action == "stay" then return "stay" end
+if action == "leave" then return "leave" end
+if action == "__terminate" then
+running = false
+return "leave"
+end
+if action == "__tick" then
+betRequest("BET_LOBBY_STATUS", { code = code }, true)
+end
+end
+return "leave"
+end
+
+
+
+local function waitForNextRound(code, status)
+local frame = 0
+while running and status and not status.lobby.closed
+and not (status.lobby.status == "lobby" and (status.player.wager or 0) <= 0) do
+local lobby, player = status.lobby, status.player
+local width, height = target.getSize()
+ui.clear(target, colors.black)
+ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
+ui.center(target, 6, ui.truncate(lobby.code, width - 4), colors.cyan,
+colors.black)
+ui.center(target, 8, player.display_name, colors.white, colors.black)
+ui.center(target, 11, lobby.status == "running" and "GAME IN PROGRESS"
+or "NEXT GAME SOON", colors.magenta, colors.black)
+ui.center(target, 13, (lobby.status == "running" and "YOU'RE IN THE NEXT ONE"
+or "THE CCG PICKS IT") .. string.rep(".", frame % 4),
+colors.lightGray, colors.black)
+local scene = ui.scene(target)
+scene:button("leave", 2, height - 3, width - 2, 2, "LEAVE LOBBY",
+{ background = colors.red })
+local action = scene:wait({ tickRate = 0.5 })
+if action == "leave" or action == "__terminate" then
+if action == "__terminate" then running = false end
+betRequest("BET_LEAVE", { code = code }, true)
+return nil
+end
+frame = frame + 1
+status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+end
+return status
+end
+
+
+
+local function roundResult(status, round)
+local lobby, player = status.lobby, status.player
+if (lobby.round or 1) == round
+and (lobby.status == "finished" or lobby.status == "cancelled") then
+return { status = lobby.status, game = lobby.game,
+game_name = lobby.game_name, outcome = lobby.outcome,
+winner_name = lobby.winner_name, cancelled_reason = lobby.cancelled_reason,
+won = player.won, payout = player.payout, hold_id = player.hold_id }
+end
+local last = status.last
+if last and last.round == round and last.played then return last end
+return nil
 end
 
 local function survivorController(code, initial)
@@ -2319,7 +2420,10 @@ end
 
 local function waitForBetResult(code, initial)
 local status, frame = initial, 0
-while status and status.lobby.status == "lobby" do
+
+
+while status and status.lobby.status == "lobby"
+and (status.player.wager or 0) > 0 do
 local lobby, player = status.lobby, status.player
 local width, height = target.getSize()
 ui.clear(target, colors.black)
@@ -2340,8 +2444,9 @@ local action = scene:wait({ tickRate = 0.5 })
 if action == "leave" then
 if ui.confirm(target, "Leave Lobby?",
 "Your wager returns to Bet Wallet", "LEAVE", "STAY") then
-betRequest("BET_LEAVE", { code = code }, true)
-return nil
+local left, leaveError = betRequest("BET_LEAVE", { code = code }, true)
+if left then return nil end
+ui.message(target, "error", "STILL IN THE LOBBY", leaveError, 1.2)
 end
 elseif action == "__terminate" then
 betRequest("BET_LEAVE", { code = code }, true)
@@ -2419,14 +2524,29 @@ if not joined then
 ui.message(target, "error", "CANNOT JOIN", joinError, 1.1)
 return
 end
-local selection = chooseBetSelection(joined.lobby)
+
+
+
+local status = { lobby = joined.lobby, player = joined.player,
+wallet = unlocked.wallet }
+local myRound
+while running and status do
+local lobby, player = status.lobby, status.player
+if lobby.closed then
+ui.message(target, "warning", "LOBBY CLOSED",
+lobby.cancelled_reason or "The CCG closed it", 1.2)
+return
+end
+if lobby.status == "lobby" and (player.wager or 0) <= 0 then
+local selection = chooseBetSelection(lobby)
 if not selection then
 betRequest("BET_LEAVE", { code = code }, true)
 return
 end
+local wallet = status.wallet or unlocked.wallet
 local amountText = ui.input(target, "Set Wager", {
-hint = joined.lobby.multiplier .. "X if you win // Wallet "
-.. money(unlocked.wallet.available),
+hint = lobby.multiplier .. "X if you win // Wallet "
+.. money(wallet.available),
 mode = "number",
 maxLength = 12,
 })
@@ -2434,22 +2554,40 @@ if not amountText then
 betRequest("BET_LEAVE", { code = code }, true)
 return
 end
-local placed, placeError = betRequest("BET_PLACE_WAGER", {
+local placed, placeError, placeCode = betRequest("BET_PLACE_WAGER", {
 code = code,
 selection = selection,
 amount = tonumber(amountText),
 }, true)
-if not placed then
+if placed then
+myRound = lobby.round or 1
+status = placed
+else
+if placeCode == "LOBBY_CLOSED" then
+ui.message(target, "warning", "GAME STARTED",
+"You're in the next one", 1.2)
+else
 ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
+end
+status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+end
+elseif (player.wager or 0) > 0
+and (lobby.status == "lobby" or lobby.status == "running") then
+myRound = myRound or lobby.round or 1
+local final = waitForBetResult(code, status)
+if not final then return end
+local result = roundResult(final, myRound)
+if result and (result.status == "finished" or not final.lobby.closed) then
+if betResultScreen(result, final.wallet, code) == "leave" then
 betRequest("BET_LEAVE", { code = code }, true)
 return
 end
-local final = waitForBetResult(code, placed)
-if final and final.lobby.status == "finished" then
-betResultScreen(final)
-elseif final and final.lobby.status == "cancelled" then
-ui.message(target, "warning", "LOBBY CANCELLED",
-"Your wager returned to Bet Wallet", 1.1)
+final = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+end
+status = final
+else
+status = waitForNextRound(code, status)
+end
 end
 end
 
@@ -3201,35 +3339,186 @@ end
 return nil
 end
 
-local function chatMoneyMenu(conversation, items)
-local pending = pendingRequestFor(items, account.account_id)
-local width, height = target.getSize()
-ui.clear(target)
-ui.header(target, "Money", conversation.title, util.formatClock())
-local scene = ui.scene(target)
 
 
-local official = conversation.kind == "government"
-if official then
-ui.wrappedText(target, 2, 5,
-"Only the Government can move money in this chat.",
-width - 2, 3, ui.theme.muted)
+
+
+
+
+
+
+local chat = { syncTicks = 10 }
+
+
+function chat.bubble(item, width)
+local mine = account and item.sender_id == account.account_id
+local textWidth = math.max(6, width - 10)
+local lines, background, ink
+if item.kind == "system" then
+return { system = true, lines = ui.wrap(tostring(item.body or ""), width - 4) }
+elseif item.kind == "money_request" then
+lines = { "Asks for " .. money(item.amount) }
+if item.body and item.body ~= "" then
+for _, line in ipairs(ui.wrap(item.body, textWidth)) do lines[#lines + 1] = line end
+end
+local state = item.status == "paid" and "Paid"
+or item.status == "declined" and "Declined"
+or (mine and "Waiting" or nil)
+if state then lines[#lines + 1] = state end
+background = item.status == "paid" and ui.theme.success
+or item.status == "declined" and ui.theme.panel or ui.theme.warning
+ink = item.status == "declined" and ui.theme.muted or colors.black
+elseif item.kind == "money_sent" then
+lines = ui.wrap(tostring(item.body or ("sent " .. money(item.amount))), textWidth)
+background, ink = ui.theme.success, colors.black
 else
-scene:button("send", 2, 5, width - 2, 3, "Send money",
+lines = ui.wrap(tostring(item.body or ""), textWidth)
+background = mine and ui.theme.accent or ui.theme.panel
+ink = mine and (ui.theme.accentInk or ui.inkOn(ui.theme.accent)) or ui.theme.ink
+end
+local widest = 0
+for _, line in ipairs(lines) do widest = math.max(widest, #line) end
+
+local asking = item.kind == "money_request" and item.status == "pending" and not mine
+if asking then widest = math.max(widest, 9) end
+return { lines = lines, background = background, ink = ink, mine = mine,
+width = widest + 2, asking = asking, item = item,
+height = #lines + (asking and 1 or 0) }
+end
+
+
+
+function chat.draw(scene, items, conversation, top, bottom, scroll)
+local width = target.getSize()
+local group = conversation.kind == "group"
+local y = bottom
+local index = #items - scroll
+while index >= 1 and y >= top do
+local item = items[index]
+local bubble = chat.bubble(item, width)
+if bubble.system then
+for line = #bubble.lines, 1, -1 do
+if y >= top then
+ui.center(target, y, bubble.lines[line], ui.theme.muted)
+end
+y = y - 1
+end
+else
+local x = bubble.mine and (width - bubble.width) or 2
+local first = y - bubble.height + 1
+for line, text in ipairs(bubble.lines) do
+local row = first + line - 1
+if row >= top then
+ui.fill(target, x, row, bubble.width, 1, bubble.background)
+ui.text(target, x + 1, row, text, bubble.ink, bubble.background)
+end
+end
+if bubble.asking and y >= top then
+local half = math.floor((bubble.width - 1) / 2)
+scene:button("pay:" .. item.seq, x, y, half, 1, "Pay",
 { background = ui.theme.success, foreground = colors.black })
-scene:button("ask", 2, 9, width - 2, 3, "Ask for money",
+scene:button("no:" .. item.seq, x + half + 1, y, bubble.width - half - 1, 1,
+"No", { background = ui.theme.danger })
+end
+y = first - 1
+
+local previous = items[index - 1]
+if group and not bubble.mine and y >= top and (not previous
+or previous.sender_id ~= item.sender_id or previous.kind == "system") then
+ui.text(target, 2, y, ui.truncate(tostring(item.sender_name), width - 3),
+ui.theme.muted)
+y = y - 1
+end
+end
+
+local previous = items[index - 1]
+if previous and previous.sender_id ~= item.sender_id then y = y - 1 end
+index = index - 1
+end
+if #items == 0 then
+ui.center(target, math.floor((top + bottom) / 2), "Say hello", ui.theme.muted)
+end
+return index >= 1
+end
+
+
+
+
+function chat.moneyTab(conversation, redraw, sync)
+local official = conversation.kind == "government"
+local amount = ""
+local tall = 10
+local function paint(scene, rows)
+local width, height = target.getSize()
+local top = height - rows + 1
+ui.fill(target, 1, top, width, rows, ui.theme.panel)
+ui.fill(target, 1, top, width, 1, ui.theme.accent)
+if rows < tall then return end
+ui.text(target, 2, top, "MONEY", ui.theme.accentInk or colors.black, ui.theme.accent)
+scene:button("close", width - 3, top, 3, 1, "x",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+ui.center(target, top + 1, config.currency .. (amount ~= "" and amount or "0"),
+ui.theme.ink, ui.theme.panel)
+local keysWide = math.floor((width - 4) / 3)
+for row, keysRow in ipairs({ { "1", "2", "3" }, { "4", "5", "6" },
+{ "7", "8", "9" }, { ".", "0", "<" } }) do
+for column, key in ipairs(keysRow) do
+scene:button("key:" .. key, 2 + (column - 1) * (keysWide + 1),
+top + 1 + row, keysWide, 1, key, { background = ui.theme.background,
+foreground = ui.theme.ink, flash = false })
+end
+end
+if official then
+ui.center(target, top + 7, "Only the state sends here",
+ui.theme.muted, ui.theme.panel)
+else
+local half = math.floor((width - 3) / 2)
+scene:button("ask", 2, top + 7, half, 2, "Request",
 { background = ui.theme.warning, foreground = colors.black })
+scene:button("send", 3 + half, top + 7, width - 3 - half, 2, "Send",
+{ background = ui.theme.success, foreground = colors.black })
 end
-if pending then
-scene:button("pay", 2, official and 9 or 13, width - 2, 3,
-"Pay " .. money(pending.amount)
-.. (official and "" or (" to " .. pending.sender_name)),
-{ background = ui.theme.accentDark })
 end
-scene:button("back", 1, height, 8, 1, "< Back",
-{ background = ui.theme.panel })
-local action = scene:wait()
-if action == "send" then
+
+for rows = 2, tall, 2 do
+redraw()
+paint(ui.scene(target), rows)
+sleep(0.03)
+end
+while running do
+redraw()
+local scene = ui.scene(target)
+paint(scene, tall)
+local action = scene:wait({ tickRate = 0.5, flash = false,
+onChar = function(character)
+if character:match("[%d%.]") then return "key:" .. character end
+end,
+keys = type(keys) == "table" and { [keys.backspace] = "key:<",
+[keys.enter] = "ask" } or nil })
+local key = action and action:match("^key:(.)$")
+if action == "close" or action == "__terminate" or action == "back" then return end
+if key == "<" then
+amount = amount:sub(1, -2)
+elseif key == "." then
+if not amount:find(".", 1, true) and #amount < 8 then
+amount = (amount == "" and "0" or amount) .. "."
+end
+elseif key then
+if #amount < 9 then amount = amount .. key end
+elseif action == "__tick" then
+sync()
+elseif (action == "ask" or action == "send") and not official then
+local value = tonumber(amount)
+if not value or value <= 0 then
+ui.message(target, "warning", "Type an amount", nil, 0.8)
+elseif action == "ask" then
+if request("CHAT_REQUEST_MONEY", {
+conversation_id = conversation.conversation_id, amount = value,
+}) then
+sync()
+return
+end
+else
 local recipientId
 if conversation.kind == "group" then
 local overview = request("FRIEND_OVERVIEW", {}, true)
@@ -3240,43 +3529,19 @@ if name == friend.name then members[#members + 1] = friend end
 end
 end
 local chosen = pickFriend("Pay who?", members)
-if not chosen then return end
-recipientId = chosen.account_id
+recipientId = chosen and chosen.account_id
 end
-local amount = socialAmount("Send how much?")
-if not amount then return end
-local pin = ui.pin(target, "Confirm with PIN", true)
-if not pin then return end
-local sent = request("CHAT_SEND_MONEY", {
+if conversation.kind ~= "group" or recipientId then
+local pin = ui.pin(target, "Send " .. money(value), true)
+if pin and request("CHAT_SEND_MONEY", {
 conversation_id = conversation.conversation_id,
-to_account_id = recipientId,
-amount = amount,
-pin = pin,
-})
-if sent then
-ui.message(target, "success", "Sent " .. money(sent.quote.amount),
-"Fee " .. money(sent.quote.fee), 1.2)
-end
-elseif action == "ask" then
-local amount = socialAmount("Ask for how much?")
-if not amount then return end
-if request("CHAT_REQUEST_MONEY", {
-conversation_id = conversation.conversation_id,
-amount = amount,
+to_account_id = recipientId, amount = value, pin = pin,
 }) then
-ui.message(target, "success", "Request sent", nil, 1)
+sync()
+return
 end
-elseif action == "pay" and pending then
-local pin = ui.pin(target, "Pay " .. money(pending.amount), true)
-if not pin then return end
-local paid = request("CHAT_PAY_REQUEST", {
-conversation_id = conversation.conversation_id,
-seq = pending.seq,
-pin = pin,
-})
-if paid then
-ui.message(target, "success", "Paid " .. money(paid.quote.amount),
-"Fee " .. money(paid.quote.fee), 1.2)
+end
+end
 end
 end
 end
@@ -3289,55 +3554,117 @@ if not opened then return end
 local items = opened.messages
 local conversation = opened.conversation
 local nextSeq = opened.next_seq
-local blink = true
-while true do
-local width, height = target.getSize()
-ui.clear(target)
-ui.header(target, conversation.title,
-conversation.kind == "group"
-and (conversation.member_count .. " people") or "Direct",
-util.formatClock(blink))
-drawTranscript(items, 4, height - 4, width)
-local scene = ui.scene(target)
-local half = math.floor((width - 3) / 2)
-scene:button("type", 2, height - 3, half, 2, "Message",
-{ background = ui.theme.accentDark })
-scene:button("money", 2 + half + 1, height - 3, width - 3 - half, 2,
-"Money", { background = ui.theme.success,
-foreground = colors.black })
-scene:button("back", 1, height, 8, 1, "< Back",
-{ background = ui.theme.panel })
-local action = scene:wait({ tickRate = 1 })
-blink = not blink
-if action == "back" or action == "__terminate" then return end
-if action == "type" then
-local body = ui.input(target, "Message", {
-hint = conversation.title,
-maxLength = 120,
-allowSpace = true,
-})
-if body then
-request("CHAT_SEND", {
-conversation_id = conversation.conversation_id,
-body = body,
-})
-end
-elseif action == "money" then
-chatMoneyMenu(conversation, items)
-end
+local blink, scroll, ticks = true, 0, 0
 
+
+
+local function sync(whole)
 local update = request("CHAT_OPEN", {
 conversation_id = conversation.conversation_id,
-after_seq = nextSeq - 1,
+after_seq = whole and 0 or (nextSeq - 1),
 }, true)
-if update then
+if not update then return end
+local changed = false
+if whole then
+items = update.messages
+else
 for _, item in ipairs(update.messages) do
 items[#items + 1] = item
+
+if item.kind == "money_sent" or item.kind == "system" then
+changed = true
+end
+end
 end
 while #items > 60 do table.remove(items, 1) end
 nextSeq = update.next_seq
 conversation = update.conversation
+if changed then sync(true) end
 end
+
+local function draw(scene)
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, conversation.title,
+conversation.kind == "group"
+and (conversation.member_count .. " people")
+or conversation.kind == "publisher" and "Codes" or "Direct",
+util.formatClock(blink))
+return chat.draw(scene or ui.scene(target), items, conversation, 4, height - 3, scroll)
+end
+
+while running do
+local width, height = target.getSize()
+local scene = ui.scene(target)
+local more = draw(scene)
+
+if conversation.kind == "publisher" then
+ui.text(target, 2, height - 1, ui.truncate("Codes only. No replies",
+width - 2), ui.theme.muted)
+else
+scene:button("type", 2, height - 1, width - 7, 1, "Message...",
+{ background = ui.theme.panel, foreground = ui.theme.muted })
+scene:button("money", width - 4, height - 1, 4, 1, config.currency,
+{ background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+end
+scene:button("back", 1, height, 8, 1, "< Back",
+{ background = ui.theme.background })
+if more then
+scene:button("older", width - 8, height, 3, 1, "^",
+{ background = ui.theme.panel })
+end
+if scroll > 0 then
+scene:button("newer", width - 4, height, 3, 1, "v",
+{ background = ui.theme.panel })
+end
+local action = scene:wait({ tickRate = 0.5 })
+blink = not blink
+if action == "back" or action == "__terminate" then return end
+local paySeq = tonumber(action and action:match("^pay:(%d+)$"))
+local noSeq = tonumber(action and action:match("^no:(%d+)$"))
+if action == "type" then
+local body = ui.input(target, "Message", {
+hint = conversation.title, maxLength = 120, allowSpace = true,
+mode = "text",
+})
+if body and util.trim(body) ~= "" then
+request("CHAT_SEND", {
+conversation_id = conversation.conversation_id, body = body,
+})
+scroll = 0
+end
+elseif action == "money" then
+chat.moneyTab(conversation, function() draw() end, function() sync(true) end)
+scroll = 0
+elseif action == "older" then
+scroll = math.min(#items - 1, scroll + 1)
+elseif action == "newer" then
+scroll = math.max(0, scroll - 1)
+elseif paySeq then
+for _, item in ipairs(items) do
+if item.seq == paySeq then
+local pin = ui.pin(target, "Pay " .. money(item.amount), true)
+if pin then
+local paid = request("CHAT_PAY_REQUEST", {
+conversation_id = conversation.conversation_id,
+seq = paySeq, pin = pin,
+})
+if paid then
+ui.message(target, "success", "Paid " .. money(paid.quote.amount),
+paid.quote.recipient, 1)
+end
+end
+end
+end
+sync(true)
+elseif noSeq then
+request("CHAT_DECLINE_REQUEST", {
+conversation_id = conversation.conversation_id, seq = noSeq,
+})
+sync(true)
+end
+ticks = ticks + 1
+sync(ticks % chat.syncTicks == 0)
 end
 end
 
@@ -3405,24 +3732,33 @@ end
 end
 end
 
-local function messagesScreen(tabs)
+
+
+
+local function messagesScreen(tabs, which)
 local page = 1
+local groups = which == "groups"
 while true do
 local list = request("CHAT_LIST")
 if not list then return end
-local conversations = list.conversations
+local conversations = {}
+for _, item in ipairs(list.conversations) do
+if (item.kind == "group") == groups then
+conversations[#conversations + 1] = item
+end
+end
 local width, height = target.getSize()
 ui.clear(target)
-ui.header(target, "Messages", #conversations .. " chats",
-util.formatClock())
+ui.header(target, groups and "Groups" or "Messages", #conversations
+.. (groups and " groups" or " chats"), util.formatClock())
 local scene = ui.scene(target)
-local half = math.floor((width - 3) / 2)
-scene:button("new", 2, 4, half, 2, "New chat",
-{ background = ui.theme.accentDark })
-scene:button("group", 2 + half + 1, 4, width - 3 - half, 2, "New group",
-{ background = ui.theme.panel })
+scene:button(groups and "group" or "new", 2, 4, width - 2, 2,
+groups and "+ New group" or "+ New chat",
+{ background = ui.theme.accent,
+foreground = ui.theme.accentInk or ui.inkOn(ui.theme.accent) })
 if #conversations == 0 then
-ui.center(target, 11, "No chats yet", ui.theme.muted)
+ui.center(target, 11, groups and "No groups yet" or "No chats yet",
+ui.theme.muted)
 end
 local pageItems, actualPage, pages = util.page(conversations, page, 3)
 page = actualPage
@@ -3430,10 +3766,13 @@ for index, item in ipairs(pageItems) do
 local y = 7 + (index - 1) * 4
 local label = item.title
 if item.unread > 0 then label = "(" .. item.unread .. ") " .. label end
+
 scene:button("open:" .. item.conversation_id, 2, y, width - 2, 3,
 label .. "\n" .. ui.truncate(item.last_preview, width - 6), {
-background = item.unread > 0 and ui.theme.accentDark
+background = item.unread > 0 and ui.theme.accent
 or ui.theme.panel,
+foreground = item.unread > 0 and (ui.theme.accentInk
+or ui.inkOn(ui.theme.accent)) or ui.theme.ink,
 })
 end
 pageFooter(scene, page, pages, tabs)
@@ -3984,8 +4323,93 @@ end
 
 
 
+
+
+
+
+
+local ringing = { frame = 0 }
+
+function ringing.draw(where, drop)
+local call = ringing.call
+if not call then return nil end
+local dots = ({ "*  ", " * ", "  *" })[ringing.frame % 3 + 1]
+return ui.topBanner(where, {
+title = ui.truncate(tostring(call.other_name), 14) .. "  " .. dots,
+body = call.app_name and ("Calling on " .. call.app_name) or "Urgent Contact",
+color = ui.theme.accent,
+buttons = { { id = "accept", label = "Accept", color = ui.theme.success },
+{ id = "decline", label = "Decline", color = ui.theme.danger } },
+}, drop)
+end
+
+function ringing.stop()
+ringing.call = nil
+ui.setOverlay(nil)
+end
+
+function ringing.tap(id)
+local call = ringing.call
+ringing.stop()
+if not call then return end
+if id == "accept" then
+local answered = request("URGENT_ANSWER", { call_id = call.call_id, accept = true })
+if answered then urgentCallScreen(answered.call) end
+else
+request("URGENT_ANSWER", { call_id = call.call_id, accept = false }, true)
+end
+end
+
+function ringing.start(call)
+ringing.call, ringing.frame = call, 0
+
+for step = 1, 4 do
+ringing.draw(target, step / 4)
+sleep(0.04)
+end
+local layout = ringing.draw(target, 1)
+ui.setOverlay({ target = target, top = layout.top, bottom = layout.bottom,
+buttons = layout.buttons, tap = ringing.tap,
+draw = function(where) ringing.draw(where, 1) end })
+end
+
+
+
+
+function ringing.code(item)
+ringing.vercode, ringing.codeAt = item, os.clock()
+local function draw(where, drop)
+return ui.topBanner(where, {
+title = ui.truncate(tostring(item.publisher or item.title or "Code"), 14)
+.. "  " .. tostring(item.code),
+body = ui.truncate(tostring(item.app_name or "Your") .. " code", 20),
+color = ui.theme.accent,
+buttons = { { id = "paste", label = "Paste", color = ui.theme.success },
+{ id = "close", label = "Close", color = ui.theme.panel } },
+}, drop)
+end
+for step = 1, 4 do
+draw(target, step / 4)
+sleep(0.04)
+end
+local layout = draw(target, 1)
+ui.setOverlay({ target = target, top = layout.top, bottom = layout.bottom,
+buttons = layout.buttons,
+draw = function(where) draw(where, 1) end,
+tap = function(id)
+if id == "paste" and type(ui.paste) == "function" then ui.paste(item.code) end
+ringing.vercode = nil
+ui.setOverlay(nil)
+end })
+end
+
 watchForUrgentCalls = function()
 if not sessionToken or inCall then return false end
+
+if ringing.vercode and not ringing.call and os.clock() - (ringing.codeAt or 0) > 60 then
+ringing.vercode = nil
+ui.setOverlay(nil)
+end
 local poll = request("PUMPE_POLL", { position = net.locate(1) }, true)
 if not poll then return false end
 local latest = poll.latest
@@ -4013,7 +4437,29 @@ return true
 end
 if poll.call then
 if latest then lastBannerId = latest.notification_id end
+if type(ui.setOverlay) ~= "function" or type(ui.topBanner) ~= "function" then
 incomingCallScreen(poll.call)
+return true
+end
+if ringing.call and ringing.call.call_id == poll.call.call_id then
+
+ringing.frame = ringing.frame + 1
+return false
+end
+ringing.start(poll.call)
+return true
+end
+
+if ringing.call then
+ringing.stop()
+return true
+end
+
+if latest and latest.notification_id ~= lastBannerId and latest.kind == "vercode"
+and latest.code and type(ui.setOverlay) == "function"
+and type(ui.topBanner) == "function" then
+lastBannerId = latest.notification_id
+ringing.code(latest)
 return true
 end
 if latest and latest.notification_id ~= lastBannerId then
@@ -4605,28 +5051,31 @@ end
 
 
 
+
+
+local function messagesApp(action)
+ui.runTabs({
+list = { { id = "chats", label = "Chats" }, { id = "groups", label = "Groups" } },
+color = colors.green,
+start = action == "groups" and "groups" or "chats",
+pages = { chats = function(spec) return messagesScreen(spec, "chats") end,
+groups = function(spec) return messagesScreen(spec, "groups") end },
+running = function() return running and sessionToken ~= nil end,
+})
+end
+
 local function friendsApp(action)
 if action == "urgent" then urgentScreen() return end
+
+if action == "messages" then messagesApp() return end
 ui.runTabs({
-list = { { id = "messages", label = "Chats" },
-{ id = "people", label = "Friends", short = "Pals" },
+list = { { id = "people", label = "Friends" },
 { id = "urgent", label = "Urgent", short = "SOS" } },
 color = colors.cyan,
-start = action == "people" and "people" or "messages",
-pages = { messages = messagesScreen, people = friendsScreen,
-urgent = urgentScreen },
+start = "people",
+pages = { people = friendsScreen, urgent = urgentScreen },
 once = { urgent = true },
 running = function() return running and sessionToken ~= nil end,
-
-
-refresh = function(spec)
-local poll = request("PUMPE_POLL", {}, true) or {}
-local unread = poll.unread_messages or 0
-spec.list[1].label = unread > 0
-and ("Chats " .. math.min(unread, 9)) or "Chats"
-spec.list[1].short = unread > 0 and ("Chat" .. math.min(unread, 9))
-or nil
-end,
 })
 end
 
@@ -5784,6 +6233,38 @@ browse = function(domain) return webpage.browse(domain) end,
 
 
 
+
+vercode = {
+send = function()
+return request("VERCODE_SEND", { app_id = entry.app_id }, true)
+end,
+check = function(code)
+return request("VERCODE_CHECK", { app_id = entry.app_id,
+code = tostring(code or "") }, true)
+end,
+ask = function(title)
+local sent, sendError = request("VERCODE_SEND",
+{ app_id = entry.app_id }, true)
+if not sent then return nil, sendError end
+for _ = 1, 3 do
+local typed = ui.input(target, title or "Your code", {
+hint = "From " .. ui.truncate(tostring(sent.publisher), 12)
+.. " in Messages", mode = "integer", maxLength = 6 })
+if not typed then return nil, "Cancelled" end
+local ok, err, code = request("VERCODE_CHECK", {
+app_id = entry.app_id, code = typed }, true)
+if ok then return true end
+ui.message(target, "error", "Not that code", err, 1.2)
+if code == "VERCODE_LOCKED" or code == "VERCODE_EXPIRED" then
+return nil, err
+end
+end
+return nil, "Too many tries"
+end,
+},
+
+
+
 mail = {
 send = function(spec)
 spec = type(spec) == "table" and spec or {}
@@ -6316,18 +6797,40 @@ end
 
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
 SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
-BUCK = "buckapp.lua", REVO = "revolution.lua" }
+BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua" }
 
-function beta.syncApps()
-if not beta.isBeta(config.version) or offline() then return end
+
+
+function beta.manifest()
+if not beta.isBeta(config.version) or offline() then return nil end
 local okLib, update = pcall(require, "lib.update")
 local url = tostring(config.beta_manifest_url or "")
-if not okLib or type(update) ~= "table" or url == "" then return end
+if not okLib or type(update) ~= "table" or url == "" then return nil end
 local manifest = update.fetchManifest(url, update.PUBLISHED_FILES, "beta",
 update.PUBLISHED_OPTIONAL)
+if not manifest or manifest.version ~= config.version then return nil end
+return manifest, update, url
+end
 
 
-if not manifest or manifest.version ~= config.version then return end
+
+
+function beta.fetchApp(appId)
+local manifest, update, url = beta.manifest()
+if not manifest then return nil end
+for _, file in ipairs(manifest.files) do
+if file.path == beta.APP_FILES[appId] then
+local body = update.fetchFile(url, file, manifest.version)
+if type(body) ~= "string" then return nil end
+return body, { app_id = appId, author = "Foxy",
+name = body:match("^%-%- PUMPE APP: ([^\n]+)") or appId }, file.checksum
+end
+end
+end
+
+function beta.syncApps()
+local manifest, update, url = beta.manifest()
+if not manifest then return end
 local byPath = {}
 for _, file in ipairs(manifest.files) do byPath[file.path] = file end
 local changed = false
@@ -6629,9 +7132,15 @@ end
 
 
 local APPS = {
+
+
+messages = { name = "Messages", glyph = "\"", color = colors.green,
+open = messagesApp, actions = {
+{ id = "chats", label = "Chats", hint = "One to one" },
+{ id = "groups", label = "Group Chats", hint = "Everybody at once" },
+} },
 friends = { name = "Friends", glyph = "@", color = colors.cyan,
 open = friendsApp, actions = {
-{ id = "messages", label = "Messages", hint = "Open a chat" },
 { id = "people", label = "Friends", hint = "Add or find someone" },
 { id = "urgent", label = "Urgent Contact",
 hint = "Reach a friend fast" },
@@ -6669,7 +7178,7 @@ quick = { name = "Quick", glyph = "&", color = colors.lime, actions = {
 settings = { name = "Settings", glyph = "*", color = colors.gray },
 }
 local APP_ORDER = {
-"friends", "tickets", "myid", "ccg", "subs",
+"friends", "messages", "tickets", "myid", "ccg", "subs",
 "reminders", "quick", "browser", "settings",
 }
 
@@ -6718,7 +7227,8 @@ end
 APPS[id] = {
 name = entry.name,
 glyph = string.upper(entry.name:sub(1, 1)),
-color = EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
+color = entry.app_id == "YAP" and colors.cyan
+or EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
 actions = entry.actions,
 open = function(action) runInstalledApp(entry, action) end,
 }
@@ -6728,9 +7238,12 @@ end
 local DOCK_SLOTS = 4
 
 local function appBadge(id, poll)
-if id == "friends" then
-local total = (poll.unread_messages or 0) + (poll.friend_requests or 0)
-if total > 0 then return total end
+
+if id == "messages" and (poll.unread_messages or 0) > 0 then
+return poll.unread_messages
+end
+if id == "friends" and (poll.friend_requests or 0) > 0 then
+return poll.friend_requests
 end
 return nil
 end
@@ -6977,12 +7490,24 @@ end
 
 
 
+
+
+
+
+
+
 local function ensureFoxy()
 local missing = {}
 for _, appId in ipairs({ "FOXY", "MAIL" }) do
 if not installedApp(appId) then missing[appId] = true end
 end
-if next(missing) == nil then return end
+device.included = type(device.included) == "table" and device.included or {}
+if not device.included.YAP and installedApp("YAP") then
+device.included.YAP = true
+saveDevice()
+end
+local wantYap = not device.included.YAP
+if next(missing) == nil and not wantYap then return end
 local listed = storeRequest("APP_LIST", {}, true)
 local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
 for _, app in ipairs(listed and listed.apps or {}) do
@@ -6993,6 +7518,25 @@ if missing[app.app_id] and (app.app_id == "FOXY" or room > 0) then
 if installApp(app) then room = room - 1 end
 end
 end
+if not wantYap or room <= 0 then return end
+local body, app, sum
+if beta.isBeta(config.version) then
+body, app, sum = beta.fetchApp("YAP")
+else
+for _, listedApp in ipairs(listed and listed.apps or {}) do
+if listedApp.app_id == "YAP" then app = listedApp end
+end
+body = app and fetchApp(app)
+end
+if not body or not keepApp(app, body) then return end
+local entry = installedApp("YAP")
+if entry and sum then
+entry.beta, entry.beta_sum = config.version, sum
+saveApps()
+end
+device.included.YAP = true
+saveDevice()
+return tostring(app.name or "Yap!")
 end
 
 
@@ -7553,7 +8097,7 @@ APPS.settings.open = settingsScreen
 APPS.browser.open = appBrowser
 APPS.reminders.open = agenda.reminders
 APPS.quick.open = agenda.quick
-pcall(ensureFoxy)
+local includedOk, included = pcall(ensureFoxy)
 
 pcall(webpage.retireShopApps)
 pcall(beta.syncApps)
@@ -7563,6 +8107,8 @@ refreshInstalledApps()
 if restoredOk and #restored > 0 then
 showBanner({ title = #restored == 1 and "App is back"
 or (#restored .. " apps are back"), body = table.concat(restored, ", ") })
+elseif includedOk and included then
+showBanner({ title = included .. " is here", body = "New in FoxyOS 16, by Foxy" })
 end
 
 local blink, tick, page, alertOffset = true, 0, 1, 0

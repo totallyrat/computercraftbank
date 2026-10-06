@@ -9,7 +9,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.2.0"
+local PROGRAM_VERSION = "16.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -428,9 +428,9 @@ local function request(action, payload, silent, timeout)
         payload.console_id = device.console_id
         payload.console_token = device.console_token
     end
-    local result, err = client:request(action, payload, timeout)
+    local result, err, code = client:request(action, payload, timeout)
     if not result and not silent then ui.networkError(target, err) end
-    return result, err
+    return result, err, code
 end
 
 local function fitText(value, width)
@@ -729,11 +729,15 @@ local function waitForLobby(game, existingLobby)
     local countdown
     while running and lobby.status == "lobby" do
         local width, height, top, bottom, footerY = frame()
+        definition = gameById[lobby.game] or definition
         local ready = readyCount(lobby)
+        -- FoxyOS 16: enough wagers start it. Anybody still choosing sits
+        -- this round out and stays in the lobby for the next.
         local startable = ready >= definition.minimum
-            and ready == (lobby.player_count or 0)
         ui.clear(target, colors.black)
-        arcadeHeader(lobby.game_name, "LOBBY // CCG APP > BET", colors.cyan)
+        arcadeHeader(lobby.game_name, (lobby.round or 1) > 1
+            and ("ROUND " .. lobby.round .. " // SAME CODE")
+            or "LOBBY // CCG APP > BET", colors.cyan)
         ui.center(target, top, "JOIN CODE", colors.lightGray, colors.black)
         ui.center(target, top + 2, lobby.code, colors.white, colors.black)
         ui.fill(target, 2, top + 4, width - 2, 1, colors.gray, "-")
@@ -746,6 +750,9 @@ local function waitForLobby(game, existingLobby)
             statusText = "AUTO WAITING FOR " .. definition.minimum .. "+ READY"
         else
             statusText = ready .. "/" .. (lobby.player_count or 0) .. " READY"
+            if startable and ready < (lobby.player_count or 0) then
+                statusText = statusText .. " // REST SIT OUT"
+            end
         end
         ui.text(target, 2, bottom, fitText(statusText, width - 2),
             startable and colors.lime or colors.orange, colors.black)
@@ -768,9 +775,14 @@ local function waitForLobby(game, existingLobby)
             if refreshed then lobby = refreshed.lobby end
             if auto and lobby.status == "lobby" then
                 local waiting = readyCount(lobby)
-                if waiting >= definition.minimum
-                    and waiting == (lobby.player_count or 0) then
-                    countdown = (countdown or AUTO_START_TICKS) - 1
+                if waiting >= definition.minimum then
+                    -- Everybody ready: the usual wait. Somebody still
+                    -- choosing: longer, and then they sit this one out.
+                    local all = waiting == (lobby.player_count or 0)
+                    countdown = countdown or (all and AUTO_START_TICKS
+                        or AUTO_START_TICKS * 4)
+                    if all then countdown = math.min(countdown, AUTO_START_TICKS) end
+                    countdown = countdown - 1
                     if countdown <= 0 then
                         local started = request("CCG_START",
                             { code = lobby.code }, true)
@@ -919,15 +931,22 @@ local function survivorAnimation(lobby)
     return lobby
 end
 
+-- FoxyOS 16: the lobby stays open after a round. Returns the game for the
+-- next round in it -- the same one, or another -- or nil to close it.
 local function resultScreen(lobby)
-    if not lobby then return end
+    if not lobby then return nil end
     local countdown = auto and AUTO_NEXT_TICKS or nil
     while running do
         local width, height, top, bottom, footerY = frame()
         ui.clear(target, colors.black)
-        arcadeHeader("RESULT", lobby.game_name, colors.lime)
+        arcadeHeader(lobby.status == "cancelled" and "ROUND CANCELLED" or "RESULT",
+            lobby.game_name, colors.lime)
         local caption, headline, tint
-        if lobby.game == "heads_tails" then
+        if lobby.status == "cancelled" then
+            caption, headline = fitText(lobby.cancelled_reason or "ROUND STOPPED",
+                width - 2), "WAGERS RETURNED"
+            tint = colors.orange
+        elseif lobby.game == "heads_tails" then
             caption, headline = "THE COIN LANDED",
                 string.upper(lobby.outcome or "?")
             tint = colors.yellow
@@ -944,38 +963,50 @@ local function resultScreen(lobby)
         ui.center(target, middle, caption, colors.lightGray, colors.black)
         ui.center(target, middle + 2, fitText(headline, width - 2),
             tint, colors.black)
-        ui.center(target, middle + 4,
-            tostring(lobby.multiplier or 0) .. "X PAYOUT",
-            colors.white, colors.black)
+        if lobby.status ~= "cancelled" then
+            ui.center(target, middle + 4,
+                tostring(lobby.multiplier or 0) .. "X PAYOUT",
+                colors.white, colors.black)
+        end
+        -- The players are still in the lobby, under the same code.
+        ui.center(target, bottom - 1, fitText("SAME CODE " .. tostring(lobby.code)
+            .. " // PLAYERS STAY", width - 2), colors.cyan, colors.black)
         ui.center(target, bottom, fitText("WINNINGS MOVE TO 1-DAY HOLDING",
             width - 2), colors.magenta, colors.black)
 
         local scene = ui.scene(target)
+        local half = math.max(8, math.floor((width - 3) / 2))
         if auto then
-            local half = math.max(8, math.floor((width - 3) / 2))
             scene:button("stop", 2, footerY, half, 2, "STOP AUTO",
                 { background = colors.red })
             scene:button("again", 2 + half + 1, footerY, width - 3 - half, 2,
                 "NEXT GAME " .. tostring(countdown) .. "s",
                 { background = colors.lime, foreground = colors.black })
         else
-            scene:button("again", math.max(2, math.floor(width / 4)), footerY,
-                math.max(10, math.floor(width / 2)), 2, "NEXT GAME",
-                { background = colors.lime, foreground = colors.black })
+            scene:button("change", 2, footerY, half, 2, "OTHER GAME",
+                { background = colors.gray })
+            scene:button("again", 2 + half + 1, footerY, width - 3 - half, 2,
+                "NEXT GAME", { background = colors.lime, foreground = colors.black })
+            scene:button("close", width - 6, 1, 6, 1, "CLOSE",
+                { background = colors.red })
         end
         local action = scene:wait({ tickRate = 1 })
-        if action == "again" then return end
-        if action == "stop" then
-            if stopAuto() then return end
-            countdown = AUTO_NEXT_TICKS
+        if action == "again" then return auto and nextAutoGame() or lobby.game end
+        if action == "close" then return nil end
+        if action == "change" then
+            local picked = gameMenu()
+            if picked then return picked end
+        elseif action == "stop" then
+            -- Off Auto Mode, the lobby stays: the same screen, by hand.
+            if not stopAuto() then countdown = AUTO_NEXT_TICKS end
         elseif action == "__terminate" then
             running = false
-            return
+            return nil
         elseif action == "__tick" then
             net.autoUpdate(config, "ccg", ROOT, client)
-            if countdown then
+            if countdown and auto then
                 countdown = countdown - 1
-                if countdown <= 0 then return end
+                if countdown <= 0 then return nextAutoGame() end
             end
         end
     end
@@ -1560,24 +1591,28 @@ end
 -- when it is opened, not at start-up, so nothing else waits for it. An arena
 -- in Auto Mode waits here for its CCG Server and never falls back to a menu.
 
-local function playRound(game, resumedLobby)
-    local lobby, failure = waitForLobby(game, resumedLobby)
-    if not lobby and auto and failure == "offline" then autoStandby() end
+-- One round: the lobby (a new one, or the one the last round was in), the
+-- game, and the lobby as it ended up.
+local function playRound(game, lobby)
+    if not lobby or lobby.status == "lobby" then
+        local failure
+        lobby, failure = waitForLobby(game, lobby)
+        if not lobby and auto and failure == "offline" then autoStandby() end
+    end
     if lobby and lobby.status == "running" then
-        if game == "heads_tails" then
+        if lobby.game == "heads_tails" then
             lobby = coinAnimation(lobby)
-        elseif game == "race" then
+        elseif lobby.game == "race" then
             lobby = raceAnimation(lobby)
         else
             lobby = survivorAnimation(lobby)
         end
     end
-    if lobby and lobby.status == "finished" then
-        resultScreen(lobby)
-    elseif lobby and lobby.status == "cancelled" and not auto then
+    if lobby and lobby.closed and not auto then
         ui.message(target, "warning", "LOBBY CLOSED",
             lobby.cancelled_reason or "Every wager was returned", 1.2)
     end
+    return lobby
 end
 
 local function betPlay()
@@ -1589,19 +1624,36 @@ local function betPlay()
         autoStandby()
     end
     local resume = request("CCG_CONSOLE_STATUS", {}, true)
-    local resumedLobby = resume and resume.lobby or nil
+    local lobby = resume and resume.lobby or nil
+    -- FoxyOS 16: a lobby lasts from game to game, under one code. After a
+    -- round the players stay in it, and the next round opens in it.
     while running do
-        local game
-        if resumedLobby then
-            game = resumedLobby.game
-        elseif auto then
-            game = nextAutoGame()
+        if lobby and lobby.closed then lobby = nil end
+        if not lobby then
+            local game = auto and nextAutoGame() or gameMenu()
+            if not game then return end
+            lobby = playRound(game)
+        elseif lobby.status == "lobby" or lobby.status == "running" then
+            lobby = playRound(lobby.game, lobby)
         else
-            game = gameMenu()
+            local nextGame = resultScreen(lobby)
+            if not running then return end
+            if nextGame then
+                local reopened, err, code = request("CCG_NEXT_ROUND",
+                    { code = lobby.code, game = nextGame }, true)
+                if reopened then
+                    lobby = reopened.lobby
+                elseif code == "LOBBY_NOT_FOUND" or code == "LOBBY_CLOSED" then
+                    -- Gone from the server: a new lobby, which keeps the code.
+                    lobby = nil
+                elseif not auto then
+                    ui.message(target, "error", "NEXT ROUND", err, 1.4)
+                end
+            else
+                request("CCG_CANCEL_LOBBY", { code = lobby.code }, true)
+                lobby = nil
+            end
         end
-        if not game then return end
-        playRound(game, resumedLobby)
-        resumedLobby = nil
     end
 end
 

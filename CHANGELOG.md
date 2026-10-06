@@ -1,5 +1,37 @@
 # Changelog
 
+## 16.0.0
+
+FoxyOS 16: the two betas, finished. Update the Bank (Core and Vault), the
+App Server and the CCG Server. The App Server ships Yap!, which every
+Pocket fetches once, and Bet's lobbies need the new CCG Server.
+
+**Interactive Notifications.** A call is a banner at the top of the screen
+with Accept and Decline, and the Pocket keeps working under it. A
+verification code is one too, with Paste.
+
+**Messages.** An app of its own: bubbles in your theme colour, syncing
+twice a second in a chat, Chats and Groups tabs. Money requests are bubbles
+with Pay and No, and the money button slides a keypad up over the chat.
+
+**Yap!** Yap and Yap Chat are one app, by Foxy, on every Pocket: Feed, a
+PIN-locked Chat whose messages go a day after they are read, and Yap Map.
+Taken off, it stays off.
+
+**Yap Map.** Your friends' coordinates while they are in a Coordinate Zone,
+where the GPS Anchors can place their Pocket. Only friends who use Yap!;
+Hide me takes you off.
+
+**VerCode.** Apps send verification codes, from their publisher, into
+Messages and as a notification with Paste. Signing up to Yap! uses one.
+
+**Bet lobbies stay open.** On a CCG and in the CCG app, a lobby lasts from
+game to game under the same code. After a round the players stay in it,
+see how it went and wager again for the next, which the CCG can switch to
+another game; a CCG keeps its code for its next lobby too. Whoever has
+wagered when a round starts plays, and anybody still choosing sits that
+round out instead of holding it up.
+
 ## 15.5.1
 
 FoxyOS 16 Beta 2, for devices signed up to Beta Updates. Not tested yet:

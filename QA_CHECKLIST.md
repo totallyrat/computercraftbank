@@ -7,14 +7,30 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
-## FoxyOS 16 Beta 2 (15.5.1)
+## FoxyOS 16 (16.0.0)
 
-Only devices signed up to Beta Updates get this. The Bank and App Server stay on the release: VerCode and Yap Map need the Bank on 15.2 first. Sign up a Pocket in Settings → Beta (and any other device you want on it). If the beta will not start on a Pocket, run `installer` and install the Pocket again: that puts the release back. Two Pockets on the beta, friends with each other, make this easiest.
+Update the Bank (Core and Vault), the App Server and the CCG Server first. A Pocket on a beta takes 16.0.0 by itself.
+
+### Bet lobbies
+
+- [ ] A CCG starts Heads or Tails. Two Pockets join from CCG → Bet with its code and wager. After the result each Pocket shows **LEAVE** and **NEXT GAME**, and *Same code: …*.
+- [ ] **NEXT GAME** on the CCG opens round 2 in the same lobby: header *ROUND 2 // SAME CODE*, both players listed, neither ready. The Pockets ask for a pick and a wager again without typing the code.
+- [ ] **OTHER GAME** on the CCG switches round 2 to Race or Survivor, same code. Survivor with more than 8 in the lobby says it takes 8.
+- [ ] With one player ready and one still picking, **START** works: *1/2 READY // REST SIT OUT*. The one still picking is told *You're in the next one* when they wager.
+- [ ] A third Pocket joins mid-round: it waits (*YOU'RE IN THE NEXT ONE*) and plays the next round.
+- [ ] **LEAVE** on a Pocket after a result takes it out; the CCG's list drops it.
+- [ ] **CLOSE** on the CCG's result ends the lobby: Pockets say *LOBBY CLOSED*. A new lobby from the same CCG has the same code.
+- [ ] Auto Mode: rounds keep coming in one lobby under one code; ROTATE ALL GAMES changes the game each round, not the code.
+- [ ] Bet Wallets add up after a few rounds: wins held, losses gone, refunds back.
+
+### From the betas
+
+Two Pockets that are friends with each other make this easiest.
 
 ### Getting it
 
-- [ ] Settings → Beta: *FoxyOS 16 Beta 2, Version 15.5.1*, **Get FoxyOS 16 Beta 2**. A Pocket on Beta 1 takes it by itself. The start-up ends on *Powered by FoxyOS 16 Beta 2*.
-- [ ] After the restart a banner says *Yap! is here*, and Yap! (a cyan **Y**) is on the Home Screen.
+- [ ] The start-up ends on *Powered by FoxyOS 16*. Settings → Beta says *No beta right now*.
+- [ ] After the restart a banner says *Yap! is here*, and Yap! (a cyan **Y**) is on the Home Screen. In the App Browser it says *Foxy*.
 
 ### Calls
 
@@ -55,7 +71,7 @@ Only devices signed up to Beta Updates get this. The Bank and App Server stay on
 ### Yap Map
 
 - [ ] **Map**: rings go out, then friends who use Yap! drop in. One whose Pocket is near the GPS Anchors shows *x y z* and how far away; one out of range says *Not in a zone*. A friend without Yap! is not listed.
-- [ ] *You* at the top shows your own coordinates, or *Not in a Coordinate Zone*.
+- [ ] *You* at the top shows your own coordinates, or *Not in a zone*.
 - [ ] **Hide me** asks first; afterwards your friends do not see you, and your row says *You (hidden)*. **Show me** puts you back.
 ## FoxyOS 15.2 (15.2.0)
 

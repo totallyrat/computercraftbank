@@ -622,7 +622,7 @@ return function(api)
             ui.text(target, 3, 4, map and map.hidden and "You (hidden)" or "You",
                 here and colors.black or ui.theme.ink, here and MAP or ui.theme.panel)
             ui.text(target, 3, 5, ui.truncate(here and coords(here)
-                or "Not in a Coordinate Zone", width - 4),
+                or "Not in a zone", width - 4),
                 here and colors.black or ui.theme.muted, here and MAP or ui.theme.panel)
             local scene = ui.scene(target)
             local per = math.max(1, math.floor((height - 10) / 2))

@@ -151,6 +151,23 @@ local function surface(target)
 return target or term.current()
 end
 
+
+
+
+
+
+
+
+
+local overlay
+function ui.setOverlay(spec)
+overlay = type(spec) == "table" and spec or nil
+if overlay then overlay.target = surface(overlay.target) end
+end
+
+function ui.overlay() return overlay end
+
+
 function ui.size(target)
 return surface(target).getSize()
 end
@@ -454,14 +471,40 @@ return true
 end
 
 
+local function onTop()
+return overlay and overlay.target == self.target and overlay or nil
+end
+local function drawOverlay()
+local shown = onTop()
+if shown and shown.draw then pcall(shown.draw, self.target) end
+end
+
+
 
 if runBackgroundTask() then return finish("__wake") end
+drawOverlay()
 idleTimer = scheduleIdleTimer()
 backgroundTimer = scheduleBackgroundTimer()
 while true do
 local event = { os.pullEvent() }
+local shown = (event[1] == "mouse_click" or event[1] == "monitor_touch")
+and not customerScreens[event[2]] and onTop()
+local onBanner = shown and event[4] >= (shown.top or 1)
+and event[4] <= (shown.bottom or 0)
 if event[1] == "monitor_touch" and customerScreens[event[2]] then
 
+elseif onBanner then
+
+
+recordActivity()
+for _, button in ipairs(shown.buttons or {}) do
+if event[3] >= button.x1 and event[3] <= button.x2
+and event[4] >= button.y1 and event[4] <= button.y2 then
+local ok, err = pcall(shown.tap, button.id)
+if not ok then error(err, 0) end
+return finish("__wake")
+end
+end
 elseif event[1] == "mouse_click" or event[1] == "monitor_touch" then
 if handleIdle() then return finish("__idle") end
 recordActivity()
@@ -488,6 +531,7 @@ if action then return finish(action) end
 elseif backgroundTimer and event[1] == "timer"
 and event[2] == backgroundTimer then
 if runBackgroundTask() then return finish("__wake") end
+drawOverlay()
 backgroundTimer = scheduleBackgroundTimer()
 elseif idleTimer and event[1] == "timer" and event[2] == idleTimer then
 if handleIdle() then return finish("__idle") end
@@ -1511,6 +1555,57 @@ end
 sleep(duration or 0.8)
 end
 
+
+
+
+
+
+function ui.topBanner(target, spec, drop)
+target = surface(target)
+local width = target.getSize()
+local color = spec.color or ui.theme.accent
+local inside = ui.theme.background
+local left, right = 2, math.max(2, width - 1)
+local span, tall = right - left + 1, 5
+local top = 1 - math.floor((1 - util.clamp(tonumber(drop) or 1, 0, 1)) * tall + 0.5)
+local function onScreen(row) return top + row - 1 >= 1 end
+local function at(row) return top + row - 1 end
+for row = 1, tall do
+if onScreen(row) then
+local edge = row == 1 or row == tall
+ui.fill(target, left, at(row), span, 1, edge and color or inside)
+ui.fill(target, left, at(row), 1, 1, color)
+ui.fill(target, right, at(row), 1, 1, color)
+end
+end
+if onScreen(2) then
+ui.text(target, left + 2, at(2), ui.truncate(tostring(spec.title or ""), span - 4),
+color, inside)
+end
+if onScreen(3) then
+ui.text(target, left + 2, at(3), ui.truncate(tostring(spec.body or ""), span - 4),
+ui.theme.muted, inside)
+end
+local buttons = {}
+local list = spec.buttons or {}
+local inner = span - 4
+local each = math.floor((inner - (#list - 1)) / math.max(1, #list))
+local x = left + 2
+for index, entry in ipairs(list) do
+local w = index == #list and (left + 2 + inner - x) or each
+local label = ui.truncate(tostring(entry.label), w)
+if onScreen(4) then
+ui.fill(target, x, at(4), w, 1, entry.color or ui.theme.panel)
+ui.text(target, x + math.floor((w - #label) / 2), at(4), label,
+ui.inkOn(entry.color or ui.theme.panel), entry.color or ui.theme.panel)
+end
+buttons[#buttons + 1] = { id = entry.id, x1 = x, y1 = at(4), x2 = x + w - 1,
+y2 = at(4) }
+x = x + w + 1
+end
+return { top = 1, bottom = math.max(1, at(tall)), buttons = buttons }
+end
+
 local function keyboardRows(mode)
 if mode == "integer" then return { "123", "456", "789", "-0<" } end
 if mode == "number" then return { "123", "456", "789", ".0<" } end
@@ -1530,6 +1625,20 @@ end
 return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_<" }
 end
 
+
+
+
+local clipboard = {}
+function ui.paste(text)
+clipboard.text, clipboard.at = tostring(text or ""), util.nowMs()
+end
+local function takePaste()
+if not clipboard.text or util.nowMs() - (clipboard.at or 0) > 60000 then return nil end
+local text = clipboard.text
+clipboard.text = nil
+return text
+end
+
 function ui.input(target, title, options)
 target = surface(target)
 options = options or {}
@@ -1545,6 +1654,9 @@ local blink = true
 local suggestions, suggestedFor = {}, nil
 
 while true do
+
+local pasted = takePaste()
+if pasted then value = pasted:sub(1, maxLength) end
 ui.clear(target)
 ui.header(target, title, options.hint)
 local fieldY = options.hint and 5 or 4

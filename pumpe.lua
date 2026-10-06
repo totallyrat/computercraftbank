@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.5.1"
+local PROGRAM_VERSION = "16.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2257,38 +2257,115 @@ do
         end
     end
 
-    local function betResultScreen(result)
-        local lobby, player, wallet = result.lobby, result.player, result.wallet
+    -- How a round went. FoxyOS 16: the lobby stays open after it, so this
+    -- asks whether to stay for the next game. `result` is the round's game,
+    -- outcome, winner_name, won, payout, hold_id and status. While it is up
+    -- the Pocket keeps telling the CCG Server it is still here.
+    local function betResultScreen(result, wallet, code)
         local width, height = target.getSize()
-        ui.clear(target)
-        ui.header(target, player.won and "YOU WON" or "ROUND COMPLETE",
-            lobby.game_name, util.formatClock())
-        ui.card(target, 2, 5, width - 2, 8,
-            player.won and ui.theme.success or ui.theme.warning)
-        if player.won then
-            ui.center(target, 7, money(player.payout), ui.theme.ink)
-            ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
-            local release = "One full in-game day"
-            for _, hold in ipairs(wallet.holds or {}) do
-                if hold.hold_id == player.hold_id then
-                    release = "Day " .. hold.release_day .. " " .. hold.release_time
-                    break
+        local cancelled = result.status == "cancelled"
+        while running do
+            ui.clear(target)
+            ui.header(target, cancelled and "ROUND CANCELLED" or result.won and "YOU WON"
+                or "ROUND COMPLETE", result.game_name, util.formatClock())
+            ui.card(target, 2, 5, width - 2, 8, result.won and ui.theme.success
+                or ui.theme.warning)
+            if cancelled then
+                ui.center(target, 7, "WAGER RETURNED", ui.theme.ink)
+                ui.center(target, 9, ui.truncate(tostring(result.cancelled_reason
+                    or "Round stopped"), width - 6), ui.theme.muted)
+            elseif result.won then
+                ui.center(target, 7, money(result.payout), ui.theme.ink)
+                ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
+                local release = "One full in-game day"
+                for _, hold in ipairs(wallet and wallet.holds or {}) do
+                    if hold.hold_id == result.hold_id then
+                        release = "Day " .. hold.release_day .. " " .. hold.release_time
+                        break
+                    end
                 end
+                ui.center(target, 11, release, ui.theme.muted)
+            else
+                ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
+                ui.center(target, 9,
+                    result.game == "survivor" and (tostring(result.winner_name) .. " survived")
+                        or "Result: " .. string.upper(result.outcome or "?"),
+                    ui.theme.muted)
             end
-            ui.center(target, 11, release, ui.theme.muted)
-        else
-            ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
-            ui.center(target, 9,
-                lobby.game == "survivor" and (lobby.winner_name .. " survived")
-                    or "Result: " .. string.upper(lobby.outcome or "?"),
-                ui.theme.muted)
-            ui.center(target, 11, "BET WALLET " .. money(wallet.available),
-                ui.theme.muted)
+            if wallet then
+                ui.center(target, 11 + (result.won and 3 or 0), "BET WALLET "
+                    .. money(wallet.available), ui.theme.muted)
+            end
+            ui.center(target, height - 5, ui.truncate("Same code: " .. tostring(code),
+                width - 2), colors.cyan)
+            local scene = ui.scene(target)
+            local half = math.floor((width - 3) / 2)
+            scene:button("leave", 2, height - 3, half, 2, "LEAVE",
+                { background = ui.theme.danger })
+            scene:button("stay", 3 + half, height - 3, width - 3 - half, 2, "NEXT GAME",
+                { background = ui.theme.accent,
+                  foreground = ui.theme.accentInk or ui.inkOn(ui.theme.accent) })
+            local action = scene:wait({ tickRate = 2 })
+            if action == "stay" then return "stay" end
+            if action == "leave" then return "leave" end
+            if action == "__terminate" then
+                running = false
+                return "leave"
+            end
+            if action == "__tick" then
+                betRequest("BET_LOBBY_STATUS", { code = code }, true)
+            end
         end
-        local scene = ui.scene(target)
-        scene:button("done", 2, height - 3, width - 2, 2, "DONE",
-            { background = ui.theme.accentDark })
-        scene:wait()
+        return "leave"
+    end
+
+    -- Between rounds, or while one runs without you: still in the lobby,
+    -- waiting for the next game to open. Returns the status once it has.
+    local function waitForNextRound(code, status)
+        local frame = 0
+        while running and status and not status.lobby.closed
+            and not (status.lobby.status == "lobby" and (status.player.wager or 0) <= 0) do
+            local lobby, player = status.lobby, status.player
+            local width, height = target.getSize()
+            ui.clear(target, colors.black)
+            ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
+            ui.center(target, 6, ui.truncate(lobby.code, width - 4), colors.cyan,
+                colors.black)
+            ui.center(target, 8, player.display_name, colors.white, colors.black)
+            ui.center(target, 11, lobby.status == "running" and "GAME IN PROGRESS"
+                or "NEXT GAME SOON", colors.magenta, colors.black)
+            ui.center(target, 13, (lobby.status == "running" and "YOU'RE IN THE NEXT ONE"
+                or "THE CCG PICKS IT") .. string.rep(".", frame % 4),
+                colors.lightGray, colors.black)
+            local scene = ui.scene(target)
+            scene:button("leave", 2, height - 3, width - 2, 2, "LEAVE LOBBY",
+                { background = colors.red })
+            local action = scene:wait({ tickRate = 0.5 })
+            if action == "leave" or action == "__terminate" then
+                if action == "__terminate" then running = false end
+                betRequest("BET_LEAVE", { code = code }, true)
+                return nil
+            end
+            frame = frame + 1
+            status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+        end
+        return status
+    end
+
+    -- The round a Pocket played, from the lobby if it is still on that round
+    -- or from what the server kept of it if the next has already opened.
+    local function roundResult(status, round)
+        local lobby, player = status.lobby, status.player
+        if (lobby.round or 1) == round
+            and (lobby.status == "finished" or lobby.status == "cancelled") then
+            return { status = lobby.status, game = lobby.game,
+                game_name = lobby.game_name, outcome = lobby.outcome,
+                winner_name = lobby.winner_name, cancelled_reason = lobby.cancelled_reason,
+                won = player.won, payout = player.payout, hold_id = player.hold_id }
+        end
+        local last = status.last
+        if last and last.round == round and last.played then return last end
+        return nil
     end
 
     local function survivorController(code, initial)
@@ -2343,7 +2420,10 @@ do
 
     local function waitForBetResult(code, initial)
         local status, frame = initial, 0
-        while status and status.lobby.status == "lobby" do
+        -- Only while this Pocket's wager is in: once the round is over and
+        -- the next has opened, its wager is cleared and so is this screen.
+        while status and status.lobby.status == "lobby"
+            and (status.player.wager or 0) > 0 do
             local lobby, player = status.lobby, status.player
             local width, height = target.getSize()
             ui.clear(target, colors.black)
@@ -2364,8 +2444,9 @@ do
             if action == "leave" then
                 if ui.confirm(target, "Leave Lobby?",
                     "Your wager returns to Bet Wallet", "LEAVE", "STAY") then
-                    betRequest("BET_LEAVE", { code = code }, true)
-                    return nil
+                    local left, leaveError = betRequest("BET_LEAVE", { code = code }, true)
+                    if left then return nil end
+                    ui.message(target, "error", "STILL IN THE LOBBY", leaveError, 1.2)
                 end
             elseif action == "__terminate" then
                 betRequest("BET_LEAVE", { code = code }, true)
@@ -2443,37 +2524,70 @@ do
             ui.message(target, "error", "CANNOT JOIN", joinError, 1.1)
             return
         end
-        local selection = chooseBetSelection(joined.lobby)
-        if not selection then
-            betRequest("BET_LEAVE", { code = code }, true)
-            return
-        end
-        local amountText = ui.input(target, "Set Wager", {
-            hint = joined.lobby.multiplier .. "X if you win // Wallet "
-                .. money(unlocked.wallet.available),
-            mode = "number",
-            maxLength = 12,
-        })
-        if not amountText then
-            betRequest("BET_LEAVE", { code = code }, true)
-            return
-        end
-        local placed, placeError = betRequest("BET_PLACE_WAGER", {
-            code = code,
-            selection = selection,
-            amount = tonumber(amountText),
-        }, true)
-        if not placed then
-            ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
-            betRequest("BET_LEAVE", { code = code }, true)
-            return
-        end
-        local final = waitForBetResult(code, placed)
-        if final and final.lobby.status == "finished" then
-            betResultScreen(final)
-        elseif final and final.lobby.status == "cancelled" then
-            ui.message(target, "warning", "LOBBY CANCELLED",
-                "Your wager returned to Bet Wallet", 1.1)
+        -- FoxyOS 16: the lobby lasts from game to game under the same code,
+        -- and so does this Pocket's seat in it. Each round it picks and
+        -- wagers, plays, sees how it went, and stays for the next.
+        local status = { lobby = joined.lobby, player = joined.player,
+            wallet = unlocked.wallet }
+        local myRound
+        while running and status do
+            local lobby, player = status.lobby, status.player
+            if lobby.closed then
+                ui.message(target, "warning", "LOBBY CLOSED",
+                    lobby.cancelled_reason or "The CCG closed it", 1.2)
+                return
+            end
+            if lobby.status == "lobby" and (player.wager or 0) <= 0 then
+                local selection = chooseBetSelection(lobby)
+                if not selection then
+                    betRequest("BET_LEAVE", { code = code }, true)
+                    return
+                end
+                local wallet = status.wallet or unlocked.wallet
+                local amountText = ui.input(target, "Set Wager", {
+                    hint = lobby.multiplier .. "X if you win // Wallet "
+                        .. money(wallet.available),
+                    mode = "number",
+                    maxLength = 12,
+                })
+                if not amountText then
+                    betRequest("BET_LEAVE", { code = code }, true)
+                    return
+                end
+                local placed, placeError, placeCode = betRequest("BET_PLACE_WAGER", {
+                    code = code,
+                    selection = selection,
+                    amount = tonumber(amountText),
+                }, true)
+                if placed then
+                    myRound = lobby.round or 1
+                    status = placed
+                else
+                    if placeCode == "LOBBY_CLOSED" then
+                        ui.message(target, "warning", "GAME STARTED",
+                            "You're in the next one", 1.2)
+                    else
+                        ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
+                    end
+                    status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+                end
+            elseif (player.wager or 0) > 0
+                and (lobby.status == "lobby" or lobby.status == "running") then
+                myRound = myRound or lobby.round or 1
+                local final = waitForBetResult(code, status)
+                if not final then return end
+                local result = roundResult(final, myRound)
+                if result and (result.status == "finished" or not final.lobby.closed) then
+                    if betResultScreen(result, final.wallet, code) == "leave" then
+                        betRequest("BET_LEAVE", { code = code }, true)
+                        return
+                    end
+                    final = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+                end
+                status = final
+            else
+                status = waitForNextRound(code, status)
+            end
         end
     end
 

@@ -55,6 +55,9 @@ package.loaded.config = {
     app_chunk_size = 6000, max_apps_installed = 12,
     foxy_cash_fee_rate = 0.02,
 }
+-- FoxyOS 16: the device file is kept between the two boots below, the way a
+-- disk would keep it.
+local savedDevice
 package.loaded["lib.util"] = {
     loadTable = function(path, fallback)
         -- Foxy is already installed, so the Home Screen carries it.
@@ -62,9 +65,14 @@ package.loaded["lib.util"] = {
             return { list = { { app_id = "FOXY", name = "Foxy", version = 1,
                 author = "PUMPE", description = "Your Foxy Account" } } }
         end
+        if tostring(path):find("pumpe_device", 1, true) and savedDevice then
+            return savedDevice
+        end
         return fallback
     end,
-    saveTable = function() end,
+    saveTable = function(path, value)
+        if tostring(path):find("pumpe_device", 1, true) then savedDevice = value end
+    end,
     writeFile = function(path, body) written[path] = body end,
     readFile = function(path) return written[path] end,
     checksum = function(body)
@@ -153,6 +161,11 @@ local BODY2 = "return function() NOTES_V2 = true end\n"
 local APP2 = { app_id = "NOTES", name = "Notes", version = 2,
     author = "Shop Owner", description = "Jot things down", size = #BODY2 }
 local notesDownloads = 0
+-- FoxyOS 16: Yap!, which the App Server ships and every Pocket fetches once.
+local YAP_BODY = "-- PUMPE APP: Yap!\nreturn function() end\n"
+local YAP_APP = { app_id = "YAP", name = "Yap!", version = 1, author = "Foxy",
+    description = "Posts, private chats and Yap Map.", size = #YAP_BODY }
+local chunked = {}
 local storeClient = {
     discover = function() return true end,
     request = function(_, action, payload)
@@ -163,11 +176,13 @@ local storeClient = {
                 { app_id = "FOXY", name = "Foxy", version = published and 2 or 1,
                   author = "PUMPE", description = "Your Foxy Account",
                   size = #BODY, checksum = "0" },
-                published and APP2 or APP, ROTTEN, MAIL_APP,
+                published and APP2 or APP, ROTTEN, MAIL_APP, YAP_APP,
             } }
         elseif action == "APP_CHUNK" then
+            chunked[#chunked + 1] = payload.app_id
             if payload.app_id == "NOTES" then notesDownloads = notesDownloads + 1 end
             local body = payload.app_id == "MAIL" and MAIL_BODY
+                or payload.app_id == "YAP" and YAP_BODY
                 or payload.app_id == "NOTES" and notesDownloads > 1 and BODY2 or BODY
             return { app_id = payload.app_id, offset = 0, data = body,
                 next_offset = #body, total_size = #body, done = true }
@@ -178,6 +193,7 @@ local storeClient = {
 APP.checksum = package.loaded["lib.util"].checksum(BODY)
 APP2.checksum = package.loaded["lib.util"].checksum(BODY2)
 MAIL_APP.checksum = package.loaded["lib.util"].checksum(MAIL_BODY)
+YAP_APP.checksum = package.loaded["lib.util"].checksum(YAP_BODY)
 package.loaded["lib.net"] = {
     client = function(config)
         if config.protocol == "PUMPE_APPS_V1" then return storeClient end
@@ -431,6 +447,29 @@ assert(pressed("Bring money in"),
     "Fast Bank Transfer is reachable from the account it moves money into")
 assert(not pressed("Code Pay"),
     "but not Code Pay: paying a kiosk is Foxy Pay, or a third-party bank")
+
+-- FoxyOS 16: Yap! comes with the update, once ---------------------------------------------
+-- Fetched at sign-in from the App Server, quietly, and said so on the Home
+-- Screen. Taken off, it is not put back at the next sign-in.
+assert(written["/pumpe/apps/YAP.lua"] == YAP_BODY, "Yap! is installed at sign-in")
+assert(drew("Yap! is here"), "and the Home Screen says so")
+assert(savedDevice and savedDevice.included and savedDevice.included.YAP,
+    "remembered as included, the moment it is here")
+written["/pumpe/apps/YAP.lua"] = nil     -- removed (the app list never had it)
+chunked, storeCalls, buttonLabels, drawnText = {}, {}, {}, {}
+-- Signed in already, it boots to the Home Screen: Foxy and Yap! were looked
+-- after on the way there.
+index, actions = 0, { function(live)
+    assert(live["open:ext:FOXY"], "the Home Screen")
+    return "__terminate"
+end }
+local againOk, againErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(againOk or tostring(againErr):find("more actions", 1, true), tostring(againErr))
+for _, appId in ipairs(chunked) do
+    assert(appId ~= "YAP", "a Yap! that was taken off stays off")
+end
+assert(written["/pumpe/apps/YAP.lua"] == nil and not drew("Yap! is here"))
+savedDevice = nil                        -- a fresh Pocket for what follows
 
 -- FoxyOS 15: the App Browser's front page ------------------------------------------------
 -- Latest is the newest apps, Trending this week's most downloaded, five

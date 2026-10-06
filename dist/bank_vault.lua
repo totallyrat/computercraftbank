@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "15.2.0"
+local PROGRAM_VERSION = "16.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")

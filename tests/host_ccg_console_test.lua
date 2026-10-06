@@ -113,6 +113,20 @@ local client = {
             lobby.status = "finished"
             lobby.outcome = "heads"
             return { lobby = lobby }
+        elseif action == "CCG_NEXT_ROUND" then
+            -- FoxyOS 16: the next round, in the same lobby, under its code.
+            assert(payload.code == "ABC234" and payload.game == "heads_tails",
+                "the next round reopens this lobby")
+            local lobby = {}
+            for key, value in pairs(baseLobby) do lobby[key] = value end
+            lobby.round = 2
+            return { lobby = lobby }
+        elseif action == "CCG_CANCEL_LOBBY" then
+            assert(payload.code == "ABC234")
+            local lobby = {}
+            for key, value in pairs(baseLobby) do lobby[key] = value end
+            lobby.status, lobby.closed = "finished", true
+            return { lobby = lobby }
         end
         error("Unexpected CCG request: " .. tostring(action))
     end,
@@ -216,8 +230,10 @@ local function playOneRound(width, height)
     WIDTH, HEIGHT = width, height
     requests, labels = {}, {}
     -- 12.0 Final: the main menu first, then Bet Play; BACK, then CLOSE.
-    for _, action in ipairs({ "bet", "heads_tails", "start", "again", "back",
-        "close" }) do
+    -- FoxyOS 16: NEXT GAME plays a second round in the same lobby; CLOSE on
+    -- the result ends it.
+    for _, action in ipairs({ "bet", "heads_tails", "start", "again", "start",
+        "close", "back", "close" }) do
         actions[#actions + 1] = action
     end
     console()
@@ -226,7 +242,15 @@ local function playOneRound(width, height)
     assert(contains(requests, "CCG_CREATE_LOBBY"))
     assert(contains(requests, "CCG_START"))
     assert(contains(requests, "CCG_TICK"))
-    assert(contains(labels, "NEXT GAME"))
+    assert(contains(labels, "NEXT GAME") and contains(labels, "OTHER GAME"))
+    local created, reopened = 0, 0
+    for _, request in ipairs(requests) do
+        if request == "CCG_CREATE_LOBBY" then created = created + 1 end
+        if request == "CCG_NEXT_ROUND" then reopened = reopened + 1 end
+    end
+    assert(created == 1 and reopened == 1,
+        "two rounds, one lobby: created " .. created .. ", reopened " .. reopened)
+    assert(contains(requests, "CCG_CANCEL_LOBBY"), "CLOSE closes the lobby")
 end
 
 -- The smallest supported display: every element must stay on screen.

@@ -75,6 +75,7 @@ package.loaded["lib.util"] = {
 }
 
 local lobbyCounter = 0
+local nextRounds = {}
 local function lobbyTemplate(status)
     lobbyCounter = status == "lobby" and lobbyCounter + 1 or lobbyCounter
     return {
@@ -107,7 +108,10 @@ local client = {
             }
         elseif action == "CCG_CONSOLE_STATUS" then
             if not payload.code then return nil, "No active lobby" end
-            return { lobby = lobbyTemplate("lobby") }
+            -- The lobby asked about, as it is: its code does not change.
+            local lobby = lobbyTemplate("finished")
+            lobby.status, lobby.code = "lobby", payload.code
+            return { lobby = lobby }
         elseif action == "CCG_CREATE_LOBBY" then
             return { lobby = lobbyTemplate("lobby") }
         elseif action == "CCG_START" then
@@ -116,6 +120,13 @@ local client = {
             return { lobby = lobbyTemplate("finished") }
         elseif action == "CCG_CANCEL_LOBBY" then
             return { lobby = lobbyTemplate("cancelled") }
+        elseif action == "CCG_NEXT_ROUND" then
+            -- FoxyOS 16: the next round, in the same lobby, same code.
+            nextRounds[#nextRounds + 1] = payload
+            local lobby = lobbyTemplate("finished")
+            lobby.code, lobby.status, lobby.game = payload.code, "lobby", payload.game
+            lobby.round = #nextRounds + 1
+            return { lobby = lobby }
         end
         error("Unexpected CCG request: " .. tostring(action))
     end,
@@ -228,8 +239,11 @@ end
 
 -- Auto Mode started the round itself: no operator pressed START.
 assert(count(requests, "CCG_START") == 1, "Auto Mode must start the game")
-assert(count(requests, "CCG_CREATE_LOBBY") == 2,
-    "Auto Mode must open the next lobby after a result")
+assert(count(requests, "CCG_CREATE_LOBBY") == 1
+    and count(requests, "CCG_NEXT_ROUND") == 1,
+    "after a result Auto Mode opens the next round in the same lobby")
+assert(nextRounds[1].code == "AUTO01" and nextRounds[1].game == "heads_tails",
+    "under the same code")
 assert(count(requests, "CCG_CANCEL_LOBBY") == 1,
     "stopping Auto Mode closes the open lobby")
 
@@ -267,12 +281,12 @@ local resumed = {
     auto = { game = "rotate", hash = resumeHash, index = 0 },
 }
 package.loaded["lib.util"].loadTable = function() return resumed end
-requests, labels, messages = {}, {}, {}
+requests, labels, messages, nextRounds = {}, {}, {}, {}
 for _, item in ipairs({
     "__tick", "__tick",     -- first rotated game starts itself
     "__tick",               -- result rolls straight into the next lobby
     "__tick", "__tick",     -- second rotated game starts itself
-    "__tick",
+    "again",                -- NEXT GAME tapped early: still the next in rotation
     "cancel",               -- stop Auto Mode with the saved code
     "back", "close",
 }) do actions[#actions + 1] = item end
@@ -283,8 +297,12 @@ assert(#actions == 0, "the resumed Auto Mode run did not finish")
 assert(requests[3] == "CCG_CREATE_LOBBY",
     "a resumed console opens a lobby without showing the game menu first")
 assert(count(requests, "CCG_START") == 2, "both rotated rounds must start")
-assert(count(requests, "CCG_CREATE_LOBBY") == 3,
-    "Auto Mode keeps opening lobbies until it is stopped")
+assert(count(requests, "CCG_CREATE_LOBBY") == 1
+    and count(requests, "CCG_NEXT_ROUND") == 2,
+    "Auto Mode keeps playing rounds in its lobby until it is stopped")
+assert(nextRounds[1].game == "race" and nextRounds[2].game == "survivor"
+    and nextRounds[1].code == nextRounds[2].code,
+    "rotating changes the game, not the lobby or its code")
 assert(count(labels, "AUTO MODE") == 1,
     "the game menu only returns once Auto Mode has been stopped")
 assert(pinAsked == 1, "and an arena coming back in Auto Mode is never held up"
@@ -325,7 +343,7 @@ assert(loadfile("../ccg.lua"))()
 assert(#actions == 0, "the standby run did not finish")
 assert(contains(labels, "STOP AUTO"),
     "the standby screen must still offer a way out of Auto Mode")
-assert(count(requests, "CCG_CREATE_LOBBY") == 3,
+assert(count(requests, "CCG_CREATE_LOBBY") == 2,
     "Auto Mode retries the lobby after the Bank comes back")
 assert(count(requests, "CCG_START") == 1,
     "the retried lobby still starts on its own")

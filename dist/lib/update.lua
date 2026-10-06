@@ -370,6 +370,7 @@ update.PUBLISHED_OPTIONAL = {
 "company.lua",
 "brickbreaker.lua",
 "invt.lua",
+"yap.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -414,7 +415,9 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 
 "brickbreaker.lua",
 
-"invt.lua" },
+"invt.lua",
+
+"yap.lua" },
 }
 
 

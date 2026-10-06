@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "15.2.0"
+local PROGRAM_VERSION = "16.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -82,6 +82,14 @@ local CCG_GAMES = {
 local RACE_COLORS = {
     "red", "orange", "yellow", "green", "blue", "purple",
 }
+
+-- FoxyOS 16: a lobby is not one round any more. It keeps its code and its
+-- players from game to game, so a player who has not wagered yet is only
+-- dropped once their Pocket has gone quiet for this long.
+local PRESENCE_MS = 120000
+local function lobbyTtl()
+    return tonumber(config.ccg_lobby_ttl_ms) or 5 * 60 * 1000
+end
 
 -- Talking to the Bank ----------------------------------------------------------
 -- Everything to do with money is a question asked of the Bank, never a
@@ -158,6 +166,8 @@ local function publicPlayer(player)
         won = player.won,
         payout = player.payout,
         hold_id = player.hold_id,
+        -- In this round, rather than sitting it out until the next.
+        playing = (player.wager or 0) > 0,
     }
 end
 
@@ -186,6 +196,10 @@ local function publicLobby(lobby, revealOutcome)
         winner_player_id = lobby.winner_account_id,
         winner_name = lobby.winner_name,
         cancelled_reason = lobby.cancelled_reason,
+        -- FoxyOS 16: the round this is, and whether the lobby is over for
+        -- good (the console closed it, or nobody started it in time).
+        round = lobby.round or 1,
+        closed = lobby.closed == true,
     }
     if lobby.status == "finished" or revealOutcome then
         output.outcome = lobby.outcome
@@ -205,9 +219,14 @@ end
 -- Both of these are the Bank's decision to carry out. This server says which
 -- lobby and, at most, who won.
 
-local function refundLobby(lobby, reason)
+local function refundLobby(lobby, reason, close)
+    if close then lobby.closed = true end
     if lobby.escrow_closed then return false end
-    askBank("CCG_ESCROW_REFUND", { lobby_code = lobby.code, reason = reason })
+    -- The code is used again for the next round, so a refund the Bank never
+    -- heard has to be sent again before anybody stakes under it.
+    if not askBank("CCG_ESCROW_REFUND", { lobby_code = lobby.code, reason = reason }) then
+        lobby.refund_pending = reason or "Lobby cancelled"
+    end
     for _, player in pairs(lobby.players or {}) do
         player.settled = true
         player.refunded = true
@@ -216,6 +235,17 @@ local function refundLobby(lobby, reason)
     lobby.status = "cancelled"
     lobby.cancelled_reason = reason or "Lobby cancelled"
     lobby.finished_at = util.nowMs()
+    return true
+end
+
+local function retryRefund(lobby)
+    if not lobby.refund_pending then return true end
+    lobby.refund_tried_at = util.nowMs()
+    if not askBank("CCG_ESCROW_REFUND", { lobby_code = lobby.code,
+        reason = lobby.refund_pending }) then
+        return false
+    end
+    lobby.refund_pending = nil
     return true
 end
 
@@ -385,13 +415,33 @@ end
 local function processGames()
     local now, changed = util.nowMs(), false
     for lobbyId, lobby in pairs(state.lobbies) do
+        if lobby.refund_pending and now - (lobby.refund_tried_at or 0) > 10000 then
+            changed = retryRefund(lobby) or changed
+        end
         if lobby.status == "lobby" and lobby.expires_at <= now then
-            changed = refundLobby(lobby, "Lobby expired") or changed
+            changed = refundLobby(lobby, "Lobby expired", true) or changed
+        elseif lobby.status == "lobby" then
+            -- Somebody who never wagered and whose Pocket went quiet left
+            -- without saying so. A wager keeps its player: that money is
+            -- in this round.
+            for index = #lobby.player_order, 1, -1 do
+                local accountId = lobby.player_order[index]
+                local player = lobby.players[accountId]
+                if player and (player.wager or 0) <= 0
+                    and now - (player.seen_at or player.joined_at or now) > PRESENCE_MS then
+                    lobby.players[accountId] = nil
+                    table.remove(lobby.player_order, index)
+                    changed = true
+                end
+            end
+            for seat, accountId in ipairs(lobby.player_order) do
+                lobby.players[accountId].seat = seat
+            end
         elseif lobby.status == "running" then
             if lobby.game == "survivor" then
                 if lobby.boot_id ~= BOOT_ID then
                     changed = refundLobby(lobby,
-                        "CCG Server restarted during Survivor") or changed
+                        "CCG Server restarted during Survivor", false) or changed
                 else
                     changed = advanceSurvivor(lobby, now) or changed
                 end
@@ -399,6 +449,7 @@ local function processGames()
                 changed = settleChanceLobby(lobby) or changed
             end
         elseif (lobby.status == "finished" or lobby.status == "cancelled")
+            and not lobby.refund_pending
             and lobby.finished_at and lobby.finished_at + 30 * 60 * 1000 < now then
             if state.codes[lobby.code] == lobbyId then
                 state.codes[lobby.code] = nil
@@ -457,19 +508,28 @@ function actions.CCG_CREATE_LOBBY(payload)
             "LOBBY_ACTIVE", "Finish or cancel the current lobby first")
     end
     local lobbyId = nextId("lobby", "CCGL", 6)
-    local code = uniqueCode()
+    -- FoxyOS 16: a console keeps its code from lobby to lobby, as long as
+    -- its last lobby is over and nothing of it is left with the Bank.
+    local code = console.code
+    local previous = code and state.codes[code] and state.lobbies[state.codes[code]]
+    if not code or (state.codes[code] and not (previous
+        and previous.console_id == console.console_id and previous.escrow_closed
+        and retryRefund(previous))) then
+        code = uniqueCode()
+    end
+    console.code = code
     local lobby = {
         lobby_id = lobbyId,
         code = code,
         console_id = console.console_id,
         game = game,
         status = "lobby",
+        round = 1,
         players = {},
         player_order = {},
         created_day = util.ingameDay(),
         created_at = util.nowMs(),
-        expires_at = util.nowMs()
-            + (tonumber(config.ccg_lobby_ttl_ms) or 5 * 60 * 1000),
+        expires_at = util.nowMs() + lobbyTtl(),
     }
     state.lobbies[lobbyId] = lobby
     state.codes[code] = lobbyId
@@ -493,10 +553,72 @@ function actions.CCG_CANCEL_LOBBY(payload)
     local lobby = lobbyByCode(payload.code)
     need(lobby and lobby.console_id == console.console_id,
         "LOBBY_NOT_FOUND", "CCG lobby not found")
-    need(lobby.status == "lobby", "GAME_STARTED",
+    need(lobby.status ~= "running", "GAME_STARTED",
         "A running game cannot be cancelled")
-    refundLobby(lobby, "Cancelled by console")
+    if lobby.status == "lobby" then
+        refundLobby(lobby, "Cancelled by console", true)
+    else
+        lobby.closed = true
+    end
     save()
+    return { lobby = publicLobby(lobby, false) }
+end
+
+-- FoxyOS 16: the next round, in the same lobby. Same code, same players --
+-- every wager cleared -- and the game can change. The round before is kept
+-- so a Pocket that looked away still finds out how it went.
+function actions.CCG_NEXT_ROUND(payload)
+    local console = requireConsole(payload)
+    local lobby = lobbyByCode(payload.code)
+    need(lobby and lobby.console_id == console.console_id,
+        "LOBBY_NOT_FOUND", "CCG lobby not found")
+    need(not lobby.closed, "LOBBY_CLOSED", "That lobby is closed")
+    need(lobby.status == "finished" or lobby.status == "cancelled",
+        "GAME_STARTED", "Finish this round first")
+    local game = string.lower(util.trim(payload.game or lobby.game))
+    need(CCG_GAMES[game], "INVALID_GAME", "Choose a supported CCG game")
+    need(#lobby.player_order <= CCG_GAMES[game].maximum_players, "LOBBY_FULL",
+        CCG_GAMES[game].name .. " takes " .. CCG_GAMES[game].maximum_players
+            .. " players")
+    need(lobby.escrow_closed and retryRefund(lobby), "BANK_OFFLINE",
+        "The Bank has not returned the last round's wagers yet")
+    local results = {}
+    for accountId, player in pairs(lobby.players) do
+        if (player.wager or 0) > 0 then
+            -- They were in the game a moment ago: present, for now.
+            player.seen_at = util.nowMs()
+            results[accountId] = { won = player.won == true, payout = player.payout,
+                hold_id = player.hold_id, wager = player.wager,
+                selection = player.selection }
+        end
+    end
+    lobby.last_round = { round = lobby.round or 1, game = lobby.game,
+        status = lobby.status, outcome = lobby.outcome,
+        winner_name = lobby.winner_name, cancelled_reason = lobby.cancelled_reason,
+        results = results }
+    for _, player in pairs(lobby.players) do
+        for _, key in ipairs({ "wager", "selection", "ready_at", "alive", "x", "y",
+            "vx", "vy", "input_x", "input_y", "input_until", "push_requested",
+            "push_cooldown_until", "last_push_hit", "eliminated_at", "color",
+            "won", "payout", "hold_id", "settled", "refunded" }) do
+            player[key] = nil
+        end
+        player.wager = 0
+    end
+    for _, key in ipairs({ "outcome", "race_order", "reveal_at", "started_at",
+        "finished_at", "winner_account_id", "winner_name", "cancelled_reason",
+        "escrow_closed", "platform_radius", "last_sim_at", "last_eliminated",
+        "boot_id" }) do
+        lobby[key] = nil
+    end
+    lobby.game = game
+    lobby.round = (lobby.round or 1) + 1
+    lobby.status = "lobby"
+    lobby.expires_at = util.nowMs() + lobbyTtl()
+    console.active_lobby_id = lobby.lobby_id
+    save()
+    logActivity("Round " .. lobby.round .. " in " .. lobby.code .. " / "
+        .. CCG_GAMES[game].name, colors.cyan)
     return { lobby = publicLobby(lobby, false) }
 end
 
@@ -504,8 +626,9 @@ function actions.BET_JOIN(payload)
     local who = requirePlayer(payload)
     processGames()
     local lobby = lobbyByCode(payload.code)
-    need(lobby and lobby.status == "lobby"
-        and lobby.expires_at > util.nowMs(),
+    -- FoxyOS 16: a lobby mid-round can be joined too, for the next one.
+    need(lobby and not lobby.closed and (lobby.status ~= "lobby"
+        or lobby.expires_at > util.nowMs()),
         "LOBBY_NOT_FOUND", "Lobby code is invalid or closed")
     local displayName = util.safeText(util.trim(payload.display_name), 14)
     need(#displayName >= 2 and displayName:match("^[%w_ %-]+$"),
@@ -532,6 +655,8 @@ function actions.BET_JOIN(payload)
     elseif (player.wager or 0) == 0 then
         player.display_name = displayName
     end
+    player.seen_at = util.nowMs()
+    if lobby.status == "lobby" then lobby.expires_at = util.nowMs() + lobbyTtl() end
     save()
     return {
         lobby = publicLobby(lobby, false),
@@ -548,8 +673,13 @@ end
 
 function actions.BET_PLACE_WAGER(payload)
     local lobby = lobbyByCode(payload.code)
-    need(lobby and lobby.status == "lobby",
+    need(lobby and lobby.status == "lobby" and not lobby.closed,
         "LOBBY_CLOSED", "Betting is closed for this lobby")
+    -- Before the Bank takes anything: money staked by somebody who is not
+    -- in the lobby would sit in its escrow with nobody to settle it.
+    local who = requirePlayer(payload)
+    need(lobby.players[who.account_id], "NOT_JOINED",
+        "Join the lobby before placing a wager")
     local selection = string.lower(util.trim(payload.selection))
     if lobby.game == "heads_tails" then
         need(selection == "heads" or selection == "tails",
@@ -574,6 +704,8 @@ function actions.BET_PLACE_WAGER(payload)
     player.wager = staked.staked
     player.selection = selection
     player.ready_at = util.nowMs()
+    player.seen_at = util.nowMs()
+    lobby.expires_at = util.nowMs() + lobbyTtl()
     save()
     return {
         lobby = publicLobby(lobby, false),
@@ -585,13 +717,21 @@ end
 function actions.BET_LEAVE(payload)
     local who = requirePlayer(payload)
     local lobby = lobbyByCode(payload.code)
-    need(lobby and lobby.status == "lobby",
-        "GAME_STARTED", "You cannot leave after the game starts")
+    need(lobby, "LOBBY_NOT_FOUND", "CCG lobby not found")
     local player = lobby.players[who.account_id]
     need(player, "NOT_JOINED", "You are not in this lobby")
-    local released = askBank("CCG_ESCROW_RELEASE", {
-        lobby_code = lobby.code, account_id = who.account_id,
-    })
+    -- Between rounds, or sitting this one out, anybody can go. Not in the
+    -- middle of a round they have money in.
+    need(lobby.status ~= "running" or (player.wager or 0) <= 0,
+        "GAME_STARTED", "You cannot leave after the game starts")
+    local released
+    if lobby.status == "lobby" and (player.wager or 0) > 0 then
+        -- A stake the Bank did not give back would be settled as a loss
+        -- with the round, so leaving waits for it.
+        released = bankOrFail("CCG_ESCROW_RELEASE", {
+            lobby_code = lobby.code, account_id = who.account_id,
+        })
+    end
     lobby.players[who.account_id] = nil
     for index, accountId in ipairs(lobby.player_order) do
         if accountId == who.account_id then
@@ -616,10 +756,26 @@ function actions.BET_LOBBY_STATUS(payload)
     need(lobby, "LOBBY_NOT_FOUND", "CCG lobby not found")
     local player = lobby.players[who.account_id]
     need(player, "NOT_JOINED", "You are not in this lobby")
+    player.seen_at = util.nowMs()
+    local last
+    if lobby.last_round then
+        local mine = lobby.last_round.results[who.account_id]
+        local game = CCG_GAMES[lobby.last_round.game]
+        last = { round = lobby.last_round.round, game = lobby.last_round.game,
+            game_name = game and game.name or lobby.last_round.game,
+            multiplier = game and game.multiplier or 0,
+            status = lobby.last_round.status, outcome = lobby.last_round.outcome,
+            winner_name = lobby.last_round.winner_name,
+            cancelled_reason = lobby.last_round.cancelled_reason,
+            played = mine ~= nil, won = mine and mine.won or false,
+            payout = mine and mine.payout or nil, hold_id = mine and mine.hold_id,
+            wager = mine and mine.wager or 0, selection = mine and mine.selection }
+    end
     return {
         lobby = publicLobby(lobby, false),
         player = publicPlayer(player),
         wallet = who.wallet,
+        last = last,
     }
 end
 
@@ -630,6 +786,7 @@ function actions.BET_CONTROL(payload)
         "NOT_INTERACTIVE", "Survivor is not running")
     local player = lobby.players[who.account_id]
     need(player and player.alive, "ELIMINATED", "You are out of this round")
+    player.seen_at = util.nowMs()
     local dx = util.clamp(tonumber(payload.dx) or 0, -1, 1)
     local dy = util.clamp(tonumber(payload.dy) or 0, -1, 1)
     local length = math.sqrt(dx * dx + dy * dy)
@@ -667,13 +824,17 @@ function actions.CCG_START(payload)
         "LOBBY_NOT_FOUND", "CCG lobby not found")
     need(lobby.status == "lobby", "GAME_STARTED", "Game has already started")
     local minimumPlayers = lobby.game == "survivor" and 2 or 1
-    need(#lobby.player_order >= minimumPlayers, "NOT_ENOUGH_PLAYERS",
-        lobby.game == "survivor" and "Survivor needs at least two players"
-            or "At least one player must join")
+    -- FoxyOS 16: whoever has wagered plays; anybody still choosing sits
+    -- this round out and stays for the next.
+    local playing = {}
     for _, accountId in ipairs(lobby.player_order) do
-        need((lobby.players[accountId].wager or 0) > 0,
-            "PLAYER_NOT_READY", "Every player must place a wager")
+        if (lobby.players[accountId].wager or 0) > 0 then
+            playing[#playing + 1] = accountId
+        end
     end
+    need(#playing >= minimumPlayers, "NOT_ENOUGH_PLAYERS",
+        lobby.game == "survivor" and "Survivor needs two players with a wager"
+            or "At least one player must place a wager")
     -- Seed the RNG even when nothing has generated a token since this server
     -- started.
     util.randomString(1)
@@ -691,8 +852,8 @@ function actions.CCG_START(payload)
         lobby.reveal_at = lobby.started_at
             + (tonumber(config.ccg_result_delay_ms) or 6000)
     else
-        local count = #lobby.player_order
-        for index, accountId in ipairs(lobby.player_order) do
+        local count = #playing
+        for index, accountId in ipairs(playing) do
             local player = lobby.players[accountId]
             local angle = (index - 1) / count * math.pi * 2
             player.x = math.cos(angle) * 360

@@ -22,6 +22,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `foxmail.lua` | Installed on every Pocket at sign-in | Email: an address at foxy.com for everybody, company domains, mail from kiosks and apps |
 | `company.lua` | Downloaded to a Pocket from the App Browser | Start and run companies from the phone: products, the online store, what pickup points sell, and Delivery Mode |
 | `foxy.lua` | Downloaded to a Pocket from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
+| `yap.lua` | Installed on every Pocket once, since FoxyOS 16 | Yap!, by Foxy: a feed, private chats behind your PIN, and Yap Map |
 | `apps/` | Written here, published from inside the game | Notes on writing apps. Its two apps, Yap and Yap Chat, became Yap! in FoxyOS 16, which Foxy ships (`yap.lua`) |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
@@ -36,6 +37,7 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 
 - **Start-up (FoxyOS 14).** A circle of your theme colour opens from the middle of the screen until it covers it, then black opens over it the same way — three times — and **POCKET** lands on black, followed by *Powered by FoxyOS* and the version. The same circles play while the Pocket updates or is installed: see **Automatic Internet Updates**.
 - **Notices are banners** (FoxyOS 15). Something that worked, or did not, is a banner across the middle of the screen over whatever was there, opening from a line drawn out from the centre: its border and its words are **green** when something went right and **red** otherwise — errors, warnings and plain information alike. It is the same on every device.
+- **Calls and codes are banners at the top** (FoxyOS 16): Interactive Notifications. A call comes in as a banner at the top of the screen, in the same look, with **Accept** and **Decline** on it — and whatever was open stays open and usable under it. A verification code from an app arrives the same way, with **Paste**, which puts the code in the box the app has open.
 - **Every app opens its own way** (FoxyOS 13). A motion in the app's colour grows out of the icon that was tapped and paints over the Home Screen, then holds a beat on the app's icon and name — about half a second. Friends ripples like a call coming in, Tickets closes in on a perforation, MyID scans a card, CCG boots like an arcade cabinet, Subs rises like a wave, Reminders shakes like a bell, Quick strikes like lightning, the App Browser lands in tiles and Settings closes like a shutter. Foxy has none since FoxyOS 15 (it opens straight onto the Bank, whose card drops in), FoxMail folds like an envelope, Shop rolls up an awning, Company opens its blinds, Internet sweeps like radar, Website Crafter types, BuckApp turns like a coin, Revolution spins and INVT unfolds like a card. Any other app gets one of five shapes, chosen from its id, so it always opens the same way.
 - Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How Pocket Works** in Settings → Account re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your Pocket**.
@@ -44,11 +46,12 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - The **dock** sits under every app page: search first, then up to three favourites. An empty slot opens the picker, and so does **Edit Your Dock** in Settings.
 - Unread counts appear as a badge in an icon's corner.
 - **Foxy** is the bank. Since 9.4 the balance, your accounts, Foxy Cash, the Bet Wallet, Activity, cashing out and the Account ID all live in its bank section; there is no Bank app on the Home Screen. (It was BuckApp until 9.0, then a built-in Bank tab until 9.4.)
-- **Friends** holds Messages, Friends and Urgent Contact, badged with whatever is waiting.
+- **Messages** (FoxyOS 16) is an app of its own, badged with unread chats. **Friends** holds your friends and Urgent Contact, badged with friend requests.
+- **Yap!** (FoxyOS 16, by Foxy) comes with the update on every Pocket, once: take it off and it stays off.
 - **Tickets** holds events and your own tickets, bought through a queue since FoxyOS 13 (see *Tickets and the queue*); **MyID** holds everything the government does: your Digital ID, visas, the countries you run, and tax.
 - Opening a ticket or a travel document tells the Bank what you are holding up, which is what lets a door or a border find you. It lapses twenty seconds after you close the screen.
 - The **notification centre** is the last Home Screen page: one row per alert with a coloured bar for its kind, its title, the time it arrived, and the first line of the message. Read alerts fade, a tap opens one in full, and the list scrolls. A `!` in the page dots and a banner across the top of whatever app is open announce new ones.
-- **CCG** (the Bet app until 12.0) has three tabs: **Home** plays Home Mode on your own console, **Bet** joins a lobby and needs the Foxy Account PIN every time, and **Scores** keeps your best at home. The Bet Wallet is in Foxy.
+- **CCG** (the Bet app until 12.0) has three tabs: **Home** plays Home Mode on your own console, **Bet** joins a lobby and needs the Foxy Account PIN every time, and **Scores** keeps your best at home. The Bet Wallet is in Foxy. Since FoxyOS 16 you stay in a lobby from game to game: see **Lobbies stay open**.
 - After one minute without touch or keyboard activity, the Pocket opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 - **Turning the modem off leaves you signed in.** Settings → Network takes the phone off the network; since 9.5 that is all it does. The Home Screen, Settings and everything already downloaded keep working, the header reads **Offline** where the balance goes, and anything needing a server says so instead of hanging. A phone that starts up with the modem off opens the same way, under the name it last signed in as — a label, not a session, and the first thing it can do back on the network is sign in properly. Off the network the Lock Screen opens on a tap, because the PIN is checked by the Bank and there is no Bank to check it.
 
@@ -88,6 +91,16 @@ The Bank keeps the queue and works out who is next whenever somebody asks; nobod
 - **Hosting:** **Guests** shows who is coming and who was invited, **Check in** takes the six-letter code from a guest's ticket (once), and **Cancel it** refunds everybody who paid — from the host, checked before any money moves, so a host who cannot cover it is told and nothing is half refunded.
 
 The Bank's Vault keeps INVT's events and tickets. Only the INVT app may ask, and only for somebody who signed in to it with Foxy; the Core checks both on every request.
+
+## Yap! (FoxyOS 16)
+
+**Yap!** is Yap and Yap Chat in one app, made by **Foxy** and installed on every Pocket with FoxyOS 16 — fetched once at sign-in, with a banner saying so. Take it off and it is not put back. You sign in with **Foxy** (your name and your friends), and the first time on a Pocket you sign up with a **VerCode**: Foxy sends six digits to **Messages**, and the notification has **Paste**.
+
+- **Feed**: posts of up to 140 characters, your friends' (and yours) above everybody else's, newest first. Tap one to **Like** it or **Reply**; your own have **Delete**.
+- **Chat**: private messages between friends. The tab is behind your PIN, once each time Yap! opens. Exactly two people can read a chat, and a message you have read is gone a day later, on both Pockets. **Call** rings your friend through Urgent Contact.
+- **Map** — **Yap Map** — is not a map: it lists your friends' coordinates while they are in a **Coordinate Zone**, which is anywhere the GPS Anchors can place their Pocket (a fix from the last minute and a half). Only friends who use Yap! are listed, and **Hide me** takes you off everybody's. You see your own coordinates at the top, and how far away each friend is.
+
+It opens with three typing dots that become a speech bubble, and moves throughout: yaps slide in, a like pops a heart, a post rises off the screen, the Chat lock opens, Yap Map pings. Yap Boost did not come along from the old Yap, and nothing was moved over from it: Yap! is a different app to the Bank.
 
 ## Search, App Actions and QuickActions
 
@@ -168,16 +181,18 @@ Tapping a friend opens your chat with them. `X` removes them after a confirmatio
 
 ### Messages
 
-**Messages** holds one chat per friend plus group chats of up to eight people. A direct chat is never duplicated, whoever starts it.
+**Messages** is an app of its own since FoxyOS 16, with two tabs: **Chats**, one per friend, and **Groups**, of up to eight people (**+ New group** picks who). A direct chat is never duplicated, whoever starts it.
 
-- **Message** opens the touch keyboard.
-- **Money** offers **Send money**, **Ask for money**, and — when a friend has asked you — **Pay**.
-- A money request stays in the transcript until it is paid or declined. Paying takes the PIN.
+- A chat is bubbles: yours on the right in your theme colour, theirs on the left; in a group, the sender's name over theirs. An open chat syncs twice a second.
+- **Message...** opens the touch keyboard.
+- The money button slides a keypad up from the bottom, over the chat: type an amount, then **Request** or **Send**.
+- A money request is a bubble: everybody else sees **Pay** and **No** on it, and it turns green *Paid* or grey *Declined*. A payment is a bubble too. Paying takes the PIN.
+- A chat from an app's publisher holds its VerCodes, and cannot be answered.
 - A chat raises an alert only when it goes from read to unread, so a busy group never floods the Alerts list.
 
 ### Urgent Contact
 
-**Urgent Contact** reaches a friend right now. They get a full-screen ring with **Accept** and **Decline** whatever app they had open, because the check runs in the shared wait loop rather than in any one screen.
+**Urgent Contact** reaches a friend right now. Since FoxyOS 16 they get a banner at the top of the screen with **Accept** and **Decline**, whatever app they had open, and that app keeps working under it; the check runs in the shared wait loop rather than in any one screen.
 
 Once accepted, both sides poll a live transcript several times a second, so a typed line appears on the other screen straight away. Inside a call you can send money, ask for money, and pay a request, all under the same PIN and fee rules as any other payment.
 
@@ -212,6 +227,8 @@ Three games are included:
 
 Since 9.1 the games run on their own computer — a **CCG Server** — while the money stays on the Bank. The CCG Server generates chance-game outcomes, simulates Survivor, decides the winner and settles each lobby once; a modified Pocket or CCG console still cannot submit its preferred result.
 
+**Lobbies stay open (FoxyOS 16).** A lobby lasts from game to game under the same code. After a round every player stays in it: their Pocket shows how it went, with **NEXT GAME** to stay or **LEAVE**, and asks for a pick and a wager again when the next round opens — no code to type. The console's result has **NEXT GAME** (the same game), **OTHER GAME** (the code stays) and **CLOSE**; a console keeps its code for its next lobby too. A round starts once enough players have wagered, and anybody still choosing sits that round out and plays the next. Somebody can join mid-round, for the next one, and leave between rounds. A player who never wagers and whose Pocket goes quiet for two minutes is dropped.
+
 What it cannot do is touch money. A wager sits in **escrow on the Bank**, and a settle carries only the list of winners — the Bank multiplies the stake it is already holding by its own copy of the game's multiplier, so a CCG Server can pick the wrong winner but cannot invent a payout. It registers with the Bank once using the operator code before the Bank will settle for it at all.
 
 Waiting lobbies expire after five minutes and return every reserved wager, and a CCG Server restart during an active Survivor round refunds everyone rather than guessing a winner. If a CCG Server is switched off holding wagers, the Bank refunds that escrow itself after two hours.
@@ -240,11 +257,11 @@ Auto Mode turns a CCG console into an unattended arcade cabinet. Tap **AUTO MODE
 
 From then on the console runs by itself:
 
-1. It opens a lobby and shows the join code.
-2. When every player who joined is **READY**, a countdown starts (`ccg_auto_start_seconds`, default 15). The operator can still tap **START** to begin immediately.
+1. It opens a lobby and shows the join code — the same code from then on.
+2. Once enough players are **READY**, a countdown starts (`ccg_auto_start_seconds`, default 15; four times that while somebody is still choosing, who then sits the round out). The operator can still tap **START** to begin immediately.
 3. The game plays and settles as usual.
-4. The result stays up for `ccg_auto_next_seconds` (default 8), then the next lobby opens.
-5. If nobody joins before a lobby expires, every reserved wager is returned and a fresh lobby opens straight away.
+4. The result stays up for `ccg_auto_next_seconds` (default 8), then the next round opens in the same lobby, with the same players. Rotate changes the game, not the code.
+5. If nobody starts a lobby before it expires, every reserved wager is returned and a fresh lobby opens straight away, under the same code.
 
 Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when the mode was started; a wrong code leaves it running. The setting is saved to the console, so a restart — including one caused by an automatic update — comes back into Auto Mode instead of the game menu. Rotate mode remembers which game is next across restarts.
 
@@ -390,13 +407,15 @@ Signed-in apps also get a small store on the Bank for posts, comments or anythin
 
 ### What else an app can ask for
 
-Three more APIs, each a single call, and each one where the owner rather than the app has the last word.
+Four more APIs, each a single call, and each one where the owner rather than the app has the last word.
 
-**The Pin API.** `api.pin("Unlock Yap Chat")` puts the Pocket's own PIN pad up and hands the app back true or false. The app never sees the PIN.
+**The Pin API.** `api.pin("Unlock Yap! Chat")` puts the Pocket's own PIN pad up and hands the app back true or false. The app never sees the PIN.
 
 **The Notification API.** `api.notifications.ask()` asks once and remembers the answer, a refusal included, so an app cannot put the question up every time it starts. `api.notifications.send{ ... }` then sends a banner — or a fullscreen alert, but only where the owner allowed one. Across accounts it works between friends only, with a daily budget.
 
 **The Urgent Contact API.** `api.call{ account_id = ..., name = ... }` raises the same fullscreen ring the Pocket raises for Urgent Contact. The ring says which app is calling and who is, both labels coming from the install rather than the app.
+
+**The VerCode API (FoxyOS 16).** `api.vercode.ask(title)` sends this person a six-digit code and asks for it back, three goes; it returns true once they typed the one they were sent. The code arrives in **Messages**, from the app's *publisher* — the company its developer runs, or **Foxy** for the apps FoxyOS ships — in a chat nobody can answer, and as a banner with **Paste**. `api.vercode.send()` and `api.vercode.check(code)` are the two halves. A code is for its app only, lasts five minutes and five tries, and is used once; a new one can be sent every twenty seconds.
 
 **Settings → App Settings** lists every app that has ever asked for a permission, whatever the answer was, and is where you change your mind. **Fullscreen notifications are switched on there and nowhere else**: an app cannot ask for them, and blocking notifications takes fullscreen with it.
 
@@ -404,7 +423,7 @@ Three more APIs, each a single call, and each one where the owner rather than th
 
 An app can sell things. The money goes to the account that published it, less **30% to the government**, and the Bank keeps the record — an app is never told it has been paid by anything but the Bank, so it cannot decide for itself. One-off purchases and daily subscriptions both work; a subscription that cannot be charged stops rather than running up a debt, and is cancelled under **Settings → App Settings**.
 
-**Yap Boost** is the first: ten dollars to lift one yap above everything in the feed, or twenty a day to lift them all.
+**Yap Boost** was the first, in the old Yap; Yap! (FoxyOS 16) left it behind, and the snippets in `apps/README.md` remain.
 
 `apps/README.md` has the full contract.
 
@@ -758,8 +777,8 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - Use an Advanced Computer with an Ender modem and an Advanced Monitor.
 - The console sets the monitor to text scale `0.5` and responsively supports a 1×1 monitor or a larger wall.
 - Lobby codes, ready states, coin flips, six race lanes, the shrinking Survivor ring, players, and results all render on the monitor.
-- Touch **Start** only after every displayed player is ready. Heads or Tails and Race support one or more players; Survivor requires at least two.
-- **Auto Mode** does that waiting for you and keeps opening the next lobby. It stops only for the code entered when it was started.
+- **Start** works once one player is ready (two for Survivor); anybody not ready sits that round out. Heads or Tails and Race take up to 24 players, Survivor 8.
+- **Auto Mode** does that waiting for you and keeps playing rounds in its lobby. It stops only for the code entered when it was started.
 - The console stores only its server-issued ID/token. It never stores Pocket PINs or decides payouts.
 
 ### A till (the Pocket on a standing computer)
@@ -825,7 +844,7 @@ Sign in, create the event — tickets on sale **now**, or **later** at a day and
 
 ### CCG
 
-Install **CCG Bet Console**, attach the monitor and modem, and select a game. Players fund **Bet Wallet** from their Pocket, open the PIN-gated **Bet** app, enter the lobby code and a player name, then choose their wager. The big-screen operator starts the round when everyone shows **READY**.
+Install **CCG Bet Console**, attach the monitor and modem, and select a game. Players fund **Bet Wallet** from their Pocket, open the PIN-gated **Bet** app, enter the lobby code and a player name, then choose their wager. The big-screen operator starts the round once players show **READY**, and after it the lobby stays open for the next one.
 
 ## Important behavior
 
@@ -843,9 +862,9 @@ Install **CCG Bet Console**, attach the monitor and modem, and select a game. Pl
 - A Pocket asks before it installs a release, and lists what changed. Every unattended role still updates itself.
 - Citizenship codes grant permanent entry to their own territory. They also grant permanent entry wherever that citizenship has active Free Roam.
 - Temporary visa departure days are calculated by the Bank Server on entry, and the document locks permanently after its recorded exit.
-- CCG wagers leave Bet Wallet when they are marked ready. Leaving or expiring before a round starts returns the full wager.
+- CCG wagers leave Bet Wallet when they are marked ready. Leaving or expiring before a round starts returns the full wager; leaving with a wager in waits for the Bank to return it. Every wager is cleared between rounds.
 - CCG payouts are `2×` for Heads or Tails and `3×` for Race or Survivor. Winning payouts remain held for one complete in-game day before entering the available Bet Wallet balance.
-- CCG Auto Mode starts a round only when every player who joined is ready, and returns every wager if a lobby expires empty. It cannot be turned off without its stop code.
+- CCG Auto Mode starts a round once enough players are ready, giving anybody still choosing longer first, and returns every wager if a lobby expires. It cannot be turned off without its stop code.
 - Bet Wallet funds are separate from the normal Foxy Account until the player explicitly transfers them. Both transfer directions require the PIN.
 
 ## Security reality check
@@ -943,10 +962,10 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 **CCG lobby will not start**
 
-- Every listed player must show **READY** after selecting a pick and reserving a wager.
-- Survivor requires at least two ready players.
+- At least one player must show **READY** after selecting a pick and reserving a wager (two for Survivor). Since FoxyOS 16 the rest sit the round out rather than holding it.
 - Confirm the Pocket has available Bet Wallet funds, not only funds still in Holding.
-- In Auto Mode the countdown only begins once every joined player is ready; a single player still picking holds the round.
+- **OTHER GAME** refuses Survivor while more than eight are in the lobby.
+- **NEXT GAME** says the Bank has not returned the last round's wagers: the Bank did not answer a refund. The CCG Server keeps trying every ten seconds; try again shortly.
 
 **Auto Mode will not turn off**
 
@@ -955,4 +974,4 @@ It deletes what can be fetched again, and only if that is not enough trims trans
 
 ## Version
 
-FoxyOS 14 — release `14.0.0`.
+FoxyOS 16 — release `16.0.0`.

@@ -242,8 +242,7 @@ function ui.networkError(_, err) error("unexpected network error: " .. tostring(
 -- login() asks for the account name first, then each screen's own input, in
 -- the order the scripted actions below reach them.
 inputs = {
-    "On my way now",    -- chat message
-    "25",               -- money request amount
+    "On my way now",    -- chat message (FoxyOS 16: amounts are on the keypad)
     "Market Run",       -- group name
     "Two minutes",      -- urgent contact message
     "hare",             -- friend search
@@ -253,23 +252,24 @@ function ui.pin() return "1234" end
 function ui.confirm() return false end
 
 actions = {
-    "open:friends",             -- opens on its Chats tab since 11.0
+    "open:messages",            -- FoxyOS 16: an app of its own, on Chats
     "open:CHAT0001",            -- chat list
     "type",                     -- send a message
-    "money", "ask",             -- ask for money
+    "money", "key:2", "key:5", "ask", -- the money tab: 25, then Request
     "back",                     -- leave the chat
-    "group",                    -- build a group
+    "tab:groups", "group",      -- Groups: build a group
     "pick:ACC000002",           -- first page
     "next",                     -- second page of friends
     "pick:ACC000007",           -- only reachable once paging works
     "create",
     "back",                     -- leave the new group chat
-    "__ring",                   -- a friend reaches us from inside the app
-    "accept",                   -- answer the Urgent Contact
+    "__ring",                   -- a friend calls: a banner over Messages
+    "banner:accept",            -- Accept, on the banner itself
     "type",                     -- talk
     "save",                     -- vote to save
     "hang",                     -- hang up
-    "tab:people",               -- the Friends tab of the same app
+    "home",                     -- leave Messages
+    "open:friends",             -- Friends: friends and Urgent, no Chats
     "add",                      -- search
     "add:ACC000005",            -- send a request
     "back",                     -- leave search
@@ -278,6 +278,20 @@ actions = {
     "__terminate",
 }
 index = 0
+-- FoxyOS 16: a call is a banner drawn over whatever is open, with buttons of
+-- its own. A tap on one is the banner's to answer, exactly as in lib/ui.
+local overlay
+function ui.setOverlay(spec) overlay = spec end
+function ui.topBanner(_, spec)
+    drawnText[#drawnText + 1] = tostring(spec.title or "")
+    drawnText[#drawnText + 1] = tostring(spec.body or "")
+    local buttons = {}
+    for slot, button in ipairs(spec.buttons or {}) do
+        buttonLabels[#buttonLabels + 1] = button.label
+        buttons[slot] = { id = button.id, x1 = slot, x2 = slot, y1 = 2, y2 = 2 }
+    end
+    return { top = 1, bottom = 4, buttons = buttons }
+end
 function ui.scene()
     local scene = { width = WIDTH, height = HEIGHT }
     local live = {}
@@ -301,6 +315,16 @@ function ui.scene()
             urgentStatus = "incoming"
             assert(ringHandler, "the ring watcher was never armed")
             assert(ringHandler() == true, "an incoming call must take over")
+            return "__wake"
+        end
+        local bannerId = action:match("^banner:(.+)$")
+        if bannerId then
+            local onBanner = false
+            for _, button in ipairs(overlay and overlay.buttons or {}) do
+                if button.id == bannerId then onBanner = true end
+            end
+            assert(onBanner, "tapped the banner's " .. bannerId .. " but it is not up")
+            overlay.tap(bannerId)
             return "__wake"
         end
         if not action:match("^__") then
@@ -356,22 +380,22 @@ end
 
 -- Home screen badges surface waiting messages and friend requests. In 8.0
 -- the count sits in the icon's corner rather than inside its label.
-assert(pressed("@"), "the Friends icon is on the home screen")
-local badged = false
-for _, item in ipairs(drawnText) do
-    if item == " 3" then badged = true end
-end
-assert(badged, "unread messages and friend requests badge the Friends icon")
--- 11.0: no hub. The Chats tab says what is waiting, the Friends page says
--- who wants to be a friend, and Urgent Contact is a tab of the same app.
-assert(pressed("Chats 2"), "the Chats tab shows what is waiting")
-assert(pressed("Requests 1"), "and the Friends page the requests waiting")
-assert(pressed("Urgent"), "Urgent Contact lives in the same app")
+assert(pressed("@") and pressed('"'), "Friends and Messages are on the home screen")
+local badges = {}
+for _, item in ipairs(drawnText) do badges[item] = true end
+-- FoxyOS 16: unread messages badge Messages; friend requests badge Friends.
+assert(badges[" 2"] and badges[" 1"], "Messages shows 2 unread, Friends 1 request")
+assert(not badges[" 3"], "and nothing adds the two up any more")
+assert(pressed("Chats") and pressed("Groups"), "Messages has Chats and Groups")
+assert(not pressed("Chats 2"), "Friends has no Chats tab")
+assert(pressed("Requests 1"), "the Friends page shows the requests waiting")
+assert(pressed("Urgent"), "Urgent Contact lives in the Friends app")
 
 -- Messages
 assert(asked("CHAT_LIST") and asked("CHAT_OPEN") and asked("CHAT_SEND"))
 assert(asked("CHAT_REQUEST_MONEY"), "money can be asked for inside a chat")
-assert(drewContaining("Bob Wolf:"), "the transcript names the sender")
+-- FoxyOS 16: bubbles. A direct chat needs no names; a request is a bubble.
+assert(drewContaining("Asks for"), "the money request is a bubble in the chat")
 assert(drewContaining("market"), "the transcript renders the message body")
 
 -- Group chats can reach every friend, not just the first screenful.
@@ -384,7 +408,8 @@ assert(picked["ACC000002"] and picked["ACC000007"],
 -- Urgent Contact reached the user from the home screen, not from its own app.
 assert(asked("PUMPE_POLL") and asked("URGENT_ANSWER"))
 assert(pressed("Accept") and pressed("Decline"),
-    "an incoming call shows Accept and Decline")
+    "an incoming call shows Accept and Decline, on its banner")
+assert(drewContaining("Urgent Contact"), "the banner says what is ringing")
 assert(asked("URGENT_SEND") and asked("URGENT_SAVE") and asked("URGENT_END"))
 assert(pressed("Hang up"), "a live call can always be hung up")
 

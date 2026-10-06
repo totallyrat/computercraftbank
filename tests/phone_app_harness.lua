@@ -98,6 +98,8 @@ function phone.run(options)
     function ui.wrappedText(_, x, y, value, width, lines)
         box("wrapped text", x, y, width, lines)
         draw(value)
+        -- As lib/ui: how many lines it took.
+        return math.min(#realUi.wrap(value, width), math.max(1, lines or 1))
     end
     function ui.message(_, kind, title, body)
         seen.messages[#seen.messages + 1] = { kind = kind, title = title,
@@ -213,6 +215,11 @@ function phone.run(options)
         login = options.login,
         app_id = appId,
     }
+    -- FoxyOS 16: anything else the phone hands this app (notifications,
+    -- calls, VerCode), as the test provides it. `api` is passed in so they
+    -- can make requests the way the app does.
+    for name, make in pairs(options.api or {}) do api[name] = make(api, ui, surface) end
+    ui.runTabs = ui.runTabs or realUi.runTabs
     assert(loadfile(options.file))()(api)
     for name, queue in pairs(script) do
         assert(#queue == 0, #queue .. " scripted " .. name .. " never used")

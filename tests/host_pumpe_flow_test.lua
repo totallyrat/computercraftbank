@@ -32,7 +32,10 @@ local actions = {
     "home",                                          -- leave MyID
     -- 12.0: Bet is CCG. Bet Play is a tab; Home Mode pairs with a console
     -- (the real one, below) and plays Snake into a wall.
-    "open:ccg", "tab:bet", "join", "pick:heads", "__tick", "done",
+    -- FoxyOS 16: the result asks to stay for the next game. Stay, play
+    -- round two in the same lobby, then leave.
+    "open:ccg", "tab:bet", "join", "pick:heads", "__tick", "stay",
+    "pick:heads", "__tick", "leave",
     "tab:home", "pair", "play:snake", "key:up", "__tick", "__tick", "__tick",
     "__tick", "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
     "key:a", "menu",
@@ -529,8 +532,13 @@ local client = {
                     game_name = "Heads or Tails",
                     multiplier = 2,
                     status = "lobby",
+                    round = 1,
                 },
+                player = { display_name = "FoxyPlayer", wager = 0 },
             }
+        elseif action == "BET_LEAVE" then
+            assert(payload.code == LONG_CCG_CODE)
+            return { left = true }
         elseif action == "BET_PLACE_WAGER" then
             assert(payload.code == LONG_CCG_CODE)
             assert(payload.selection == "heads")
@@ -542,6 +550,7 @@ local client = {
                     game_name = "Heads or Tails",
                     multiplier = 2,
                     status = "lobby",
+                    round = betStatusCalls < 3 and 1 or 2,
                 },
                 player = {
                     display_name = "FoxyPlayer",
@@ -553,6 +562,26 @@ local client = {
         elseif action == "BET_LOBBY_STATUS" then
             assert(payload.code == LONG_CCG_CODE)
             betStatusCalls = betStatusCalls + 1
+            -- FoxyOS 16: the lobby goes on. After round one, round two opens
+            -- in it; round two ends, and round three has already opened by
+            -- the time the Pocket asks, so it learns how round two went from
+            -- what the server kept of it.
+            if betStatusCalls >= 3 then
+                local round = betStatusCalls == 3 and 2 or 3
+                return {
+                    lobby = { code = LONG_CCG_CODE, game = "heads_tails",
+                        game_name = "Heads or Tails", multiplier = 2,
+                        status = "lobby", round = round },
+                    player = { display_name = "FoxyPlayer", wager = 0 },
+                    wallet = { available = 90, held = 20, holds = {} },
+                    last = round == 2 and { round = 1, played = true, won = true,
+                        payout = 20, game = "heads_tails", status = "finished",
+                        game_name = "Heads or Tails", outcome = "heads" }
+                        or { round = 2, played = true, won = false,
+                        game = "heads_tails", status = "finished",
+                        game_name = "Heads or Tails", outcome = "tails" },
+                }
+            end
             local finished = betStatusCalls >= 2
             return {
                 lobby = {
@@ -929,6 +958,14 @@ assert(find(requests, "CUSTOMS_DETAIL"))
 assert(find(requests, "BET_UNLOCK"))
 assert(find(requests, "BET_JOIN"))
 assert(find(requests, "BET_PLACE_WAGER"))
+assert(find(requests, "BET_LEAVE"), "LEAVE on the result leaves the lobby")
+local wagers = 0
+for _, name in ipairs(requests) do
+    if name == "BET_PLACE_WAGER" then wagers = wagers + 1 end
+end
+assert(wagers == 2, "NEXT GAME stays in the lobby for a second round: " .. wagers)
+assert(find(drawnText, "Result: TAILS"),
+    "round two's result, from what the server kept once round three opened")
 -- The bet wallet moved into Foxy in 9.4, so the PUMPE itself no longer
 -- deposits or withdraws; host_pumpe_apps_test covers that where the app is
 -- installed. What is still the PUMPE's is unlocking and playing.
