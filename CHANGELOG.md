@@ -20,6 +20,19 @@ the chat to request or send, over the chat rather than a new screen.
 
 **Faster chats.** An open chat syncs twice a second, and a request paid or
 turned down shows as it is now.
+## 15.2.0
+
+FoxyOS 15.2, a quick fix: Prioritize Updates, and the Bank getting ready
+for FoxyOS 16.
+
+**Prioritize Updates.** A release that does not fit beside a Pocket's apps
+no longer waits for you to clear space. The Pocket takes apps off to make
+room, biggest first and Foxy last, keeping what each one saved, and puts
+them back once the release is in, as soon as there is room. On unless you
+turn it off in Settings, Updates.
+
+**Ready for FoxyOS 16.** The Bank can send VerCodes for apps, from their
+publisher, and answer Yap Map. Nothing uses either until FoxyOS 16.
 
 ## 15.1.0
 

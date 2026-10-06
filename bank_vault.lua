@@ -101,6 +101,10 @@ local function blankState()
         migrated = {},
         -- FoxyOS 14: INVT, by Foxy. Its events and the tickets to them.
         invt = { events = {}, tickets = {} },
+        -- FoxyOS 15.2, for 16: the chat each app publisher has with a
+        -- person (VerCodes arrive there), and the codes waiting to be typed.
+        publisher_conversations = {},
+        vercodes = {},
     }
 end
 
@@ -480,7 +484,9 @@ end
 
 local function conversationTitle(conversation, accountId)
     if conversation.kind == "government" then return "Government" end
-    if conversation.kind == "group" then return conversation.title end
+    if conversation.kind == "group" or conversation.kind == "publisher" then
+        return conversation.title
+    end
     for _, memberId in ipairs(conversation.member_ids) do
         if memberId ~= accountId then return nameOf(memberId) end
     end
@@ -676,6 +682,8 @@ end
 function actions.CHAT_SEND(payload, caller)
     local account = whoIsAsking(caller)
     local conversation = requireConversation(account, payload.conversation_id)
+    need(conversation.kind ~= "publisher", "READ_ONLY",
+        "This chat sends codes; it cannot be answered")
     local body = util.safeText(util.trim(payload.body or ""),
         SOCIAL.max_message)
     need(#body > 0, "EMPTY_MESSAGE", "Type a message first")
@@ -690,6 +698,7 @@ function actions.CHAT_REQUEST_MONEY(payload, caller)
     local conversation = requireConversation(account, payload.conversation_id)
     need(conversation.kind ~= "government", "GOVERNMENT_THREAD",
         "Only the government can move money in this chat")
+    need(conversation.kind ~= "publisher", "READ_ONLY", "No money moves in this chat")
     local amount = validateAmount(payload.amount)
     local item = appendMessage(conversation, account.account_id,
         "money_request", util.safeText(payload.note or "", 60), {
@@ -700,6 +709,70 @@ function actions.CHAT_REQUEST_MONEY(payload, caller)
         account.name .. " asked for " .. util.money(amount, config.currency))
     save()
     return { message = util.copy(item) }
+end
+
+-- VerCode, FoxyOS 15.2 (for 16) ------------------------------------------------
+-- An app asks the Bank to send somebody a code, and checks the code they
+-- type back: that is how an app knows the person signing up holds this
+-- Foxy Account right now, not just that a Pocket once said yes. The code
+-- arrives as a message from the app's publisher -- its company's name, or
+-- Foxy's -- in a chat nobody can answer, and as a notification a Pocket
+-- shows with a Paste button. Five minutes, five tries, one at a time.
+local VERCODE = { ttl_ms = 5 * 60 * 1000, wait_ms = 20 * 1000, tries = 5 }
+
+function VERCODE.thread(account, publisher)
+    local key = account.account_id .. "|" .. publisher
+    local existing = state.publisher_conversations[key]
+    local conversation = existing and state.conversations[existing]
+    if conversation then return conversation end
+    conversation = newConversation("publisher", { account.account_id }, publisher, nil)
+    state.publisher_conversations[key] = conversation.conversation_id
+    return conversation
+end
+
+function actions.VERCODE_SEND(payload, caller)
+    local account = whoIsAsking(caller)
+    local appId = tostring(caller.app_id or "")
+    need(appId ~= "", "APP_REQUIRED", "Only an app can send a code")
+    local publisher = util.safeText(tostring(caller.publisher or "Foxy"), 24)
+    local appName = util.safeText(tostring(caller.app_name or appId), 18)
+    local key = account.account_id .. "|" .. appId
+    local previous = state.vercodes[key]
+    need(not previous or util.nowMs() - (previous.sent_at or 0) >= VERCODE.wait_ms,
+        "VERCODE_WAIT", "A code was just sent. Wait a moment")
+    local code = string.format("%06d", math.random(0, 999999))
+    state.vercodes[key] = { hash = util.checksum(key .. code), sent_at = util.nowMs(),
+        expires_at = util.nowMs() + VERCODE.ttl_ms, tries = 0 }
+    local body = "Your " .. appName .. " code is " .. code .. ". It works for 5 minutes."
+    appendMessage(VERCODE.thread(account, publisher), nil, "vercode", body,
+        { sender_name = publisher, code = code })
+    core.notify(account.account_id, publisher, appName .. " code: " .. code, "vercode",
+        { code = code, publisher = publisher, app_name = appName })
+    save()
+    return { sent = true, publisher = publisher, expires_in = VERCODE.ttl_ms / 1000 }
+end
+
+function actions.VERCODE_CHECK(payload, caller)
+    local account = whoIsAsking(caller)
+    local appId = tostring(caller.app_id or "")
+    local key = account.account_id .. "|" .. appId
+    local entry = state.vercodes[key]
+    need(entry, "NO_VERCODE", "Ask for a code first")
+    if util.nowMs() > entry.expires_at then
+        state.vercodes[key] = nil
+        save()
+        reject("VERCODE_EXPIRED", "That code has run out. Ask for a new one")
+    end
+    need(entry.tries < VERCODE.tries, "VERCODE_LOCKED", "Too many tries. Ask for a new code")
+    local typed = tostring(payload.code or ""):gsub("%D", "")
+    if util.checksum(key .. typed) ~= entry.hash then
+        entry.tries = entry.tries + 1
+        save()
+        reject("BAD_VERCODE", "That is not the code")
+    end
+    state.vercodes[key] = nil
+    save()
+    return { verified = true }
 end
 
 local function conversationCounterpart(conversation, account, accountId)
@@ -722,6 +795,7 @@ function actions.CHAT_SEND_MONEY(payload, caller)
     local conversation = requireConversation(account, payload.conversation_id)
     need(conversation.kind ~= "government", "GOVERNMENT_THREAD",
         "Only the government can move money in this chat")
+    need(conversation.kind ~= "publisher", "READ_ONLY", "No money moves in this chat")
     local recipientId = conversationCounterpart(conversation, account,
         payload.to_account_id)
     local recipient = activeAccount(recipientId)

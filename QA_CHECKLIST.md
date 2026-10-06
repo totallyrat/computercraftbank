@@ -33,6 +33,12 @@ Only devices signed up to Beta Updates get this. Sign up a Pocket in Settings �
 - [ ] **Send** in the tab asks for the PIN and sends; in a group it asks who first.
 - [ ] A Government chat's tab says *Only the state sends here*; its demands still show **Pay**.
 - [ ] The Friends hub's Chats tab opens the same new chats.
+## FoxyOS 15.2 (15.2.0)
+
+- [ ] Settings → Updates shows **Prioritize Updates On**; tapping it turns it off and back.
+- [ ] On a Pocket nearly full of apps, a release that would not fit installs anyway: some apps disappear from the Home Screen while it downloads.
+- [ ] After the restart, the apps come back by themselves (a banner says which), with what they had saved. Settings → Updates says how many are still waiting if some did not fit.
+- [ ] With Prioritize Updates off, the same Pocket says it needs more free space instead, and keeps every app.
 
 ## FoxyOS 15.1 (15.1.0)
 

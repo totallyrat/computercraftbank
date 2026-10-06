@@ -4410,6 +4410,14 @@ end
 -- so the question is put once rather than every half minute.
 local updateDeferred
 
+-- Prioritize Updates, FoxyOS 15.2. A release that does not fit beside this
+-- Pocket's apps used to stop at "needs some KiB more free space". With this
+-- on -- and it is, unless turned off in Settings -> Updates -- the Pocket
+-- takes apps off to make room, biggest first and Foxy last, keeping what
+-- each had saved, and fetches them back once the release is in, whenever
+-- there is space for them. Filled in beside the App Browser.
+local prioritize = {}
+
 -- FoxyOS 14: installing plays the Pocket's circles for fifteen seconds, the
 -- bar filling under them, whether or not it takes that long: a phone that
 -- goes dark for a moment and comes back different reads as a glitch.
@@ -4462,6 +4470,7 @@ local function checkForUpdate(force, betaOnly)
             onInstalled = updateInstalled,
             beta = device.beta == true,
             manifestUrl = url, channel = url and "beta" or nil,
+            onSpaceNeeded = function(needed) prioritize.makeRoom(needed) end,
         })
     end
     if not betaOnly and look(nil) then return true end
@@ -4474,33 +4483,37 @@ local function updatesScreen()
     while running do
         local width, height = target.getSize()
         local auto = device.update_mode == "auto"
+        local prioritized = device.prioritize_updates ~= false
         ui.clear(target)
         ui.header(target, "Updates", "v" .. tostring(config.version),
             util.formatClock())
-        ui.card(target, 2, 5, width - 2, 5, auto and ui.theme.success
+        ui.card(target, 2, 5, width - 2, 4, auto and ui.theme.success
             or ui.theme.accent)
         ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
             ui.theme.panel)
         ui.text(target, 4, 6, auto and "Install it" or "Ask me first",
             ui.theme.ink, ui.theme.panel)
-        ui.wrappedText(target, 4, 8, auto
-            and "New releases install themselves."
-            or "You choose each time.", width - 6, 2,
+        ui.text(target, 4, 7, ui.truncate(device.modem_on == false
+            and "Modem off: not looking" or (updateDeferred
+                and ("v" .. updateDeferred .. " is waiting")
+            or "Checked every half minute"), width - 6),
             ui.theme.muted, ui.theme.panel)
-        ui.text(target, 2, 11, "THIS POCKET", ui.theme.muted)
-        ui.text(target, 2, 12, ui.truncate(tostring(config.release_name
+        ui.text(target, 2, 10, "THIS POCKET", ui.theme.muted)
+        ui.text(target, 2, 11, ui.truncate(tostring(config.release_name
             or ("v" .. tostring(config.version))), width - 2), ui.theme.ink)
-        ui.wrappedText(target, 2, 14, device.modem_on == false
-            and "The modem is off, so this Pocket is not looking for releases."
-            or (updateDeferred and ("Version " .. updateDeferred
-                .. " is waiting. Check now to see it again.")
-            or "Checked every half minute while you are on the network."),
-            width - 2, 4, ui.theme.muted)
         local scene = ui.scene(target)
-        scene:button("mode", 2, height - 7, width - 2, 2,
+        -- FoxyOS 15.2: Prioritize Updates.
+        scene:button("prioritize", 2, 13, width - 2, 1, prioritized
+            and "Prioritize Updates On" or "Prioritize Updates Off",
+            { background = prioritized and ui.theme.success or ui.theme.panel,
+              foreground = prioritized and colors.black or ui.theme.ink })
+        ui.text(target, 2, 14, ui.truncate(#(device.prioritized or {}) > 0
+            and (#device.prioritized .. " app(s) to put back") or
+            "Apps make room for releases", width - 2), ui.theme.muted)
+        scene:button("mode", 2, height - 4, width - 2, 1,
             auto and "Ask me instead" or "Install automatically",
             { background = ui.theme.panel })
-        scene:button("check", 2, height - 4, width - 2, 2, "Check now",
+        scene:button("check", 2, height - 2, width - 2, 1, "Check now",
             { background = ui.theme.accentDark,
               disabled = device.modem_on == false })
         scene:button("back", 1, height, 8, 1, "< Back",
@@ -4515,10 +4528,18 @@ local function updatesScreen()
                 device.update_mode == "auto"
                     and "New releases install themselves"
                     or "You choose, every time", 1.2)
+        elseif action == "prioritize" then
+            device.prioritize_updates = not prioritized
+            saveDevice()
+            ui.message(target, "success", device.prioritize_updates
+                and "Updates come first" or "Apps stay put",
+                device.prioritize_updates and "Apps make room, and come back after"
+                    or "A release that does not fit waits", 1.4)
         elseif action == "check" then
             -- Forced, so a release the owner put off comes back up rather
             -- than staying hidden because they said Later once.
             if not checkForUpdate(true) then
+                prioritize.restore()
                 ui.message(target, "info", "Up to date",
                     "This Pocket is on the newest release", 1.2)
             end
@@ -6271,6 +6292,94 @@ local function keepApp(app, body)
     return true
 end
 
+-- Prioritize Updates: taking apps off for a release that needs the room.
+-- Only the app's own file goes: what it saved stays, and so does its place
+-- on the list of apps to put back. Biggest first, so as few go as can, and
+-- FoxMail then Foxy last of all.
+prioritize.LAST = { FOXY = 2, MAIL = 1 }
+function prioritize.makeRoom(needed)
+    if device.prioritize_updates == false or type(fs.getFreeSpace) ~= "function" then
+        return
+    end
+    local short = (tonumber(needed) or 0) + 12288 - (fs.getFreeSpace(ROOT) or 0)
+    if short <= 0 then return end
+    local candidates = {}
+    for _, entry in ipairs(installed.list) do
+        local path = appPath(entry.app_id)
+        if fs.exists(path) then
+            candidates[#candidates + 1] = { entry = entry, size = fs.getSize(path) }
+        end
+    end
+    table.sort(candidates, function(a, b)
+        local lastA, lastB = prioritize.LAST[a.entry.app_id] or 0,
+            prioritize.LAST[b.entry.app_id] or 0
+        if lastA ~= lastB then return lastA < lastB end
+        return a.size > b.size
+    end)
+    device.prioritized = device.prioritized or {}
+    for _, candidate in ipairs(candidates) do
+        if short <= 0 then break end
+        local entry = candidate.entry
+        pcall(fs.delete, appPath(entry.app_id))
+        for index = #installed.list, 1, -1 do
+            if installed.list[index].app_id == entry.app_id then
+                table.remove(installed.list, index)
+            end
+        end
+        device.prioritized[#device.prioritized + 1] = { app_id = entry.app_id,
+            name = entry.name }
+        short = short - candidate.size
+    end
+    saveApps()
+    saveDevice()
+end
+
+-- And putting them back: Foxy first, then FoxMail, then the smallest, as
+-- many as there is room for. Tried at sign-in and every minute or so after,
+-- so the ones that did not fit come back as soon as they do.
+function prioritize.restore(force)
+    if type(device.prioritized) ~= "table" or #device.prioritized == 0
+        or offline() then
+        return {}
+    end
+    local now = os.clock()
+    if not force and prioritize.tried and now - prioritize.tried < 60 then return {} end
+    prioritize.tried = now
+    local listed = storeRequest("APP_LIST", {}, true, 2)
+    if not listed or type(listed.apps) ~= "table" then return {} end
+    local byId = {}
+    for _, app in ipairs(listed.apps) do byId[app.app_id] = app end
+    local waiting, still = {}, {}
+    for _, wanted in ipairs(device.prioritized) do
+        local app = byId[wanted.app_id]
+        if app and not installedApp(app.app_id) then
+            waiting[#waiting + 1] = app
+        elseif not app then
+            -- Not on the App Server just now -- one that is restarting lists
+            -- nothing for a moment. It waits for the next try.
+            still[#still + 1] = wanted
+        end
+    end
+    table.sort(waiting, function(a, b)
+        local firstA, firstB = prioritize.LAST[a.app_id] or 0, prioritize.LAST[b.app_id] or 0
+        if firstA ~= firstB then return firstA > firstB end
+        return (a.size or 0) < (b.size or 0)
+    end)
+    local back = {}
+    for _, app in ipairs(waiting) do
+        local free = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT) or math.huge
+        local body = free >= (app.size or 0) + 16384 and fetchApp(app) or nil
+        if body and keepApp(app, body) then
+            back[#back + 1] = tostring(app.name)
+        else
+            still[#still + 1] = { app_id = app.app_id, name = app.name }
+        end
+    end
+    device.prioritized = still
+    saveDevice()
+    return back
+end
+
 -- A bar that fills as the chunks land, then a tick that draws itself.
 local function installApp(app)
     local width, height = target.getSize()
@@ -7714,7 +7823,13 @@ local function mainMenu()
     -- FoxyOS 15: Shop Apps are websites now, and a beta brings its own apps.
     pcall(webpage.retireShopApps)
     pcall(beta.syncApps)
+    -- FoxyOS 15.2: apps an update made room by taking off come back.
+    local restoredOk, restored = pcall(prioritize.restore, true)
     refreshInstalledApps()
+    if restoredOk and #restored > 0 then
+        showBanner({ title = #restored == 1 and "App is back"
+            or (#restored .. " apps are back"), body = table.concat(restored, ", ") })
+    end
 
     local blink, tick, page, alertOffset = true, 0, 1, 0
     local poll = request("PUMPE_POLL", {}, true) or {}
@@ -7835,6 +7950,12 @@ local function mainMenu()
             tick = tick + 1
             agenda.tick()
             checkForUpdate(false)
+            local back = prioritize.restore()
+            if #back > 0 then
+                refreshInstalledApps()
+                showBanner({ title = #back == 1 and "App is back"
+                    or (#back .. " apps are back"), body = table.concat(back, ", ") })
+            end
             local updated = updateApps(false)
             if #updated > 0 then
                 refreshInstalledApps()

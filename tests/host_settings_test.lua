@@ -202,6 +202,12 @@ local client = {
         elseif action == "APP_CHUNK" then
             chunked = chunked or {}
             chunked[#chunked + 1] = payload.app_id
+            -- FoxyOS 15.2: the apps a run says the App Server has.
+            local body = appBodies and appBodies[payload.app_id]
+            if body then
+                return { app_id = payload.app_id, offset = 0, data = body,
+                    next_offset = #body, total_size = #body, done = true }
+            end
             return nil, "not in this test"
         end
         return { ok = true }
@@ -387,6 +393,7 @@ actions = {
     "updates",
     "check", "install",                -- ask again, and take it this time
     "mode",                            -- then switch updates to automatic
+    "prioritize",                      -- 15.2: and Prioritize Updates off
     "back",
     "tab:apps",
     -- FoxyOS 13: Dev Mode came over from the Service Kiosk. Become a
@@ -544,6 +551,17 @@ assert(savedOnItsOwn,
         .. " an update rewrites")
 assert(pressed("Ask me instead"),
     "and the switch reads the other way once it is on")
+-- FoxyOS 15.2: Prioritize Updates, on until turned off, remembered on the
+-- device like the rest.
+assert(pressed("Prioritize Updates On"), "Prioritize Updates is on to start with")
+local prioritizeOff = false
+for _, snapshot in ipairs(deviceSaves) do
+    -- Saved when it was flipped: before Dev Mode wrote anything.
+    if snapshot.prioritize_updates == false and snapshot.published == nil then
+        prioritizeOff = true
+    end
+end
+assert(prioritizeOff, "and turning it off is remembered")
 
 -- The setting is only a label unless the updater actually asks. A PUMPE that
 -- says "Ask me first" on screen and hands net.autoUpdate no way to ask would
@@ -962,5 +980,99 @@ assert(SHOP_VISIT and SHOP_VISIT.store == "COM000001"
 assert(#chunked == 1 and chunked[1] == "SHOP", "Shop was fetched for the visit")
 assert(written["/pumpe/apps/SHOP.lua"] == nil, "and nothing of it was kept")
 browseTo, shopBody, SHOP_VISIT = nil, nil, nil
+
+-- FoxyOS 15.2: Prioritize Updates ------------------------------------------------------
+-- A release that does not fit: the Pocket takes apps off, biggest first,
+-- FoxMail then Foxy last, keeps what they saved, and remembers them. Then,
+-- once there is room, they come back: Foxy first, then the smallest.
+local SIZES = { FOXY = 40000, MAIL = 13000, BIG = 60000, SMALL = 5000, TESTBANK = 3000 }
+local freeSpace = 20000
+fs.getFreeSpace = function() return freeSpace end
+fs.getSize = function(path)
+    local id = tostring(path):match("/apps/([%w_%-]+)%.lua$")
+    return id and SIZES[id] or #tostring(written[path] or "")
+end
+local function installedLike(ids)
+    local list = {}
+    for _, id in ipairs(ids) do
+        list[#list + 1] = { app_id = id, name = id, version = 1, author = "X" }
+        written["/pumpe/apps/" .. id .. ".lua"] = "return function() end"
+        written["/pumpe/apps/" .. id .. ".dat"] = "{ kept = true }"
+    end
+    return { list = list }
+end
+local spaceAsked
+net.autoUpdate = function(_, _, _, _, options)
+    options = options or {}
+    if options.manifestUrl then return false end
+    -- The release needs 70,000 bytes; 20,000 are free.
+    spaceAsked = options.onSpaceNeeded ~= nil
+    if options.onSpaceNeeded then options.onSpaceNeeded(70000) end
+    return false
+end
+bootApps = installedLike({ "FOXY", "MAIL", "BIG", "SMALL", "TESTBANK" })
+appList = nil
+savedDevice, deviceSaves = {}, {}
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "auto" }
+index, actions = 0, { "__terminate" }
+local roomOk, roomErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(roomOk or tostring(roomErr):find("more actions", 1, true), tostring(roomErr))
+assert(spaceAsked, "the Pocket hands the updater a way to make room")
+assert(written["/pumpe/apps/BIG.lua"] == nil and written["/pumpe/apps/SMALL.lua"] == nil,
+    "the biggest went first, then the next, until the release fits")
+assert(written["/pumpe/apps/FOXY.lua"] and written["/pumpe/apps/MAIL.lua"]
+    and written["/pumpe/apps/TESTBANK.lua"], "and nothing more than that, Foxy last")
+assert(written["/pumpe/apps/BIG.dat"] and written["/pumpe/apps/SMALL.dat"],
+    "what they saved is kept")
+local waiting = savedDevice.prioritized
+assert(waiting and #waiting == 2 and waiting[1].app_id == "BIG"
+    and waiting[2].app_id == "SMALL", "and they are remembered, to come back")
+for _, entry in ipairs(bootApps.list) do
+    assert(entry.app_id ~= "BIG" and entry.app_id ~= "SMALL", "off the Home Screen")
+end
+
+-- Turned off, nothing is taken.
+bootApps = installedLike({ "FOXY", "BIG" })
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "auto", prioritize_updates = false }
+index, actions = 0, { "__terminate" }
+local offOk, offErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(offOk or tostring(offErr):find("more actions", 1, true), tostring(offErr))
+assert(written["/pumpe/apps/BIG.lua"], "with Prioritize Updates off, apps stay")
+assert(not bootDevice.prioritized, "and nothing waits")
+
+-- Room again, and they come back -- as many as fit, smallest first.
+net.autoUpdate = function() return false end
+freeSpace = 70000
+appBodies = { BIG = "-- big\nreturn function() end", SMALL = "-- small\nreturn function() end" }
+appList = {}
+for id, body in pairs(appBodies) do
+    appList[#appList + 1] = { app_id = id, name = id, version = 2, size = SIZES[id],
+        checksum = package.loaded["lib.util"].checksum(body) }
+end
+-- fetchApp checks what arrives against the advertised size.
+appList[1].size = #appBodies[appList[1].app_id]
+appList[2].size = #appBodies[appList[2].app_id]
+SIZES.BIG = 60000
+bootApps = installedLike({ "FOXY", "MAIL" })
+bootDevice = { last_name = "Ana Fox", onboarding_complete = true, modem_on = true,
+    update_mode = "auto", prioritized = { { app_id = "BIG", name = "BIG" },
+        { app_id = "SMALL", name = "SMALL" }, { app_id = "GONE", name = "GONE" } } }
+local drawsBeforeBack = #drawnText
+index, actions = 0, { "__terminate" }
+local backOk, backErr = pcall(assert(loadfile("../pumpe.lua")))
+assert(backOk or tostring(backErr):find("more actions", 1, true), tostring(backErr))
+assert(written["/pumpe/apps/SMALL.lua"] == appBodies.SMALL
+    and written["/pumpe/apps/BIG.lua"] == appBodies.BIG, "both back, once there is room")
+assert(#bootDevice.prioritized == 1 and bootDevice.prioritized[1].app_id == "GONE",
+    "one the App Server is not listing just now keeps waiting, rather than being forgotten")
+local saidBack = false
+for at = drawsBeforeBack + 1, #drawnText do
+    if drawnText[at] == "2 apps are back" then saidBack = true end
+end
+assert(saidBack, "which the Pocket says")
+appBodies, appList, bootApps = nil, nil, nil
+fs.getFreeSpace, fs.getSize = nil, nil
 
 print("host_settings_test: OK")

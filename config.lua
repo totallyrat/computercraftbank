@@ -2,7 +2,7 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "15.5.0",
+    version = "15.5.1",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
