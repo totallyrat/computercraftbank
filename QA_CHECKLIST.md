@@ -7,6 +7,13 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 15.2 (15.2.0)
+
+- [ ] Settings → Updates shows **Prioritize Updates On**; tapping it turns it off and back.
+- [ ] On a Pocket nearly full of apps, a release that would not fit installs anyway: some apps disappear from the Home Screen while it downloads.
+- [ ] After the restart, the apps come back by themselves (a banner says which), with what they had saved. Settings → Updates says how many are still waiting if some did not fit.
+- [ ] With Prioritize Updates off, the same Pocket says it needs more free space instead, and keeps every app.
+
 ## FoxyOS 15.1 (15.1.0)
 
 - [ ] Every server's Server tab has **BETA UPDATES** (the Vault has none: it follows its Core). It opens Beta Updates: *Not signed up*, *Running v15.1.0*, **SIGN UP** and **BACK**.

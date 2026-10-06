@@ -384,6 +384,9 @@ local function autoUpdateOnce(config, role, root, client, options)
                 local ok, result = updater.apply(found, {
                     config = config, role = role, root = root,
                     onProgress = onProgress,
+                    -- FoxyOS 15.2: a Pocket that installs by itself can
+                    -- make room too (Prioritize Updates).
+                    onSpaceNeeded = options.onSpaceNeeded,
                 })
                 if ok and progress then progress(1) end
                 return ok, result

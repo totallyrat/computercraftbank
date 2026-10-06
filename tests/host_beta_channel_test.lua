@@ -309,4 +309,23 @@ assert(none == false and not askedAboutIt and depotRuns == 0,
     "the Bank's beta is not offered to a Pocket that did not sign up")
 manifests["release_manifest.json"] = saved
 
+-- FoxyOS 15.2: Prioritize Updates. A device updating by itself that is
+-- short of space asks for room -- a Pocket takes apps off -- and then fits.
+files, rebooted = {}, 0
+for _, path in ipairs(update.rolePaths("pumpe")) do
+    files["/room/" .. update.installPath(path)] = "FoxyOS 14.0 " .. path
+end
+local free, askedFor = 100, nil
+fs.getFreeSpace = function() return free end
+local roomy = net.autoUpdate({ version = "14.0.0", auto_update = true,
+    update_manifest_url = config.update_manifest_url, update_channel = "stable",
+    client_update_check_seconds = 30 }, "pumpe", "/room", nil, {
+    force = true, beta = false,
+    onSpaceNeeded = function(needed) askedFor = needed free = 10000000 end,
+})
+assert(askedFor and askedFor > 0, "short of space, it asks for room")
+assert(roomy and rebooted == 1 and files["/room/pumpe.lua"] == "FoxyOS 14.1 pumpe.lua",
+    "and with room made, the release goes in")
+fs.getFreeSpace = nil
+
 print("host_beta_channel_test: OK")

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "15.1.0"
+local PROGRAM_VERSION = "15.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -3049,6 +3049,22 @@ end
 end
 end
 
+
+
+
+function appstore.publisher(appId)
+local owner = appstore.owners()[appId]
+if not owner then return "Foxy" end
+local first
+for _, company in pairs(state.companies) do
+if company.owner_account_id == owner.account_id and company.status == "active"
+and (not first or company.company_id < first.company_id) then
+first = company
+end
+end
+return first and first.name or owner.name or "Foxy"
+end
+
 function appstore.requireGrant(account, appId)
 local grant = appstore.grants(account)[appId]
 need(grant, "NOT_SIGNED_IN", "Sign in to that app first")
@@ -3761,8 +3777,55 @@ style = latest.style,
 security_order = latest.security_order,
 
 security_lookup = latest.security_lookup,
+
+code = latest.code,
+publisher = latest.publisher,
 } or nil,
 }
+end
+
+
+
+
+
+
+local yapMap = { app = "YAP" }
+
+function yapMap.caller(payload)
+local account = requireSession(payload)
+need(payload.app_id == yapMap.app, "WRONG_APP", "Only Yap! can do that")
+appstore.requireGrant(account, yapMap.app)
+return account
+end
+
+function actions.YAP_MAP(payload)
+local account = yapMap.caller(payload)
+local listed = pair.forward("VAULT_FRIEND_LIST", {}, vaultCaller(account))
+local friends = {}
+for _, friend in ipairs(listed and listed.friends or {}) do
+local other = state.accounts[friend.account_id]
+if other and appstore.grants(other)[yapMap.app] and not other.yap_hidden then
+local at = freshPosition(other)
+friends[#friends + 1] = { account_id = other.account_id, name = other.name,
+in_zone = at ~= nil, x = at and math.floor(at.x) or nil,
+y = at and math.floor(at.y) or nil, z = at and math.floor(at.z) or nil }
+end
+end
+table.sort(friends, function(a, b)
+if a.in_zone ~= b.in_zone then return a.in_zone end
+return a.name < b.name
+end)
+local mine = freshPosition(account)
+return { friends = friends, hidden = account.yap_hidden == true,
+me = mine and { x = math.floor(mine.x), y = math.floor(mine.y),
+z = math.floor(mine.z) } or nil }
+end
+
+function actions.YAP_MAP_HIDE(payload)
+local account = yapMap.caller(payload)
+account.yap_hidden = payload.hidden == true or nil
+save()
+return { hidden = account.yap_hidden == true }
 end
 
 
@@ -5879,6 +5942,10 @@ URGENT_REQUEST_MONEY = { auth = "session" },
 URGENT_SEND_MONEY = { auth = "spender", pin = true },
 URGENT_PAY_REQUEST = { auth = "spender", pin = true },
 URGENT_END = { auth = "session" },
+
+
+VERCODE_SEND = { auth = "session", app = "required", publisher = true },
+VERCODE_CHECK = { auth = "session", app = "required" },
 APP_DATA_PUT = { auth = "session", app = "required" },
 APP_DATA_LIST = { auth = "session", app = "required" },
 APP_DATA_DELETE = { auth = "session", app = "required" },
@@ -6077,8 +6144,13 @@ local extra = {}
 if spec.companies then extra.companies = ownedCompanies(account) end
 if spec.app == "required" then
 local appId = appstore.appId(payload)
-appstore.requireGrant(account, appId)
+local grant = appstore.requireGrant(account, appId)
 extra.app_id = appId
+
+if spec.publisher then
+extra.publisher = appstore.publisher(appId)
+extra.app_name = grant.app_name
+end
 elseif spec.app == "optional" and payload.app_id then
 local appId = appstore.appId(payload)
 extra.app_id = appId

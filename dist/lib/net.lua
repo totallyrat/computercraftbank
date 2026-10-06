@@ -384,6 +384,9 @@ local updated, detail = underScreen(found, function(onProgress, progress)
 local ok, result = updater.apply(found, {
 config = config, role = role, root = root,
 onProgress = onProgress,
+
+
+onSpaceNeeded = options.onSpaceNeeded,
 })
 if ok and progress then progress(1) end
 return ok, result
