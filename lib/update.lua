@@ -370,6 +370,7 @@ update.PUBLISHED_OPTIONAL = {
     "company.lua",
     "brickbreaker.lua",
     "invt.lua",
+    "yap.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -414,7 +415,9 @@ local ROLE_EXTRA_FILES = {
         -- 12.0 Final: the Game Browser's first game.
         "brickbreaker.lua",
         -- FoxyOS 14: INVT, by Foxy.
-        "invt.lua" },
+        "invt.lua",
+        -- FoxyOS 16: Yap!, by Foxy.
+        "yap.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

@@ -11,10 +11,12 @@ the App Server does not ship them. To put one on your network:
    PIN, tap the file, and give it a name and a description.
 3. It appears in every Pocket's **App Browser**.
 
-| App | What it is |
-| --- | --- |
-| `yap.lua` | Yap Social: a text social network. Friends float to the top; **Yap Boost** puts your own above everything, and is the worked example of in-app purchases. |
-| `yapchat.lua` | Private messages between Foxy friends, behind your PIN, gone a day after you read them. Uses all three of the APIs below. |
+FoxyOS 16 merged the two apps that used to be here, Yap Social and Yap Chat,
+into **Yap!**, which Foxy ships with every Pocket (`yap.lua` at the top of the
+repository). It is still the fullest example of the APIs below: FoxyLogin,
+the shared app store, notifications, the Pin API, Urgent Contact, and the
+new VerCode API. Yap Boost did not come along, so the in-app purchase
+snippets below no longer have an app of their own.
 
 ## Writing one
 

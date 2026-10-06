@@ -22,7 +22,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `foxmail.lua` | Installed on every Pocket at sign-in | Email: an address at foxy.com for everybody, company domains, mail from kiosks and apps |
 | `company.lua` | Downloaded to a Pocket from the App Browser | Start and run companies from the phone: products, the online store, what pickup points sell, and Delivery Mode |
 | `foxy.lua` | Downloaded to a Pocket from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
-| `apps/` | Written here, published from inside the game | Apps that are not part of a release: `yap.lua`, a text social network, and `yapchat.lua`, private messages |
+| `apps/` | Written here, published from inside the game | Notes on writing apps. Its two apps, Yap and Yap Chat, became Yap! in FoxyOS 16, which Foxy ships (`yap.lua`) |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
 All screens support touch. Physical keyboard input also works.

@@ -122,22 +122,6 @@ function ui.setIdleLock(seconds, handler)
     ui.noteActivity()
 end
 
--- FoxyOS 16: Interactive Notifications. A banner held over the top of the
--- screen, with buttons of its own, while whatever is open keeps working
--- under it: every Scene:wait on its screen draws it last, a tap on one of
--- its buttons goes to it rather than to the screen, a tap elsewhere on it
--- does nothing, and a tap anywhere else goes to the screen as usual.
--- spec: target, top, bottom (the rows it covers), draw(target), buttons
--- ({ id, x1, y1, x2, y2 }), tap(id) -- run in the wait, which then wakes
--- its screen to redraw. nil takes it down.
-local overlay
-function ui.setOverlay(spec)
-    overlay = type(spec) == "table" and spec or nil
-    if overlay then overlay.target = surface(overlay.target) end
-end
-
-function ui.overlay() return overlay end
-
 -- A hook every Scene:wait polls, whatever screen is open. Urgent Contact uses
 -- it so an incoming call reaches the user from anywhere, the same way the
 -- idle lock already takes over from anywhere. The handler returns true when
@@ -166,6 +150,23 @@ end
 local function surface(target)
     return target or term.current()
 end
+
+-- FoxyOS 16: Interactive Notifications. A banner held over the top of the
+-- screen, with buttons of its own, while whatever is open keeps working
+-- under it: every Scene:wait on its screen draws it last, a tap on one of
+-- its buttons goes to it rather than to the screen, a tap elsewhere on it
+-- does nothing, and a tap anywhere else goes to the screen as usual.
+-- spec: target, top, bottom (the rows it covers), draw(target), buttons
+-- ({ id, x1, y1, x2, y2 }), tap(id) -- run in the wait, which then wakes
+-- its screen to redraw. nil takes it down.
+local overlay
+function ui.setOverlay(spec)
+    overlay = type(spec) == "table" and spec or nil
+    if overlay then overlay.target = surface(overlay.target) end
+end
+
+function ui.overlay() return overlay end
+
 
 function ui.size(target)
     return surface(target).getSize()
@@ -1624,6 +1625,20 @@ local function keyboardRows(mode)
     return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_<" }
 end
 
+-- FoxyOS 16: Paste. A VerCode notification's Paste button puts the code
+-- here, and the text box that is open takes it at once -- or, if none is,
+-- the next one opened within a minute does. Then it is used up.
+local clipboard = {}
+function ui.paste(text)
+    clipboard.text, clipboard.at = tostring(text or ""), util.nowMs()
+end
+local function takePaste()
+    if not clipboard.text or util.nowMs() - (clipboard.at or 0) > 60000 then return nil end
+    local text = clipboard.text
+    clipboard.text = nil
+    return text
+end
+
 function ui.input(target, title, options)
     target = surface(target)
     options = options or {}
@@ -1639,6 +1654,9 @@ function ui.input(target, title, options)
     local suggestions, suggestedFor = {}, nil
 
     while true do
+        -- FoxyOS 16: a code pasted from a notification, typed for you.
+        local pasted = takePaste()
+        if pasted then value = pasted:sub(1, maxLength) end
         ui.clear(target)
         ui.header(target, title, options.hint)
         local fieldY = options.hint and 5 or 4

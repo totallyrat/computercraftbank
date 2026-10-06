@@ -7,16 +7,18 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
-## FoxyOS 16 Beta (15.5.0)
+## FoxyOS 16 Beta 2 (15.5.1)
 
-Only devices signed up to Beta Updates get this. Sign up a Pocket in Settings → Beta (and any other device you want on it). If the beta will not start on a Pocket, run `installer` and install the Pocket again: that puts the release back. Two Pockets on the beta, friends with each other, make this easiest.
+Only devices signed up to Beta Updates get this. The Bank and App Server stay on the release: VerCode and Yap Map need the Bank on 15.2 first. Sign up a Pocket in Settings → Beta (and any other device you want on it). If the beta will not start on a Pocket, run `installer` and install the Pocket again: that puts the release back. Two Pockets on the beta, friends with each other, make this easiest.
 
 ### Getting it
 
-- [ ] Settings → Beta: *FoxyOS 16 Beta, Version 15.5.0*, **Get FoxyOS 16 Beta**. The start-up ends on *Powered by FoxyOS 16 Beta*.
+- [ ] Settings → Beta: *FoxyOS 16 Beta 2, Version 15.5.1*, **Get FoxyOS 16 Beta 2**. A Pocket on Beta 1 takes it by itself. The start-up ends on *Powered by FoxyOS 16 Beta 2*.
+- [ ] After the restart a banner says *Yap! is here*, and Yap! (a cyan **Y**) is on the Home Screen.
 
 ### Calls
 
+- [ ] **The Beta 1 crash:** a call coming in no longer stops the Pocket.
 - [ ] Pocket A calls Pocket B (Friends → Urgent) while B is in another app: a banner slides down at the top of B's screen, theme-coloured border, the caller's name with moving dots, *Urgent Contact*, **Accept** and **Decline**.
 - [ ] B can keep using the app under it: scrolling, typing, tapping buttons outside the banner all work.
 - [ ] **Decline**: the banner goes, A sees *Declined*. **Accept**: the call opens on B.
@@ -32,7 +34,29 @@ Only devices signed up to Beta Updates get this. Sign up a Pocket in Settings �
 - [ ] On the other Pocket that bubble has **Pay** and **No**. **Pay** asks for the PIN, pays, and both sides see it turn green *Paid*, plus a green *paid $5* bubble. **No** turns it grey *Declined*.
 - [ ] **Send** in the tab asks for the PIN and sends; in a group it asks who first.
 - [ ] A Government chat's tab says *Only the state sends here*; its demands still show **Pay**.
-- [ ] The Friends hub's Chats tab opens the same new chats.
+- [ ] Messages has **Chats** and **Groups** tabs. **+ New group** on Groups picks friends and makes one; groups are only on Groups, one-to-one chats only on Chats.
+- [ ] Friends has **Friends** and **Urgent** only, no Chats.
+
+### VerCode
+
+- [ ] Open Yap! for the first time: after signing in with Foxy it asks you to sign up. **Send my code**: a banner drops at the top, *Foxy* and a 6 digit code, *Yap! code*, with **Paste** and **Close**.
+- [ ] **Paste** fills the code box; **OK** signs you up (*Welcome to Yap!*). Opening Yap! again does not ask again.
+- [ ] Messages → Chats has a chat from *Foxy* with the code in it, and no box to reply: *Codes only. No replies*.
+- [ ] A wrong code says *Not that code*; after three wrong ones the app stops asking until you tap Send again.
+
+### Yap!
+
+- [ ] Opening it: three dots, then a bubble with *Yap!* typed in, *by Foxy* under it.
+- [ ] **Feed**: **+ Yap** posts (the yap rises off the screen, *Yapped!*). Cards slide in from the right; friends' yaps (green edge) come before everybody else's.
+- [ ] Open a yap: **Like** (a heart pops), **Reply**, and **Delete** on your own.
+- [ ] **Chat** asks for your PIN once per opening (a padlock opens), then lists friends. **Say** sends; it slides in. The friend gets a notification if they allowed Yap!. **Call** rings them.
+- [ ] Remove Yap! (Settings → Apps), sign out and in: it does not come back.
+
+### Yap Map
+
+- [ ] **Map**: rings go out, then friends who use Yap! drop in. One whose Pocket is near the GPS Anchors shows *x y z* and how far away; one out of range says *Not in a zone*. A friend without Yap! is not listed.
+- [ ] *You* at the top shows your own coordinates, or *Not in a Coordinate Zone*.
+- [ ] **Hide me** asks first; afterwards your friends do not see you, and your row says *You (hidden)*. **Show me** puts you back.
 ## FoxyOS 15.2 (15.2.0)
 
 - [ ] Settings → Updates shows **Prioritize Updates On**; tapping it turns it off and back.

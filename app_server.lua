@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "15.5.0"
+local PROGRAM_VERSION = "15.5.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -209,6 +209,9 @@ local SHIPPED = {
     -- FoxyOS 14: invitations and small events, made by Foxy.
     { file = "invt.lua", id = "INVT", name = "INVT", author = "Foxy",
       description = "Invite friends. Small events, one price, no queue." },
+    -- FoxyOS 16: Yap!, by Foxy. Every Pocket fetches it once, like Foxy.
+    { file = "yap.lua", id = "YAP", name = "Yap!", author = "Foxy",
+      description = "Posts, private chats and Yap Map." },
 }
 
 local function seedShippedApps()

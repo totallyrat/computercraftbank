@@ -1,5 +1,30 @@
 # Changelog
 
+## 15.5.1
+
+FoxyOS 16 Beta 2, for devices signed up to Beta Updates. Not tested yet:
+that is what the beta is for. Everything from Beta 1 is still here.
+
+**Calls work.** A call coming in stopped the Pocket in Beta 1: the banner
+code used a part of the screen library before it existed. Fixed.
+
+**Yap!** Yap and Yap Chat are one app, by Foxy, and every Pocket gets it
+with the update. Feed for posts, likes and replies; Chat for private
+messages behind your PIN, gone a day after they are read; and Yap Map.
+Take it off and it stays off. Yap Boost did not come along.
+
+**Yap Map.** Not a map: your friends' coordinates while they are in a
+Coordinate Zone, somewhere the GPS Anchors can place their Pocket. Only
+friends who use Yap!, and Hide me takes you off everybody's.
+
+**VerCode.** Apps can send you a verification code. It arrives in Messages
+from the app's publisher, the company behind it, and as a notification with
+Paste, which fills in the box the app is asking in. Signing up to Yap! uses
+one.
+
+**Group Chats.** Messages has Chats and Groups tabs. Friends lost its Chats
+tab: Friends is for friends, Messages for messages.
+
 ## 15.5.0
 
 FoxyOS 16 Beta, for devices signed up to Beta Updates. Not tested yet: that

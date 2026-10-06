@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "15.5.0"
+local PROGRAM_VERSION = "15.5.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -347,6 +347,20 @@ end
 return front(c.h - y + 1, rise - 2, 1)
 end
 
+
+function STYLES.dots(c, x, y, t)
+if t < 0.5 then
+for index = 1, 3 do
+if t >= (index - 1) / 6
+and near(c, x, y, c.w * index / 4, c.h / 2) <= 1.5 then
+return 2
+end
+end
+return nil
+end
+return front(near(c, x, y, c.w / 2, c.h / 2), (t - 0.5) * 2 * (reach(c) / 2 + 1), 1.5)
+end
+
 local BUILT_IN = { friends = "ripple", messages = "bubble", tickets = "tear", myid = "scan",
 ccg = "arcade", subs = "wave", reminders = "shake", quick = "bolt",
 browser = "tiles", settings = "shutter" }
@@ -354,7 +368,7 @@ browser = "tiles", settings = "shutter" }
 
 local SHIPPED = { FOXY = "none", MAIL = "envelope", SHOP = "awning",
 COMPANY = "blinds", NET = "radar", WC = "typewriter", BUCK = "coin",
-REVO = "spin", INVT = "unfold" }
+REVO = "spin", INVT = "unfold", YAP = "dots" }
 local OTHERS = { "diamond", "iris", "doors", "rise", "diagonal" }
 
 function opening.style(id)
@@ -3459,7 +3473,8 @@ local width, height = target.getSize()
 ui.clear(target)
 ui.header(target, conversation.title,
 conversation.kind == "group"
-and (conversation.member_count .. " people") or "Direct",
+and (conversation.member_count .. " people")
+or conversation.kind == "publisher" and "Codes" or "Direct",
 util.formatClock(blink))
 return chat.draw(scene or ui.scene(target), items, conversation, 4, height - 3, scroll)
 end
@@ -3468,10 +3483,16 @@ while running do
 local width, height = target.getSize()
 local scene = ui.scene(target)
 local more = draw(scene)
+
+if conversation.kind == "publisher" then
+ui.text(target, 2, height - 1, ui.truncate("Codes only. No replies",
+width - 2), ui.theme.muted)
+else
 scene:button("type", 2, height - 1, width - 7, 1, "Message...",
 { background = ui.theme.panel, foreground = ui.theme.muted })
 scene:button("money", width - 4, height - 1, 4, 1, config.currency,
 { background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+end
 scene:button("back", 1, height, 8, 1, "< Back",
 { background = ui.theme.background })
 if more then
@@ -3597,24 +3618,33 @@ end
 end
 end
 
-local function messagesScreen(tabs)
+
+
+
+local function messagesScreen(tabs, which)
 local page = 1
+local groups = which == "groups"
 while true do
 local list = request("CHAT_LIST")
 if not list then return end
-local conversations = list.conversations
+local conversations = {}
+for _, item in ipairs(list.conversations) do
+if (item.kind == "group") == groups then
+conversations[#conversations + 1] = item
+end
+end
 local width, height = target.getSize()
 ui.clear(target)
-ui.header(target, "Messages", #conversations .. " chats",
-util.formatClock())
+ui.header(target, groups and "Groups" or "Messages", #conversations
+.. (groups and " groups" or " chats"), util.formatClock())
 local scene = ui.scene(target)
-local half = math.floor((width - 3) / 2)
-scene:button("new", 2, 4, half, 2, "New chat",
-{ background = ui.theme.accentDark })
-scene:button("group", 2 + half + 1, 4, width - 3 - half, 2, "New group",
-{ background = ui.theme.panel })
+scene:button(groups and "group" or "new", 2, 4, width - 2, 2,
+groups and "+ New group" or "+ New chat",
+{ background = ui.theme.accent,
+foreground = ui.theme.accentInk or ui.inkOn(ui.theme.accent) })
 if #conversations == 0 then
-ui.center(target, 11, "No chats yet", ui.theme.muted)
+ui.center(target, 11, groups and "No groups yet" or "No chats yet",
+ui.theme.muted)
 end
 local pageItems, actualPage, pages = util.page(conversations, page, 3)
 page = actualPage
@@ -4229,8 +4259,43 @@ buttons = layout.buttons, tap = ringing.tap,
 draw = function(where) ringing.draw(where, 1) end })
 end
 
+
+
+
+function ringing.code(item)
+ringing.vercode, ringing.codeAt = item, os.clock()
+local function draw(where, drop)
+return ui.topBanner(where, {
+title = ui.truncate(tostring(item.publisher or item.title or "Code"), 14)
+.. "  " .. tostring(item.code),
+body = ui.truncate(tostring(item.app_name or "Your") .. " code", 20),
+color = ui.theme.accent,
+buttons = { { id = "paste", label = "Paste", color = ui.theme.success },
+{ id = "close", label = "Close", color = ui.theme.panel } },
+}, drop)
+end
+for step = 1, 4 do
+draw(target, step / 4)
+sleep(0.04)
+end
+local layout = draw(target, 1)
+ui.setOverlay({ target = target, top = layout.top, bottom = layout.bottom,
+buttons = layout.buttons,
+draw = function(where) draw(where, 1) end,
+tap = function(id)
+if id == "paste" and type(ui.paste) == "function" then ui.paste(item.code) end
+ringing.vercode = nil
+ui.setOverlay(nil)
+end })
+end
+
 watchForUrgentCalls = function()
 if not sessionToken or inCall then return false end
+
+if ringing.vercode and not ringing.call and os.clock() - (ringing.codeAt or 0) > 60 then
+ringing.vercode = nil
+ui.setOverlay(nil)
+end
 local poll = request("PUMPE_POLL", { position = net.locate(1) }, true)
 if not poll then return false end
 local latest = poll.latest
@@ -4273,6 +4338,14 @@ end
 
 if ringing.call then
 ringing.stop()
+return true
+end
+
+if latest and latest.notification_id ~= lastBannerId and latest.kind == "vercode"
+and latest.code and type(ui.setOverlay) == "function"
+and type(ui.topBanner) == "function" then
+lastBannerId = latest.notification_id
+ringing.code(latest)
 return true
 end
 if latest and latest.notification_id ~= lastBannerId then
@@ -4413,6 +4486,14 @@ local updateDeferred
 
 
 
+
+
+
+local prioritize = {}
+
+
+
+
 local function updateInstalled()
 if type(ui.pocketInstalling) == "function" then
 ui.pocketInstalling(target, 15)
@@ -4462,6 +4543,7 @@ updating = ui.pocketUpdating,
 onInstalled = updateInstalled,
 beta = device.beta == true,
 manifestUrl = url, channel = url and "beta" or nil,
+onSpaceNeeded = function(needed) prioritize.makeRoom(needed) end,
 })
 end
 if not betaOnly and look(nil) then return true end
@@ -4474,33 +4556,37 @@ local function updatesScreen()
 while running do
 local width, height = target.getSize()
 local auto = device.update_mode == "auto"
+local prioritized = device.prioritize_updates ~= false
 ui.clear(target)
 ui.header(target, "Updates", "v" .. tostring(config.version),
 util.formatClock())
-ui.card(target, 2, 5, width - 2, 5, auto and ui.theme.success
+ui.card(target, 2, 5, width - 2, 4, auto and ui.theme.success
 or ui.theme.accent)
 ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
 ui.theme.panel)
 ui.text(target, 4, 6, auto and "Install it" or "Ask me first",
 ui.theme.ink, ui.theme.panel)
-ui.wrappedText(target, 4, 8, auto
-and "New releases install themselves."
-or "You choose each time.", width - 6, 2,
+ui.text(target, 4, 7, ui.truncate(device.modem_on == false
+and "Modem off: not looking" or (updateDeferred
+and ("v" .. updateDeferred .. " is waiting")
+or "Checked every half minute"), width - 6),
 ui.theme.muted, ui.theme.panel)
-ui.text(target, 2, 11, "THIS POCKET", ui.theme.muted)
-ui.text(target, 2, 12, ui.truncate(tostring(config.release_name
+ui.text(target, 2, 10, "THIS POCKET", ui.theme.muted)
+ui.text(target, 2, 11, ui.truncate(tostring(config.release_name
 or ("v" .. tostring(config.version))), width - 2), ui.theme.ink)
-ui.wrappedText(target, 2, 14, device.modem_on == false
-and "The modem is off, so this Pocket is not looking for releases."
-or (updateDeferred and ("Version " .. updateDeferred
-.. " is waiting. Check now to see it again.")
-or "Checked every half minute while you are on the network."),
-width - 2, 4, ui.theme.muted)
 local scene = ui.scene(target)
-scene:button("mode", 2, height - 7, width - 2, 2,
+
+scene:button("prioritize", 2, 13, width - 2, 1, prioritized
+and "Prioritize Updates On" or "Prioritize Updates Off",
+{ background = prioritized and ui.theme.success or ui.theme.panel,
+foreground = prioritized and colors.black or ui.theme.ink })
+ui.text(target, 2, 14, ui.truncate(#(device.prioritized or {}) > 0
+and (#device.prioritized .. " app(s) to put back") or
+"Apps make room for releases", width - 2), ui.theme.muted)
+scene:button("mode", 2, height - 4, width - 2, 1,
 auto and "Ask me instead" or "Install automatically",
 { background = ui.theme.panel })
-scene:button("check", 2, height - 4, width - 2, 2, "Check now",
+scene:button("check", 2, height - 2, width - 2, 1, "Check now",
 { background = ui.theme.accentDark,
 disabled = device.modem_on == false })
 scene:button("back", 1, height, 8, 1, "< Back",
@@ -4515,10 +4601,18 @@ device.update_mode == "auto" and "Automatic" or "Ask first",
 device.update_mode == "auto"
 and "New releases install themselves"
 or "You choose, every time", 1.2)
+elseif action == "prioritize" then
+device.prioritize_updates = not prioritized
+saveDevice()
+ui.message(target, "success", device.prioritize_updates
+and "Updates come first" or "Apps stay put",
+device.prioritize_updates and "Apps make room, and come back after"
+or "A release that does not fit waits", 1.4)
 elseif action == "check" then
 
 
 if not checkForUpdate(true) then
+prioritize.restore()
 ui.message(target, "info", "Up to date",
 "This Pocket is on the newest release", 1.2)
 end
@@ -4843,28 +4937,31 @@ end
 
 
 
+
+
+local function messagesApp(action)
+ui.runTabs({
+list = { { id = "chats", label = "Chats" }, { id = "groups", label = "Groups" } },
+color = colors.green,
+start = action == "groups" and "groups" or "chats",
+pages = { chats = function(spec) return messagesScreen(spec, "chats") end,
+groups = function(spec) return messagesScreen(spec, "groups") end },
+running = function() return running and sessionToken ~= nil end,
+})
+end
+
 local function friendsApp(action)
 if action == "urgent" then urgentScreen() return end
+
+if action == "messages" then messagesApp() return end
 ui.runTabs({
-list = { { id = "messages", label = "Chats" },
-{ id = "people", label = "Friends", short = "Pals" },
+list = { { id = "people", label = "Friends" },
 { id = "urgent", label = "Urgent", short = "SOS" } },
 color = colors.cyan,
-start = action == "people" and "people" or "messages",
-pages = { messages = messagesScreen, people = friendsScreen,
-urgent = urgentScreen },
+start = "people",
+pages = { people = friendsScreen, urgent = urgentScreen },
 once = { urgent = true },
 running = function() return running and sessionToken ~= nil end,
-
-
-refresh = function(spec)
-local poll = request("PUMPE_POLL", {}, true) or {}
-local unread = poll.unread_messages or 0
-spec.list[1].label = unread > 0
-and ("Chats " .. math.min(unread, 9)) or "Chats"
-spec.list[1].short = unread > 0 and ("Chat" .. math.min(unread, 9))
-or nil
-end,
 })
 end
 
@@ -6022,6 +6119,38 @@ browse = function(domain) return webpage.browse(domain) end,
 
 
 
+
+vercode = {
+send = function()
+return request("VERCODE_SEND", { app_id = entry.app_id }, true)
+end,
+check = function(code)
+return request("VERCODE_CHECK", { app_id = entry.app_id,
+code = tostring(code or "") }, true)
+end,
+ask = function(title)
+local sent, sendError = request("VERCODE_SEND",
+{ app_id = entry.app_id }, true)
+if not sent then return nil, sendError end
+for _ = 1, 3 do
+local typed = ui.input(target, title or "Your code", {
+hint = "From " .. ui.truncate(tostring(sent.publisher), 12)
+.. " in Messages", mode = "integer", maxLength = 6 })
+if not typed then return nil, "Cancelled" end
+local ok, err, code = request("VERCODE_CHECK", {
+app_id = entry.app_id, code = typed }, true)
+if ok then return true end
+ui.message(target, "error", "Not that code", err, 1.2)
+if code == "VERCODE_LOCKED" or code == "VERCODE_EXPIRED" then
+return nil, err
+end
+end
+return nil, "Too many tries"
+end,
+},
+
+
+
 mail = {
 send = function(spec)
 spec = type(spec) == "table" and spec or {}
@@ -6272,6 +6401,94 @@ return true
 end
 
 
+
+
+
+prioritize.LAST = { FOXY = 2, MAIL = 1 }
+function prioritize.makeRoom(needed)
+if device.prioritize_updates == false or type(fs.getFreeSpace) ~= "function" then
+return
+end
+local short = (tonumber(needed) or 0) + 12288 - (fs.getFreeSpace(ROOT) or 0)
+if short <= 0 then return end
+local candidates = {}
+for _, entry in ipairs(installed.list) do
+local path = appPath(entry.app_id)
+if fs.exists(path) then
+candidates[#candidates + 1] = { entry = entry, size = fs.getSize(path) }
+end
+end
+table.sort(candidates, function(a, b)
+local lastA, lastB = prioritize.LAST[a.entry.app_id] or 0,
+prioritize.LAST[b.entry.app_id] or 0
+if lastA ~= lastB then return lastA < lastB end
+return a.size > b.size
+end)
+device.prioritized = device.prioritized or {}
+for _, candidate in ipairs(candidates) do
+if short <= 0 then break end
+local entry = candidate.entry
+pcall(fs.delete, appPath(entry.app_id))
+for index = #installed.list, 1, -1 do
+if installed.list[index].app_id == entry.app_id then
+table.remove(installed.list, index)
+end
+end
+device.prioritized[#device.prioritized + 1] = { app_id = entry.app_id,
+name = entry.name }
+short = short - candidate.size
+end
+saveApps()
+saveDevice()
+end
+
+
+
+
+function prioritize.restore(force)
+if type(device.prioritized) ~= "table" or #device.prioritized == 0
+or offline() then
+return {}
+end
+local now = os.clock()
+if not force and prioritize.tried and now - prioritize.tried < 60 then return {} end
+prioritize.tried = now
+local listed = storeRequest("APP_LIST", {}, true, 2)
+if not listed or type(listed.apps) ~= "table" then return {} end
+local byId = {}
+for _, app in ipairs(listed.apps) do byId[app.app_id] = app end
+local waiting, still = {}, {}
+for _, wanted in ipairs(device.prioritized) do
+local app = byId[wanted.app_id]
+if app and not installedApp(app.app_id) then
+waiting[#waiting + 1] = app
+elseif not app then
+
+
+still[#still + 1] = wanted
+end
+end
+table.sort(waiting, function(a, b)
+local firstA, firstB = prioritize.LAST[a.app_id] or 0, prioritize.LAST[b.app_id] or 0
+if firstA ~= firstB then return firstA > firstB end
+return (a.size or 0) < (b.size or 0)
+end)
+local back = {}
+for _, app in ipairs(waiting) do
+local free = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT) or math.huge
+local body = free >= (app.size or 0) + 16384 and fetchApp(app) or nil
+if body and keepApp(app, body) then
+back[#back + 1] = tostring(app.name)
+else
+still[#still + 1] = { app_id = app.app_id, name = app.name }
+end
+end
+device.prioritized = still
+saveDevice()
+return back
+end
+
+
 local function installApp(app)
 local width, height = target.getSize()
 if #installed.list >= (tonumber(config.max_apps_installed) or 12)
@@ -6466,18 +6683,40 @@ end
 
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
 SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
-BUCK = "buckapp.lua", REVO = "revolution.lua" }
+BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua" }
 
-function beta.syncApps()
-if not beta.isBeta(config.version) or offline() then return end
+
+
+function beta.manifest()
+if not beta.isBeta(config.version) or offline() then return nil end
 local okLib, update = pcall(require, "lib.update")
 local url = tostring(config.beta_manifest_url or "")
-if not okLib or type(update) ~= "table" or url == "" then return end
+if not okLib or type(update) ~= "table" or url == "" then return nil end
 local manifest = update.fetchManifest(url, update.PUBLISHED_FILES, "beta",
 update.PUBLISHED_OPTIONAL)
+if not manifest or manifest.version ~= config.version then return nil end
+return manifest, update, url
+end
 
 
-if not manifest or manifest.version ~= config.version then return end
+
+
+function beta.fetchApp(appId)
+local manifest, update, url = beta.manifest()
+if not manifest then return nil end
+for _, file in ipairs(manifest.files) do
+if file.path == beta.APP_FILES[appId] then
+local body = update.fetchFile(url, file, manifest.version)
+if type(body) ~= "string" then return nil end
+return body, { app_id = appId, author = "Foxy",
+name = body:match("^%-%- PUMPE APP: ([^\n]+)") or appId }, file.checksum
+end
+end
+end
+
+function beta.syncApps()
+local manifest, update, url = beta.manifest()
+if not manifest then return end
 local byPath = {}
 for _, file in ipairs(manifest.files) do byPath[file.path] = file end
 local changed = false
@@ -6782,10 +7021,12 @@ local APPS = {
 
 
 messages = { name = "Messages", glyph = "\"", color = colors.green,
-open = function() messagesScreen() end },
+open = messagesApp, actions = {
+{ id = "chats", label = "Chats", hint = "One to one" },
+{ id = "groups", label = "Group Chats", hint = "Everybody at once" },
+} },
 friends = { name = "Friends", glyph = "@", color = colors.cyan,
 open = friendsApp, actions = {
-{ id = "messages", label = "Messages", hint = "Open a chat" },
 { id = "people", label = "Friends", hint = "Add or find someone" },
 { id = "urgent", label = "Urgent Contact",
 hint = "Reach a friend fast" },
@@ -6872,7 +7113,8 @@ end
 APPS[id] = {
 name = entry.name,
 glyph = string.upper(entry.name:sub(1, 1)),
-color = EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
+color = entry.app_id == "YAP" and colors.cyan
+or EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
 actions = entry.actions,
 open = function(action) runInstalledApp(entry, action) end,
 }
@@ -7134,12 +7376,24 @@ end
 
 
 
+
+
+
+
+
+
 local function ensureFoxy()
 local missing = {}
 for _, appId in ipairs({ "FOXY", "MAIL" }) do
 if not installedApp(appId) then missing[appId] = true end
 end
-if next(missing) == nil then return end
+device.included = type(device.included) == "table" and device.included or {}
+if not device.included.YAP and installedApp("YAP") then
+device.included.YAP = true
+saveDevice()
+end
+local wantYap = not device.included.YAP
+if next(missing) == nil and not wantYap then return end
 local listed = storeRequest("APP_LIST", {}, true)
 local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
 for _, app in ipairs(listed and listed.apps or {}) do
@@ -7150,6 +7404,25 @@ if missing[app.app_id] and (app.app_id == "FOXY" or room > 0) then
 if installApp(app) then room = room - 1 end
 end
 end
+if not wantYap or room <= 0 then return end
+local body, app, sum
+if beta.isBeta(config.version) then
+body, app, sum = beta.fetchApp("YAP")
+else
+for _, listedApp in ipairs(listed and listed.apps or {}) do
+if listedApp.app_id == "YAP" then app = listedApp end
+end
+body = app and fetchApp(app)
+end
+if not body or not keepApp(app, body) then return end
+local entry = installedApp("YAP")
+if entry and sum then
+entry.beta, entry.beta_sum = config.version, sum
+saveApps()
+end
+device.included.YAP = true
+saveDevice()
+return tostring(app.name or "Yap!")
 end
 
 
@@ -7710,11 +7983,19 @@ APPS.settings.open = settingsScreen
 APPS.browser.open = appBrowser
 APPS.reminders.open = agenda.reminders
 APPS.quick.open = agenda.quick
-pcall(ensureFoxy)
+local includedOk, included = pcall(ensureFoxy)
 
 pcall(webpage.retireShopApps)
 pcall(beta.syncApps)
+
+local restoredOk, restored = pcall(prioritize.restore, true)
 refreshInstalledApps()
+if restoredOk and #restored > 0 then
+showBanner({ title = #restored == 1 and "App is back"
+or (#restored .. " apps are back"), body = table.concat(restored, ", ") })
+elseif includedOk and included then
+showBanner({ title = included .. " is here", body = "New in FoxyOS 16, by Foxy" })
+end
 
 local blink, tick, page, alertOffset = true, 0, 1, 0
 local poll = request("PUMPE_POLL", {}, true) or {}
@@ -7835,6 +8116,12 @@ if action == "__tick" or action == "__idle" or action == "__wake" then
 tick = tick + 1
 agenda.tick()
 checkForUpdate(false)
+local back = prioritize.restore()
+if #back > 0 then
+refreshInstalledApps()
+showBanner({ title = #back == 1 and "App is back"
+or (#back .. " apps are back"), body = table.concat(back, ", ") })
+end
 local updated = updateApps(false)
 if #updated > 0 then
 refreshInstalledApps()

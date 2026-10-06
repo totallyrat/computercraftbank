@@ -81,6 +81,8 @@ const forwardOptionalFiles = [
   "brickbreaker.lua",
   // FoxyOS 14: INVT, by Foxy, shipped by the App Server.
   "invt.lua",
+  // FoxyOS 16: Yap!, by Foxy, on every Pocket.
+  "yap.lua",
 ];
 
 function checksum(buffer) {
@@ -215,7 +217,7 @@ const strippedFiles = [
 // size. Their headers stay: the App Server and the Pocket read them.
 const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
   "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
-  "invt.lua"];
+  "invt.lua", "yap.lua"];
 strippedFiles.push(...strippedApps);
 
 // FoxyOS 14.1: everything a computer downloads is in dist/, the files that

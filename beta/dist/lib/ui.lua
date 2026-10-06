@@ -126,22 +126,6 @@ end
 
 
 
-
-
-
-
-local overlay
-function ui.setOverlay(spec)
-overlay = type(spec) == "table" and spec or nil
-if overlay then overlay.target = surface(overlay.target) end
-end
-
-function ui.overlay() return overlay end
-
-
-
-
-
 function ui.setBackgroundTask(seconds, handler)
 seconds = tonumber(seconds)
 if not seconds or seconds <= 0 or type(handler) ~= "function" then
@@ -166,6 +150,23 @@ end
 local function surface(target)
 return target or term.current()
 end
+
+
+
+
+
+
+
+
+
+local overlay
+function ui.setOverlay(spec)
+overlay = type(spec) == "table" and spec or nil
+if overlay then overlay.target = surface(overlay.target) end
+end
+
+function ui.overlay() return overlay end
+
 
 function ui.size(target)
 return surface(target).getSize()
@@ -1624,6 +1625,20 @@ end
 return { "1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_<" }
 end
 
+
+
+
+local clipboard = {}
+function ui.paste(text)
+clipboard.text, clipboard.at = tostring(text or ""), util.nowMs()
+end
+local function takePaste()
+if not clipboard.text or util.nowMs() - (clipboard.at or 0) > 60000 then return nil end
+local text = clipboard.text
+clipboard.text = nil
+return text
+end
+
 function ui.input(target, title, options)
 target = surface(target)
 options = options or {}
@@ -1639,6 +1654,9 @@ local blink = true
 local suggestions, suggestedFor = {}, nil
 
 while true do
+
+local pasted = takePaste()
+if pasted then value = pasted:sub(1, maxLength) end
 ui.clear(target)
 ui.header(target, title, options.hint)
 local fieldY = options.hint and 5 or 4
