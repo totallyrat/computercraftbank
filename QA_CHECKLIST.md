@@ -7,6 +7,13 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 16.2 (16.2.0)
+
+Bank only; FoxyOS 17's CCG Casino uses it (see its beta section).
+
+- [ ] The Bank and its Vault update to 16.2.0 by themselves and start normally.
+- [ ] Bet still works as in 16.0.
+
 ## FoxyOS 16.1 (16.1.0)
 
 Bank only; the CCG Casino that uses it is FoxyOS 17.
