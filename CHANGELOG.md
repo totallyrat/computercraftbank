@@ -1,5 +1,21 @@
 # Changelog
 
+## 16.1.0
+
+FoxyOS 16.1, for the Bank: the money side of the CCG Casino that FoxyOS 17
+brings. Nothing changes on any screen. Update the Bank (Core and Vault).
+
+**Casino bets.** Roulette, Blackjack and Poker join Heads or Tails at the
+Bank. A casino stake is up to eight bets, each of a kind the game has --
+a number, red or black, a dozen; a hand -- and the CCG Server says only how
+each one ended. What that pays is the Bank's own table, so a server can
+call a bet the wrong way but cannot name a price. A tie gives the stake
+straight back; winnings are held for a day, like every CCG win.
+
+**Whose a casino is.** A CCG Casino belongs to a company. The CCG Server
+asks the Bank which companies somebody owns, with their own session, before
+it lets them set one up or control it.
+
 ## 16.0.0
 
 FoxyOS 16: the two betas, finished. Update the Bank (Core and Vault), the

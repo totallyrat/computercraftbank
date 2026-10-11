@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.0.0"
+local PROGRAM_VERSION = "16.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1608,7 +1608,30 @@ local CCG_GAMES = {
     heads_tails = { name = "Heads or Tails", multiplier = 2 },
     race = { name = "Race", multiplier = 3 },
     survivor = { name = "Survivor", multiplier = 3 },
+    -- FoxyOS 16.1, for the CCG Casino of FoxyOS 17. These pay by the bet
+    -- (CASINO_PAYOUTS below), never by a multiplier for the whole game.
+    roulette = { name = "Roulette", multiplier = 0 },
+    blackjack = { name = "Blackjack", multiplier = 0 },
+    poker = { name = "Poker", multiplier = 0 },
 }
+
+-- What a casino bet pays, by the kind of bet and how it ended. The CCG
+-- Server says how each bet ended; the price of that is this table's, so a
+-- server can call a bet the wrong way but cannot name its own payout. 1 is
+-- the stake back (a push); a bet that lost, or an ending a kind of bet
+-- cannot have, pays nothing. Heads or Tails is here too: the casino plays
+-- it by the bet like the rest.
+local CASINO_PAYOUTS = {
+    heads_tails = { pick = { win = 2 } },
+    -- Single zero. Red, black, odd, even, 1-18 and 19-36 are "even" bets.
+    roulette = { straight = { win = 36 }, even = { win = 2 }, dozen = { win = 3 },
+        column = { win = 3 } },
+    -- Blackjack pays 3 to 2; a tie gives the stake back. A double is the
+    -- same bet, staked again.
+    blackjack = { hand = { win = 2, blackjack = 2.5, push = 1 } },
+    poker = { hand = { win = 2, push = 1 } },
+}
+local CASINO_MAX_BETS = 8
 
 local function walletFor(account)
     account.bet_wallet = account.bet_wallet or {
@@ -1815,7 +1838,32 @@ local function escrowFor(lobbyCode, game)
         opened_at = util.nowMs(),
     }
     if game then all[code].game = game end
+    -- FoxyOS 16.1: each stake's bets, for the games that pay by the bet.
+    all[code].bets = all[code].bets or {}
     return all[code]
+end
+
+-- A casino stake is a list of bets: { kind = , amount = }. Checked against
+-- the game's own kinds and the wager limits, and totalled.
+local function casinoBets(game, list)
+    local kinds = CASINO_PAYOUTS[game]
+    need(type(list) == "table" and #list >= 1 and #list <= CASINO_MAX_BETS,
+        "INVALID_BETS", "Place between 1 and " .. CASINO_MAX_BETS .. " bets")
+    local bets, total = {}, 0
+    for _, entry in ipairs(list) do
+        local kind = type(entry) == "table" and tostring(entry.kind or "") or ""
+        need(kinds[kind], "INVALID_BET", "That is not a bet in "
+            .. CCG_GAMES[game].name)
+        local amount = validateAmount(entry.amount,
+            tonumber(config.bet_maximum) or 10000)
+        need(amount >= (tonumber(config.bet_minimum) or 1),
+            "INVALID_AMOUNT", "A bet is below the minimum")
+        bets[#bets + 1] = { kind = kind, amount = amount }
+        total = util.roundMoney(total + amount)
+    end
+    need(total <= (tonumber(config.bet_maximum) or 10000), "INVALID_AMOUNT",
+        "That is more than the most you can wager at once")
+    return bets, total
 end
 
 -- Anything a CCG Server takes and never settles comes back on its own. This
@@ -1859,6 +1907,17 @@ function actions.CCG_SERVER_REGISTER(payload)
     return { server_token = token, games = CCG_GAMES }
 end
 
+-- FoxyOS 16.1: whose a CCG Casino is. A casino console belongs to a
+-- company, and the person setting one up -- or controlling it from the CCG
+-- app -- is whoever owns that company. The CCG Server has no accounts, so
+-- it asks, with that person's own session.
+function actions.CCG_COMPANIES(payload)
+    requireCCGServer(payload)
+    local account = requireSession(payload)
+    return { account_id = account.account_id, name = account.name,
+        companies = ownedCompanies(account) }
+end
+
 -- Who a player is. A CCG Server has no accounts of its own, so it asks --
 -- and only ever with the player's own PIN-unlocked bet session, so it
 -- cannot look anybody up who has not sat down at a game.
@@ -1880,10 +1939,18 @@ function actions.CCG_ESCROW_SET(payload)
     local account = requireBetSession(payload)
     local escrow = escrowFor(payload.lobby_code, payload.game)
     need(CCG_GAMES[escrow.game], "BAD_GAME", "That is not a CCG game")
-    local amount = validateAmount(payload.amount,
-        tonumber(config.bet_maximum) or 10000)
-    need(amount >= (tonumber(config.bet_minimum) or 1),
-        "INVALID_AMOUNT", "Wager is below the minimum")
+    local amount, bets
+    if CASINO_PAYOUTS[escrow.game] and escrow.game ~= "heads_tails"
+        or payload.bets ~= nil then
+        -- A casino stake: its bets, each of a kind the game has.
+        need(CASINO_PAYOUTS[escrow.game], "BAD_GAME", "That game takes one wager")
+        bets, amount = casinoBets(escrow.game, payload.bets)
+    else
+        amount = validateAmount(payload.amount,
+            tonumber(config.bet_maximum) or 10000)
+        need(amount >= (tonumber(config.bet_minimum) or 1),
+            "INVALID_AMOUNT", "Wager is below the minimum")
+    end
     local wallet = walletFor(account)
     local previous = util.roundMoney(escrow.stakes[account.account_id] or 0)
     need(wallet.balance + previous >= amount,
@@ -1896,6 +1963,7 @@ function actions.CCG_ESCROW_SET(payload)
     end
     wallet.balance = util.roundMoney(wallet.balance - amount)
     escrow.stakes[account.account_id] = amount
+    escrow.bets[account.account_id] = bets
     betActivity(account, "wager_reserved", -amount,
         CCG_GAMES[escrow.game].name .. " wager reserved",
         { game = escrow.game, lobby_code = escrow.code })
@@ -1913,6 +1981,7 @@ function actions.CCG_ESCROW_RELEASE(payload)
     local accountId = tostring(payload.account_id or "")
     local amount = util.roundMoney(escrow.stakes[accountId] or 0)
     escrow.stakes[accountId] = nil
+    escrow.bets[accountId] = nil
     local account = state.accounts[accountId]
     if account and amount > 0 then
         local wallet = walletFor(account)
@@ -1949,11 +2018,81 @@ end
 -- Settling. The server says who won and nothing else; the payout is this
 -- Bank multiplying the stake it is already holding, so a server that lies
 -- can pick the wrong winner but cannot invent money.
+-- FoxyOS 16.1: a casino round. `results` says how each player's bets ended
+-- -- a list in the order they were placed, or one word for all of them --
+-- and CASINO_PAYOUTS says what that pays. Winnings are held for a day like
+-- any CCG win; a push is the stake straight back.
+local function settleCasino(escrow, results)
+    local game = CCG_GAMES[escrow.game]
+    local table_ = CASINO_PAYOUTS[escrow.game]
+    local stakes, payouts, settled = 0, 0, {}
+    for accountId, staked in pairs(escrow.stakes) do
+        staked = util.roundMoney(staked) or 0
+        stakes = util.roundMoney(stakes + staked)
+        local account = state.accounts[accountId]
+        local said = results[accountId]
+        local bets = escrow.bets[accountId]
+            or { { kind = next(table_), amount = staked } }
+        local won, pushed, ended = 0, 0, {}
+        for index, bet in ipairs(bets) do
+            local outcome = type(said) == "table" and said[index] or said
+            outcome = type(outcome) == "string" and outcome or "lose"
+            local multiplier = (table_[bet.kind] or {})[outcome] or 0
+            if multiplier == 1 then
+                pushed = util.roundMoney(pushed + bet.amount)
+            elseif multiplier > 1 then
+                won = util.roundMoney(won + bet.amount * multiplier)
+            end
+            ended[index] = multiplier > 0 and outcome or "lose"
+        end
+        if account and staked > 0 then
+            local wallet = walletFor(account)
+            if pushed > 0 then
+                wallet.balance = util.roundMoney(wallet.balance + pushed)
+                betActivity(account, "wager_refund", pushed, game.name .. " push",
+                    { game = escrow.game, lobby_code = escrow.code })
+            end
+            local lost = util.roundMoney(staked - pushed)
+            if won > 0 then
+                local hold = addBetHold(account, escrow.game, escrow.code, won)
+                notification(account, "CCG win - funds holding",
+                    util.money(won, config.currency) .. " from " .. game.name
+                        .. " releases on day " .. hold.release_day .. " at "
+                        .. hold.release_time, "gaming")
+            elseif lost <= 0 then
+                notification(account, "CCG result", game.name
+                    .. ": a tie, so your stake is back", "gaming")
+            end
+            if won <= 0 and lost > 0 then
+                betActivity(account, "bet_lost", -lost, game.name .. " result",
+                    { game = escrow.game, lobby_code = escrow.code })
+                notification(account, "CCG result",
+                    "Your " .. game.name .. " bet did not win", "gaming")
+            end
+            payouts = util.roundMoney(payouts + won + pushed)
+            settled[#settled + 1] = { account_id = accountId, won = won > 0,
+                payout = won, pushed = pushed, results = ended }
+        end
+    end
+    return stakes, payouts, settled
+end
+
 function actions.CCG_ESCROW_SETTLE(payload)
     requireCCGServer(payload)
     local escrow = escrowFor(payload.lobby_code)
     local game = CCG_GAMES[escrow.game]
     need(game, "BAD_GAME", "That lobby has no game")
+    if type(payload.results) == "table" then
+        need(CASINO_PAYOUTS[escrow.game], "BAD_GAME", "That game pays by the winner")
+        local stakes, payouts, settled = settleCasino(escrow, payload.results)
+        state.ccg_house_profit = util.roundMoney(
+            (state.ccg_house_profit or 0) + stakes - payouts)
+        ccgEscrow()[escrow.code] = nil
+        save()
+        logActivity("CCG settled " .. escrow.code .. " / " .. game.name, colors.magenta)
+        return { settled = settled, stakes = stakes, payouts = payouts }
+    end
+    need((game.multiplier or 0) > 0, "BAD_GAME", "That game pays by the bet")
     local winners = {}
     for _, accountId in ipairs(type(payload.winners) == "table"
         and payload.winners or {}) do
