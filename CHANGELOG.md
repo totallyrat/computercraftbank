@@ -31,6 +31,24 @@ coin, cards dealt one at a time.
 **Sound and music.** Speakers play the games' sounds. Drop .mid files onto
 the CCG Casino computer's screen and play them from My Casino; the music
 goes quieter while a game is on.
+## 16.2.0
+
+FoxyOS 16.2, for the Bank: casino money for the CCG Casino of FoxyOS 17.
+Nothing changes on any screen yet. Update the Bank (Core and Vault).
+
+**Casinos earn for their company.** A CCG Casino table is linked to its
+company, and the company has a casino balance for all its tables: what
+players lose comes in, what they win goes out. The owner takes profit out,
+or puts money in, with their PIN.
+
+**Loans for big wins.** A win bigger than the casino's balance is a loan
+from the Bank: the balance goes below zero, the owner is told, and what the
+casino earns pays it back before there is profit again.
+
+**Credit limit.** An owner's casinos together may owe at most
+`ccg_casino_credit` (10,000), counting every round in play as if it ended as
+badly as it could; a bet that could go past it is refused, so a table in
+debt takes smaller bets. Owners cannot bet at their own casino.
 
 ## 16.1.0
 

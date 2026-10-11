@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "16.1.0"
+local PROGRAM_VERSION = "16.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1921,6 +1921,242 @@ end
 
 
 
+
+
+
+
+
+
+
+
+
+
+local casinoMoney = {}
+
+function casinoMoney.codes()
+state.ccg_casino_codes = state.ccg_casino_codes or {}
+return state.ccg_casino_codes
+end
+
+function casinoMoney.ledger(company)
+company.casino = company.casino or { balance = 0, earned = 0, paid = 0,
+borrowed = 0, cashed_out = 0, added = 0, rounds = 0 }
+return company.casino
+end
+
+function casinoMoney.companyFor(code)
+local companyId = casinoMoney.codes()[string.upper(tostring(code or ""))]
+local company = companyId and state.companies[companyId]
+if company and company.status == "active" then return company end
+return nil
+end
+
+function casinoMoney.credit()
+return tonumber(config.ccg_casino_credit) or 10000
+end
+
+
+function casinoMoney.owed(ownerId)
+local owed = 0
+for _, company in pairs(state.companies) do
+if company.owner_account_id == ownerId and company.casino then
+owed = owed + math.max(0, -company.casino.balance)
+end
+end
+return util.roundMoney(owed)
+end
+
+
+
+function casinoMoney.worst(game, bets, staked)
+local table_ = CASINO_PAYOUTS[game] or {}
+local most = 0
+for _, bet in ipairs(bets or {}) do
+local best = 0
+for _, multiplier in pairs(table_[bet.kind] or {}) do
+best = math.max(best, multiplier)
+end
+most = most + bet.amount * best
+end
+return math.max(0, most - (staked or 0))
+end
+
+
+
+function casinoMoney.exposure(escrow, swap)
+local worst = 0
+for accountId, staked in pairs(escrow.stakes) do
+if not (swap and swap.account_id == accountId) then
+worst = worst + casinoMoney.worst(escrow.game, escrow.bets[accountId], staked)
+end
+end
+if swap then worst = worst + casinoMoney.worst(escrow.game, swap.bets, swap.staked) end
+return worst
+end
+
+
+
+function casinoMoney.atStake(company, swapEscrow, swap)
+local worst = 0
+for code, companyId in pairs(casinoMoney.codes()) do
+local escrow = companyId == company.company_id and ccgEscrow()[code]
+if escrow then
+worst = worst + casinoMoney.exposure(escrow, escrow == swapEscrow and swap or nil)
+end
+end
+return worst
+end
+
+
+
+function casinoMoney.worstDebt(ownerId, swapEscrow, swap)
+local debt = 0
+for _, company in pairs(state.companies) do
+if company.owner_account_id == ownerId and company.casino then
+debt = debt + math.max(0, casinoMoney.atStake(company, swapEscrow, swap)
+- company.casino.balance)
+end
+end
+return debt
+end
+
+function casinoMoney.summary(company)
+local ledger = casinoMoney.ledger(company)
+local tables = 0
+for _, companyId in pairs(casinoMoney.codes()) do
+if companyId == company.company_id then tables = tables + 1 end
+end
+return { company_id = company.company_id, name = company.name,
+balance = ledger.balance, loan = math.max(0, -ledger.balance),
+earned = ledger.earned, paid = ledger.paid, borrowed = ledger.borrowed,
+cashed_out = ledger.cashed_out, added = ledger.added, rounds = ledger.rounds,
+tables = tables,
+free = util.roundMoney(math.max(0, ledger.balance - casinoMoney.atStake(company))) }
+end
+
+
+function casinoMoney.book(company, stakes, payouts, gameName)
+local ledger = casinoMoney.ledger(company)
+local before = ledger.balance
+ledger.balance = util.roundMoney(ledger.balance + stakes - payouts)
+ledger.earned = util.roundMoney(ledger.earned + stakes)
+ledger.paid = util.roundMoney(ledger.paid + payouts)
+ledger.rounds = ledger.rounds + 1
+local borrowed = util.roundMoney(math.max(0, -ledger.balance) - math.max(0, -before))
+local owner = state.accounts[company.owner_account_id]
+if borrowed > 0 then
+ledger.borrowed = util.roundMoney(ledger.borrowed + borrowed)
+if owner then
+notification(owner, "Casino loan", company.name .. " borrowed "
+.. util.money(borrowed, config.currency) .. " to pay a " .. gameName
+.. " win. What it earns pays it back.", "gaming")
+end
+elseif before < 0 and ledger.balance >= 0 and owner then
+notification(owner, "Casino loan repaid", company.name
+.. " has paid back its loan and is earning again.", "gaming")
+end
+end
+
+
+
+function actions.CCG_CASINO_LINK(payload)
+requireCCGServer(payload)
+local account = requireSession(payload)
+local company = state.companies[tostring(payload.company_id or "")]
+need(company and company.status == "active"
+and company.owner_account_id == account.account_id, "NOT_OWNER",
+"Choose a company you own")
+local code = string.upper(util.safeText(util.trim(tostring(payload.code or "")), 12))
+need(code:match("^[%w]+$"), "BAD_LOBBY", "That table has no code")
+local existing = casinoMoney.codes()[code]
+local holder = existing and state.companies[existing]
+need(not holder or holder.owner_account_id == account.account_id, "CODE_TAKEN",
+"Another company's table has that code")
+local open = ccgEscrow()[code]
+need(not open or next(open.stakes) == nil, "GAME_STARTED", "Link it between rounds")
+casinoMoney.codes()[code] = company.company_id
+casinoMoney.ledger(company)
+save()
+return { linked = true, casino = casinoMoney.summary(company) }
+end
+
+function actions.CCG_CASINO_UNLINK(payload)
+requireCCGServer(payload)
+local code = string.upper(util.trim(tostring(payload.code or "")))
+local open = ccgEscrow()[code]
+need(not open or next(open.stakes) == nil, "GAME_STARTED", "Unlink it between rounds")
+casinoMoney.codes()[code] = nil
+save()
+return { unlinked = true }
+end
+
+
+function actions.CASINO_FINANCES(payload)
+local account = requireSession(payload)
+local list = {}
+for _, company in pairs(state.companies) do
+if company.owner_account_id == account.account_id and company.status == "active"
+and company.casino then
+list[#list + 1] = casinoMoney.summary(company)
+end
+end
+table.sort(list, function(a, b) return a.name < b.name end)
+return { casinos = list, owed = casinoMoney.owed(account.account_id),
+credit = casinoMoney.credit() }
+end
+
+local function ownCasino(account, payload)
+local company = state.companies[tostring(payload.company_id or "")]
+need(company and company.status == "active" and company.casino
+and company.owner_account_id == account.account_id, "NOT_OWNER",
+"That is not one of your casinos")
+return company, casinoMoney.ledger(company)
+end
+
+
+function actions.CASINO_CASHOUT(payload)
+local account = requireSpender(payload)
+need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+local company, ledger = ownCasino(account, payload)
+local amount = validateAmount(payload.amount, math.huge)
+local free = util.roundMoney(ledger.balance - casinoMoney.atStake(company))
+need(amount <= free, "INSUFFICIENT_FUNDS", free > 0
+and ("The casino has " .. util.money(free, config.currency) .. " to take out")
+or "The casino has no profit to take out")
+ledger.balance = util.roundMoney(ledger.balance - amount)
+ledger.cashed_out = util.roundMoney(ledger.cashed_out + amount)
+account.balance = util.roundMoney(account.balance + amount)
+transaction(account, "casino_cashout", amount, company.name, "Casino profit",
+{ company_id = company.company_id })
+save()
+return { casino = casinoMoney.summary(company), balance = account.balance }
+end
+
+
+
+function actions.CASINO_DEPOSIT(payload)
+local account = requireSpender(payload)
+need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+local company, ledger = ownCasino(account, payload)
+local amount = validateAmount(payload.amount, math.huge)
+need(account.balance >= amount, "INSUFFICIENT_FUNDS", "Not enough in your account")
+local before = ledger.balance
+account.balance = util.roundMoney(account.balance - amount)
+ledger.balance = util.roundMoney(ledger.balance + amount)
+ledger.added = util.roundMoney(ledger.added + amount)
+transaction(account, "casino_deposit", -amount, company.name, "Money into the casino",
+{ company_id = company.company_id })
+if before < 0 and ledger.balance >= 0 then
+notification(account, "Casino loan repaid", company.name
+.. " has paid back its loan.", "gaming")
+end
+save()
+return { casino = casinoMoney.summary(company), balance = account.balance }
+end
+
+
+
+
 function actions.CCG_WHO(payload)
 requireCCGServer(payload)
 local account = requireBetSession(payload)
@@ -1950,6 +2186,17 @@ amount = validateAmount(payload.amount,
 tonumber(config.bet_maximum) or 10000)
 need(amount >= (tonumber(config.bet_minimum) or 1),
 "INVALID_AMOUNT", "Wager is below the minimum")
+end
+
+local company = casinoMoney.companyFor(escrow.code)
+if company then
+need(company.owner_account_id ~= account.account_id, "OWN_CASINO",
+"You cannot bet at your own casino")
+casinoMoney.ledger(company)
+need(casinoMoney.worstDebt(company.owner_account_id, escrow, {
+account_id = account.account_id, bets = bets, staked = amount })
+<= casinoMoney.credit(), "TABLE_LIMIT",
+"This table cannot cover a bet that size right now")
 end
 local wallet = walletFor(account)
 local previous = util.roundMoney(escrow.stakes[account.account_id] or 0)
@@ -2085,8 +2332,14 @@ need(game, "BAD_GAME", "That lobby has no game")
 if type(payload.results) == "table" then
 need(CASINO_PAYOUTS[escrow.game], "BAD_GAME", "That game pays by the winner")
 local stakes, payouts, settled = settleCasino(escrow, payload.results)
+local company = casinoMoney.companyFor(escrow.code)
+if company then
+
+casinoMoney.book(company, stakes, payouts, game.name)
+else
 state.ccg_house_profit = util.roundMoney(
 (state.ccg_house_profit or 0) + stakes - payouts)
+end
 ccgEscrow()[escrow.code] = nil
 save()
 logActivity("CCG settled " .. escrow.code .. " / " .. game.name, colors.magenta)

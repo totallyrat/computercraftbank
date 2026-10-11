@@ -43,6 +43,12 @@ Only devices signed up to Beta Updates get this. Sign up the **CCG Server** (its
 
 - [ ] Drag a .mid file onto the CCG Casino computer's screen: *Added ...*. My Casino → **MUSIC** lists it; tap it to play through the speakers. **VOL-/VOL+**, **NEXT**, **STOP**.
 - [ ] The music is quieter while a game is on, louder on the wheel.
+## FoxyOS 16.2 (16.2.0)
+
+Bank only; FoxyOS 17's CCG Casino uses it (see its beta section).
+
+- [ ] The Bank and its Vault update to 16.2.0 by themselves and start normally.
+- [ ] Bet still works as in 16.0.
 
 ## FoxyOS 16.1 (16.1.0)
 

@@ -153,4 +153,123 @@ rejected(bank.request, "CCG_AUTH", "CCG_COMPANIES", { server_token = "made up",
     session_token = ana.token })
 rejected(bank.request, "SESSION_EXPIRED", "CCG_COMPANIES", asServer({ session_token = "nope" }))
 
+-- A casino that earns for its company, FoxyOS 16.2 ---------------------------------------------
+-- Linked to Ana's Fox Casino, a table's rounds are the company's: stakes in,
+-- payouts out, and a win bigger than what it has is a loan. Counting what a
+-- casino owes as money it has below zero, nothing is made or lost.
+
+local fox = mine.companies[2]
+local ace = mine.companies[1]
+local function link(who, company, code)
+    return bank.request("CCG_CASINO_LINK", asServer({ session_token = who.token,
+        company_id = company.company_id, code = code }))
+end
+local function ledger(company) return bank.state.companies[company.company_id].casino end
+local function everything()
+    local total = world()
+    for _, account in pairs(bank.state.accounts) do total = total + (account.balance or 0) end
+    for _, company in pairs(bank.state.companies) do
+        total = total + (company.casino and company.casino.balance or 0)
+    end
+    return total
+end
+local function settle(code, results)
+    return bank.request("CCG_ESCROW_SETTLE", asServer({ lobby_code = code, results = results }))
+end
+rejected(link, "NOT_OWNER", kit, fox, "TBL001")
+assert(link(ana, fox, "TBL001").linked)
+bank.request("COMPANY_CREATE", bank.as(kit, { company_name = "Wolf Den", app_id = "COMPANY" }))
+local wolf
+for _, company in pairs(bank.state.companies) do
+    if company.name == "Wolf Den" then wolf = company end
+end
+rejected(link, "CODE_TAKEN", kit, wolf, "TBL001")
+for _, who in ipairs({ kit, sam }) do
+    bank.fund(who, 3000)
+    bank.request("BET_WALLET_DEPOSIT", bank.as(who, { pin = who.pin, amount = 400 }))
+end
+local total, houseAt = everything(), house()
+
+-- The owner cannot play their own tables.
+rejected(stake, "OWN_CASINO", ana, "TBL001", "roulette", { { kind = "even", amount = 5 } })
+
+-- Kit loses ten: the casino has ten.
+stake(kit, "TBL001", "roulette", { { kind = "even", amount = 10 } })
+settle("TBL001", { [kit.id] = { "lose" } })
+assert(ledger(fox).balance == 10 and ledger(fox).earned == 10, "what a player loses, the casino earns")
+assert(house() == houseAt, "and none of it is the Bank's any more")
+
+-- Sam's number comes up: 36 times 50 out of a casino with 60. A loan.
+stake(sam, "TBL001", "roulette", { { kind = "straight", amount = 50 } })
+settle("TBL001", { [sam.id] = { "win" } })
+assert(ledger(fox).balance == 60 - 1800 and ledger(fox).borrowed == 1740,
+    "the casino goes below zero: " .. tostring(ledger(fox).balance))
+local told = bank.notifications(ana)
+assert(told[1] and told[1].title == "Casino loan", "the owner is told")
+assert(everything() == total, "a loan is money owed, not money made")
+
+-- The credit limit: Ana's casinos together may owe 10,000, worst case.
+local kitHad = wallet(kit).available
+rejected(stake, "TABLE_LIMIT", kit, "TBL001", "roulette", { { kind = "straight", amount = 300 } })
+assert(wallet(kit).available == kitHad, "a refused bet takes nothing")
+stake(kit, "TBL001", "roulette", { { kind = "straight", amount = 200 } })
+-- Another player's bet counts against the same round.
+rejected(stake, "TABLE_LIMIT", sam, "TBL001", "roulette", { { kind = "straight", amount = 60 } })
+-- And another of Ana's casinos shares the limit, Kit's round at the first
+-- one counting as it could end: 1,740 owed and 7,000 more.
+assert(link(ana, ace, "TBL002").linked)
+rejected(stake, "TABLE_LIMIT", sam, "TBL002", "roulette", { { kind = "straight", amount = 40 } })
+stake(sam, "TBL002", "roulette", { { kind = "straight", amount = 5 } })
+settle("TBL002", { [sam.id] = { "lose" } })
+-- Not between rounds: a table with stakes on it stays linked.
+rejected(bank.request, "GAME_STARTED", "CCG_CASINO_UNLINK", asServer({ code = "TBL001" }))
+settle("TBL001", { [kit.id] = { "lose" } })
+assert(ledger(fox).balance == -1540, "earning it back")
+
+-- Paying it back, and profit.
+for _ = 1, 9 do
+    stake(kit, "TBL001", "blackjack", { { kind = "hand", amount = 20 } })
+    stake(sam, "TBL001", "blackjack", { { kind = "hand", amount = 20 } })
+    settle("TBL001", { [kit.id] = "lose", [sam.id] = "push" })
+end
+bank.request("BET_WALLET_DEPOSIT", bank.as(kit, { pin = kit.pin, amount = 1500 }))
+stake(kit, "TBL001", "heads_tails", { { kind = "pick", amount = 1500 } })
+settle("TBL001", { [kit.id] = "lose" })
+assert(ledger(fox).balance == -1540 + 180 + 1500, "back above zero")
+told = bank.notifications(ana)
+assert(told[1].title == "Casino loan repaid", "and the owner is told that too")
+assert(everything() == total, "paid back from what players lost, and nothing else")
+total = everything()
+
+-- Taking profit out, and putting money in.
+local finances = bank.request("CASINO_FINANCES", bank.as(ana))
+local foxRow
+for _, row in ipairs(finances.casinos) do if row.name == "Fox Casino" then foxRow = row end end
+assert(foxRow and foxRow.balance == 140 and foxRow.loan == 0 and foxRow.borrowed == 1740
+    and foxRow.tables == 1 and finances.credit == 10000, "the owner's view of their casinos")
+-- Money that a round being played could still need stays in.
+stake(sam, "TBL001", "heads_tails", { { kind = "pick", amount = 100 } })
+rejected(bank.request, "INSUFFICIENT_FUNDS", "CASINO_CASHOUT", bank.as(ana, { pin = "1234",
+    company_id = fox.company_id, amount = 140 }))
+rejected(bank.request, "BAD_PIN", "CASINO_CASHOUT", bank.as(ana, { pin = "0000",
+    company_id = fox.company_id, amount = 10 }))
+rejected(bank.request, "NOT_OWNER", "CASINO_CASHOUT", bank.as(kit, { pin = kit.pin,
+    company_id = fox.company_id, amount = 10 }))
+local before = bank.balanceOf(ana)
+local out = bank.request("CASINO_CASHOUT", bank.as(ana, { pin = "1234",
+    company_id = fox.company_id, amount = 40 }))
+assert(out.casino.balance == 100 and bank.balanceOf(ana) == before + 40, "profit, to Ana")
+bank.request("CASINO_DEPOSIT", bank.as(ana, { pin = "1234", company_id = fox.company_id,
+    amount = 60 }))
+assert(ledger(fox).balance == 160 and bank.balanceOf(ana) == before - 20)
+settle("TBL001", { [sam.id] = "lose" })
+assert(everything() == total, "cash out and money in only move it")
+
+-- Unlinked, a table's rounds are the Bank's again.
+bank.request("CCG_CASINO_UNLINK", asServer({ code = "TBL001" }))
+houseAt = house()
+stake(kit, "TBL001", "roulette", { { kind = "even", amount = 4 } })
+settle("TBL001", { [kit.id] = { "lose" } })
+assert(house() == houseAt + 4 and ledger(fox).balance == 260)
+
 print("host_ccg_casino_bank_test: OK")

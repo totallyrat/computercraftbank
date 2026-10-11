@@ -73,6 +73,10 @@ return {
     bet_hold_ingame_hours = 24,
     bet_minimum = 1,
     bet_maximum = 10000,
+    -- FoxyOS 16.2: how far into debt an owner's CCG Casinos may go, together,
+    -- paying wins with loans from the Bank. Bets that could go past it are
+    -- refused.
+    ccg_casino_credit = 10000,
     ccg_lobby_ttl_ms = 5 * 60 * 1000,
     ccg_result_delay_ms = 6 * 1000,
     ccg_survivor_max_seconds = 75,
