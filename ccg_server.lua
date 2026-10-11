@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "16.1.0"
+local PROGRAM_VERSION = "16.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -122,7 +122,7 @@ end
 local function uniqueCode()
     local code
     repeat code = util.randomString(6, "ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-    until not state.codes[code]
+    until not state.codes[code] and not (state.casino_codes or {})[code]
     return code
 end
 
@@ -893,6 +893,1112 @@ function actions.CCG_PING()
         registered = state.server_token ~= nil }
 end
 
+-- The CCG Casino, FoxyOS 17 ------------------------------------------------------------
+-- A CCG Casino console is a table: one each, belonging to a company, with a
+-- code on its screen that never changes. It deals Roulette, Blackjack, Heads
+-- or Tails and Poker, a round at a time:
+--
+--   wheel    the games spin and stop on the next one (Auto), or wait for
+--            whoever controls the table to pick
+--   betting  players at the table place their bets from the CCG app
+--   playing  the game itself, dealt by this server
+--   settling the Bank pays out, by the bet (FoxyOS 16.1)
+--   result   who won, for a few seconds, and the next round
+--
+-- The console is a display. Everything is decided here, and everything a
+-- person decides comes from the CCG app: players bet and play their hands,
+-- and the owner of the table's company can switch Auto, choose the game,
+-- take the dealer (pacing the round: close bets, spin, the next card) and
+-- play music. Nobody controlling it, the table runs itself. The dealer's own
+-- play is never anybody's choice: Blackjack's dealer stands on 17, Poker's
+-- shows its cards at the showdown.
+--
+-- Money is the Bank's, as it always was: a bet is staked in escrow under the
+-- table's code, and the round is settled by saying how each bet ended. What
+-- that pays is the Bank's own table.
+
+local casino = {
+    GAMES = { "roulette", "blackjack", "heads_tails", "poker" },
+    NAMES = { roulette = "Roulette", blackjack = "Blackjack",
+        heads_tails = "Heads or Tails", poker = "Poker" },
+    SEATS = 8,
+    WHEEL_MS = 5000,       -- Auto: the games spin this long, then stop on one
+    PICKED_MS = 1800,      -- a game picked from the app: the wheel lands on it
+    BETTING_MS = 25000,    -- Auto: how long bets are open
+    LAST_CALL_MS = 5000,   -- everybody seated has bet: not long now
+    DECIDE_MS = 20000,     -- Blackjack and Poker: how long a player has to act
+    FLIP_MS = 5000,
+    SPIN_MS = 8000,
+    CARD_MS = 550,         -- one card dealt
+    REVEAL_MS = 2600,      -- Poker: the next cards on the board, in Auto
+    RESULT_MS = 9000,
+    LEASE_MS = 60000,      -- control lapses when the controller goes quiet
+    OWNER_MS = 20000,      -- who owns what, remembered this long
+    ONLINE_MS = 10000,
+    owners = {},
+    RED = {},
+    HANDS = { [0] = "High card", "Pair", "Two pair", "Three of a kind", "Straight",
+        "Flush", "Full house", "Four of a kind", "Straight flush" },
+}
+for _, number in ipairs({ 1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32,
+    34, 36 }) do casino.RED[number] = true end
+state.casinos = state.casinos or {}
+state.casino_codes = state.casino_codes or {}
+state.sequence.casino = state.sequence.casino or 0
+
+-- Cards ---------------------------------------------------------------------------------------
+-- A card is 1..52: rank 2..14 (11 Jack, 12 Queen, 13 King, 14 Ace), suit 1..4.
+
+function casino.rank(card) return (card - 1) % 13 + 2 end
+function casino.suit(card) return math.floor((card - 1) / 13) + 1 end
+
+function casino.deck()
+    util.randomString(1)
+    local deck = {}
+    for card = 1, 52 do deck[card] = card end
+    for index = #deck, 2, -1 do
+        local other = math.random(1, index)
+        deck[index], deck[other] = deck[other], deck[index]
+    end
+    return deck
+end
+
+-- Blackjack: the best total, and whether an ace is still counting 11.
+function casino.total(cards)
+    local total, aces = 0, 0
+    for _, card in ipairs(cards) do
+        local rank = casino.rank(card)
+        if rank == 14 then
+            total, aces = total + 11, aces + 1
+        else
+            total = total + math.min(10, rank)
+        end
+    end
+    while total > 21 and aces > 0 do total, aces = total - 10, aces - 1 end
+    return total, aces > 0
+end
+
+function casino.natural(cards)
+    return #cards == 2 and casino.total(cards) == 21
+end
+
+-- Poker: five cards scored so that a bigger list is a better hand.
+function casino.score5(cards)
+    local counts, suits, ranks = {}, {}, {}
+    for _, card in ipairs(cards) do
+        local rank, suit = casino.rank(card), casino.suit(card)
+        counts[rank] = (counts[rank] or 0) + 1
+        suits[suit] = (suits[suit] or 0) + 1
+        ranks[#ranks + 1] = rank
+    end
+    table.sort(ranks, function(a, b) return a > b end)
+    local flush = false
+    for _, count in pairs(suits) do if count == 5 then flush = true end end
+    local groups = {}
+    for rank, count in pairs(counts) do groups[#groups + 1] = { rank = rank, count = count } end
+    table.sort(groups, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        return a.rank > b.rank
+    end)
+    local high
+    if #groups == 5 then
+        if ranks[1] - ranks[5] == 4 then high = ranks[1]
+        elseif ranks[1] == 14 and ranks[2] == 5 then high = 5 end
+    end
+    local order = {}
+    for _, group in ipairs(groups) do order[#order + 1] = group.rank end
+    local function with(category, list)
+        local out = { category }
+        for _, value in ipairs(list) do out[#out + 1] = value end
+        return out
+    end
+    if high and flush then return { 8, high } end
+    if groups[1].count == 4 then return with(7, order) end
+    if groups[1].count == 3 and groups[2].count == 2 then return with(6, order) end
+    if flush then return with(5, ranks) end
+    if high then return { 4, high } end
+    if groups[1].count == 3 then return with(3, order) end
+    if groups[1].count == 2 and groups[2].count == 2 then return with(2, order) end
+    if groups[1].count == 2 then return with(1, order) end
+    return with(0, ranks)
+end
+
+function casino.compare(a, b)
+    for index = 1, math.max(#a, #b) do
+        local x, y = a[index] or 0, b[index] or 0
+        if x ~= y then return x > y and 1 or -1 end
+    end
+    return 0
+end
+
+-- The best five of seven.
+function casino.bestHand(cards)
+    local best
+    local n = #cards
+    for a = 1, n - 4 do for b = a + 1, n - 3 do for c = b + 1, n - 2 do
+        for d = c + 1, n - 1 do for e = d + 1, n do
+            local score = casino.score5({ cards[a], cards[b], cards[c], cards[d], cards[e] })
+            if not best or casino.compare(score, best) > 0 then best = score end
+        end end
+    end end end
+    return best, casino.HANDS[best[1]]
+end
+
+-- Bets ------------------------------------------------------------------------------------------
+-- What a player may stake on each game, as the Bank's kinds of bet: Roulette
+-- has four (a number, an even-money pick, a dozen, a column), the rest one.
+
+function casino.readBet(game, bet)
+    if type(bet) ~= "table" then return nil end
+    local kind, pick = tostring(bet.kind or ""), bet.pick
+    if game == "roulette" then
+        if kind == "straight" then
+            pick = tonumber(pick)
+            if pick and pick >= 0 and pick <= 36 and pick % 1 == 0 then return kind, pick end
+        elseif kind == "even" then
+            pick = tostring(pick or "")
+            for _, name in ipairs({ "red", "black", "odd", "even", "low", "high" }) do
+                if pick == name then return kind, pick end
+            end
+        elseif kind == "dozen" or kind == "column" then
+            pick = tonumber(pick)
+            if pick == 1 or pick == 2 or pick == 3 then return kind, pick end
+        end
+    elseif game == "heads_tails" then
+        if kind == "pick" and (pick == "heads" or pick == "tails") then return kind, pick end
+    elseif kind == "hand" then
+        return kind, nil
+    end
+    return nil
+end
+
+function casino.rouletteWins(bet, number)
+    if bet.kind == "straight" then return bet.pick == number end
+    if number == 0 then return false end
+    if bet.kind == "dozen" then return math.ceil(number / 12) == bet.pick end
+    if bet.kind == "column" then return (number - 1) % 3 + 1 == bet.pick end
+    local pick = bet.pick
+    if pick == "red" then return casino.RED[number] == true end
+    if pick == "black" then return not casino.RED[number] end
+    if pick == "odd" then return number % 2 == 1 end
+    if pick == "even" then return number % 2 == 0 end
+    if pick == "low" then return number <= 18 end
+    return number >= 19
+end
+
+-- Tables ---------------------------------------------------------------------------------------
+
+function casino.event(t, kind, extra)
+    t.seq = (t.seq or 0) + 1
+    local entry = { seq = t.seq, kind = kind, at = util.nowMs() }
+    for key, value in pairs(extra or {}) do entry[key] = value end
+    t.events = t.events or {}
+    t.events[#t.events + 1] = entry
+    while #t.events > 30 do table.remove(t.events, 1) end
+    t.dirty = true
+end
+
+function casino.controlled(t, now)
+    return t.controller ~= nil and (t.controller.until_at or 0) > (now or util.nowMs())
+end
+
+function casino.phase(t, phase, ms, now)
+    now = now or util.nowMs()
+    t.phase, t.phase_at = phase, now
+    t.phase_until = ms and (now + ms) or nil
+    t.step, t.step_at, t.step_until = nil, now, nil
+    t.dirty = true
+end
+
+function casino.step(t, step, ms, now)
+    now = now or util.nowMs()
+    t.step, t.step_at = step, now
+    t.step_until = ms and (now + ms) or nil
+    t.dirty = true
+end
+
+function casino.byCode(code)
+    code = string.upper(util.trim(tostring(code or "")))
+    local id = state.casino_codes[code]
+    return id and state.casinos[id] or nil
+end
+
+function casino.console(payload)
+    local t = state.casinos[payload and payload.console_id]
+    need(t and t.auth_token == payload.console_token, "CCG_AUTH",
+        "This CCG Casino is not registered")
+    t.last_seen = util.nowMs()
+    return t
+end
+
+-- Who is asking, as the Bank knows them, and the companies they own.
+function casino.owner(payload)
+    local token = tostring(payload and payload.session_token or "")
+    need(token ~= "", "SESSION_REQUIRED", "Sign in first")
+    local cached = casino.owners[token]
+    if cached and util.nowMs() - cached.at < casino.OWNER_MS then return cached.who end
+    local who = bankOrFail("CCG_COMPANIES", { session_token = token })
+    casino.owners[token] = { at = util.nowMs(), who = who }
+    return who
+end
+
+function casino.owns(who, t)
+    for _, company in ipairs(who.companies or {}) do
+        if company.company_id == t.company_id then return true end
+    end
+    return false
+end
+
+function casino.ownedTable(payload)
+    local who = casino.owner(payload)
+    local t = state.casinos[payload.console_id]
+    need(t and casino.owns(who, t), "NOT_YOURS",
+        "That CCG Casino is not one of your company's")
+    return t, who
+end
+
+function casino.seated(t)
+    local list = {}
+    for _, accountId in ipairs(t.order or {}) do
+        if t.players[accountId] then list[#list + 1] = t.players[accountId] end
+    end
+    return list
+end
+
+function casino.bettors(t)
+    local list = {}
+    for _, player in ipairs(casino.seated(t)) do
+        if (player.total or 0) > 0 then list[#list + 1] = player end
+    end
+    return list
+end
+
+-- The next game: the one somebody asked for, the wheel's, or the same again.
+function casino.pickNext(t)
+    if t.next_game then
+        local game = t.next_game
+        t.next_game = nil
+        return game
+    end
+    return casino.GAMES[math.random(1, #casino.GAMES)]
+end
+
+-- Opening a round: the wheel, unless the table is simply playing its game
+-- again (Auto off, nobody controlling, nothing asked for).
+function casino.newRound(t, now)
+    for _, player in ipairs(casino.seated(t)) do
+        player.bets, player.total, player.hand, player.status = nil, 0, nil, nil
+        player.result, player.done, player.decision = nil, nil, nil
+    end
+    t.dealer, t.board, t.outcome, t.deck, t.deal_order = nil, nil, nil, nil, nil
+    t.results, t.payouts = nil, nil
+    if casino.controlled(t, now) then
+        t.wheel_target = nil
+        casino.phase(t, "wheel", nil, now)
+        casino.event(t, "wheel")
+    elseif t.auto or t.next_game then
+        local picked = t.next_game ~= nil
+        t.wheel_target = casino.pickNext(t)
+        casino.phase(t, "wheel", picked and casino.PICKED_MS or casino.WHEEL_MS, now)
+        casino.event(t, "wheel")
+    else
+        casino.openBets(t, t.game or "roulette", now)
+    end
+end
+
+function casino.openBets(t, game, now)
+    t.game = game
+    t.round = (t.round or 0) + 1
+    casino.phase(t, "betting", (not casino.controlled(t, now)) and casino.BETTING_MS or nil, now)
+    casino.event(t, "bets_open", { game = game })
+end
+
+-- Playing a round -------------------------------------------------------------------------------
+
+function casino.draw(t)
+    if not t.deck or #t.deck == 0 then t.deck = casino.deck() end
+    return table.remove(t.deck)
+end
+
+-- Bets are closed: deal. Only the players who bet are in the round.
+function casino.deal(t, now)
+    local bettors = casino.bettors(t)
+    casino.phase(t, "playing", nil, now)
+    t.deck = casino.deck()
+    if t.game == "roulette" then
+        t.outcome = math.random(0, 36)
+        casino.step(t, "spin", casino.SPIN_MS, now)
+        casino.event(t, "spin")
+    elseif t.game == "heads_tails" then
+        t.outcome = math.random(1, 2) == 1 and "heads" or "tails"
+        casino.step(t, "flip", casino.FLIP_MS, now)
+        casino.event(t, "flip")
+    else
+        -- Two cards each, the dealer last, one round of the table at a time.
+        t.dealer = { cards = {} }
+        t.deal_order = {}
+        for _ = 1, 2 do
+            for _, player in ipairs(bettors) do
+                player.hand = player.hand or {}
+                player.hand[#player.hand + 1] = casino.draw(t)
+                t.deal_order[#t.deal_order + 1] = player.account_id
+            end
+            t.dealer.cards[#t.dealer.cards + 1] = casino.draw(t)
+            t.deal_order[#t.deal_order + 1] = "dealer"
+        end
+        for _, player in ipairs(bettors) do player.status = "playing" end
+        if t.game == "poker" then
+            t.board = { cards = {}, shown = 0 }
+            for index = 1, 5 do t.board.cards[index] = casino.draw(t) end
+        end
+        casino.step(t, "deal", casino.CARD_MS * #t.deal_order, now)
+        casino.event(t, "deal")
+    end
+end
+
+function casino.allDone(t)
+    for _, player in ipairs(casino.bettors(t)) do
+        if not player.done then return false end
+    end
+    return true
+end
+
+-- Blackjack: the dealer turns the hidden card over and draws to 17.
+function casino.dealerPlays(t, now)
+    local anyStanding = false
+    for _, player in ipairs(casino.bettors(t)) do
+        if player.status ~= "bust" then anyStanding = true end
+    end
+    if anyStanding then
+        while casino.total(t.dealer.cards) < 17 do
+            t.dealer.cards[#t.dealer.cards + 1] = casino.draw(t)
+        end
+    end
+    t.dealer.open = true
+    casino.step(t, "dealer", casino.CARD_MS * 2 * (#t.dealer.cards - 1), now)
+    casino.event(t, "reveal")
+end
+
+-- How each bet ended, as the Bank's words: win, blackjack, push or lose.
+function casino.outcomes(t)
+    local results = {}
+    if t.game == "roulette" then
+        for _, player in ipairs(casino.bettors(t)) do
+            local list = {}
+            for index, bet in ipairs(player.bets) do
+                list[index] = casino.rouletteWins(bet, t.outcome) and "win" or "lose"
+            end
+            results[player.account_id] = list
+        end
+    elseif t.game == "heads_tails" then
+        for _, player in ipairs(casino.bettors(t)) do
+            results[player.account_id] = player.bets[1].pick == t.outcome and "win" or "lose"
+        end
+    elseif t.game == "blackjack" then
+        local dealer = casino.total(t.dealer.cards)
+        local dealerNatural = casino.natural(t.dealer.cards)
+        for _, player in ipairs(casino.bettors(t)) do
+            local mine = casino.total(player.hand)
+            local natural = casino.natural(player.hand) and not player.doubled
+            local said
+            if mine > 21 then said = "lose"
+            elseif natural and dealerNatural then said = "push"
+            elseif natural then said = "blackjack"
+            elseif dealerNatural then said = "lose"
+            elseif dealer > 21 or mine > dealer then said = "win"
+            elseif mine == dealer then said = "push"
+            else said = "lose" end
+            results[player.account_id] = said
+        end
+    else
+        local dealerCards = { t.dealer.cards[1], t.dealer.cards[2] }
+        for _, card in ipairs(t.board.cards) do dealerCards[#dealerCards + 1] = card end
+        local dealerBest, dealerName = casino.bestHand(dealerCards)
+        t.dealer.hand_name = dealerName
+        for _, player in ipairs(casino.bettors(t)) do
+            local said = "lose"
+            if player.status ~= "folded" then
+                local cards = { player.hand[1], player.hand[2] }
+                for _, card in ipairs(t.board.cards) do cards[#cards + 1] = card end
+                local best, name = casino.bestHand(cards)
+                player.hand_name = name
+                -- Ties go to the dealer: the house's edge, said on the table.
+                said = casino.compare(best, dealerBest) > 0 and "win" or "lose"
+            end
+            results[player.account_id] = said
+        end
+    end
+    return results
+end
+
+-- The Bank pays out. If it does not answer, the round waits and asks again:
+-- the money is still in escrow, so calling it settled would lose it.
+function casino.settle(t, now)
+    if not t.results then
+        t.results = casino.outcomes(t)
+        casino.phase(t, "settling", nil, now)
+    end
+    if next(t.results) == nil then
+        casino.finish(t, {}, now)
+        return true
+    end
+    if t.settle_tried_at and now - t.settle_tried_at < 2000 then return false end
+    t.settle_tried_at = now
+    local paid = askBank("CCG_ESCROW_SETTLE", { lobby_code = t.code, results = t.results }, 8)
+    if not paid then
+        logActivity("Bank did not settle " .. t.name .. ", will retry", colors.orange)
+        return false
+    end
+    casino.finish(t, paid.settled or {}, now)
+    return true
+end
+
+function casino.finish(t, settled, now)
+    t.settle_tried_at = nil
+    local winners = {}
+    for _, entry in ipairs(settled) do
+        local player = t.players[entry.account_id]
+        if player then
+            player.result = { won = entry.won, payout = entry.payout or 0,
+                pushed = entry.pushed or 0, results = entry.results,
+                said = t.results[entry.account_id] }
+            if entry.won then
+                winners[#winners + 1] = { name = player.name, payout = entry.payout }
+            end
+        end
+    end
+    table.sort(winners, function(a, b) return (a.payout or 0) > (b.payout or 0) end)
+    t.winners = winners
+    -- Kept for a player who looked away while the next round opened.
+    local kept = {}
+    for _, player in ipairs(casino.bettors(t)) do
+        kept[player.account_id] = player.result
+    end
+    t.last = { round = t.round, game = t.game, outcome = t.outcome, results = kept,
+        dealer_total = t.dealer and casino.total(t.dealer.cards) or nil,
+        dealer_hand = t.dealer and t.dealer.hand_name or nil }
+    t.results = nil
+    casino.phase(t, "result", (not casino.controlled(t, now)) and casino.RESULT_MS or nil, now)
+    casino.event(t, #winners > 0 and "win" or "lose")
+    logActivity(t.name .. ": " .. casino.NAMES[t.game] .. " round " .. t.round
+        .. ", " .. #winners .. " won", colors.magenta)
+end
+
+-- Moving a table on. Called every tick for every table, and straight after
+-- anybody does anything to one.
+function casino.advance(t, now)
+    now = now or util.nowMs()
+    if t.controller and not casino.controlled(t, now) then
+        t.controller = nil
+        t.dirty = true
+        -- Back to the computer: anything that was waiting on the controller
+        -- gets its clock again.
+        if t.phase == "wheel" and not t.phase_until then
+            t.wheel_target = casino.pickNext(t)
+            t.phase_until = now + casino.WHEEL_MS
+        elseif t.phase == "betting" and not t.phase_until then
+            t.phase_until = now + casino.BETTING_MS
+        elseif t.phase == "result" and not t.phase_until then
+            t.phase_until = now + 2000
+        elseif t.phase == "playing" and not t.step_until then
+            t.step_until = now + casino.REVEAL_MS
+        end
+    end
+    local phase = t.phase
+    if phase == nil then
+        casino.newRound(t, now)
+    elseif phase == "wheel" then
+        if t.phase_until and now >= t.phase_until and t.wheel_target then
+            casino.event(t, "stop", { game = t.wheel_target })
+            casino.openBets(t, t.wheel_target, now)
+        end
+    elseif phase == "betting" then
+        local bettors, seated = casino.bettors(t), casino.seated(t)
+        if t.phase_until and #bettors > 0 and #bettors == #seated
+            and t.phase_until - now > casino.LAST_CALL_MS then
+            t.phase_until = now + casino.LAST_CALL_MS
+            t.dirty = true
+        end
+        if t.phase_until and now >= t.phase_until then
+            if #bettors > 0 then
+                casino.deal(t, now)
+            elseif t.auto then
+                casino.newRound(t, now)
+            else
+                t.phase_until = now + casino.BETTING_MS
+            end
+        end
+    elseif phase == "playing" then
+        casino.play(t, now)
+    elseif phase == "settling" then
+        casino.settle(t, now)
+    elseif phase == "result" then
+        if t.phase_until and now >= t.phase_until then casino.newRound(t, now) end
+    end
+end
+
+function casino.play(t, now)
+    local step, due = t.step, t.step_until and now >= t.step_until
+    if (step == "spin" or step == "flip") and due then
+        casino.settle(t, now)
+    elseif step == "deal" and due then
+        if t.game == "blackjack" then
+            local dealerNatural = casino.natural(t.dealer.cards)
+            for _, player in ipairs(casino.bettors(t)) do
+                if casino.natural(player.hand) or dealerNatural then
+                    player.done = true
+                    player.status = casino.natural(player.hand) and "blackjack" or "stood"
+                end
+            end
+            if dealerNatural or casino.allDone(t) then
+                casino.dealerPlays(t, now)
+            else
+                casino.step(t, "turns", casino.DECIDE_MS, now)
+            end
+        else
+            casino.step(t, "decide", casino.DECIDE_MS, now)
+        end
+    elseif (step == "turns" or step == "decide") and (due or casino.allDone(t)) then
+        -- Whoever has not acted stands, or checks.
+        for _, player in ipairs(casino.bettors(t)) do
+            if not player.done then
+                player.done = true
+                player.status = step == "turns" and "stood" or "checked"
+            end
+        end
+        if step == "turns" then
+            casino.dealerPlays(t, now)
+        else
+            t.board.shown = 3
+            casino.step(t, "flop", (not casino.controlled(t, now)) and casino.REVEAL_MS or nil, now)
+            casino.event(t, "reveal")
+        end
+    elseif step == "dealer" and due then
+        casino.settle(t, now)
+    elseif (step == "flop" or step == "turn") and due then
+        t.board.shown = step == "flop" and 4 or 5
+        casino.step(t, step == "flop" and "turn" or "river",
+            (not casino.controlled(t, now)) and casino.REVEAL_MS or nil, now)
+        casino.event(t, "reveal")
+    elseif step == "river" and due then
+        t.dealer.open = true
+        casino.step(t, "showdown", casino.REVEAL_MS, now)
+        casino.event(t, "reveal")
+    elseif step == "showdown" and due then
+        casino.settle(t, now)
+    end
+end
+
+-- What a table looks like ---------------------------------------------------------------------
+-- To the console, which is the casino's screen and is shown everything it
+-- shows the room (and where the ball will stop, so it can land it there);
+-- to a player, who also sees their own cards; to the owner, who also sees
+-- every bet and the music. Cards face down are 0. During the deal, cards
+-- appear one at a time in the order they were dealt, on every screen alike.
+
+function casino.nextLabel(t)
+    if t.phase == "wheel" then return nil end
+    if t.phase == "betting" then
+        return t.game == "roulette" and "SPIN" or t.game == "heads_tails" and "FLIP" or "DEAL"
+    end
+    if t.phase == "result" then return "NEXT GAME" end
+    local labels = { turns = "DEALER'S TURN", decide = "FLOP", flop = "TURN",
+        turn = "RIVER", river = "SHOWDOWN" }
+    return t.phase == "playing" and labels[t.step] or nil
+end
+
+function casino.view(t, how)
+    how = how or {}
+    local now = util.nowMs()
+    local shownSoFar
+    if t.step == "deal" and t.deal_order then
+        shownSoFar = {}
+        local count = math.floor((now - (t.step_at or now)) / casino.CARD_MS) + 1
+        for index = 1, math.min(count, #t.deal_order) do
+            local who = t.deal_order[index]
+            shownSoFar[who] = (shownSoFar[who] or 0) + 1
+        end
+    end
+    local showdown = t.phase == "settling" or t.phase == "result"
+        or t.step == "showdown"
+    local function cardsOf(id, cards, faceDown)
+        if not cards then return nil end
+        local limit = shownSoFar and (shownSoFar[id] or 0) or #cards
+        local out = {}
+        for index = 1, math.min(limit, #cards) do
+            out[index] = faceDown and 0 or cards[index]
+        end
+        return out
+    end
+    local players = {}
+    for _, player in ipairs(casino.seated(t)) do
+        local mine = how.account == player.account_id
+        local hidden = t.game == "poker" and not mine and not showdown
+        local entry = { seat = player.seat, name = player.name,
+            total = player.total or 0, playing = (player.total or 0) > 0,
+            status = player.status, result = player.result, me = mine or nil,
+            hand_name = (showdown or mine) and player.hand_name or nil }
+        if how.display or how.owner or mine or t.phase ~= "betting" then
+            entry.bets = player.bets
+        end
+        entry.cards = cardsOf(player.account_id, player.hand, hidden)
+        if entry.cards and t.game == "blackjack" and #entry.cards > 0 then
+            entry.hand_total = casino.total(entry.cards)
+        end
+        players[#players + 1] = entry
+    end
+    local view = {
+        console_id = t.console_id, name = t.name, company_name = t.company_name,
+        code = t.code, game = t.game, game_name = casino.NAMES[t.game or ""],
+        auto = t.auto == true, controlled = casino.controlled(t, now),
+        controller_name = casino.controlled(t, now) and t.controller.name or nil,
+        phase = t.phase, step = t.step, round = t.round or 0,
+        left_ms = t.phase_until and math.max(0, t.phase_until - now) or nil,
+        phase_ms = t.phase_until and t.phase_at and (t.phase_until - t.phase_at) or nil,
+        step_left_ms = t.step_until and math.max(0, t.step_until - now) or nil,
+        step_ms = t.step_until and t.step_at and (t.step_until - t.step_at) or nil,
+        wheel_target = t.wheel_target, games = casino.GAMES, names = casino.NAMES,
+        players = players, seats = casino.SEATS, winners = t.phase == "result" and t.winners or nil,
+        seq = t.seq or 0,
+    }
+    if t.dealer then
+        local cards = cardsOf("dealer", t.dealer.cards, false)
+        if t.game == "blackjack" and t.dealer.open then
+            -- The dealer's draws, one every two card-times.
+            if t.step == "dealer" then
+                local count = 2 + math.floor((now - (t.step_at or now)) / (casino.CARD_MS * 2))
+                while #cards > math.max(2, count) do table.remove(cards) end
+            end
+        elseif t.game == "blackjack" then
+            if cards[2] then cards[2] = 0 end
+        elseif not t.dealer.open then
+            for index in ipairs(cards) do cards[index] = 0 end
+        end
+        local visible = {}
+        for _, card in ipairs(cards) do if card ~= 0 then visible[#visible + 1] = card end end
+        view.dealer = { cards = cards,
+            total = t.game == "blackjack" and #visible > 0 and casino.total(visible) or nil,
+            hand_name = showdown and t.dealer.hand_name or nil }
+    end
+    if t.board then
+        local shown = {}
+        for index = 1, t.board.shown or 0 do shown[index] = t.board.cards[index] end
+        view.board = { cards = shown }
+    end
+    if t.outcome ~= nil and (how.display or showdown) then view.outcome = t.outcome end
+    if how.display then view.events = t.events end
+    if how.display or how.owner then
+        view.music, view.library = t.music, t.library or {}
+    end
+    if how.owner then view.next_label = casino.nextLabel(t) end
+    return view
+end
+
+-- The player asking, their seat, and what they can do now.
+function casino.mine(t, accountId)
+    local player = t.players[accountId]
+    if not player then return nil end
+    local options = {}
+    if t.phase == "playing" and not player.done and (player.total or 0) > 0 then
+        if t.step == "turns" then
+            options = { "hit", "stand" }
+            if #(player.hand or {}) == 2 and not player.doubled then options[3] = "double" end
+        elseif t.step == "decide" then
+            options = { "raise", "check", "fold" }
+        end
+    end
+    -- Poker: what your cards make so far, with the board as it is.
+    local handName = player.hand_name
+    if t.game == "poker" and player.hand and not handName then
+        local cards = { player.hand[1], player.hand[2] }
+        for index = 1, (t.board and t.board.shown or 0) do cards[#cards + 1] = t.board.cards[index] end
+        if #cards >= 5 then
+            handName = select(2, casino.bestHand(cards))
+        elseif #cards == 2 then
+            handName = casino.rank(cards[1]) == casino.rank(cards[2]) and "Pair" or "High card"
+        end
+    end
+    return { seat = player.seat, name = player.name, bets = player.bets,
+        total = player.total or 0, status = player.status, options = options,
+        result = player.result, hand_name = handName }
+end
+
+-- Actions: the console ---------------------------------------------------------------------------
+
+function actions.CASINO_COMPANIES(payload)
+    local who = casino.owner(payload)
+    return { name = who.name, companies = who.companies or {} }
+end
+
+function actions.CASINO_REGISTER(payload)
+    local who = casino.owner(payload)
+    local company
+    for _, owned in ipairs(who.companies or {}) do
+        if owned.company_id == payload.company_id then company = owned end
+    end
+    need(company, "NOT_YOURS", "Choose a company you own")
+    local name = util.safeText(util.trim(payload.name), 16)
+    need(#name >= 2, "INVALID_NAME", "Give this CCG Casino a name")
+    local consoleId = nextId("casino", "CAS", 5)
+    local code = uniqueCode()
+    local t = {
+        console_id = consoleId, auth_token = util.token("CCG_CASINO"),
+        name = name, company_id = company.company_id, company_name = company.name,
+        owner_account_id = who.account_id, code = code, auto = true,
+        players = {}, order = {}, round = 0, seq = 0, events = {},
+        music = { playing = false, volume = 5, seq = 0 }, library = {},
+        created_at = util.nowMs(), last_seen = util.nowMs(),
+    }
+    state.casinos[consoleId] = t
+    state.casino_codes[code] = consoleId
+    casino.advance(t)
+    save()
+    logActivity("CCG Casino " .. name .. " for " .. company.name, colors.magenta)
+    return { console_id = consoleId, console_token = t.auth_token, code = code,
+        name = name, company_name = company.name }
+end
+
+-- The console asks what to show, a few times a second, and says which music
+-- files it has.
+function actions.CASINO_TICK(payload)
+    local t = casino.console(payload)
+    if type(payload.library) == "table" then
+        local library = {}
+        for index, name in ipairs(payload.library) do
+            if index > 60 then break end
+            library[#library + 1] = util.safeText(tostring(name), 32)
+        end
+        t.library = library
+    end
+    casino.advance(t)
+    return { table = casino.view(t, { display = true }) }
+end
+
+function actions.CASINO_UNLINK(payload)
+    local t = casino.console(payload)
+    need(t.phase ~= "playing" and t.phase ~= "settling", "GAME_STARTED",
+        "Finish this round first")
+    if #casino.bettors(t) > 0 then
+        bankOrFail("CCG_ESCROW_REFUND", { lobby_code = t.code, reason = "Table closed" })
+    end
+    state.casino_codes[t.code] = nil
+    state.casinos[t.console_id] = nil
+    save()
+    return { unlinked = true }
+end
+
+-- Actions: the owner, from My Casino -------------------------------------------------------------
+
+function actions.CASINO_LIST(payload)
+    local who = casino.owner(payload)
+    local now, list = util.nowMs(), {}
+    for _, t in pairs(state.casinos) do
+        if casino.owns(who, t) then
+            list[#list + 1] = { console_id = t.console_id, name = t.name,
+                company_name = t.company_name, code = t.code, game = t.game,
+                game_name = casino.NAMES[t.game or ""], phase = t.phase,
+                players = #casino.seated(t), betting = #casino.bettors(t),
+                auto = t.auto == true, controlled = casino.controlled(t, now),
+                controller_name = casino.controlled(t, now) and t.controller.name or nil,
+                online = now - (t.last_seen or 0) < casino.ONLINE_MS,
+                music = t.music and t.music.playing and t.music.track or nil }
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.company_name ~= b.company_name then return a.company_name < b.company_name end
+        return a.name < b.name
+    end)
+    return { casinos = list, companies = who.companies or {} }
+end
+
+function actions.CASINO_VIEW(payload)
+    local t, who = casino.ownedTable(payload)
+    local now = util.nowMs()
+    local mine = casino.controlled(t, now) and t.controller.account_id == who.account_id
+    -- Watching the controls is controlling: the lease runs while you look.
+    if mine then t.controller.until_at = now + casino.LEASE_MS end
+    casino.advance(t, now)
+    return { table = casino.view(t, { owner = true }), you_control = mine }
+end
+
+function actions.CASINO_CONTROL(payload)
+    local t, who = casino.ownedTable(payload)
+    local now = util.nowMs()
+    local op = tostring(payload.op or "")
+    local mine = casino.controlled(t, now) and t.controller.account_id == who.account_id
+    if op == "take" then
+        t.controller = { account_id = who.account_id, name = who.name,
+            until_at = now + casino.LEASE_MS }
+        -- What was running on a clock now waits for the controller.
+        if t.phase == "wheel" then t.wheel_target, t.phase_until = nil, nil end
+        if t.phase == "betting" or t.phase == "result" then t.phase_until = nil end
+        if t.phase == "playing" and (t.step == "flop" or t.step == "turn"
+            or t.step == "river") then t.step_until = nil end
+        casino.event(t, "control")
+        mine = true
+    elseif op == "release" then
+        if t.controller then t.controller.until_at = 0 end
+    elseif op == "auto" then
+        t.auto = payload.on == true
+        t.dirty = true
+    elseif op == "game" then
+        local game = tostring(payload.game or "")
+        need(casino.NAMES[game], "INVALID_GAME", "Choose Roulette, Blackjack, Heads or Tails or Poker")
+        if t.phase == "wheel" then
+            t.wheel_target, t.phase_until = game, now + casino.PICKED_MS
+        elseif t.phase == "betting" and #casino.bettors(t) == 0 then
+            casino.openBets(t, game, now)
+        else
+            t.next_game = game
+        end
+        t.dirty = true
+    elseif op == "next" then
+        need(mine, "NOT_CONTROLLING", "Take the dealer first")
+        if t.phase == "betting" then
+            need(#casino.bettors(t) > 0, "NO_BETS", "Nobody has bet yet")
+            casino.deal(t, now)
+        elseif t.phase == "result" then
+            casino.newRound(t, now)
+        elseif t.phase == "playing" then
+            if t.step == "turns" or t.step == "decide" then
+                for _, player in ipairs(casino.bettors(t)) do
+                    if not player.done then player.done = true
+                        player.status = t.step == "turns" and "stood" or "checked" end
+                end
+            end
+            if t.step ~= "deal" and t.step ~= "spin" and t.step ~= "flip"
+                and t.step ~= "dealer" and t.step ~= "showdown" then
+                t.step_until = now
+            end
+        end
+    elseif op == "music" then
+        local music = t.music
+        local action = tostring(payload.action or "")
+        if action == "play" then
+            music.track = util.safeText(tostring(payload.track or ""), 32)
+            music.playing = music.track ~= ""
+        elseif action == "stop" then
+            music.playing = false
+        elseif action == "volume" then
+            music.volume = util.clamp(math.floor(tonumber(payload.volume) or 5), 0, 10)
+        elseif action == "next" then
+            local library = t.library or {}
+            local at = 0
+            for index, name in ipairs(library) do if name == music.track then at = index end end
+            music.track = library[at % math.max(1, #library) + 1]
+            music.playing = music.track ~= nil
+        end
+        music.seq = (music.seq or 0) + 1
+        t.dirty = true
+    elseif op == "rename" then
+        local name = util.safeText(util.trim(payload.name), 16)
+        need(#name >= 2, "INVALID_NAME", "Give it a name")
+        t.name = name
+        t.dirty = true
+    else
+        reject("UNKNOWN_OP", "The CCG cannot do that")
+    end
+    if mine and t.controller then t.controller.until_at = math.max(t.controller.until_at, now
+        + (op == "release" and 0 or casino.LEASE_MS)) end
+    if op == "release" and t.controller then t.controller.until_at = 0 end
+    casino.advance(t, now)
+    save()
+    return { table = casino.view(t, { owner = true }),
+        you_control = casino.controlled(t, now) and t.controller.account_id == who.account_id }
+end
+
+-- Actions: players, from the CCG app's Bet tab ---------------------------------------------------
+
+function casino.status(t, who)
+    local last
+    if t.last and t.last.results and t.last.results[who.account_id]
+        and t.last.round ~= (t.phase == "result" and t.round or -1) then
+        last = { round = t.last.round, game = t.last.game,
+            game_name = casino.NAMES[t.last.game], outcome = t.last.outcome,
+            result = t.last.results[who.account_id], dealer_total = t.last.dealer_total,
+            dealer_hand = t.last.dealer_hand }
+    end
+    return { table = casino.view(t, { account = who.account_id }),
+        me = casino.mine(t, who.account_id), last = last, wallet = who.wallet }
+end
+
+function casino.seat(t, who)
+    local player = t.players[who.account_id]
+    need(player, "NOT_JOINED", "Sit down at the table first")
+    player.seen_at = util.nowMs()
+    return player
+end
+
+function actions.TABLE_JOIN(payload)
+    local who = requirePlayer(payload)
+    local t = casino.byCode(payload.code)
+    need(t, "TABLE_NOT_FOUND", "No CCG Casino has that code")
+    local name = util.safeText(util.trim(payload.display_name), 14)
+    need(#name >= 2 and name:match("^[%w_ %-]+$"), "INVALID_NAME",
+        "Use 2-14 letters, numbers, spaces, _ or -")
+    for otherId, other in pairs(t.players) do
+        need(otherId == who.account_id or util.normalName(other.name) ~= util.normalName(name),
+            "NAME_TAKEN", "Somebody at this table already has that name")
+    end
+    local player = t.players[who.account_id]
+    if not player then
+        need(#t.order < casino.SEATS, "TABLE_FULL", "Every seat at this table is taken")
+        player = { account_id = who.account_id, seat = #t.order + 1, total = 0,
+            joined_at = util.nowMs() }
+        t.players[who.account_id] = player
+        t.order[#t.order + 1] = who.account_id
+        casino.event(t, "sit")
+    end
+    if (player.total or 0) == 0 then player.name = name end
+    player.seen_at = util.nowMs()
+    save()
+    return casino.status(t, who)
+end
+
+function actions.TABLE_STATUS(payload)
+    local who = requirePlayer(payload)
+    local t = casino.byCode(payload.code)
+    need(t, "TABLE_NOT_FOUND", "That table has closed")
+    casino.seat(t, who)
+    casino.advance(t)
+    return casino.status(t, who)
+end
+
+-- Bets for this round: a list of { kind, pick, amount }. Up to eight at
+-- Roulette, one at the rest. Placing again replaces them.
+function actions.TABLE_BET(payload)
+    local t = casino.byCode(payload.code)
+    need(t and t.phase == "betting", "BETS_CLOSED", "Bets are closed")
+    local who = requirePlayer(payload)
+    local player = casino.seat(t, who)
+    local list = type(payload.bets) == "table" and payload.bets or {}
+    need(#list >= 1 and #list <= (t.game == "roulette" and 8 or 1), "INVALID_BETS",
+        t.game == "roulette" and "Place one to eight bets" or "Place one bet")
+    local bets, staked = {}, {}
+    for index, entry in ipairs(list) do
+        local kind, pick = casino.readBet(t.game, entry)
+        need(kind, "INVALID_BET", "That is not a bet at " .. casino.NAMES[t.game])
+        local amount = tonumber(entry.amount)
+        need(amount and amount > 0, "INVALID_AMOUNT", "Say how much")
+        bets[index] = { kind = kind, pick = pick, amount = amount }
+        staked[index] = { kind = kind, amount = amount }
+    end
+    -- The Bank takes the money, or says why not; the player is checked as
+    -- seated before it is asked.
+    local done = bankOrFail("CCG_ESCROW_SET", { bet_token = payload.bet_token,
+        session_token = payload.session_token, lobby_code = t.code, game = t.game,
+        bets = staked })
+    if t.phase ~= "betting" then
+        -- The round started while the Bank was taking it: this player is not
+        -- in it, so their stake goes straight back rather than being settled
+        -- as a bet that lost.
+        askBank("CCG_ESCROW_RELEASE", { lobby_code = t.code, account_id = who.account_id })
+        reject("BETS_CLOSED", "Bets closed while that went through")
+    end
+    player.bets, player.total = bets, done.staked
+    casino.event(t, "chip")
+    save()
+    local status = casino.status(t, who)
+    status.wallet = done.wallet or status.wallet
+    return status
+end
+
+-- Blackjack: hit, stand, double. Poker: raise, check, fold.
+function actions.TABLE_ACT(payload)
+    local who = requirePlayer(payload)
+    local t = casino.byCode(payload.code)
+    need(t and t.phase == "playing", "NOT_NOW", "There is nothing to do right now")
+    local player = casino.seat(t, who)
+    local action = tostring(payload.action or "")
+    local allowed = false
+    for _, option in ipairs((casino.mine(t, who.account_id) or {}).options or {}) do
+        if option == action then allowed = true end
+    end
+    need(allowed, "NOT_NOW", "You cannot do that now")
+    local function restake()
+        -- The same bet, staked again: a double, or a raise.
+        local done = bankOrFail("CCG_ESCROW_SET", { bet_token = payload.bet_token,
+            session_token = payload.session_token, lobby_code = t.code, game = t.game,
+            bets = { { kind = "hand", amount = player.total * 2 } } })
+        player.bets[1].amount = done.staked
+        player.total = done.staked
+    end
+    if action == "hit" then
+        player.hand[#player.hand + 1] = casino.draw(t)
+        local total = casino.total(player.hand)
+        if total > 21 then player.status, player.done = "bust", true
+        elseif total == 21 then player.status, player.done = "stood", true end
+        casino.event(t, total > 21 and "bust" or "card")
+    elseif action == "stand" then
+        player.status, player.done = "stood", true
+    elseif action == "double" then
+        restake()
+        player.doubled = true
+        player.hand[#player.hand + 1] = casino.draw(t)
+        player.status = casino.total(player.hand) > 21 and "bust" or "doubled"
+        player.done = true
+        casino.event(t, "chip")
+    elseif action == "raise" then
+        restake()
+        player.status, player.done = "raised", true
+        casino.event(t, "chip")
+    elseif action == "check" then
+        player.status, player.done = "checked", true
+    elseif action == "fold" then
+        player.status, player.done = "folded", true
+    end
+    t.dirty = true
+    casino.advance(t)
+    save()
+    return casino.status(t, who)
+end
+
+function actions.TABLE_LEAVE(payload)
+    local who = requirePlayer(payload)
+    local t = casino.byCode(payload.code)
+    need(t, "TABLE_NOT_FOUND", "That table has closed")
+    local player = t.players[who.account_id]
+    need(player, "NOT_JOINED", "You are not at this table")
+    local staked = (player.total or 0) > 0
+    need(not staked or t.phase == "betting" or t.phase == "result" or t.phase == "wheel",
+        "GAME_STARTED", "Finish this round first")
+    if staked and t.phase == "betting" then
+        bankOrFail("CCG_ESCROW_RELEASE", { lobby_code = t.code, account_id = who.account_id })
+    end
+    t.players[who.account_id] = nil
+    for index, accountId in ipairs(t.order) do
+        if accountId == who.account_id then table.remove(t.order, index) break end
+    end
+    for seat, accountId in ipairs(t.order) do t.players[accountId].seat = seat end
+    save()
+    return { left = true, wallet = who.wallet }
+end
+
+-- Every table, every tick: the clock, and anybody who left without saying.
+function casino.tick(now)
+    local changed = false
+    for _, t in pairs(state.casinos) do
+        local ok, err = pcall(casino.advance, t, now)
+        if not ok then logActivity("Casino " .. tostring(t.name) .. ": " .. tostring(err),
+            colors.red) end
+        if t.phase ~= "playing" and t.phase ~= "settling" then
+            for index = #t.order, 1, -1 do
+                local player = t.players[t.order[index]]
+                if player and (player.total or 0) <= 0
+                    and now - (player.seen_at or player.joined_at or now) > PRESENCE_MS then
+                    t.players[t.order[index]] = nil
+                    table.remove(t.order, index)
+                    t.dirty = true
+                end
+            end
+            for seat, accountId in ipairs(t.order) do t.players[accountId].seat = seat end
+        end
+        if t.dirty then t.dirty, changed = nil, true end
+    end
+    if changed then save() end
+    return changed
+end
+
 -- Serving ---------------------------------------------------------------------
 
 local function route(sender, message)
@@ -929,6 +2035,8 @@ end
 local function gameLoop()
     while running do
         pcall(processGames)
+        -- FoxyOS 17: every CCG Casino table.
+        pcall(casino.tick, util.nowMs())
         sleep(0.15)
     end
 end
@@ -955,8 +2063,14 @@ local function dashboardLoop()
                     players = players + #(lobby.player_order or {})
                 end
             end
-            return { { "LOBBIES", open, colors.cyan }, { "RUNNING", running_count, colors.lime },
-                { "PLAYERS", players, colors.magenta } }
+            -- FoxyOS 17: the CCG Casino tables, and who is at them.
+            local tables = 0
+            for _, t in pairs(state.casinos) do
+                tables = tables + 1
+                players = players + #(t.order or {})
+            end
+            return { { "TABLES", tables, colors.cyan }, { "LOBBIES", open + running_count,
+                colors.lime }, { "PLAYERS", players, colors.magenta } }
         end,
         lines = function()
             return { { "BANK  " .. (bank:isOnline() and "CONNECTED" or "SEARCHING"),
@@ -985,7 +2099,7 @@ if TEST_MODE then
     return {
         actions = actions, state = state, games = CCG_GAMES,
         process_games = processGames, advance_survivor = advanceSurvivor,
-        refund_lobby = refundLobby, boot_id = BOOT_ID,
+        refund_lobby = refundLobby, boot_id = BOOT_ID, casino = casino,
     }
 end
 

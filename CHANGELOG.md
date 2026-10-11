@@ -1,5 +1,37 @@
 # Changelog
 
+## 16.5.0
+
+FoxyOS 17 Beta, for devices signed up to Beta Updates. Not tested yet: that
+is what the beta is for. Sign up the CCG Server, your CCGs and your Pockets;
+the Bank stays on 16.1, which already has the CCG Casino's money.
+
+**The CCG is two.** CCG Home and CCG Casino are separate downloads in Easy
+Deployment. A CCG that updates asks once which it is to be. CCG Home is Home
+Mode, untouched.
+
+**CCG Casino.** Set up on the computer's own screen: sign in with Foxy,
+choose one of your companies, name the table. The name is in the monitor's
+top left corner, and the monitor is only a display now.
+
+**Four classics.** Roulette (single zero, up to eight bets), Blackjack (3 to
+2, double, the dealer stands on 17), Heads or Tails and Poker (Hold'em
+against the dealer: raise doubles your stake, ties go to the dealer). The
+CCG deals; you stay at the table from game to game.
+
+**My Casino.** A new tab in the CCG app: every CCG Casino your companies
+own. Switch Auto, choose the next game, or be the dealer and pace the round
+yourself. Let go, and the computer deals again.
+
+**The wheel.** In Auto the games spin for five seconds and slow to a stop on
+the next one. Waiting for the dealer they turn slowly until a game is
+picked. The code is big now, and every game moves: the roulette ball, the
+coin, cards dealt one at a time.
+
+**Sound and music.** Speakers play the games' sounds. Drop .mid files onto
+the CCG Casino computer's screen and play them from My Casino; the music
+goes quieter while a game is on.
+
 ## 16.1.0
 
 FoxyOS 16.1, for the Bank: the money side of the CCG Casino that FoxyOS 17

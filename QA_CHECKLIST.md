@@ -7,6 +7,43 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 17 Beta (16.5.0)
+
+Only devices signed up to Beta Updates get this. Sign up the **CCG Server** (its Server tab), each **CCG** (Home Mode settings, **BETA**) and the Pockets that will play. The Bank stays on 16.1. You need a company (Company app) to own a CCG Casino; attach speakers to a CCG Casino for sound.
+
+### The split
+
+- [ ] A CCG that updates shows **CCG IS TWO NOW** with **CCG CASINO** and **CCG HOME**. **CCG HOME** confirms, restarts, and is Home Mode as before (pair, play Snake, Game Browser).
+- [ ] Another CCG: **CCG CASINO** confirms and restarts into the CCG Casino setup.
+
+### Setting up a CCG Casino
+
+- [ ] The monitor says *SET ME UP ON THE COMPUTER*. On the computer's own screen: **SIGN IN WITH FOXY**, name and PIN, pick a company, name it (*Table 1*).
+- [ ] The monitor shows the name in the top left, and the game wheel spinning. Tapping the monitor does nothing.
+- [ ] The computer's screen shows the code, *CCG Server Connected*, speakers and songs; **SPEAKERS** plays a jingle.
+
+### Playing (Pocket: CCG → Bet → Sit at a table)
+
+- [ ] PIN, then the code from the monitor and a name. The Pocket follows the table: the wheel, then *Bets close in ...*.
+- [ ] **Roulette**: **BET** opens the slip: Number (type it), Red, Black, Odd, Even, 1-18, 19-36, dozens, columns; up to eight. **PLACE BETS**. The monitor's pockets spin and slow under the ball; the Pocket shows the result card and the winners.
+- [ ] **Heads or Tails**: pick a side; the coin turns over and lands.
+- [ ] **Blackjack**: cards come one at a time on both screens. **HIT**, **STAND**, **DOUBLE** (only on two cards); 21 pays, a blackjack pays 3 to 2, a tie gives the stake back. Not acting in 20s stands.
+- [ ] **Poker**: two cards each; **RAISE** (doubles the stake), **CHECK** or **FOLD**; the flop, turn and river come in; the dealer's cards turn over at the showdown with the hands named.
+- [ ] After each result the next game starts by itself (Auto: the wheel). **LEAVE** leaves; you cannot leave a round you have money in.
+- [ ] Bet Wallet: wins held a day, ties back at once, losses gone.
+
+### My Casino (Pocket: CCG → My Casino, as the company's owner)
+
+- [ ] Your tables, with their game and how many are playing; another company's are not there.
+- [ ] **AUTO: ON/OFF**. With Auto off the table keeps playing the same game; a game button sets the next game.
+- [ ] **BE THE DEALER**: the monitor says *DEALER <you>*; the wheel waits for **Pick the game**; the big button reads **SPIN** / **FLIP** / **DEAL**, then **DEALER'S TURN**, **FLOP**, **TURN**, **RIVER**, **SHOWDOWN**, **NEXT GAME**. **< Back** lets go; after a minute without the page open, the computer takes over.
+- [ ] **RENAME** changes the name on the monitor.
+
+### Music
+
+- [ ] Drag a .mid file onto the CCG Casino computer's screen: *Added ...*. My Casino → **MUSIC** lists it; tap it to play through the speakers. **VOL-/VOL+**, **NEXT**, **STOP**.
+- [ ] The music is quieter while a game is on, louder on the wheel.
+
 ## FoxyOS 16.1 (16.1.0)
 
 Bank only; the CCG Casino that uses it is FoxyOS 17.

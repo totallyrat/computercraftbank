@@ -83,6 +83,9 @@ const forwardOptionalFiles = [
   "invt.lua",
   // FoxyOS 16: Yap!, by Foxy, on every Pocket.
   "yap.lua",
+  // FoxyOS 17: the CCG is two, each its own download.
+  "ccg_home.lua",
+  "ccg_casino.lua",
 ];
 
 function checksum(buffer) {

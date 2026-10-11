@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.1.0"
+local PROGRAM_VERSION = "16.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -69,6 +69,8 @@ RELEASE.depot_files = {
     "admin_terminal.lua",
     "border_controller.lua",
     "ccg.lua",
+    "ccg_home.lua",
+    "ccg_casino.lua",
     "gps_anchor.lua",
     "app_server.lua",
     "foxy.lua",
@@ -108,6 +110,8 @@ RELEASE.published = {
 RELEASE.optional = {
     "border_controller.lua",
     "ccg.lua",
+    "ccg_home.lua",
+    "ccg_casino.lua",
     "gps_anchor.lua",
     "admin_terminal.lua",
     "app_server.lua",
@@ -138,6 +142,8 @@ RELEASE.programs = {
     admin = "admin_terminal.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    ccghome = "ccg_home.lua",
+    ccgcasino = "ccg_casino.lua",
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
     tpbank = "bank_app_server.lua",

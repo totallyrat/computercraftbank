@@ -352,6 +352,8 @@ update.PUBLISHED_FILES = {
 update.PUBLISHED_OPTIONAL = {
     "border_controller.lua",
     "ccg.lua",
+    "ccg_home.lua",
+    "ccg_casino.lua",
     "gps_anchor.lua",
     "admin_terminal.lua",
     "app_server.lua",
@@ -390,6 +392,9 @@ local ROLE_PROGRAMS = {
     admin = "admin_terminal.lua",
     border = "border_controller.lua",
     ccg = "ccg.lua",
+    -- FoxyOS 17: the CCG is two.
+    ccghome = "ccg_home.lua",
+    ccgcasino = "ccg_casino.lua",
     anchor = "gps_anchor.lua",
     apps = "app_server.lua",
     tpbank = "bank_app_server.lua",

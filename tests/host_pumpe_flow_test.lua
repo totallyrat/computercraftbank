@@ -32,10 +32,13 @@ local actions = {
     "home",                                          -- leave MyID
     -- 12.0: Bet is CCG. Bet Play is a tab; Home Mode pairs with a console
     -- (the real one, below) and plays Snake into a wall.
-    -- FoxyOS 16: the result asks to stay for the next game. Stay, play
-    -- round two in the same lobby, then leave.
-    "open:ccg", "tab:bet", "join", "pick:heads", "__tick", "stay",
-    "pick:heads", "__tick", "leave",
+    -- FoxyOS 17: Bet sits at a CCG Casino table. Bet, the cards come,
+    -- stand, the result, and leave the table.
+    "open:ccg", "tab:bet", "join", "bet", "__tick", "__tick", "__tick", "act:stand",
+    "__tick", "__tick", "__tick", "leave",
+    -- My Casino: the table, the dealer, a game, a song.
+    "tab:mine", "open:CAS00001", "take", "next", "game:poker", "music", "play:1", "back",
+    "back",
     "tab:home", "pair", "play:snake", "key:up", "__tick", "__tick", "__tick",
     "__tick", "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
     "key:a", "menu",
@@ -63,9 +66,21 @@ local myid, taxDemand = nil, { amount = 10, reason = "Unpaid tax, period 3" }
 ticketVisits = 0
 local savedDevice
 local lockSeconds
-local betStatusCalls = 0
+-- FoxyOS 17: one table, its state as the CCG Server would say it.
+local casinoState = {}
+local function casinoView(phase, extra)
+    local view = { console_id = "CAS00001", name = "Table 1", company_name = "Lucky Fox",
+        code = "ABC234", game = "blackjack", game_name = "Blackjack", auto = true,
+        phase = phase, round = 1, seq = 1,
+        games = { "roulette", "blackjack", "heads_tails", "poker" },
+        dealer = { cards = { 9, 0 }, total = 10 },
+        players = { { seat = 1, name = "FoxyPlayer", me = true, playing = true, total = 10,
+            cards = { 1, 23 }, hand_total = 12 }, { seat = 2, name = "Kit", playing = true,
+            total = 5, cards = { 5, 6 }, hand_total = 13 } } }
+    for key, value in pairs(extra or {}) do view[key] = value end
+    return view
+end
 local WIDTH, HEIGHT = 26, 20
-local LONG_CCG_CODE = "CCG2026LONGSCREENCODE987654321"
 
 colors = {
     white = 1, orange = 2, magenta = 4, lightBlue = 8,
@@ -203,7 +218,7 @@ do
     local realShell = shell
     shell = { getRunningProgram = function() return "/ccg/ccg.lua" end }
     PUMPE_TEST_MODE = "ccg_home"
-    ccgHome = assert(loadfile("../ccg.lua"))()
+    ccgHome = assert(loadfile("../ccg_home.lua"))()
     PUMPE_TEST_MODE = nil
     shell = realShell
     for name, value in pairs(phoneLoaded) do package.loaded[name] = value end
@@ -521,100 +536,57 @@ local client = {
                     },
                 },
             }
-        elseif action == "BET_JOIN" then
-            assert(payload.bet_token == "BET_TOKEN")
-            assert(payload.code == LONG_CCG_CODE)
+        -- FoxyOS 17: a CCG Casino table, dealing Blackjack.
+        elseif action == "TABLE_JOIN" then
+            assert(payload.bet_token == "BET_TOKEN" and payload.code == "ABC234",
+                "the code typed, in capitals: " .. tostring(payload.code))
             assert(payload.display_name == "FoxyPlayer")
-            return {
-                lobby = {
-                    code = LONG_CCG_CODE,
-                    game = "heads_tails",
-                    game_name = "Heads or Tails",
-                    multiplier = 2,
-                    status = "lobby",
-                    round = 1,
-                },
-                player = { display_name = "FoxyPlayer", wager = 0 },
-            }
-        elseif action == "BET_LEAVE" then
-            assert(payload.code == LONG_CCG_CODE)
-            return { left = true }
-        elseif action == "BET_PLACE_WAGER" then
-            assert(payload.code == LONG_CCG_CODE)
-            assert(payload.selection == "heads")
-            assert(payload.amount == 10)
-            return {
-                lobby = {
-                    code = LONG_CCG_CODE,
-                    game = "heads_tails",
-                    game_name = "Heads or Tails",
-                    multiplier = 2,
-                    status = "lobby",
-                    round = betStatusCalls < 3 and 1 or 2,
-                },
-                player = {
-                    display_name = "FoxyPlayer",
-                    selection = "heads",
-                    wager = 10,
-                },
-                wallet = { available = 90, held = 0, holds = {} },
-            }
-        elseif action == "BET_LOBBY_STATUS" then
-            assert(payload.code == LONG_CCG_CODE)
-            betStatusCalls = betStatusCalls + 1
-            -- FoxyOS 16: the lobby goes on. After round one, round two opens
-            -- in it; round two ends, and round three has already opened by
-            -- the time the Pocket asks, so it learns how round two went from
-            -- what the server kept of it.
-            if betStatusCalls >= 3 then
-                local round = betStatusCalls == 3 and 2 or 3
-                return {
-                    lobby = { code = LONG_CCG_CODE, game = "heads_tails",
-                        game_name = "Heads or Tails", multiplier = 2,
-                        status = "lobby", round = round },
-                    player = { display_name = "FoxyPlayer", wager = 0 },
-                    wallet = { available = 90, held = 20, holds = {} },
-                    last = round == 2 and { round = 1, played = true, won = true,
-                        payout = 20, game = "heads_tails", status = "finished",
-                        game_name = "Heads or Tails", outcome = "heads" }
-                        or { round = 2, played = true, won = false,
-                        game = "heads_tails", status = "finished",
-                        game_name = "Heads or Tails", outcome = "tails" },
-                }
+            return { table = casinoView("betting", { left_ms = 20000, phase_ms = 25000 }),
+                me = { seat = 1, total = 0 }, wallet = { available = 90 } }
+        elseif action == "TABLE_BET" then
+            assert(payload.bets[1].kind == "hand" and payload.bets[1].amount == 10)
+            casinoState.bet = true
+            return { table = casinoView("betting", { left_ms = 5000, phase_ms = 25000 }),
+                me = { seat = 1, total = 10, bets = { { kind = "hand", amount = 10 } } },
+                wallet = { available = 80 } }
+        elseif action == "TABLE_ACT" then
+            assert(payload.action == "stand")
+            casinoState.stood = true
+            return { table = casinoView("playing", { step = "dealer" }),
+                me = { seat = 1, total = 10, status = "stood", options = {} } }
+        elseif action == "TABLE_STATUS" then
+            if casinoState.stood then
+                return { table = casinoView("result", { left_ms = 8000,
+                    winners = { { name = "FoxyPlayer", payout = 20 } },
+                    dealer = { cards = { 9, 7, 10 }, total = 26 } }),
+                    me = { seat = 1, total = 10, result = { won = true, payout = 20 } } }
             end
-            local finished = betStatusCalls >= 2
-            return {
-                lobby = {
-                    code = LONG_CCG_CODE,
-                    game = "heads_tails",
-                    game_name = "Heads or Tails",
-                    multiplier = 2,
-                    status = finished and "finished" or "running",
-                    outcome = finished and "heads" or nil,
-                },
-                player = {
-                    display_name = "FoxyPlayer",
-                    selection = "heads",
-                    wager = 10,
-                    won = finished,
-                    payout = finished and 20 or nil,
-                    hold_id = finished and "HOLD0000000001" or nil,
-                },
-                wallet = {
-                    available = 90,
-                    held = finished and 20 or 0,
-                    hold_count = finished and 1 or 0,
-                    holds = finished and {
-                        {
-                            hold_id = "HOLD0000000001",
-                            amount = 20,
-                            status = "holding",
-                            release_day = 43,
-                            release_time = "12:00",
-                        },
-                    } or {},
-                },
-            }
+            return { table = casinoView("playing", { step = "turns", step_left_ms = 15000,
+                step_ms = 20000 }), me = { seat = 1, total = 10, status = "playing",
+                options = { "hit", "stand", "double" } } }
+        elseif action == "CASINO_LIST" then
+            return { casinos = { { console_id = "CAS00001", name = "Table 1",
+                company_name = "Lucky Fox", code = "ABC234", game = "roulette",
+                game_name = "Roulette", phase = "betting", players = 2, betting = 1,
+                auto = true, controlled = false, online = true } } }
+        elseif action == "CASINO_VIEW" or action == "CASINO_CONTROL" then
+            assert(payload.console_id == "CAS00001" and payload.session_token)
+            if action == "CASINO_CONTROL" then
+                casinoState.ops = casinoState.ops or {}
+                casinoState.ops[#casinoState.ops + 1] = payload.op .. ":"
+                    .. tostring(payload.game or payload.action or payload.track or "")
+                    .. ":" .. tostring(payload.track or "")
+                if payload.op == "take" then casinoState.controlling = true end
+                if payload.op == "release" then casinoState.controlling = false end
+            end
+            return { table = casinoView("betting", { controlled = casinoState.controlling,
+                controller_name = casinoState.controlling and "FoxyUser" or nil,
+                next_label = casinoState.controlling and "DEAL" or nil,
+                library = { "theme.mid", "jazz.mid" }, music = { playing = false, volume = 5 } }),
+                you_control = casinoState.controlling == true }
+        elseif action == "TABLE_LEAVE" then
+            assert(payload.code == "ABC234")
+            return { left = true }
         elseif action == "BET_WALLET_SUMMARY" then
             return {
                 wallet = {
@@ -799,19 +771,16 @@ function ui.input(_, title, options)
     if title == "PAY A CODE" then return "ABC123" end
     if title == "Send Money" then return "FoxyFriend" end
     if title == "They Receive" then return "100" end
-    if title == "Join CCG" then
+    if title == "Table code" then
         assert(options.mode == "code")
-        assert(options.maxLength == math.huge)
-        assert(options.scrollToEnd == true)
-        assert(options.minLength == nil)
-        return "cCg2026LongScreenCode987654321"
+        return "abc234"
     end
-    if title == "Player Name" then return "FoxyPlayer" end
+    if title == "Your name" then return "FoxyPlayer" end
+    if title == "Your bet" then return "10" end
     if title == "Pairing code" then
         assert(options.mode == "integer" and options.maxLength == 6)
         return homeCode()
     end
-    if title == "Set Wager" then return "10" end
     if title == "Add to Bet Wallet" then return "25" end
     if title == "Send to Foxy Account" then return "10" end
     error("Unexpected input screen: " .. tostring(title))
@@ -956,16 +925,17 @@ assert(find(requests, "ACCOUNT_SUMMARY"))
 assert(find(requests, "VISA_OVERVIEW"))
 assert(find(requests, "CUSTOMS_DETAIL"))
 assert(find(requests, "BET_UNLOCK"))
-assert(find(requests, "BET_JOIN"))
-assert(find(requests, "BET_PLACE_WAGER"))
-assert(find(requests, "BET_LEAVE"), "LEAVE on the result leaves the lobby")
-local wagers = 0
-for _, name in ipairs(requests) do
-    if name == "BET_PLACE_WAGER" then wagers = wagers + 1 end
-end
-assert(wagers == 2, "NEXT GAME stays in the lobby for a second round: " .. wagers)
-assert(find(drawnText, "Result: TAILS"),
-    "round two's result, from what the server kept once round three opened")
+assert(find(requests, "TABLE_JOIN") and find(requests, "TABLE_BET")
+    and find(requests, "TABLE_ACT"), "sat down, bet, and played the hand")
+assert(find(requests, "TABLE_LEAVE"), "LEAVE leaves the table")
+assert(find(drawnText, "YOU WON $20"), "the result, in its card")
+local ops = table.concat(casinoState.ops or {}, " ")
+assert(find(requests, "CASINO_LIST") and find(requests, "CASINO_VIEW"),
+    "My Casino lists the tables and opens one")
+assert(ops:find("take::", 1, true) and ops:find("next::", 1, true)
+    and ops:find("game:poker:", 1, true) and ops:find("music:play:theme.mid", 1, true)
+    and ops:find("release::", 1, true),
+    "the dealer taken, dealt, a game chosen, a song played, and the dealer let go: " .. ops)
 -- The bet wallet moved into Foxy in 9.4, so the PUMPE itself no longer
 -- deposits or withdraws; host_pumpe_apps_test covers that where the app is
 -- installed. What is still the PUMPE's is unlocking and playing.

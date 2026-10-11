@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.1.0"
+local PROGRAM_VERSION = "16.5.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2155,15 +2155,6 @@ end
 local ccgApp
 do
 
-    local betColors = {
-        red = colors.red,
-        orange = colors.orange,
-        yellow = colors.yellow,
-        green = colors.lime,
-        blue = colors.lightBlue,
-        purple = colors.purple,
-    }
-
     -- Betting is two servers since 9.1: the Bet Wallet is money and stays on the
     -- Bank, while lobbies and games are on the CCG Server. The wallet actions go
     -- one way and everything about a game goes the other, so a screen never has
@@ -2201,288 +2192,436 @@ do
 
 
 
-    local function chooseBetSelection(lobby)
-        local width, height = target.getSize()
-        if lobby.game == "survivor" then
-            ui.clear(target)
-            ui.header(target, "Survivor", "Interactive // 3X", util.formatClock())
-            ui.card(target, 2, 5, width - 2, 8, colors.purple)
-            ui.center(target, 7, "LAST ONE STANDING", ui.theme.ink)
-            ui.wrappedText(target, 4, 9,
-                "Use the touch joystick. Get close and PUSH opponents off the ring.",
-                width - 6, 3, ui.theme.muted)
-            local scene = ui.scene(target)
-            scene:button("continue", 2, 15, width - 2, 3,
-                "SET WAGER", { background = colors.purple })
-            scene:button("back", 1, height, 8, 1, "< Back",
-                { background = ui.theme.panel })
-            return scene:wait() == "continue" and "survivor" or nil
+    -- The CCG Casino, FoxyOS 17 ---------------------------------------------------------
+    -- Bet: sit at a table with its code and play the round it is dealing --
+    -- the table chooses the game, and you stay at it from game to game. My
+    -- Casino: the tables your companies own, and their controls.
+    local casino = {
+        NAMES = { roulette = "Roulette", blackjack = "Blackjack",
+            heads_tails = "Heads or Tails", poker = "Poker" },
+        -- For buttons a third of a Pocket wide.
+        SHORT = { roulette = "Roulette", blackjack = "Blackjack", heads_tails = "Coin flip",
+            poker = "Poker" },
+        GAMES = { "roulette", "blackjack", "heads_tails", "poker" },
+        COLORS = { roulette = colors.green, blackjack = colors.gray,
+            heads_tails = colors.yellow, poker = colors.purple },
+        SUITS = { string.char(3), string.char(4), string.char(5), string.char(6) },
+        RANKS = { [11] = "J", [12] = "Q", [13] = "K", [14] = "A" },
+        WHEEL = { 0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5,
+            24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26 },
+        RED = {},
+    }
+    for _, number in ipairs({ 1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32,
+        34, 36 }) do casino.RED[number] = true end
+
+    function casino.ease(x)
+        x = math.max(0, math.min(1, x))
+        return 1 - (1 - x) ^ 3
+    end
+
+    function casino.pocketColor(number)
+        if number == 0 then return colors.green end
+        return casino.RED[number] and colors.red or colors.black
+    end
+
+    -- A card: 5 wide and 4 tall, or 3 by 2. 0 is face down.
+    function casino.card(x, y, card, small, lit)
+        local w, h = small and 3 or 5, small and 2 or 4
+        if card == 0 then
+            ui.fill(target, x, y, w, h, colors.blue)
+            ui.text(target, x, y, string.rep("\127", w), colors.lightBlue, colors.blue)
+            return
         end
-        while true do
-            ui.clear(target)
-            ui.header(target, lobby.game_name,
-                "Choose your pick // " .. lobby.multiplier .. "X",
-                util.formatClock())
-            local scene = ui.scene(target)
-            if lobby.game == "heads_tails" then
-                scene:button("pick:heads", 2, 6, width - 2, 5,
-                    "H\nHEADS", { background = colors.orange,
-                        foreground = colors.black })
-                scene:button("pick:tails", 2, 12, width - 2, 5,
-                    "T\nTAILS", { background = colors.blue })
-            else
-                local choices = {
-                    "red", "orange", "yellow", "green", "blue", "purple",
-                }
-                local buttonWidth = math.floor((width - 5) / 2)
-                for index, name in ipairs(choices) do
-                    local column = (index - 1) % 2
-                    local row = math.floor((index - 1) / 2)
-                    local x = column == 0 and 2 or width - buttonWidth
-                    local y = 5 + row * 4
-                    scene:button("pick:" .. name, x, y, buttonWidth, 3,
-                        string.upper(name), {
-                            background = betColors[name],
-                            foreground = (name == "yellow" or name == "orange"
-                                or name == "green") and colors.black or colors.white,
-                        })
-                end
-            end
-            scene:button("back", 1, height, 8, 1, "< Back",
-                { background = ui.theme.panel })
-            local action = scene:wait()
-            local selection = action and action:match("^pick:(.+)$")
-            if selection then return selection end
-            if action == "back" or action == "__terminate" then return nil end
+        local rank = (card - 1) % 13 + 2
+        local suit = math.floor((card - 1) / 13) + 1
+        local label = casino.RANKS[rank] or tostring(rank)
+        local ink = suit <= 2 and colors.red or colors.black
+        local face = lit and colors.yellow or colors.white
+        ui.fill(target, x, y, w, h, face)
+        ui.text(target, x, y, label, ink, face)
+        if small then
+            ui.text(target, x + w - 1, y + 1, casino.SUITS[suit], ink, face)
+        else
+            ui.text(target, x + 2, y + 1, casino.SUITS[suit], ink, face)
+            ui.text(target, x + w - #label, y + h - 1, label, ink, face)
         end
     end
 
-    -- How a round went. FoxyOS 16: the lobby stays open after it, so this
-    -- asks whether to stay for the next game. `result` is the round's game,
-    -- outcome, winner_name, won, payout, hold_id and status. While it is up
-    -- the Pocket keeps telling the CCG Server it is still here.
-    local function betResultScreen(result, wallet, code)
-        local width, height = target.getSize()
-        local cancelled = result.status == "cancelled"
-        while running do
+    function casino.hand(x, y, cards, small, room, litFrom)
+        local w = small and 3 or 5
+        local step = w + 1
+        if #cards > 1 and (#cards - 1) * step + w > room then
+            step = math.max(1, math.floor((room - w) / (#cards - 1)))
+        end
+        for index, card in ipairs(cards) do
+            casino.card(x + (index - 1) * step, y, card, small, litFrom and index >= litFrom)
+        end
+    end
+
+    -- A bet in a few words.
+    function casino.betWords(bet)
+        if bet.kind == "straight" then return "Number " .. tostring(bet.pick) end
+        if bet.kind == "dozen" then return ({ "1-12", "13-24", "25-36" })[bet.pick] or "Dozen" end
+        if bet.kind == "column" then return "Column " .. tostring(bet.pick) end
+        if bet.kind == "hand" then return "Hand" end
+        local words = { red = "Red", black = "Black", odd = "Odd", even = "Even",
+            low = "1-18", high = "19-36", heads = "Heads", tails = "Tails" }
+        return words[tostring(bet.pick)] or tostring(bet.pick)
+    end
+
+    -- Playing -------------------------------------------------------------------------------------
+
+    function casino.ask(code, action, extra)
+        local payload = extra or {}
+        payload.code = code
+        return betRequest(action, payload, true)
+    end
+
+    -- Building the bet slip for this round. Returns a list of bets, or nil.
+    function casino.slip(game, wallet)
+        local bets = {}
+        local function amountFor(title)
+            local text = ui.input(target, title, {
+                hint = "Bet Wallet " .. money(wallet and wallet.available or 0),
+                mode = "number", maxLength = 10 })
+            local amount = tonumber(text)
+            if not amount or amount <= 0 then return nil end
+            return amount
+        end
+        if game == "blackjack" or game == "poker" then
+            local amount = amountFor(game == "poker" and "Your ante" or "Your bet")
+            return amount and { { kind = "hand", amount = amount } } or nil
+        end
+        if game == "heads_tails" then
+            local width, height = target.getSize()
             ui.clear(target)
-            ui.header(target, cancelled and "ROUND CANCELLED" or result.won and "YOU WON"
-                or "ROUND COMPLETE", result.game_name, util.formatClock())
-            ui.card(target, 2, 5, width - 2, 8, result.won and ui.theme.success
-                or ui.theme.warning)
-            if cancelled then
-                ui.center(target, 7, "WAGER RETURNED", ui.theme.ink)
-                ui.center(target, 9, ui.truncate(tostring(result.cancelled_reason
-                    or "Round stopped"), width - 6), ui.theme.muted)
-            elseif result.won then
-                ui.center(target, 7, money(result.payout), ui.theme.ink)
-                ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
-                local release = "One full in-game day"
-                for _, hold in ipairs(wallet and wallet.holds or {}) do
-                    if hold.hold_id == result.hold_id then
-                        release = "Day " .. hold.release_day .. " " .. hold.release_time
-                        break
+            ui.header(target, "Heads or Tails", "Pays 2x", util.formatClock())
+            local scene = ui.scene(target)
+            scene:button("heads", 2, 5, width - 2, 5, "H\nHEADS",
+                { background = colors.yellow, foreground = colors.black })
+            scene:button("tails", 2, 11, width - 2, 5, "T\nTAILS",
+                { background = colors.orange, foreground = colors.black })
+            scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+            local pick = scene:wait()
+            if pick ~= "heads" and pick ~= "tails" then return nil end
+            local amount = amountFor("On " .. pick)
+            return amount and { { kind = "pick", pick = pick, amount = amount } } or nil
+        end
+        -- Roulette: up to eight bets on one slip.
+        local CHOICES = {
+            { "Number", "straight" }, { "Red", "even", "red", colors.red },
+            { "Black", "even", "black", colors.black }, { "Odd", "even", "odd" },
+            { "Even", "even", "even" }, { "1-18", "even", "low" }, { "19-36", "even", "high" },
+            { "1-12", "dozen", 1 }, { "13-24", "dozen", 2 }, { "25-36", "dozen", 3 },
+            { "Col 1", "column", 1 }, { "Col 2", "column", 2 }, { "Col 3", "column", 3 },
+        }
+        while running do
+            local width, height = target.getSize()
+            ui.clear(target)
+            local total = 0
+            for _, bet in ipairs(bets) do total = total + bet.amount end
+            ui.header(target, "Roulette", #bets .. " bets  " .. money(total), util.formatClock())
+            local scene = ui.scene(target)
+            local columns, w = 3, math.floor((width - 4) / 3)
+            for index, choice in ipairs(CHOICES) do
+                local column = (index - 1) % columns
+                local row = math.floor((index - 1) / columns)
+                scene:button("choice:" .. index, 2 + column * (w + 1), 4 + row * 2, w, 1,
+                    choice[1], { background = choice[4] or ui.theme.panel,
+                        foreground = choice[4] and colors.white or nil,
+                        disabled = #bets >= 8 })
+            end
+            local listY = 4 + math.ceil(#CHOICES / columns) * 2
+            for index, bet in ipairs(bets) do
+                local y = listY + index - 1
+                if y > height - 4 then break end
+                ui.text(target, 2, y, ui.truncate(casino.betWords(bet) .. "  " .. money(bet.amount),
+                    width - 6), ui.theme.ink)
+                scene:button("drop:" .. index, width - 3, y, 3, 1, "x",
+                    { background = ui.theme.danger })
+            end
+            scene:button("place", 2, height - 2, width - 2, 2, #bets > 0
+                and ("PLACE " .. #bets .. (#bets == 1 and " BET" or " BETS")) or "PICK A BET",
+                { background = #bets > 0 and ui.theme.success or ui.theme.panel,
+                  foreground = colors.black, disabled = #bets == 0 })
+            scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return nil end
+            if action == "place" then return bets end
+            local drop = tonumber(action and action:match("^drop:(%d+)$"))
+            if drop then table.remove(bets, drop) end
+            local index = tonumber(action and action:match("^choice:(%d+)$"))
+            local choice = index and CHOICES[index]
+            if choice then
+                local pick = choice[3]
+                if choice[2] == "straight" then
+                    pick = tonumber(ui.input(target, "Which number?", { hint = "0 to 36",
+                        mode = "integer", maxLength = 2 }) or "")
+                end
+                if pick ~= nil and (choice[2] ~= "straight" or (pick >= 0 and pick <= 36)) then
+                    local amount = amountFor("On " .. (choice[2] == "straight"
+                        and tostring(pick) or choice[1]))
+                    if amount then
+                        bets[#bets + 1] = { kind = choice[2], pick = pick, amount = amount }
                     end
                 end
-                ui.center(target, 11, release, ui.theme.muted)
-            else
-                ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
-                ui.center(target, 9,
-                    result.game == "survivor" and (tostring(result.winner_name) .. " survived")
-                        or "Result: " .. string.upper(result.outcome or "?"),
-                    ui.theme.muted)
-            end
-            if wallet then
-                ui.center(target, 11 + (result.won and 3 or 0), "BET WALLET "
-                    .. money(wallet.available), ui.theme.muted)
-            end
-            ui.center(target, height - 5, ui.truncate("Same code: " .. tostring(code),
-                width - 2), colors.cyan)
-            local scene = ui.scene(target)
-            local half = math.floor((width - 3) / 2)
-            scene:button("leave", 2, height - 3, half, 2, "LEAVE",
-                { background = ui.theme.danger })
-            scene:button("stay", 3 + half, height - 3, width - 3 - half, 2, "NEXT GAME",
-                { background = ui.theme.accent,
-                  foreground = ui.theme.accentInk or ui.inkOn(ui.theme.accent) })
-            local action = scene:wait({ tickRate = 2 })
-            if action == "stay" then return "stay" end
-            if action == "leave" then return "leave" end
-            if action == "__terminate" then
-                running = false
-                return "leave"
-            end
-            if action == "__tick" then
-                betRequest("BET_LOBBY_STATUS", { code = code }, true)
             end
         end
-        return "leave"
     end
 
-    -- Between rounds, or while one runs without you: still in the lobby,
-    -- waiting for the next game to open. Returns the status once it has.
-    local function waitForNextRound(code, status)
-        local frame = 0
-        while running and status and not status.lobby.closed
-            and not (status.lobby.status == "lobby" and (status.player.wager or 0) <= 0) do
-            local lobby, player = status.lobby, status.player
-            local width, height = target.getSize()
-            ui.clear(target, colors.black)
-            ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
-            ui.center(target, 6, ui.truncate(lobby.code, width - 4), colors.cyan,
-                colors.black)
-            ui.center(target, 8, player.display_name, colors.white, colors.black)
-            ui.center(target, 11, lobby.status == "running" and "GAME IN PROGRESS"
-                or "NEXT GAME SOON", colors.magenta, colors.black)
-            ui.center(target, 13, (lobby.status == "running" and "YOU'RE IN THE NEXT ONE"
-                or "THE CCG PICKS IT") .. string.rep(".", frame % 4),
-                colors.lightGray, colors.black)
-            local scene = ui.scene(target)
-            scene:button("leave", 2, height - 3, width - 2, 2, "LEAVE LOBBY",
-                { background = colors.red })
-            local action = scene:wait({ tickRate = 0.5 })
-            if action == "leave" or action == "__terminate" then
-                if action == "__terminate" then running = false end
-                betRequest("BET_LEAVE", { code = code }, true)
-                return nil
-            end
-            frame = frame + 1
-            status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+    -- How a round went for you, in a card.
+    function casino.outcomeCard(y, result, view, last)
+        local width = target.getSize()
+        local payout = result and result.payout or 0
+        local pushed = result and result.pushed or 0
+        local colour = payout > 0 and ui.theme.success or pushed > 0 and ui.theme.warning
+            or ui.theme.danger
+        ui.card(target, 2, y, width - 2, 4, colour)
+        local words = payout > 0 and ("YOU WON " .. money(payout))
+            or pushed > 0 and ("A TIE: " .. money(pushed) .. " BACK") or "NOT THIS TIME"
+        ui.center(target, y + 1, words, ui.theme.ink, ui.theme.panel)
+        local game, outcome = (last or view).game, (last or view).outcome
+        local said
+        if game == "roulette" and type(outcome) == "number" then
+            said = "The ball: " .. outcome .. (outcome == 0 and " (zero)"
+                or (casino.RED[outcome] and " red" or " black"))
+        elseif game == "heads_tails" and outcome then
+            said = "The coin: " .. string.upper(outcome)
+        elseif game == "blackjack" then
+            local total = last and last.dealer_total or (view.dealer and view.dealer.total)
+            said = total and ("Dealer: " .. total .. (total > 21 and " bust" or "")) or nil
+        elseif game == "poker" then
+            local hand = last and last.dealer_hand or (view.dealer and view.dealer.hand_name)
+            said = hand and ("Dealer: " .. hand) or nil
         end
-        return status
+        if said then ui.center(target, y + 2, ui.truncate(said, width - 4), ui.theme.muted,
+            ui.theme.panel) end
+        if payout > 0 then ui.center(target, y + 3, "Held for a day", ui.theme.muted, ui.theme.panel) end
     end
 
-    -- The round a Pocket played, from the lobby if it is still on that round
-    -- or from what the server kept of it if the next has already opened.
-    local function roundResult(status, round)
-        local lobby, player = status.lobby, status.player
-        if (lobby.round or 1) == round
-            and (lobby.status == "finished" or lobby.status == "cancelled") then
-            return { status = lobby.status, game = lobby.game,
-                game_name = lobby.game_name, outcome = lobby.outcome,
-                winner_name = lobby.winner_name, cancelled_reason = lobby.cancelled_reason,
-                won = player.won, payout = player.payout, hold_id = player.hold_id }
+    -- The table: whatever it is dealing, from the wheel to the result, until
+    -- you leave. The table picks the game; you stay from round to round.
+    function casino.sit(code, status)
+        local view, me = status.table, status.me
+        -- Polled every third tick of the screen, about twice a second.
+        local polledAt, ticks, counts, fresh, reel, roll = util.nowMs(), 0, {}, {}, 0, 0
+        local function litFrom(key, cards)
+            local count = #(cards or {})
+            if count > (counts[key] or 0) then fresh[key] = { from = (counts[key] or 0) + 1,
+                at = util.nowMs() } end
+            counts[key] = count
+            local mark = fresh[key]
+            return mark and util.nowMs() - mark.at < 500 and mark.from or nil
         end
-        local last = status.last
-        if last and last.round == round and last.played then return last end
-        return nil
-    end
-
-    local function survivorController(code, initial)
-        local status, pulse = initial, false
-        while status and status.lobby.status == "running" do
-            local lobby, player = status.lobby, status.player
-            local width, height = target.getSize()
-            ui.clear(target, colors.black)
-            ui.header(target, "Survivor", player.alive and "YOU ARE IN" or "SPECTATING",
-                util.formatClock())
-            ui.center(target, 5,
-                player.alive and "MOVE + PUSH" or "YOU WERE PUSHED OUT",
-                player.alive and colors.lime or colors.red)
-            local scene = ui.scene(target)
-            if player.alive then
-                scene:button("move:0:-1", 10, 7, 7, 2, "UP",
-                    { background = colors.gray })
-                scene:button("move:-1:0", 2, 10, 7, 3, "LEFT",
-                    { background = colors.gray })
-                scene:button("move:0:1", 10, 10, 7, 3, "DOWN",
-                    { background = colors.gray })
-                scene:button("move:1:0", 18, 10, width - 18, 3, "RIGHT",
-                    { background = colors.gray })
-                scene:button("push", 4, 15, width - 7, 3,
-                    pulse and "PUSH // LOCKED" or "PUSH!", {
-                        background = pulse and colors.gray or colors.magenta,
-                    })
-            else
-                ui.center(target, 10, "Waiting for a winner...", ui.theme.muted)
-            end
-            local action = scene:wait({ tickRate = 0.25, flash = false })
-            local dx, dy = action and action:match("^move:([%-0-9]+):([%-0-9]+)$")
-            if dx then
-                betRequest("BET_CONTROL", {
-                    code = code, dx = tonumber(dx), dy = tonumber(dy),
-                }, true)
-            elseif action == "push" then
-                local pushed = betRequest("BET_CONTROL", {
-                    code = code, dx = 0, dy = 0, push = true,
-                }, true)
-                pulse = pushed and pushed.pushed == true
-            elseif action == "__terminate" then
-                running = false
-                return nil
-            end
-            status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-            if not status then return nil end
-            if pulse and action == "__tick" then pulse = false end
-        end
-        return status
-    end
-
-    local function waitForBetResult(code, initial)
-        local status, frame = initial, 0
-        -- Only while this Pocket's wager is in: once the round is over and
-        -- the next has opened, its wager is cleared and so is this screen.
-        while status and status.lobby.status == "lobby"
-            and (status.player.wager or 0) > 0 do
-            local lobby, player = status.lobby, status.player
-            local width, height = target.getSize()
-            ui.clear(target, colors.black)
-            ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
-            ui.center(target, 6, ui.truncate(lobby.code, width - 4),
-                colors.cyan, colors.black)
-            ui.center(target, 8, player.display_name, colors.white, colors.black)
-            ui.center(target, 10,
-                string.upper(player.selection) .. " // " .. money(player.wager),
-                betColors[player.selection] or colors.magenta, colors.black)
-            ui.center(target, 13,
-                "WAITING FOR START" .. string.rep(".", frame % 4),
-                colors.lightGray, colors.black)
-            local scene = ui.scene(target)
-            scene:button("leave", 2, height - 3, width - 2, 2,
-                "LEAVE + REFUND", { background = colors.red })
-            local action = scene:wait({ tickRate = 0.5 })
-            if action == "leave" then
-                if ui.confirm(target, "Leave Lobby?",
-                    "Your wager returns to Bet Wallet", "LEAVE", "STAY") then
-                    local left, leaveError = betRequest("BET_LEAVE", { code = code }, true)
-                    if left then return nil end
-                    ui.message(target, "error", "STILL IN THE LOBBY", leaveError, 1.2)
+        while running and sessionToken do
+            if ticks >= 3 then
+                ticks = 0
+                local seen, err, errCode = casino.ask(code, "TABLE_STATUS")
+                if seen then
+                    if seen.table.round ~= view.round then counts, fresh = {}, {} end
+                    status, view, me = seen, seen.table, seen.me
+                elseif errCode == "TABLE_NOT_FOUND" or errCode == "NOT_JOINED" then
+                    ui.message(target, "warning", "Not at the table", err, 1.4)
+                    return
                 end
-            elseif action == "__terminate" then
-                betRequest("BET_LEAVE", { code = code }, true)
-                running = false
-                return nil
+                polledAt = util.nowMs()
             end
-            frame = frame + 1
-            status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-            if not status then return nil end
-        end
-        if status and status.lobby.status == "running"
-            and status.lobby.game == "survivor" then
-            return survivorController(code, status)
-        end
-        while status and status.lobby.status == "running" do
+            local elapsed = util.nowMs() - polledAt
+            local function left(field)
+                return view[field] and math.max(0, view[field] - elapsed) or nil
+            end
             local width, height = target.getSize()
-            ui.clear(target, colors.black)
-            ui.header(target, status.lobby.game_name, "BET LOCKED",
+            ui.clear(target)
+            ui.header(target, ui.truncate(view.name or "CCG Casino", width - 9),
+                view.phase == "wheel" and "Choosing a game" or (view.game_name or ""),
                 util.formatClock())
-            local symbols = status.lobby.game == "race"
-                and { ">--", "->-", "-->", ">>-" }
-                or { "H", "T", "H", "T" }
-            ui.center(target, 8, symbols[frame % #symbols + 1], colors.magenta,
-                colors.black)
-            ui.center(target, 11, "GAME IN PROGRESS" .. string.rep(".", frame % 4),
-                colors.lightGray, colors.black)
-            ui.progress(target, 3, 15, width - 5, frame % 12, 12,
-                colors.cyan, colors.gray)
-            sleep(0.35)
-            frame = frame + 1
-            status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+            local scene = ui.scene(target)
+            local phase = view.phase
+            me = me or {}
+            if phase == "wheel" then
+                local games = casino.GAMES
+                local target_
+                for index, game in ipairs(games) do
+                    if game == view.wheel_target then target_ = index - 1 end
+                end
+                local total, remaining = view.phase_ms, left("left_ms")
+                if total and remaining and target_ then
+                    local spins = total >= 4000 and 3 or 1
+                    local goal = spins * #games + target_
+                    reel = goal * casino.ease(1 - remaining / total)
+                else
+                    reel = reel + 0.06
+                end
+                local game = games[math.floor(reel) % #games + 1]
+                ui.center(target, 5, "The next game", ui.theme.muted)
+                ui.fill(target, 3, 7, width - 4, 5, casino.COLORS[game])
+                ui.center(target, 9, string.upper(casino.NAMES[game]),
+                    game == "heads_tails" and colors.black or colors.white, casino.COLORS[game])
+                ui.center(target, 13, view.controlled and "The dealer is choosing"
+                    or "Stopping...", ui.theme.muted)
+            elseif phase == "betting" then
+                ui.fill(target, 1, 4, width, 1, casino.COLORS[view.game] or ui.theme.accent)
+                local remaining = left("left_ms")
+                if remaining and view.phase_ms then
+                    ui.fill(target, 2, 6, width - 2, 1, ui.theme.panel)
+                    ui.fill(target, 2, 6, math.floor((width - 2) * remaining / view.phase_ms + 0.5), 1,
+                        remaining < 5000 and ui.theme.danger or ui.theme.success)
+                    ui.center(target, 7, "Bets close in " .. math.ceil(remaining / 1000) .. "s",
+                        ui.theme.ink)
+                else
+                    ui.center(target, 7, "The dealer deals when ready", ui.theme.muted)
+                end
+                local y = 9
+                if (me.total or 0) > 0 then
+                    ui.text(target, 2, y, "Your bets  " .. money(me.total), ui.theme.ink)
+                    for index, bet in ipairs(me.bets or {}) do
+                        if y + index > height - 5 then break end
+                        ui.text(target, 3, y + index, ui.truncate(casino.betWords(bet) .. "  "
+                            .. money(bet.amount), width - 4), ui.theme.muted)
+                    end
+                else
+                    ui.wrappedText(target, 2, y, "Place a bet to play this round. "
+                        .. (view.game == "roulette" and "Up to eight at once." or ""),
+                        width - 2, 3, ui.theme.muted)
+                end
+                scene:button("bet", 2, height - 3, width - 2, 2,
+                    (me.total or 0) > 0 and "CHANGE BETS" or "BET",
+                    { background = casino.COLORS[view.game] or ui.theme.accent,
+                      foreground = view.game == "heads_tails" and colors.black or colors.white })
+            elseif phase == "playing" and (view.game == "roulette" or view.game == "heads_tails") then
+                local progress = view.step_ms and left("step_left_ms")
+                    and (1 - left("step_left_ms") / view.step_ms) or 1
+                if view.game == "roulette" then
+                    roll = roll + (1 - casino.ease(progress)) * 1.4 + 0.02
+                    local number = casino.WHEEL[math.floor(roll) % 37 + 1]
+                    ui.fill(target, math.floor(width / 2) - 3, 6, 8, 5, casino.pocketColor(number))
+                    ui.center(target, 8, tostring(number), colors.white, casino.pocketColor(number))
+                    ui.center(target, 12, "No more bets", ui.theme.muted)
+                else
+                    local squash = math.abs(math.cos(casino.ease(progress) * 14 * math.pi))
+                    local half = math.max(1, math.floor(6 * squash + 0.5))
+                    ui.fill(target, math.floor(width / 2) + 1 - half, 6, half * 2, 5,
+                        math.floor(casino.ease(progress) * 14) % 2 == 0 and colors.yellow
+                            or colors.orange)
+                    ui.center(target, 12, "Flipping...", ui.theme.muted)
+                end
+                local y = 14
+                for _, bet in ipairs(me.bets or {}) do
+                    if y > height - 2 then break end
+                    ui.text(target, 2, y, ui.truncate(casino.betWords(bet) .. "  " .. money(bet.amount),
+                        width - 2), ui.theme.ink)
+                    y = y + 1
+                end
+            elseif phase == "playing" then
+                local dealer = view.dealer or { cards = {} }
+                local mine
+                for _, player in ipairs(view.players or {}) do if player.me then mine = player end end
+                ui.text(target, 2, 4, "Dealer" .. (dealer.total and ("  " .. dealer.total) or ""),
+                    ui.theme.muted)
+                local boardY = 5
+                if view.game == "poker" then
+                    casino.hand(2, 5, dealer.cards or {}, true, 8, litFrom("dealer", dealer.cards))
+                    local board = {}
+                    for index = 1, 5 do board[index] = (view.board and view.board.cards[index]) or 0 end
+                    casino.hand(11, 5, board, true, width - 11, litFrom("board", view.board
+                        and view.board.cards))
+                    boardY = 8
+                else
+                    casino.hand(2, 5, dealer.cards or {}, false, width - 2,
+                        litFrom("dealer", dealer.cards))
+                    boardY = 10
+                end
+                local cards = mine and mine.cards or {}
+                ui.text(target, 2, boardY, "You", ui.theme.muted)
+                casino.hand(2, boardY + 1, cards, false, width - 2, litFrom("me", cards))
+                local words = mine and mine.hand_total and ("Total " .. mine.hand_total)
+                    or me.hand_name or ""
+                if me.status and me.status ~= "playing" then
+                    words = words .. "  " .. string.upper(me.status)
+                end
+                ui.text(target, 2, boardY + 5, ui.truncate(words, width - 2), ui.theme.ink)
+                local options = me.options or {}
+                if #options > 0 then
+                    local each = math.floor((width - 1 - #options) / #options)
+                    for index, option in ipairs(options) do
+                        local colour = (option == "hit" or option == "raise") and ui.theme.success
+                            or (option == "fold") and ui.theme.danger or ui.theme.accent
+                        scene:button("act:" .. option, 2 + (index - 1) * (each + 1), height - 3,
+                            each, 2, string.upper(option), { background = colour,
+                                foreground = colors.black })
+                    end
+                    local remaining = left("step_left_ms")
+                    if remaining then
+                        ui.text(target, width - 4, boardY + 5, math.ceil(remaining / 1000) .. "s",
+                            ui.theme.warning)
+                    end
+                elseif (me.total or 0) == 0 then
+                    ui.center(target, height - 3, "You are watching this one", ui.theme.muted)
+                else
+                    ui.center(target, height - 3, view.step == "dealer" and "The dealer plays"
+                        or "Waiting for the table", ui.theme.muted)
+                end
+            elseif phase == "settling" then
+                ui.center(target, 9, "Paying out...", ui.theme.muted)
+            elseif phase == "result" then
+                if (me.total or 0) > 0 or me.result then
+                    casino.outcomeCard(5, me.result, view)
+                else
+                    ui.center(target, 6, "You sat this one out", ui.theme.muted)
+                end
+                local remaining = left("left_ms")
+                ui.center(target, 11, remaining and ("Next game in " .. math.ceil(remaining / 1000)
+                    .. "s") or "Next game soon", ui.theme.muted)
+                local winners = {}
+                for _, winner in ipairs(view.winners or {}) do winners[#winners + 1] = winner.name end
+                ui.wrappedText(target, 2, 13, #winners > 0 and ("Won: " .. table.concat(winners, ", "))
+                    or "The house won this round", width - 2, 3, ui.theme.muted)
+            end
+            -- A round you missed, when the next one has already started.
+            if status.last and phase ~= "result" and phase ~= "playing" then
+                local result = status.last.result or {}
+                local said = (result.payout or 0) > 0 and ("Last round: won " .. money(result.payout))
+                    or (result.pushed or 0) > 0 and "Last round: a tie" or "Last round: lost"
+                ui.text(target, 2, height - 5, ui.truncate(said, width - 2), ui.theme.muted)
+            end
+            ui.text(target, 2, height - 1, ui.truncate("Code " .. tostring(view.code)
+                .. "  Seat " .. tostring(me.seat or "-"), width - 10), ui.theme.muted)
+            scene:button("leave", width - 7, height, 7, 1, "LEAVE", { background = ui.theme.danger })
+            local action = scene:wait({ tickRate = 0.15 })
+            if action == "__tick" then ticks = ticks + 1 end
+            if action == "__terminate" then
+                casino.ask(code, "TABLE_LEAVE")
+                running = false
+                return
+            elseif action == "leave" then
+                local done, err = casino.ask(code, "TABLE_LEAVE")
+                if done then return end
+                ui.message(target, "warning", "Not yet", err, 1.4)
+            elseif action == "bet" then
+                local bets = casino.slip(view.game, status.wallet)
+                if bets then
+                    local placed, err = casino.ask(code, "TABLE_BET", { bets = bets })
+                    if placed then
+                        status, view, me = placed, placed.table, placed.me
+                        ui.message(target, "success", "Bet placed", money(me.total or 0), 0.8)
+                    else
+                        ui.message(target, "error", "Not placed", err, 1.6)
+                    end
+                    polledAt = util.nowMs()
+                end
+            elseif action and action:match("^act:") then
+                local done, err = casino.ask(code, "TABLE_ACT", { action = action:sub(5) })
+                if done then
+                    status, view, me = done, done.table, done.me
+                    polledAt = util.nowMs()
+                else
+                    ui.message(target, "error", "Not now", err, 1.2)
+                end
+            end
         end
-        return status
     end
 
-    local function betApp()
+    function casino.play()
         local pin = ui.pin(target, "Unlock Bet", true)
         if not pin then return end
         local unlocked, unlockError = request("BET_UNLOCK", { pin = pin }, true)
@@ -2495,100 +2634,214 @@ do
             ui.message(target, "warning", "BET WALLET EMPTY",
                 "Add money in Foxy > Bank > Bet Wallet", 1.4)
         end
-        local code = ui.input(target, "Join CCG", {
-            hint = "Letters + numbers",
-            mode = "code",
-            maxLength = math.huge,
-            scrollToEnd = true,
-        })
+        local code = ui.input(target, "Table code", { hint = "On the casino's screen",
+            mode = "code", maxLength = 12 })
         if not code then return end
         code = string.upper(util.trim(code))
-        if not code:match("^[A-Z0-9]+$") then
-            ui.message(target, "error", "INVALID CODE",
-                "Use letters and numbers only", 1.1)
-            return
-        end
-        local name = ui.input(target, "Player Name", {
-            hint = "Shown on the big screen",
-            maxLength = 14,
-            minLength = 2,
-            allowSpace = true,
-            initial = account.name,
-        })
+        local name = ui.input(target, "Your name", { hint = "Shown at the table",
+            maxLength = 14, minLength = 2, allowSpace = true, initial = account.name })
         if not name then return end
-        local joined, joinError = betRequest("BET_JOIN", {
-            code = code,
-            display_name = name,
-        }, true)
+        local joined, err = casino.ask(code, "TABLE_JOIN", { display_name = name })
         if not joined then
-            ui.message(target, "error", "CANNOT JOIN", joinError, 1.1)
+            ui.message(target, "error", "Cannot sit down", err, 1.4)
             return
         end
-        -- FoxyOS 16: the lobby lasts from game to game under the same code,
-        -- and so does this Pocket's seat in it. Each round it picks and
-        -- wagers, plays, sees how it went, and stays for the next.
-        local status = { lobby = joined.lobby, player = joined.player,
-            wallet = unlocked.wallet }
-        local myRound
-        while running and status do
-            local lobby, player = status.lobby, status.player
-            if lobby.closed then
-                ui.message(target, "warning", "LOBBY CLOSED",
-                    lobby.cancelled_reason or "The CCG closed it", 1.2)
+        casino.sit(code, joined)
+    end
+
+    -- My Casino ----------------------------------------------------------------------------------
+    -- Every CCG Casino your companies own: the game, Auto, the dealer and the
+    -- music, each table by the name in its top left corner.
+
+    function casino.ownerAsk(action, payload)
+        return betRequest(action, payload or {}, true)
+    end
+
+    function casino.musicPage(consoleId)
+        local page = 1
+        while running and sessionToken do
+            local seen = casino.ownerAsk("CASINO_VIEW", { console_id = consoleId })
+            if not seen then return end
+            local view = seen.table
+            local music = view.music or {}
+            local library = view.library or {}
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Music", ui.truncate(view.name, width - 3), util.formatClock())
+            ui.text(target, 2, 4, ui.truncate((music.playing and ("Playing " .. tostring(music.track))
+                or "Not playing"), width - 2), music.playing and ui.theme.success or ui.theme.muted)
+            ui.text(target, 2, 5, "Volume " .. tostring(music.volume or 5) .. "/10", ui.theme.muted)
+            local scene = ui.scene(target)
+            local items, actual, pages = util.page(library, page, 5)
+            page = actual
+            for index, name in ipairs(items) do
+                scene:button("play:" .. ((page - 1) * 5 + index), 2, 5 + index * 2, width - 2, 1,
+                    ui.truncate(name, width - 4), { background = name == music.track and music.playing
+                        and ui.theme.accent or ui.theme.panel })
+            end
+            if #library == 0 then
+                ui.wrappedText(target, 2, 7, "No songs yet. Drop .mid files onto the CCG Casino"
+                    .. " computer's own screen.", width - 2, 4, ui.theme.muted)
+            end
+            local quarter = math.floor((width - 5) / 4)
+            scene:button("stop", 2, height - 3, quarter, 2, "STOP", { background = ui.theme.danger })
+            scene:button("down", 3 + quarter, height - 3, quarter, 2, "VOL-", { background = ui.theme.panel })
+            scene:button("up", 4 + quarter * 2, height - 3, quarter, 2, "VOL+", { background = ui.theme.panel })
+            scene:button("next", 5 + quarter * 3, height - 3, width - 4 - quarter * 3, 2, "NEXT",
+                { background = ui.theme.panel })
+            scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+            if pages > 1 then
+                scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
+                    { background = ui.theme.panel })
+            end
+            local action = scene:wait({ tickRate = 2 })
+            if action == "back" or action == "__terminate" then return end
+            local payload = { console_id = consoleId, op = "music" }
+            local index = tonumber(action and action:match("^play:(%d+)$"))
+            if index then payload.action, payload.track = "play", library[index]
+            elseif action == "stop" then payload.action = "stop"
+            elseif action == "next" then payload.action = "next"
+            elseif action == "down" or action == "up" then
+                payload.action = "volume"
+                payload.volume = (music.volume or 5) + (action == "up" and 1 or -1)
+            elseif action == "more" then page = page % pages + 1 end
+            if payload.action then casino.ownerAsk("CASINO_CONTROL", payload) end
+        end
+    end
+
+    -- One table's controls.
+    function casino.control(consoleId)
+        local data, polledAt, ticks = nil, 0, 2
+        while running and sessionToken do
+            if ticks >= 2 then
+                ticks = 0
+                local seen, err = casino.ownerAsk("CASINO_VIEW", { console_id = consoleId })
+                if not seen then
+                    ui.message(target, "error", "CCG Casino", err, 1.4)
+                    return
+                end
+                data, polledAt = seen, util.nowMs()
+            end
+            local view, mine = data.table, data.you_control
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, ui.truncate(view.name, width - 9), ui.truncate(view.company_name or "",
+                width - 3), util.formatClock())
+            local phaseWords = { wheel = "choosing the game", betting = "taking bets",
+                playing = "playing", settling = "paying out", result = "showing the result" }
+            ui.text(target, 2, 4, ui.truncate((view.game_name or "-") .. ", "
+                .. (phaseWords[view.phase or ""] or ""), width - 2), ui.theme.ink)
+            local seated = 0
+            for _ in ipairs(view.players or {}) do seated = seated + 1 end
+            ui.text(target, 2, 5, ui.truncate("Code " .. tostring(view.code) .. "  " .. seated
+                .. " at the table", width - 2), ui.theme.muted)
+            local scene = ui.scene(target)
+            local half = math.floor((width - 3) / 2)
+            scene:button("auto", 2, 7, half, 2, view.auto and "AUTO: ON" or "AUTO: OFF",
+                { background = view.auto and ui.theme.success or ui.theme.panel,
+                  foreground = view.auto and colors.black or nil })
+            scene:button(mine and "release" or "take", 3 + half, 7, width - 3 - half, 2,
+                mine and "RELEASE" or "BE THE DEALER", { background = mine and ui.theme.warning
+                    or ui.theme.accent, foreground = colors.black })
+            if not mine and view.controlled then
+                ui.text(target, 2, 10, ui.truncate("Dealer: " .. tostring(view.controller_name),
+                    width - 2), ui.theme.warning)
+            end
+            local y = 11
+            if mine and view.phase ~= "wheel" and view.next_label then
+                scene:button("next", 2, 10, width - 2, 3, view.next_label,
+                    { background = ui.theme.success, foreground = colors.black })
+                y = 14
+            elseif mine and view.phase ~= "wheel" then
+                ui.center(target, 11, "Dealing...", ui.theme.muted)
+                y = 13
+            end
+            ui.text(target, 2, y, mine and view.phase == "wheel" and "Pick the game:"
+                or "Next game:", ui.theme.muted)
+            local each = math.floor((width - 3) / 2)
+            for index, game in ipairs(casino.GAMES) do
+                local column = (index - 1) % 2
+                local row = math.floor((index - 1) / 2)
+                scene:button("game:" .. game, 2 + column * (each + 1), y + 1 + row * 2, each, 1,
+                    casino.SHORT[game], { background = casino.COLORS[game],
+                        foreground = game == "heads_tails" and colors.black or colors.white })
+            end
+            scene:button("music", 2, height - 2, half, 1, "MUSIC", { background = ui.theme.panel })
+            scene:button("rename", 3 + half, height - 2, width - 3 - half, 1, "RENAME",
+                { background = ui.theme.panel })
+            scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+            local action = scene:wait({ tickRate = 0.35 })
+            if action == "__tick" then ticks = ticks + 1 end
+            if action == "back" or action == "__terminate" then
+                if mine then casino.ownerAsk("CASINO_CONTROL", { console_id = consoleId, op = "release" }) end
                 return
             end
-            if lobby.status == "lobby" and (player.wager or 0) <= 0 then
-                local selection = chooseBetSelection(lobby)
-                if not selection then
-                    betRequest("BET_LEAVE", { code = code }, true)
-                    return
-                end
-                local wallet = status.wallet or unlocked.wallet
-                local amountText = ui.input(target, "Set Wager", {
-                    hint = lobby.multiplier .. "X if you win // Wallet "
-                        .. money(wallet.available),
-                    mode = "number",
-                    maxLength = 12,
-                })
-                if not amountText then
-                    betRequest("BET_LEAVE", { code = code }, true)
-                    return
-                end
-                local placed, placeError, placeCode = betRequest("BET_PLACE_WAGER", {
-                    code = code,
-                    selection = selection,
-                    amount = tonumber(amountText),
-                }, true)
-                if placed then
-                    myRound = lobby.round or 1
-                    status = placed
-                else
-                    if placeCode == "LOBBY_CLOSED" then
-                        ui.message(target, "warning", "GAME STARTED",
-                            "You're in the next one", 1.2)
-                    else
-                        ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
-                    end
-                    status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-                end
-            elseif (player.wager or 0) > 0
-                and (lobby.status == "lobby" or lobby.status == "running") then
-                myRound = myRound or lobby.round or 1
-                local final = waitForBetResult(code, status)
-                if not final then return end
-                local result = roundResult(final, myRound)
-                if result and (result.status == "finished" or not final.lobby.closed) then
-                    if betResultScreen(result, final.wallet, code) == "leave" then
-                        betRequest("BET_LEAVE", { code = code }, true)
-                        return
-                    end
-                    final = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-                end
-                status = final
-            else
-                status = waitForNextRound(code, status)
+            local payload = { console_id = consoleId }
+            if action == "auto" then payload.op, payload.on = "auto", not view.auto
+            elseif action == "take" or action == "release" or action == "next" then payload.op = action
+            elseif action == "music" then casino.musicPage(consoleId)
+            elseif action == "rename" then
+                local name = ui.input(target, "Name this table", { initial = view.name,
+                    maxLength = 16, minLength = 2, allowSpace = true })
+                if name then payload.op, payload.name = "rename", name end
+            elseif action and action:match("^game:") then
+                payload.op, payload.game = "game", action:sub(6)
+            end
+            if payload.op then
+                local done, err = casino.ownerAsk("CASINO_CONTROL", payload)
+                if done then data, polledAt = done, util.nowMs()
+                else ui.message(target, "warning", "Not now", err, 1.2) end
             end
         end
+    end
+
+    -- The My Casino tab: your companies' tables.
+    function casino.minePage(spec)
+        local page = 1
+        while running and sessionToken do
+            local listed, err = casino.ownerAsk("CASINO_LIST")
+            local tables = listed and listed.casinos or {}
+            local width = target.getSize()
+            ui.clear(target)
+            ui.header(target, "My Casino", listed and (#tables .. " tables") or "Offline",
+                util.formatClock())
+            local scene = ui.scene(target)
+            local items, actual, pages = util.page(tables, page, 4)
+            page = actual
+            for index, entry in ipairs(items) do
+                local y = 1 + index * 3
+                local line2 = entry.online and ((entry.game_name or "Starting") .. "  "
+                    .. entry.players .. " playing" .. (entry.controlled and "  DEALER"
+                    or entry.auto and "  AUTO" or "")) or "Offline"
+                scene:button("open:" .. entry.console_id, 2, y, width - 2, 2,
+                    ui.truncate(entry.name .. "  " .. entry.company_name, width - 4) .. "\n"
+                        .. ui.truncate(line2, width - 4),
+                    { background = entry.online and ui.theme.accent or ui.theme.panel,
+                      foreground = entry.online and (ui.theme.accentInk or colors.black) or nil })
+            end
+            if not listed then
+                ui.wrappedText(target, 2, 5, tostring(err or "The CCG Server is not answering."),
+                    width - 2, 4, ui.theme.muted)
+            elseif #tables == 0 then
+                ui.wrappedText(target, 2, 5, "No CCG Casinos yet. Install CCG Casino on a computer"
+                    .. " with a monitor and set it up with a company you own: it appears here.",
+                    width - 2, 6, ui.theme.muted)
+            end
+            if pages > 1 then
+                scene:button("more", width - 6, ui.contentBottom(target) - 1, 6, 1,
+                    page .. "/" .. pages, { background = ui.theme.panel })
+            end
+            ui.tabBar(scene, target, spec.list, spec.active)
+            local action = scene:wait({ tickRate = 3 })
+            if action == "more" then
+                page = page % pages + 1
+            elseif action and action:match("^open:") then
+                casino.control(action:sub(6))
+            elseif action ~= "__tick" and action ~= "__wake" then
+                return action
+            end
+        end
+        return "home"
     end
 
     -- CCG, 12.0 -----------------------------------------------------------------
@@ -2900,17 +3153,17 @@ do
             while running and sessionToken do
                 local width = target.getSize()
                 ui.clear(target)
-                ui.header(target, "Bet Play", "Wager at a CCG", util.formatClock())
-                ui.wrappedText(target, 2, 5, "Join a lobby on a CCG with its code."
-                    .. " Wagers come from your Bet Wallet; winnings are held a"
-                    .. " day.", width - 2, 5, ui.theme.muted)
+                ui.header(target, "Bet", "CCG Casino", util.formatClock())
+                ui.wrappedText(target, 2, 5, "Roulette, Blackjack, Heads or Tails and Poker"
+                    .. " at a CCG Casino. Type the code on its screen and stay from game to"
+                    .. " game. Winnings are held a day.", width - 2, 7, ui.theme.muted)
                 local scene = ui.scene(target)
-                scene:button("join", 2, 11, width - 2, 3, "Join a lobby",
-                    { background = colors.magenta })
+                scene:button("join", 2, 13, width - 2, 3, "Sit at a table",
+                    { background = colors.red })
                 ui.tabBar(scene, target, spec.list, spec.active)
                 local pressed = scene:wait()
                 if pressed == "join" then
-                    betApp()
+                    casino.play()
                 else
                     return pressed
                 end
@@ -2952,9 +3205,13 @@ do
         ui.runTabs({
             title = "CCG",
             list = { { id = "home", label = "Home" }, { id = "bet", label = "Bet" },
+                -- FoxyOS 17: the CCG Casinos your companies own.
+                { id = "mine", label = "My Casino", short = "Casino" },
                 { id = "scores", label = "Scores" } },
-            start = (action == "bet" or action == "scores") and action or "home",
-            pages = { home = homePage, bet = betPage, scores = scoresPage },
+            start = (action == "bet" or action == "scores" or action == "mine") and action
+                or "home",
+            pages = { home = homePage, bet = betPage, mine = casino.minePage,
+                scores = scoresPage },
             running = function() return running and sessionToken ~= nil end,
         })
         -- Leaving the app lets the console go: it shows a new code.
@@ -7161,7 +7418,8 @@ local APPS = {
     -- 12.0: Bet grew into CCG, with Home Mode.
     ccg = { name = "CCG", glyph = "?", color = colors.magenta, actions = {
         { id = "home", label = "Home Mode", hint = "Play free on your CCG" },
-        { id = "bet", label = "Bet Play", hint = "Join a lobby" },
+        { id = "bet", label = "Bet", hint = "Sit at a CCG Casino" },
+        { id = "mine", label = "My Casino", hint = "Run your company's CCG Casinos" },
         { id = "scores", label = "CCG scores", hint = "Your best at home" },
     } },
     subs = { name = "Subs", glyph = "~", color = colors.magenta },
