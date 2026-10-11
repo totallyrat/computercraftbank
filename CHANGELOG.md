@@ -1,5 +1,24 @@
 # Changelog
 
+## 16.5.1
+
+FoxyOS 17 Beta 2. Everything from Beta 1, and casinos earn for their
+company. Needs the Bank on 16.2.
+
+**Casinos earn.** A CCG Casino's rounds are its company's: what players lose
+comes in, what they win goes out, into one casino balance per company. My
+Casino → **CASINO MONEY** shows it, and takes profit out or puts money in
+with your PIN.
+
+**Loans for big wins.** A win bigger than the casino has is a loan from the
+Bank. The balance goes below zero, you are told, and what the casino earns
+pays it back before there is profit again.
+
+**Table limits.** All of an owner's casinos may owe 10,000 together, worst
+case; a bet that could go past it is refused, so a table in debt takes
+smaller bets. You cannot bet at your own casino. A table set up in Beta 1
+starts earning the next time you open My Casino.
+
 ## 16.5.0
 
 FoxyOS 17 Beta, for devices signed up to Beta Updates. Not tested yet: that

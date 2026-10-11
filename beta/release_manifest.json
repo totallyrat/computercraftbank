@@ -1,53 +1,50 @@
 {
   "schema": 1,
   "channel": "beta",
-  "version": "16.5.0",
-  "label": "FoxyOS 17 Beta",
+  "version": "16.5.1",
+  "label": "FoxyOS 17 Beta 2",
   "notes": "FoxyOS automatic internet release",
   "changes": [
-    "The CCG is two.",
-    "CCG Casino.",
-    "Four classics.",
-    "My Casino.",
-    "The wheel.",
-    "Sound and music."
+    "Casinos earn.",
+    "Loans for big wins.",
+    "Table limits."
   ],
   "files": [
     {
       "path": "bank_server.lua",
       "source": "dist/bank_server.lua",
-      "size": 217362,
-      "checksum": "2e7ccae1"
+      "size": 225593,
+      "checksum": "cf659569"
     },
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 259473,
-      "checksum": "dad37757"
+      "size": 263908,
+      "checksum": "214a1cda"
     },
     {
       "path": "service_kiosk.lua",
       "source": "dist/service_kiosk.lua",
       "size": 8140,
-      "checksum": "0196c84a"
+      "checksum": "8a32baab"
     },
     {
       "path": "event_kiosk.lua",
       "source": "dist/event_kiosk.lua",
       "size": 36089,
-      "checksum": "d927a766"
+      "checksum": "daad8527"
     },
     {
       "path": "tax_controller.lua",
       "source": "dist/tax_controller.lua",
       "size": 1742,
-      "checksum": "f07071da"
+      "checksum": "7800481b"
     },
     {
       "path": "startup.lua",
       "source": "dist/startup.lua",
       "size": 50145,
-      "checksum": "6957484a"
+      "checksum": "06d5858b"
     },
     {
       "path": "launcher.lua",
@@ -58,8 +55,8 @@
     {
       "path": "config.lua",
       "source": "dist/config.lua",
-      "size": 8247,
-      "checksum": "ff123df8"
+      "size": 8451,
+      "checksum": "37e5d165"
     },
     {
       "path": "lib/net.lua",
@@ -91,13 +88,13 @@
       "path": "border_controller.lua",
       "source": "dist/border_controller.lua",
       "size": 23190,
-      "checksum": "5f865c99"
+      "checksum": "7a341dfa"
     },
     {
       "path": "ccg.lua",
       "source": "dist/ccg.lua",
       "size": 5876,
-      "checksum": "a31f0646"
+      "checksum": "b866d907"
     }
   ],
   "optional_files": [
@@ -105,19 +102,19 @@
       "path": "gps_anchor.lua",
       "source": "dist/gps_anchor.lua",
       "size": 5181,
-      "checksum": "6896b321"
+      "checksum": "1dac8982"
     },
     {
       "path": "admin_terminal.lua",
       "source": "dist/admin_terminal.lua",
       "size": 40930,
-      "checksum": "56a3d4a8"
+      "checksum": "18eed789"
     },
     {
       "path": "app_server.lua",
       "source": "dist/app_server.lua",
       "size": 20677,
-      "checksum": "c7a815f8"
+      "checksum": "8bbe9539"
     },
     {
       "path": "foxy.lua",
@@ -129,7 +126,7 @@
       "path": "bank_app_server.lua",
       "source": "dist/bank_app_server.lua",
       "size": 40879,
-      "checksum": "7fdb02fc"
+      "checksum": "df545e3d"
     },
     {
       "path": "buckapp.lua",
@@ -140,8 +137,8 @@
     {
       "path": "ccg_server.lua",
       "source": "dist/ccg_server.lua",
-      "size": 86704,
-      "checksum": "d6c8f8a8"
+      "size": 87924,
+      "checksum": "e7de76f9"
     },
     {
       "path": "revolution.lua",
@@ -153,13 +150,13 @@
       "path": "bank_vault.lua",
       "source": "dist/bank_vault.lua",
       "size": 174294,
-      "checksum": "c4813b88"
+      "checksum": "dbada829"
     },
     {
       "path": "internet_server.lua",
       "source": "dist/internet_server.lua",
       "size": 12647,
-      "checksum": "ed0e92a1"
+      "checksum": "42f41482"
     },
     {
       "path": "wc.lua",
@@ -177,7 +174,7 @@
       "path": "delivery_terminal.lua",
       "source": "dist/delivery_terminal.lua",
       "size": 67505,
-      "checksum": "de09eabf"
+      "checksum": "ca7a70e0"
     },
     {
       "path": "shop.lua",
@@ -219,13 +216,13 @@
       "path": "ccg_home.lua",
       "source": "dist/ccg_home.lua",
       "size": 41903,
-      "checksum": "e2ec95c8"
+      "checksum": "75939ec9"
     },
     {
       "path": "ccg_casino.lua",
       "source": "dist/ccg_casino.lua",
       "size": 49459,
-      "checksum": "f26fd9c7"
+      "checksum": "0ed7af48"
     }
   ]
 }

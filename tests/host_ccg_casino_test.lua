@@ -193,10 +193,17 @@ for index = 1, 3 do
     actions.TABLE_JOIN({ bet_token = players[index].bet, code = made.code,
         display_name = "Player " .. index })
 end
-local start = worldMoney() + (bank.state.ccg_house_profit or 0)
+-- Since Beta 2 a table's rounds are its company's: counted here too.
 local function conserved()
-    return worldMoney() + (bank.state.ccg_house_profit or 0)
+    local total = worldMoney() + (bank.state.ccg_house_profit or 0)
+    for _, company in pairs(bank.state.companies) do
+        total = total + (company.casino and company.casino.balance or 0)
+    end
+    return total
 end
+local start = conserved()
+assert(t.bank_linked and bank.state.ccg_casino_codes[made.code] == "COM9",
+    "the table is linked to its company at the Bank")
 local function advance(ms)
     currentEpoch = currentEpoch + ms
     casino.tick(currentEpoch)
@@ -270,7 +277,16 @@ advance(61000)
 advance(10000)
 assert(t.phase == "result" or t.phase == "wheel" or t.phase == "betting", tostring(t.phase))
 assert(conserved() == start)
+assert(bank.state.companies.COM9.casino.rounds >= 5, "the company's casino booked the rounds")
+-- A table from Beta 1, set up before tables earned for their company, is
+-- linked the next time its owner looks at My Casino, between rounds.
+while t.phase == "playing" or t.phase == "settling" do advance(1000) end
+actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "release" }))
+for _ = 1, 40 do if t.phase ~= "playing" and t.phase ~= "settling" and #casino.bettors(t) == 0 then break end advance(1000) end
+bank.actions.CCG_CASINO_UNLINK({ server_token = ccg.state.server_token, code = made.code })
+t.bank_linked, t.link_tried_at = nil, nil
 local list = actions.CASINO_LIST(asOf(owner))
+assert(t.bank_linked and bank.state.ccg_casino_codes[made.code] == "COM9", "linked again")
 assert(#list.casinos == 1 and list.casinos[1].name == "Table 1")
 rejected(actions.CASINO_VIEW, "NOT_YOURS", asOf(players[1].account, { console_id = made.console_id }))
 actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music", action = "play",

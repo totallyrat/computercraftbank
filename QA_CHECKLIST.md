@@ -7,9 +7,18 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
-## FoxyOS 17 Beta (16.5.0)
+## FoxyOS 17 Beta 2 (16.5.1)
 
-Only devices signed up to Beta Updates get this. Sign up the **CCG Server** (its Server tab), each **CCG** (Home Mode settings, **BETA**) and the Pockets that will play. The Bank stays on 16.1. You need a company (Company app) to own a CCG Casino; attach speakers to a CCG Casino for sound.
+Only devices signed up to Beta Updates get this. Sign up the **CCG Server** (its Server tab), each **CCG** (Home Mode settings, **BETA**) and the Pockets that will play. The Bank stays on the release, which must be 16.2.
+
+### Casino money (new in Beta 2)
+
+- [ ] My Casino → **CASINO MONEY** lists your company with its casino balance. A table set up in Beta 1 is linked once you open My Casino.
+- [ ] A player loses a bet: the balance goes up by it. A player wins: it goes down.
+- [ ] A win bigger than the balance: it shows **LOAN $...** in red and you get a *Casino loan* notification. Players' losses bring it back up; at zero, *Casino loan repaid*.
+- [ ] **PUT IN** moves money from your account with your PIN. **TAKE OUT** takes profit to your account, but not money a round being played could still need.
+- [ ] As the owner, betting at your own table is refused: *You cannot bet at your own casino*.
+- [ ] Deep in debt, a big bet (a large Number at Roulette) is refused: *This table cannot cover a bet that size right now*; a smaller one goes through. You need a company (Company app) to own a CCG Casino; attach speakers to a CCG Casino for sound.
 
 ### The split
 

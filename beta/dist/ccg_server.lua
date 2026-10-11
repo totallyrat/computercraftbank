@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "16.5.0"
+local PROGRAM_VERSION = "16.5.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1154,7 +1154,23 @@ function casino.ownedTable(payload)
     local t = state.casinos[payload.console_id]
     need(t and casino.owns(who, t), "NOT_YOURS",
         "That CCG Casino is not one of your company's")
+    casino.link(t, payload.session_token)
     return t, who
+end
+
+-- A table set up before Beta 2 earns for the Bank until its owner next
+-- opens it in My Casino: then, between rounds, it is linked to its company.
+function casino.link(t, session)
+    if t.bank_linked or t.phase == "playing" or t.phase == "settling"
+        or #casino.bettors(t) > 0 then return end
+    if t.link_tried_at and util.nowMs() - t.link_tried_at < 30000 then return end
+    t.link_tried_at = util.nowMs()
+    if askBank("CCG_CASINO_LINK", { session_token = session, company_id = t.company_id,
+        code = t.code }) then
+        t.bank_linked = true
+        t.dirty = true
+        logActivity(t.name .. " now earns for " .. tostring(t.company_name), colors.lime)
+    end
 end
 
 function casino.seated(t)
@@ -1639,12 +1655,16 @@ function actions.CASINO_REGISTER(payload)
     need(company, "NOT_YOURS", "Choose a company you own")
     local name = util.safeText(util.trim(payload.name), 16)
     need(#name >= 2, "INVALID_NAME", "Give this CCG Casino a name")
-    local consoleId = nextId("casino", "CAS", 5)
     local code = uniqueCode()
+    -- FoxyOS 17 Beta 2: the table earns for its company. The Bank links the
+    -- code to the company with the owner's own session, or there is no table.
+    bankOrFail("CCG_CASINO_LINK", { session_token = payload.session_token,
+        company_id = company.company_id, code = code })
+    local consoleId = nextId("casino", "CAS", 5)
     local t = {
         console_id = consoleId, auth_token = util.token("CCG_CASINO"),
         name = name, company_id = company.company_id, company_name = company.name,
-        owner_account_id = who.account_id, code = code, auto = true,
+        owner_account_id = who.account_id, code = code, auto = true, bank_linked = true,
         players = {}, order = {}, round = 0, seq = 0, events = {},
         music = { playing = false, volume = 5, seq = 0 }, library = {},
         created_at = util.nowMs(), last_seen = util.nowMs(),
@@ -1681,6 +1701,7 @@ function actions.CASINO_UNLINK(payload)
     if #casino.bettors(t) > 0 then
         bankOrFail("CCG_ESCROW_REFUND", { lobby_code = t.code, reason = "Table closed" })
     end
+    if t.bank_linked then bankOrFail("CCG_CASINO_UNLINK", { code = t.code }) end
     state.casino_codes[t.code] = nil
     state.casinos[t.console_id] = nil
     save()
@@ -1694,6 +1715,7 @@ function actions.CASINO_LIST(payload)
     local now, list = util.nowMs(), {}
     for _, t in pairs(state.casinos) do
         if casino.owns(who, t) then
+            casino.link(t, payload.session_token)
             list[#list + 1] = { console_id = t.console_id, name = t.name,
                 company_name = t.company_name, code = t.code, game = t.game,
                 game_name = casino.NAMES[t.game or ""], phase = t.phase,
@@ -1701,6 +1723,7 @@ function actions.CASINO_LIST(payload)
                 auto = t.auto == true, controlled = casino.controlled(t, now),
                 controller_name = casino.controlled(t, now) and t.controller.name or nil,
                 online = now - (t.last_seen or 0) < casino.ONLINE_MS,
+                linked = t.bank_linked == true,
                 music = t.music and t.music.playing and t.music.track or nil }
         end
     end

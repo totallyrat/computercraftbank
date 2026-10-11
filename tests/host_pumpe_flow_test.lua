@@ -39,6 +39,8 @@ local actions = {
     -- My Casino: the table, the dealer, a game, a song.
     "tab:mine", "open:CAS00001", "take", "next", "game:poker", "music", "play:1", "back",
     "back",
+    -- Casino money: in debt, so money goes in to pay the loan back.
+    "money", "company:COM9", "in", "back", "back",
     "tab:home", "pair", "play:snake", "key:up", "__tick", "__tick", "__tick",
     "__tick", "__tick", "__tick", "__tick", "__tick", "__tick", "__tick",
     "key:a", "menu",
@@ -564,6 +566,14 @@ local client = {
             return { table = casinoView("playing", { step = "turns", step_left_ms = 15000,
                 step_ms = 20000 }), me = { seat = 1, total = 10, status = "playing",
                 options = { "hit", "stand", "double" } } }
+        elseif action == "CASINO_FINANCES" then
+            return { casinos = { { company_id = "COM9", name = "Lucky Fox", balance = -300,
+                loan = 300, earned = 500, paid = 800, borrowed = 300, free = 0, rounds = 12,
+                tables = 1 } }, owed = 300, credit = 10000 }
+        elseif action == "CASINO_DEPOSIT" then
+            assert(payload.company_id == "COM9" and payload.amount == 50 and payload.pin)
+            casinoState.deposited = true
+            return { casino = {}, balance = 450 }
         elseif action == "CASINO_LIST" then
             return { casinos = { { console_id = "CAS00001", name = "Table 1",
                 company_name = "Lucky Fox", code = "ABC234", game = "roulette",
@@ -777,6 +787,7 @@ function ui.input(_, title, options)
     end
     if title == "Your name" then return "FoxyPlayer" end
     if title == "Your bet" then return "10" end
+    if title == "Put in" then return "50" end
     if title == "Pairing code" then
         assert(options.mode == "integer" and options.maxLength == 6)
         return homeCode()
@@ -929,6 +940,8 @@ assert(find(requests, "TABLE_JOIN") and find(requests, "TABLE_BET")
     and find(requests, "TABLE_ACT"), "sat down, bet, and played the hand")
 assert(find(requests, "TABLE_LEAVE"), "LEAVE leaves the table")
 assert(find(drawnText, "YOU WON $20"), "the result, in its card")
+assert(casinoState.deposited, "money put into the casino, with the PIN")
+assert(find(drawnText, "LOAN $300"), "a casino below zero shows its loan")
 local ops = table.concat(casinoState.ops or {}, " ")
 assert(find(requests, "CASINO_LIST") and find(requests, "CASINO_VIEW"),
     "My Casino lists the tables and opens one")

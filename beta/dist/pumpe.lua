@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "16.5.0"
+local PROGRAM_VERSION = "16.5.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2796,6 +2796,113 @@ end
 end
 
 
+
+
+
+function casino.companyMoney(companyId)
+while running and sessionToken do
+local finances = request("CASINO_FINANCES", {}, true)
+local row
+for _, entry in ipairs(finances and finances.casinos or {}) do
+if entry.company_id == companyId then row = entry end
+end
+if not row then return end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(row.name, width - 9), "Casino money", util.formatClock())
+local inDebt = row.balance < 0
+ui.card(target, 2, 4, width - 2, 3, inDebt and ui.theme.danger or ui.theme.success)
+ui.center(target, 5, inDebt and ("LOAN " .. money(row.loan)) or money(row.balance),
+inDebt and ui.theme.danger or ui.theme.success, ui.theme.panel)
+local lines = {
+{ "Players lost", money(row.earned) },
+{ "Paid out", money(row.paid) },
+{ "Borrowed, all", money(row.borrowed) },
+{ "Free to take out", money(row.free) },
+{ "Rounds", tostring(row.rounds) },
+}
+for index, line in ipairs(lines) do
+ui.text(target, 2, 7 + index, line[1], ui.theme.muted)
+ui.text(target, width - #line[2], 7 + index, line[2], ui.theme.ink)
+end
+if inDebt then
+ui.wrappedText(target, 2, 14, "Its earnings repay the loan first.",
+width - 2, 2, ui.theme.muted)
+end
+local scene = ui.scene(target)
+local half = math.floor((width - 3) / 2)
+scene:button("out", 2, height - 3, half, 2, "TAKE OUT", { background = ui.theme.success,
+foreground = colors.black, disabled = (row.free or 0) <= 0 })
+scene:button("in", 3 + half, height - 3, width - 3 - half, 2, "PUT IN",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+if action == "out" or action == "in" then
+local amount = tonumber(ui.input(target, action == "out" and "Take out"
+or "Put in", { hint = action == "out" and ("Up to " .. money(row.free))
+or ("From your account, " .. money(account.balance)),
+mode = "number", maxLength = 10 }) or "")
+if amount and amount > 0 then
+local pin = ui.pin(target, (action == "out" and "Take out " or "Put in ")
+.. money(amount), true)
+if pin then
+local done, err = request(action == "out" and "CASINO_CASHOUT"
+or "CASINO_DEPOSIT", { company_id = companyId, amount = amount,
+pin = pin }, true)
+if done then
+ui.message(target, "success", action == "out" and "Taken out"
+or "Put in", money(amount), 1)
+refreshSummary(true)
+else
+ui.message(target, "error", "Not moved", err, 1.6)
+end
+end
+end
+end
+end
+end
+
+function casino.moneyPage()
+while running and sessionToken do
+local finances, err = request("CASINO_FINANCES", {}, true)
+local list = finances and finances.casinos or {}
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Casino money", finances and ("Owed " .. money(finances.owed)
+.. " of " .. money(finances.credit)) or "Offline", util.formatClock())
+local scene = ui.scene(target)
+for index, row in ipairs(list) do
+local y = index * 4
+if y + 2 > height - 2 then break end
+local inDebt = row.balance < 0
+ui.card(target, 2, y, width - 2, 3, inDebt and ui.theme.danger or ui.theme.success)
+local words = inDebt and ("LOAN " .. money(row.loan)) or money(row.balance)
+ui.text(target, 4, y, ui.truncate(row.name, width - 7 - #words), ui.theme.ink,
+ui.theme.panel)
+ui.text(target, width - #words, y, words, inDebt and ui.theme.danger
+or ui.theme.success, ui.theme.panel)
+ui.text(target, 4, y + 1, ui.truncate(row.tables .. " tables, " .. row.rounds
+.. " rounds", width - 5), ui.theme.muted, ui.theme.panel)
+scene:hotspot("company:" .. row.company_id, 2, y, width - 2, 3)
+end
+if not finances then
+ui.wrappedText(target, 2, 5, tostring(err or "The Bank is not answering."),
+width - 2, 3, ui.theme.muted)
+elseif #list == 0 then
+ui.wrappedText(target, 2, 5, "No casino money yet. A CCG Casino set up for"
+.. " one of your companies keeps its money here.", width - 2, 5,
+ui.theme.muted)
+end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+local companyId = action and action:match("^company:(.+)$")
+if companyId then casino.companyMoney(companyId) end
+end
+end
+
+
 function casino.minePage(spec)
 local page = 1
 while running and sessionToken do
@@ -2827,13 +2934,18 @@ ui.wrappedText(target, 2, 5, "No CCG Casinos yet. Install CCG Casino on a comput
 .. " with a monitor and set it up with a company you own: it appears here.",
 width - 2, 6, ui.theme.muted)
 end
+local moneyY = ui.contentBottom(target) - 1
+scene:button("money", 2, moneyY, pages > 1 and width - 9 or width - 2, 1,
+"CASINO MONEY", { background = ui.theme.success, foreground = colors.black })
 if pages > 1 then
-scene:button("more", width - 6, ui.contentBottom(target) - 1, 6, 1,
+scene:button("more", width - 6, moneyY, 6, 1,
 page .. "/" .. pages, { background = ui.theme.panel })
 end
 ui.tabBar(scene, target, spec.list, spec.active)
 local action = scene:wait({ tickRate = 3 })
-if action == "more" then
+if action == "money" then
+casino.moneyPage()
+elseif action == "more" then
 page = page % pages + 1
 elseif action and action:match("^open:") then
 casino.control(action:sub(6))
