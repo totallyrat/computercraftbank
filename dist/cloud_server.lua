@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.3.0"
+local PROGRAM_VERSION = "16.3.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -78,6 +78,23 @@ local function freeSpace()
     return ok and tonumber(free) or 0
 end
 
+-- FoxyOS 16.3.1: the room this server keeps for updating itself -- a staged
+-- copy of its own programs, and a little over. Pieces never take it, and the
+-- Bank is told the room it has without it. A Cloud Server filled to the last
+-- few kilobytes could never update again, not even to the fix for that.
+local function updateRoom()
+    local okLib, update = pcall(require, "lib.update")
+    local total = 16 * 1024
+    if okLib and type(update) == "table" and update.rolePaths then
+        for _, path in ipairs(update.rolePaths("cloud") or {}) do
+            local installed = fs.combine(ROOT, update.installPath
+                and update.installPath(path) or path)
+            if fs.exists(installed) then total = total + (fs.getSize(installed) or 0) end
+        end
+    end
+    return total
+end
+
 -- Counted once at start and on every sweep, and kept up to date in between.
 local function countHeld()
     held.count, held.bytes = 0, 0
@@ -130,7 +147,7 @@ function actions.CHUNK_PUT(payload)
     need(#data <= size, "TOO_BIG", "That piece is bigger than its ticket")
     local path = chunkPath(payload.chunk_id)
     local before = fs.exists(path) and (fs.getSize(path) or 0) or nil
-    need(freeSpace() - math.max(#data, 500) >= KEEP_FREE, "CLOUD_SERVER_FULL",
+    need(freeSpace() - math.max(#data, 500) >= KEEP_FREE + updateRoom(), "CLOUD_SERVER_FULL",
         "This Cloud Server is full")
     -- Binary: a MIDI file is bytes, not text, and must come back as it went.
     local file = fs.open(path, "wb")
@@ -161,7 +178,8 @@ end
 
 -- Anyone may ask whether this server is up and how full it is.
 function actions.CLOUD_PING()
-    return { server_id = state.server_id, name = state.name, free = freeSpace(),
+    return { server_id = state.server_id, name = state.name,
+        free = math.max(0, freeSpace() - updateRoom()),
         chunks = held.count, used = held.bytes, version = PROGRAM_VERSION }
 end
 
@@ -192,7 +210,8 @@ end
 -- server -- its Vault's directory was lost -- means registering again.
 local function beat()
     local answer, err, code = bank:request("CLOUD_BEAT", {
-        server_token = state.server_token, free = freeSpace(),
+        server_token = state.server_token,
+        free = math.max(0, freeSpace() - updateRoom()),
         used = held.bytes, chunks = held.count, version = PROGRAM_VERSION }, 4)
     if not answer then
         status.beat, status.beat_color = tostring(err or "No answer"), colors.red
@@ -287,7 +306,8 @@ local function dashboardLoop()
         cards = function()
             return { { "PIECES", held.count, ui.theme.accent },
                 { "USED", util.sizeText(held.bytes), colors.magenta },
-                { "FREE", util.sizeText(freeSpace()), ui.theme.success } }
+                { "FREE", util.sizeText(math.max(0, freeSpace() - updateRoom())),
+                    ui.theme.success } }
         end,
         lines = function()
             return {
@@ -346,7 +366,7 @@ end
 if rawget(_G, "PUMPE_TEST_MODE") == "cloud_server" then
     return { actions = actions, state = state, tickets = tickets, held = held,
         beat = beat, sweep = sweep, count = countHeld, register = register,
-        chunk_dir = chunkDir }
+        chunk_dir = chunkDir, update_room = updateRoom }
 end
 
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end

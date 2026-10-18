@@ -183,7 +183,7 @@ rejected(bank.request, "BAD_CODE", "CLOUD_SERVER_REGISTER",
     { code = "0000", computer_id = 11 })
 local ids = { 11, 12, 13, 14, 15 }
 for _, id in ipairs(ids) do
-    local program = loadServer(id, 60000)
+    local program = loadServer(id, 80000)
     local registered = bank.request("CLOUD_SERVER_REGISTER",
         { code = "4040", name = "Cloud " .. id, computer_id = id })
     program.state.server_token = registered.server_token
@@ -498,6 +498,29 @@ bank.request("CLOUD_PLUS_JOIN", bank.as(ana, { pin = "1234" }))
 local _, _, noRoom = net.cloud.save(anaAsk, { name = "huge.txt" },
     string.rep("c", 60000), PROTOCOL)
 assert(noRoom == "CLOUD_FULL", "the Cloud Servers are full")
+
+-- Room to update itself, 16.3.1 ------------------------------------------------------------
+-- A Cloud Server keeps a staged copy of its own programs' worth of room for
+-- updating itself. It counts its programs on its own disk, tells the Bank the
+-- room it has without that, and takes no piece that would eat into it.
+local keeper = servers[11].program
+disks.cloud11.capacity = 300000
+disks.cloud11.files["cloud11/cloud_server.lua"] = string.rep("x", 30000)
+local room = keeper.update_room()
+assert(room == 16 * 1024 + 30000, "its programs and a little over: " .. room)
+as(11, keeper.beat)
+local told = bank.vault.cloud.store().servers[keeper.state.server_id].free
+assert(told == fs.getFreeSpace("/cloud11/cloud") - room,
+    "the Bank is told the room it has, less its own: " .. told)
+-- Just over its own room left: a piece is refused rather than squeezed in.
+disks.cloud11.capacity = disks.cloud11.capacity - fs.getFreeSpace("/cloud11/cloud") + room + 5000
+keeper.tickets.T_ROOM = { mode = "put", chunks = { ["F999.1.1"] = 6000 },
+    expires_at = math.huge }
+local putOk, putError = pcall(as, 11, keeper.actions.CHUNK_PUT,
+    { ticket = "T_ROOM", chunk_id = "F999.1.1", data = string.rep("y", 6000) })
+assert(not putOk and putError.code == "CLOUD_SERVER_FULL",
+    "its update room is not for pieces")
+disks.cloud11.files["cloud11/cloud_server.lua"] = nil
 
 -- A server the Bank stops knowing ------------------------------------------------------------
 

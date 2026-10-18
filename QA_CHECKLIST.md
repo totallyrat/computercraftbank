@@ -7,6 +7,10 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 16.3.1 (16.3.1)
+
+- [ ] Each Cloud Server updates itself to 16.3.1. Its FREE card is about 180 KB less than before: the room it keeps to update itself.
+
 ## FoxyOS 16.3 (16.3.0)
 
 Update the Bank (Core and Vault) first. The FoxyCloud app is in the FoxyOS 17 beta; this checks the servers and the Bank under it.
