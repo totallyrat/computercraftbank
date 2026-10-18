@@ -50,8 +50,11 @@ local function rejected(action, expectedCode, payload)
         "expected " .. expectedCode .. ", got " .. tostring(result.code))
 end
 
+-- FoxyOS 17: answering in Messages needs a phone number.
 local function register(name)
-    return actions.REGISTER({ name = name, pin = "1234", gender = "Not set" })
+    local created = actions.REGISTER({ name = name, pin = "1234", gender = "Not set" })
+    actions.PHONE_GET({ session_token = created.session_token })
+    return created
 end
 
 local driver = register("Fast Driver")

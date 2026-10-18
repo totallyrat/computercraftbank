@@ -186,9 +186,11 @@ local function firstResult(query)
     assert(computer.disk["startup.lua"] == h.installer, "searching installs nothing")
     return found
 end
-assert(firstResult("ccg") == "CCG Bet Console")
+-- FoxyOS 17: the CCG is two, and the old entry is hidden.
+assert(firstResult("ccg") == "CCG Casino")
 assert(firstResult("shop") == "Pocket", "FoxyOS 13: a shop's till is a Pocket")
-assert(firstResult("casino") == "CCG Bet Console", "keywords count")
+assert(firstResult("casino") == "CCG Casino", "keywords count")
+assert(firstResult("radio") == "Music Server", "FoxyOS 17: music")
 assert(firstResult("web") == "Internet Server")
 assert(firstResult("gps") == "GPS Anchor")
 assert(firstResult("bank") == "Bank Server")
@@ -298,8 +300,9 @@ end
 assert(#programs >= 15, "the program list was not found")
 for _, program in ipairs(programs) do
     -- FoxyOS 13: the Service Kiosk is hidden like the Tax Controller --
-    -- nobody installs one now -- and still boots, below.
-    local hidden = program.id == "tax" or program.id == "service"
+    -- nobody installs one now -- and still boots, below. FoxyOS 17: so is
+    -- the CCG from before it was two, which asks which it is to be.
+    local hidden = program.id == "tax" or program.id == "service" or program.id == "ccg"
     local roleFiles = update.rolePaths(program.id)
     if program.id ~= "tax" then
         assert(roleFiles and roleFiles[1] == program.file,
@@ -338,6 +341,16 @@ local oldKiosk = fresh({ disk = {
 } })
 seen = h.run(oldKiosk, {}, { "--boot", "service" }, "pumpe/installer.lua")
 assert(seen.launched[1] == "pumpe/service_kiosk.lua", "a kiosk still boots")
+
+-- FoxyOS 17: a CCG from before the split still starts, into the choice.
+local oldCcg = fresh({ disk = {
+    ["startup.lua"] = bootEntry("ccg"),
+    ["pumpe/installer.lua"] = h.installer,
+    ["pumpe/ccg.lua"] = "-- the choice",
+    ["pumpe/config.lua"] = h.published("config.lua"),
+} })
+seen = h.run(oldCcg, {}, { "--boot", "ccg" }, "pumpe/installer.lua")
+assert(seen.launched[1] == "pumpe/ccg.lua", "an old CCG still boots, and is asked")
 
 -- Reinstalling keeps settings ------------------------------------------------------------
 

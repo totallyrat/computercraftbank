@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -216,6 +216,9 @@ local SHIPPED = {
     -- FoxyOS 17: FoxyCloud, by Foxy. Every Pocket fetches it once, like Yap!.
     { file = "foxycloud.lua", id = "CLOUD", name = "FoxyCloud", author = "Foxy",
       description = "Your Foxy Account, and your files on every device." },
+    -- FoxyOS 17: Music, by Foxy: the remote for your Music Players.
+    { file = "music.lua", id = "MUSIC", name = "Music", author = "Foxy",
+      description = "Songs, radios and giveaways on your Music Players." },
 }
 
 local function seedShippedApps()

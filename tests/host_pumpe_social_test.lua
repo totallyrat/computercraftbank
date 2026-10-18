@@ -147,6 +147,10 @@ local client = {
                     status = "ringing", outgoing = false, save_votes = 0 }
             end
             return poll
+        elseif action == "PHONE_ME" then
+            -- FoxyOS 17: this person has a phone number already.
+            return { number = "234-5678", messages = 3, calls = 1, messages_limit = 40,
+                calls_limit = 10, tier = 0 }
         elseif action == "URGENT_ANSWER" then
             assert(payload.accept == true)
             urgentStatus = "active"

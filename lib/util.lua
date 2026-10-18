@@ -438,7 +438,11 @@ function util.sizeText(bytes)
     bytes = math.max(0, math.floor(tonumber(bytes) or 0))
     if bytes < 1024 then return bytes .. " B" end
     local kb = bytes / 1024
-    if kb >= 1024 then return string.format("%.1f MB", kb / 1024) end
+    if kb >= 1024 then
+        local mb = kb / 1024
+        if mb >= 100 or mb == math.floor(mb) then return math.floor(mb + 0.5) .. " MB" end
+        return string.format("%.1f MB", mb)
+    end
     if kb >= 100 or kb == math.floor(kb) then
         return math.floor(kb + 0.5) .. " KB"
     end

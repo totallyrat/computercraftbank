@@ -313,6 +313,26 @@ assert(casino.view(t, {}).music == nil, "players are never handed the ticket")
 actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music", action = "play",
     track = "theme.mid" }))
 assert(tick().music.cloud == nil, "a song on the console replaces it")
+-- FoxyOS 17: DFPWM from the Music Library, a song or a radio, by a grant
+-- the Music Server gave the owner. Never shown to players.
+rejected(actions.CASINO_CONTROL, "BAD_SONG", asOf(owner, { console_id = made.console_id,
+    op = "music", action = "stream", name = "Foxy FM" }))
+actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music",
+    action = "stream", grant = "MG_1", kind = "radio", name = "Foxy FM" }))
+local streamed = tick().music
+assert(streamed.playing and streamed.mode == "dfpwm" and streamed.track == "Foxy FM"
+    and streamed.stream.grant == "MG_1" and streamed.stream.kind == "radio")
+assert(casino.view(t, {}).music == nil, "players are never handed the grant")
+-- What the console says it can do, and how its music is going, is the
+-- owner's to see: an old console says nothing, and My Casino says so.
+assert(not actions.CASINO_VIEW(asOf(owner, { console_id = made.console_id })).table.features.dfpwm)
+actions.CASINO_TICK({ console_id = made.console_id, console_token = made.console_token,
+    version = "17.0.0", features = { cloud_midi = true, dfpwm = true },
+    music_status = "Cannot play: Music on a CCG Casino needs FoxyCloud+" })
+local owned = actions.CASINO_VIEW(asOf(owner, { console_id = made.console_id })).table
+assert(owned.features.dfpwm and owned.features.cloud_midi and owned.version == "17.0.0")
+assert(owned.music_status:find("needs FoxyCloud+", 1, true))
+assert(tick().music_status == nil, "the console's own view does not echo it back")
 
 -- Render smoke: the console's display, every phase, three sizes.
 local screen = dofile("screen_harness.lua")
@@ -391,5 +411,49 @@ net.cloud.get = realGet
 assert(fromCloud and #fromCloud == 3, "the cloud song plays like one on the disk")
 assert(askedFor.plan.ticket == "CT_X" and askedFor.protocol == require("config").cloud_protocol)
 assert(not missing and why == "A Cloud Server is not answering", "and says why when it cannot")
+
+-- FoxyOS 17: DFPWM on the console. It asks the Music Server with the grant,
+-- plays what it is told through the speakers, and says what is on.
+parallel = parallel or { waitForAny = function(first) first() end }
+local musiclib = require("lib.music")
+local realPlay, played = musiclib.play, nil
+musiclib.play = function(plan, speakers, options)
+    played = { plan = plan, offset = options.offset_ms, volume = options.volume() }
+    return true
+end
+local streamAnswer = { mode = "track", item = { title = "Fox Trot", length_ms = 1000 },
+    offset_ms = 0, plan = { ticket = "CT_M" } }
+local asked = {}
+console.console.musicClient = { request = function(_, action, payload)
+    asked[#asked + 1] = action .. ":" .. tostring(payload.grant)
+    if streamAnswer.code then return nil, streamAnswer.err, streamAnswer.code end
+    return streamAnswer
+end }
+console.console.music = { playing = true, track = "Fox Trot", volume = 10,
+    stream = { grant = "MG_2", kind = "track" } }
+console.console.musicSeq = 7
+assert(console.console.stream(console.console.music, 7))
+assert(asked[1] == "MUSIC_STREAM:MG_2", "the grant, never a session")
+assert(played.plan.ticket == "CT_M" and played.offset == 0)
+assert(console.console.musicStatus == "Fox Trot")
+-- A Cloud Server out of reach: tried again a little later, still playing.
+os.startTimer = function() return 99 end
+os.pullEvent = function() return "timer", 99 end
+streamAnswer = { code = "CLOUD_OFFLINE", err = "A Cloud Server is not answering" }
+local ok, err, code = console.console.stream(console.console.music, 7)
+assert(not ok and code == "CLOUD_OFFLINE")
+console.console.failed(console.console.music, 7, err, code)
+assert(console.console.music.playing, "one failure is tried again")
+assert(console.console.musicStatus == "Cannot play: A Cloud Server is not answering")
+-- No FoxyCloud+: it stops, and says why.
+streamAnswer = { code = "NEEDS_PLUS", err = "Music on a CCG Casino needs FoxyCloud+" }
+ok, err, code = console.console.stream(console.console.music, 7)
+console.console.failed(console.console.music, 7, err, code)
+assert(not console.console.music.playing and console.console.musicStatus:find("FoxyCloud+", 1, true))
+-- Quieter while a game is on.
+console.console.music = { playing = true, volume = 10 }
+console.show.table = { phase = "playing" }
+assert(math.abs(console.console.level() - 3 * 0.35) < 0.001)
+musiclib.play = realPlay
 
 print("host_ccg_casino_test: OK")

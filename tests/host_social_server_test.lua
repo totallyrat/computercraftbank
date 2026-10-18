@@ -46,8 +46,10 @@ local function rejected(action, expectedCode, payload)
         "expected " .. expectedCode .. ", got " .. tostring(result.code))
 end
 
+-- FoxyOS 17: Messages and Urgent Contact need a phone number, got in Messages.
 local function register(name, pin)
     local created = actions.REGISTER({ name = name, pin = pin, gender = "Not set" })
+    actions.PHONE_GET({ session_token = created.session_token })
     return { token = created.session_token, id = created.account.account_id,
         name = name, pin = pin }
 end

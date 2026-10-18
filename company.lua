@@ -1,5 +1,5 @@
 -- PUMPE APP: Company
--- PUMPE APP ICON: b000000b/b0b00b0b/b000000b/b0b00b0b/b000000b/b00bb00b
+-- PUMPE APP ICON: bbbbbbbb/b000000b/b0b00b0b/b000000b/b0b00b0b/b00bb00b
 -- PUMPE APP ACTION: companies | My companies | Start and run your companies
 -- PUMPE APP ACTION: delivery | Delivery Mode | What is out for delivery
 -- PUMPE APP ACTION: sell | Point of Sale | Sell at your till
@@ -541,6 +541,9 @@ return function(api)
                 -- FoxyOS 15: the store's address on the web.
                 { "shopsite", state.shop_site and ("Web: " .. state.shop_site.domain)
                     or "Put it on the web  >", colors.lime },
+                -- FoxyOS 17: a phone number customers can call.
+                { "phone", state.phone and ("Phone: " .. state.phone)
+                    or "Get a phone number", colors.green },
             }
             -- Two rows apart when there is room for all of them, one when not.
             local gap = (height - 5) >= #entries * 2 and 2 or 1
@@ -552,7 +555,7 @@ return function(api)
                             background = entry[3],
                             foreground = (entry[1] == "open"
                                 and settings.open == false or entry[1] == "color"
-                                or entry[1] == "shopsite")
+                                or entry[1] == "shopsite" or entry[1] == "phone")
                                 and colors.black or colors.white })
                 end
             end
@@ -588,6 +591,14 @@ return function(api)
                 pointsPage(company)
             elseif action == "shopsite" then
                 shopSitePage(company, state)
+            elseif action == "phone" then
+                local got, phoneError = ask("COMPANY_PHONE", { company_id = company.company_id })
+                if got then
+                    ui.message(target, "success", company.name .. ": " .. got.phone,
+                        "When someone calls it you are told who, and their number", 2.2)
+                else
+                    failed("No number", phoneError)
+                end
             elseif action == "cancel" then
                 if settings.cancel or ui.confirm(target, "Let buyers cancel?",
                     "For " .. tostring(state.store.confirm_hours or 2)

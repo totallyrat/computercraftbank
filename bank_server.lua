@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -82,6 +82,10 @@ RELEASE.depot_files = {
     "foxmail.lua",
     "company.lua",
     "cloud_server.lua",
+    "music_server.lua",
+    "music_player.lua",
+    "music.lua",
+    "lib/music.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -134,6 +138,10 @@ RELEASE.optional = {
     "yap.lua",
     "cloud_server.lua",
     "foxycloud.lua",
+    "music_server.lua",
+    "music_player.lua",
+    "music.lua",
+    "lib/music.lua",
 }
 
 RELEASE.programs = {
@@ -163,6 +171,9 @@ RELEASE.programs = {
     vault = "bank_vault.lua",
     -- FoxyOS 16.3: FoxyCloud's storage.
     cloud = "cloud_server.lua",
+    -- FoxyOS 17: music.
+    music = "music_server.lua",
+    musicplayer = "music_player.lua",
 }
 
 -- lib/update.lua is included for every role: without it a client cannot load
@@ -196,6 +207,10 @@ local function deploymentFilesForRole(role)
     -- download the moment the store is up.
     if role == "apps" then
         files[#files + 1] = { path = "foxy.lua", source = "foxy.lua" }
+    end
+    -- FoxyOS 17: whatever plays music streams it with lib/music.
+    if role == "music" or role == "musicplayer" or role == "ccgcasino" then
+        files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
     end
     files[#files + 1] = { path = mainFile, source = mainFile }
     return files
@@ -1197,18 +1212,37 @@ end
 local actions = {}
 
 -- FoxyCloud, FoxyOS 16.3 ------------------------------------------------------
--- Every Foxy Account has cloud storage: 100 KB, or 500 KB with FoxyCloud+.
--- What is money about it lives here -- the plan and its bill. Which files a
--- person has, and where each piece of them is, is the Vault's; the pieces
--- themselves are on Cloud Servers, and not one byte of them on a Bank.
+-- Every Foxy Account has cloud storage. What is money about it lives here --
+-- the plan and its bill. Which files a person has, and where each piece of
+-- them is, is the Vault's; the pieces themselves are on Cloud Servers, and
+-- not one byte of them on a Bank.
+--
+-- FoxyOS 17: FoxyCloud+ has two tiers (config.foxycloud_tiers), and the plan
+-- sets more than room: how many messages, Urgent Contact calls, songs played
+-- and songs uploaded a day. What a tier leaves out is unlimited. A plan from
+-- before tiers is Tier 1, at the price it was bought at.
 local cloud = { PLUS_ID = "FOXYCLOUD_PLUS", APP_ID = "CLOUD" }
 
-function cloud.price()
-    return math.max(1, util.roundMoney(tonumber(config.foxycloud_plus_price) or 500))
+function cloud.tiers()
+    local tiers = type(config.foxycloud_tiers) == "table" and config.foxycloud_tiers or {}
+    if #tiers == 0 then
+        tiers = { { name = "FoxyCloud+", price = tonumber(config.foxycloud_plus_price) or 500,
+            bytes = tonumber(config.cloud_plus_bytes) or 512000 } }
+    end
+    return tiers
+end
+
+function cloud.tierSpec(tier)
+    local tiers = cloud.tiers()
+    return tiers[math.max(1, math.min(#tiers, math.floor(tonumber(tier) or 1)))]
 end
 
 function cloud.every()
     return util.billingDays(config.foxycloud_plus_days, config.subscription_periods) or 5
+end
+
+function cloud.price(tier)
+    return math.max(1, util.roundMoney(tonumber(cloud.tierSpec(tier).price) or 500))
 end
 
 function cloud.plus(account)
@@ -1216,9 +1250,26 @@ function cloud.plus(account)
     return type(plan) == "table" and plan.plan == "plus"
 end
 
+-- 0 for the free plan, else the tier.
+function cloud.tier(account)
+    if not cloud.plus(account) then return 0 end
+    local tier = math.floor(tonumber(account.foxycloud.tier) or 1)
+    return math.max(1, math.min(#cloud.tiers(), tier))
+end
+
 function cloud.quota(account)
-    if cloud.plus(account) then return tonumber(config.cloud_plus_bytes) or 512000 end
+    local tier = cloud.tier(account)
+    if tier > 0 then return tonumber(cloud.tierSpec(tier).bytes) or 512000 end
     return tonumber(config.cloud_free_bytes) or 102400
+end
+
+-- A day's allowance of "messages", "calls", "plays" or "uploads": a number,
+-- or nil for no limit.
+function cloud.limit(account, what)
+    local tier = cloud.tier(account)
+    if tier > 0 then return tonumber(cloud.tierSpec(tier)[what]) end
+    local free = type(config.foxycloud_free) == "table" and config.foxycloud_free or {}
+    return tonumber(free[what]) or ({ messages = 40, calls = 10, plays = 10, uploads = 2 })[what]
 end
 
 -- FoxyCloud+ takes the Foxy Cash fee away. Foxy Pay at a till never had one.
@@ -1227,24 +1278,66 @@ function cloud.cashRate(account)
     return tonumber(config.foxy_cash_fee_rate) or 0.02
 end
 
--- The plan, and the perks, as FoxyCloud shows them.
+function cloud.limitText(value, what)
+    if value == nil then return "Unlimited " .. what end
+    return value .. " " .. what .. " a day"
+end
+
+-- What a plan gives, as FoxyCloud lists it.
+function cloud.perks(tier)
+    local spec = tier > 0 and cloud.tierSpec(tier) or nil
+    local function limit(what)
+        if spec then return tonumber(spec[what]) end
+        local free = type(config.foxycloud_free) == "table" and config.foxycloud_free or {}
+        return tonumber(free[what])
+    end
+    local perks = { util.sizeText(spec and spec.bytes
+        or tonumber(config.cloud_free_bytes) or 102400) .. " of cloud storage",
+        cloud.limitText(limit("messages"), "messages"),
+        cloud.limitText(limit("calls"), "Urgent Contact calls") }
+    if spec then
+        perks[#perks + 1] = cloud.limitText(limit("plays"), "songs")
+        perks[#perks + 1] = cloud.limitText(limit("uploads"), "uploads")
+        perks[#perks + 1] = "0% fee on Foxy Cash"
+        perks[#perks + 1] = "Early tickets for events that offer them"
+        perks[#perks + 1] = "Songs and radios on your CCG Casino"
+    else
+        perks[#perks + 1] = cloud.limitText(limit("plays"), "songs") .. ", radios free"
+        perks[#perks + 1] = cloud.limitText(limit("uploads"), "uploads")
+    end
+    return perks
+end
+
+-- The plan, and every plan there is, as FoxyCloud shows them.
 function cloud.summary(account)
-    local plan = cloud.plus(account) and account.foxycloud or nil
-    local plusBytes = tonumber(config.cloud_plus_bytes) or 512000
+    local tier = cloud.tier(account)
+    local plan = tier > 0 and account.foxycloud or nil
+    local tiers = {}
+    for index, spec in ipairs(cloud.tiers()) do
+        tiers[index] = { tier = index, name = spec.name or ("Tier " .. index),
+            short = spec.short or ("Tier " .. index), price = cloud.price(index),
+            bytes = tonumber(spec.bytes) or 0, perks = cloud.perks(index) }
+    end
     return {
         plan = plan and "plus" or "free",
+        tier = tier,
+        tier_name = plan and (cloud.tierSpec(tier).name or "FoxyCloud+") or "Free",
         quota = cloud.quota(account),
         free_quota = tonumber(config.cloud_free_bytes) or 102400,
-        plus_quota = plusBytes,
-        price = plan and plan.price or cloud.price(),
+        plus_quota = tonumber(cloud.tierSpec(math.max(1, tier)).bytes) or 0,
+        tiers = tiers,
+        price = plan and plan.price or cloud.price(1),
         every_days = plan and plan.every_days or cloud.every(),
         since_day = plan and plan.since_day or nil,
         next_charge_day = plan and not plan.cancelled and plan.next_charge_day or nil,
         ends_day = plan and plan.cancelled and plan.next_charge_day or nil,
+        next_tier = plan and plan.next_tier or nil,
         cash_fee_rate = cloud.cashRate(account),
-        perks = { util.sizeText(plusBytes) .. " of cloud storage",
-            "0% fee on Foxy Cash",
-            "Early tickets for events that offer them" },
+        limits = { messages = cloud.limit(account, "messages"),
+            calls = cloud.limit(account, "calls"), plays = cloud.limit(account, "plays"),
+            uploads = cloud.limit(account, "uploads") },
+        perks = cloud.perks(tier > 0 and tier or 1),
+        free_perks = cloud.perks(0),
     }
 end
 
@@ -1254,7 +1347,8 @@ function cloud.subscription(account)
     local plan = cloud.plus(account) and account.foxycloud
     if not plan then return nil end
     return {
-        subscription_id = cloud.PLUS_ID, description = "FoxyCloud+",
+        subscription_id = cloud.PLUS_ID,
+        description = cloud.tierSpec(cloud.tier(account)).name or "FoxyCloud+",
         amount = plan.price, every_days = plan.every_days,
         next_charge_day = plan.next_charge_day, active = not plan.cancelled,
         created_day = plan.since_day, foxycloud = true,
@@ -1267,15 +1361,16 @@ function cloud.fromApp(payload)
         or payload.app_id == "FOXY", "WRONG_APP", "Only FoxyCloud can do that")
 end
 
-function cloud.bill(account, amount)
+function cloud.bill(account, amount, what)
     account.balance = util.roundMoney(account.balance - amount)
     state.foxycloud_revenue = util.roundMoney((state.foxycloud_revenue or 0) + amount)
-    transaction(account, "foxycloud", -amount, "Foxy", "FoxyCloud+")
+    transaction(account, "foxycloud", -amount, "Foxy", what or "FoxyCloud+")
 end
 
 -- On the day's subscription pass. A plan that was cancelled, or that cannot
 -- be paid for, ends -- and the files stay. Over the free room, nothing new
--- fits until they are back under it; nothing is deleted.
+-- fits until they are back under it; nothing is deleted. A step down to a
+-- lower tier happens here, at the end of what was paid for.
 function cloud.renew(account, today)
     local plan = cloud.plus(account) and account.foxycloud
     if not plan or (plan.next_charge_day or today) > today then return false end
@@ -1286,12 +1381,16 @@ function cloud.renew(account, today)
             .. " again. Your files are all kept.", "subscription")
         return true
     end
-    local price = plan.price or cloud.price()
+    if plan.next_tier then
+        plan.tier, plan.price, plan.next_tier = plan.next_tier, cloud.price(plan.next_tier), nil
+    end
+    local price = plan.price or cloud.price(plan.tier)
+    local name = cloud.tierSpec(plan.tier).name or "FoxyCloud+"
     if account.balance >= price and not account.frozen and not account.banned
         and not account.bank_closed then
-        cloud.bill(account, price)
+        cloud.bill(account, price, name)
         plan.next_charge_day = today + (plan.every_days or cloud.every())
-        notification(account, "FoxyCloud+ renewed", util.money(price,
+        notification(account, name .. " renewed", util.money(price,
             config.currency) .. " " .. util.everyText(plan.every_days),
             "subscription")
     else
@@ -1306,30 +1405,53 @@ function actions.CLOUD_PLAN(payload)
     return cloud.summary(requireSession(payload))
 end
 
+-- Joining, coming back, and changing tier. Up is now, for the difference
+-- between the two prices, and the next charge stays the day it was: what was
+-- paid for the old tier counts towards the new one. Down is at the next
+-- charge, so nobody pays for room they then lose. A Pocket from before tiers
+-- asks for none: Tier 1.
 function actions.CLOUD_PLUS_JOIN(payload)
     cloud.fromApp(payload)
     local account = requireSpender(payload)
     need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local wanted = math.floor(tonumber(payload.tier) or 1)
+    need(wanted >= 1 and wanted <= #cloud.tiers(), "BAD_TIER", "There is no such tier")
+    local spec, today, every = cloud.tierSpec(wanted), util.ingameDay(), cloud.every()
     local plan = cloud.plus(account) and account.foxycloud
-    if plan then
-        need(plan.cancelled, "ALREADY_PLUS", "You already have FoxyCloud+")
-        -- Changed their mind before it ran out: it carries on, and the next
-        -- charge is the day it would have been anyway.
-        plan.cancelled, plan.cancelled_day = nil, nil
+    local current = cloud.tier(account)
+    if plan and wanted == current then
+        need(plan.cancelled or plan.next_tier, "ALREADY_PLUS",
+            "You already have " .. (spec.name or "FoxyCloud+"))
+        -- Changed their mind before it ran out, or before stepping down: it
+        -- carries on, and the next charge is the day it would have been.
+        plan.cancelled, plan.cancelled_day, plan.next_tier = nil, nil, nil
         save()
         return cloud.summary(account)
     end
-    local price, every, today = cloud.price(), cloud.every(), util.ingameDay()
-    need(account.balance >= price, "INSUFFICIENT_FUNDS", "FoxyCloud+ is "
-        .. util.money(price, config.currency) .. " " .. util.everyText(every))
-    cloud.bill(account, price)
-    account.foxycloud = { plan = "plus", price = price, every_days = every,
-        since_day = today, next_charge_day = today + every }
-    notification(account, "Welcome to FoxyCloud+", util.sizeText(
-        tonumber(config.cloud_plus_bytes) or 512000) .. " and no Foxy Cash fee."
-        .. " Next charge day " .. (today + every), "subscription")
+    if plan and wanted < current then
+        plan.next_tier, plan.cancelled, plan.cancelled_day = wanted, nil, nil
+        notification(account, "FoxyCloud+", (spec.name or "Tier " .. wanted)
+            .. " from day " .. tostring(plan.next_charge_day), "subscription")
+        save()
+        return cloud.summary(account)
+    end
+    local price = cloud.price(wanted)
+    local due = plan and math.max(0, price - (plan.price or cloud.price(current))) or price
+    need(account.balance >= due, "INSUFFICIENT_FUNDS", (spec.name or "FoxyCloud+")
+        .. (plan and (" is " .. util.money(due, config.currency) .. " more now")
+            or (" is " .. util.money(price, config.currency) .. " " .. util.everyText(every))))
+    if due > 0 then cloud.bill(account, due, spec.name) end
+    account.foxycloud = { plan = "plus", tier = wanted, price = price,
+        every_days = plan and plan.every_days or every,
+        since_day = plan and plan.since_day or today,
+        next_charge_day = plan and plan.next_charge_day or today + every }
+    notification(account, plan and ("Now " .. (spec.name or "FoxyCloud+"))
+        or ("Welcome to " .. (spec.name or "FoxyCloud+")), util.sizeText(spec.bytes or 0)
+        .. " and no Foxy Cash fee. Next charge day "
+        .. tostring(account.foxycloud.next_charge_day), "subscription")
     save()
-    logActivity(account.name .. " joined FoxyCloud+", colors.cyan)
+    logActivity(account.name .. (plan and " moved to " or " joined ")
+        .. (spec.name or "FoxyCloud+"), colors.cyan)
     return cloud.summary(account)
 end
 
@@ -1338,9 +1460,399 @@ function actions.CLOUD_PLUS_CANCEL(payload)
     local account = requireSession(payload)
     local plan = cloud.plus(account) and account.foxycloud
     need(plan and not plan.cancelled, "NOT_PLUS", "You do not have FoxyCloud+")
-    plan.cancelled, plan.cancelled_day = true, util.ingameDay()
+    plan.cancelled, plan.cancelled_day, plan.next_tier = true, util.ingameDay(), nil
     save()
     return cloud.summary(account)
+end
+
+-- Phone numbers, FoxyOS 17 ----------------------------------------------------
+-- Messages and Urgent Contact need a number of your own: "Get a number" in
+-- Messages gives a random one. A day's messages and calls are counted against
+-- the plan -- 40 and 10 free, more with FoxyCloud+, none at all on Tier 2.
+-- Companies have numbers too, and so do radios: a radio's is the one
+-- listeners call in a giveaway.
+local phone = {}
+
+function phone.store()
+    state.phones = state.phones or {}
+    return state.phones
+end
+
+-- Seven digits, written 234-5678. Anything else typed in is no number.
+function phone.clean(value)
+    local digits = tostring(value or ""):gsub("%D", "")
+    if #digits ~= 7 then return nil end
+    return digits:sub(1, 3) .. "-" .. digits:sub(4)
+end
+
+function phone.new(owner)
+    local store, number = phone.store(), nil
+    repeat
+        number = string.format("%03d-%04d", math.random(200, 999), math.random(0, 9999))
+    until not store[number]
+    owner.number, owner.created_day = number, util.ingameDay()
+    store[number] = owner
+    return number
+end
+
+function phone.name(owner)
+    if owner.kind == "person" then
+        local account = state.accounts[owner.account_id]
+        return account and account.name or "Somebody"
+    elseif owner.kind == "company" then
+        local company = state.companies[owner.company_id]
+        return company and company.name or "A company"
+    end
+    return owner.name or "A radio"
+end
+
+function phone.usage(account)
+    local today = util.ingameDay()
+    if type(account.phone_usage) ~= "table" or account.phone_usage.day ~= today then
+        account.phone_usage = { day = today, messages = 0, calls = 0 }
+    end
+    return account.phone_usage
+end
+
+-- What is left of today's "messages" or "calls", or nil for no limit.
+function phone.left(account, kind)
+    local limit = cloud.limit(account, kind)
+    if not limit then return nil end
+    return math.max(0, limit - (phone.usage(account)[kind] or 0))
+end
+
+function phone.public(account)
+    local usage = phone.usage(account)
+    return { number = account.phone, messages = usage.messages, calls = usage.calls,
+        messages_limit = cloud.limit(account, "messages"),
+        calls_limit = cloud.limit(account, "calls"), tier = cloud.tier(account) }
+end
+
+-- Before a message goes or a call is placed: a number, and today's allowance.
+function phone.check(account, kind)
+    need(account.phone, "NO_NUMBER", "Get a phone number in Messages first")
+    if kind then
+        local left = phone.left(account, kind)
+        need(left == nil or left > 0, kind == "calls" and "CALL_LIMIT" or "MESSAGE_LIMIT",
+            "That is all your " .. (kind == "calls" and "calls" or "messages")
+                .. " for today. FoxyCloud+ has more")
+    end
+end
+
+function phone.count(account, kind)
+    local usage = phone.usage(account)
+    usage[kind] = (usage[kind] or 0) + 1
+end
+
+function actions.PHONE_ME(payload)
+    return phone.public(requireSession(payload))
+end
+
+-- Only the Pocket itself gets a number or places a call. A call to a radio
+-- costs money with no PIN, so no installed app may make one -- except Foxy's
+-- own Music app, whose Call button is in a giveaway's Now Playing.
+function phone.fromPocket(payload, orMusic)
+    need(payload.app_id == nil or (orMusic and payload.app_id == "MUSIC"), "WRONG_APP",
+        "Only Messages can do that")
+end
+
+function actions.PHONE_GET(payload)
+    phone.fromPocket(payload)
+    local account = requireSession(payload)
+    if not account.phone then
+        account.phone = phone.new({ kind = "person", account_id = account.account_id })
+        logActivity(account.name .. " got a phone number", colors.cyan)
+        save()
+    end
+    return phone.public(account)
+end
+
+-- Who a number belongs to, for a Pocket about to call it.
+function actions.PHONE_LOOKUP(payload)
+    requireSession(payload)
+    local number = phone.clean(payload.number)
+    local owner = number and phone.store()[number]
+    need(owner, "NO_SUCH_NUMBER", "Nobody has that number")
+    return { number = number, kind = owner.kind, name = phone.name(owner) }
+end
+
+-- Music and radio giveaways, FoxyOS 17 ----------------------------------------
+-- A Music Server proves itself once with the operator code, like a CCG
+-- Server, and asks here who is listening and what their plan allows: songs
+-- played and uploaded a day -- 10 and 2 free, unlimited with FoxyCloud+.
+-- Radios are always free. It also opens giveaways: listeners call the radio's
+-- number, 50 a call and every call another entry, and when it closes one of
+-- them wins a random 100 to 500 -- money the Bank makes, from nobody.
+local music = {}
+
+-- Which computer asked is remembered: a Pocket or a Music Player asks the
+-- Bank where the Music Server is (MUSIC_WHERE) rather than trusting whatever
+-- answers to the name, because it is about to hand over a session.
+function music.server(payload, sender)
+    local token = payload and payload.server_token
+    local server = type(token) == "string" and state.music_servers
+        and state.music_servers[token]
+    need(server, "MUSIC_AUTH", "This Music Server is not registered with the Bank")
+    server.last_seen = util.nowMs()
+    if tonumber(sender) then server.computer_id = tonumber(sender) end
+    return server
+end
+
+function actions.MUSIC_WHERE()
+    local best
+    for _, server in pairs(state.music_servers or {}) do
+        if server.computer_id and (not best or (server.last_seen or 0) > (best.last_seen or 0)) then
+            best = server
+        end
+    end
+    need(best and util.nowMs() - (best.last_seen or 0) <= 5 * 60 * 1000, "MUSIC_OFFLINE",
+        "The Music Server is not running")
+    return { computer_id = best.computer_id, server_id = best.server_id, name = best.name }
+end
+
+function music.usage(account)
+    local today = util.ingameDay()
+    if type(account.music_usage) ~= "table" or account.music_usage.day ~= today then
+        account.music_usage = { day = today, plays = 0, uploads = 0 }
+    end
+    return account.music_usage
+end
+
+function music.who(account)
+    local usage = music.usage(account)
+    return { account_id = account.account_id, name = account.name,
+        tier = cloud.tier(account), plus = cloud.plus(account),
+        plays = usage.plays, plays_limit = cloud.limit(account, "plays"),
+        uploads = usage.uploads, uploads_limit = cloud.limit(account, "uploads") }
+end
+
+function music.account(payload)
+    local account = state.accounts[tostring(payload.account_id or "")]
+    need(account, "ACCOUNT_NOT_FOUND", "That account is not at this Bank")
+    return account
+end
+
+function actions.MUSIC_SERVER_REGISTER(payload, sender)
+    need(tostring(payload.code or "") == DEPLOY.code, "BAD_CODE",
+        "That is not the operator code")
+    state.music_servers = state.music_servers or {}
+    state.music_server_seq = (state.music_server_seq or 0) + 1
+    local token = util.token("MUSIC")
+    local id = "MS" .. state.music_server_seq
+    state.music_servers[token] = { token = token, server_id = id,
+        name = util.safeText(util.trim(payload.name or ("Music " .. id)), 24),
+        registered_day = util.ingameDay(), last_seen = util.nowMs(), radio_numbers = {},
+        computer_id = tonumber(sender) }
+    save()
+    logActivity("Music Server " .. id .. " registered", colors.magenta)
+    return { server_token = token, server_id = id }
+end
+
+-- Who a session is, for a Pocket or a Music Player signing in.
+function actions.MUSIC_WHO(payload, sender)
+    music.server(payload, sender)
+    return music.who(requireSession(payload))
+end
+
+function actions.MUSIC_ACCOUNT(payload, sender)
+    music.server(payload, sender)
+    return music.who(music.account(payload))
+end
+
+-- A song from the library starting. Counted before it plays.
+function actions.MUSIC_PLAY(payload, sender)
+    music.server(payload, sender)
+    local account = music.account(payload)
+    local usage, limit = music.usage(account), cloud.limit(account, "plays")
+    need(not limit or usage.plays < limit, "MUSIC_LIMIT", tostring(limit)
+        .. " songs a day without FoxyCloud+. Radios are free")
+    usage.plays = usage.plays + 1
+    save()
+    return music.who(account)
+end
+
+function actions.MUSIC_UPLOAD_CHECK(payload, sender)
+    music.server(payload, sender)
+    local account = music.account(payload)
+    local usage, limit = music.usage(account), cloud.limit(account, "uploads")
+    need(not limit or usage.uploads < limit, "UPLOAD_LIMIT", tostring(limit)
+        .. " uploads a day without FoxyCloud+")
+    return music.who(account)
+end
+
+function actions.MUSIC_UPLOADED(payload, sender)
+    music.server(payload, sender)
+    local account = music.account(payload)
+    local usage = music.usage(account)
+    usage.uploads = usage.uploads + 1
+    save()
+    return music.who(account)
+end
+
+-- A radio's own number, the first time it asks; its name is kept up to date.
+function actions.MUSIC_RADIO_NUMBER(payload, sender)
+    local server = music.server(payload, sender)
+    local radioId = util.safeText(tostring(payload.radio_id or ""), 16)
+    need(#radioId > 0, "NO_RADIO", "Which radio?")
+    server.radio_numbers = server.radio_numbers or {}
+    local number = server.radio_numbers[radioId]
+    local owner = number and phone.store()[number]
+    if not owner then
+        owner = { kind = "radio", server_id = server.server_id, radio_id = radioId }
+        number = phone.new(owner)
+        server.radio_numbers[radioId] = number
+    end
+    owner.name = util.safeText(util.trim(tostring(payload.name or owner.name or "Radio")), 20)
+    save()
+    return { number = number, name = owner.name }
+end
+
+function music.giveaways()
+    state.giveaways = state.giveaways or {}
+    return state.giveaways
+end
+
+function music.giveawayFor(number)
+    local now = util.nowMs()
+    for _, g in pairs(music.giveaways()) do
+        if g.number == number and g.status == "open" and g.closes_at > now then return g end
+    end
+    return nil
+end
+
+function music.publicGiveaway(g)
+    return { giveaway_id = g.giveaway_id, number = g.number, radio_name = g.radio_name,
+        status = g.status, closes_in_ms = math.max(0, g.closes_at - util.nowMs()),
+        entries = g.total or 0, winner_name = g.winner_name, prize = g.prize }
+end
+
+-- One entry per call, so more calls is a better chance; the order the
+-- accounts are counted in is fixed, so the draw is the random number alone.
+function music.draw(g)
+    if g.status ~= "open" then return end
+    g.status = "drawn"
+    local ids = {}
+    for accountId in pairs(g.entries or {}) do ids[#ids + 1] = accountId end
+    table.sort(ids)
+    if (g.total or 0) <= 0 or #ids == 0 then return end
+    local pick = math.random(1, g.total)
+    for _, accountId in ipairs(ids) do
+        pick = pick - g.entries[accountId]
+        if pick <= 0 then
+            local winner = state.accounts[accountId]
+            local range = type(config.giveaway_prize) == "table" and config.giveaway_prize
+                or { 100, 500 }
+            local prize = math.random(math.floor(range[1] or 100), math.floor(range[2] or 500))
+            g.winner_id, g.prize = accountId, prize
+            g.winner_name = winner and winner.name or "Somebody"
+            if winner then
+                winner.balance = util.roundMoney(winner.balance + prize)
+                state.giveaway_paid = util.roundMoney((state.giveaway_paid or 0) + prize)
+                transaction(winner, "giveaway", prize, g.radio_name or "Radio",
+                    "Radio giveaway")
+                notification(winner, "You won on " .. (g.radio_name or "the radio"),
+                    util.money(prize, config.currency) .. ", in your account now", "money")
+            end
+            logActivity((g.winner_name or "?") .. " won " .. util.money(prize,
+                config.currency) .. " on " .. tostring(g.radio_name), colors.yellow)
+            return
+        end
+    end
+end
+
+-- Giveaways close on time whether or not the Music Server asks.
+function music.sweepGiveaways()
+    local now, changed = util.nowMs(), false
+    for id, g in pairs(music.giveaways()) do
+        if g.status == "open" and g.closes_at <= now then
+            music.draw(g)
+            changed = true
+        elseif g.status ~= "open" and now - g.closes_at > 24 * 60 * 60 * 1000 then
+            music.giveaways()[id] = nil
+            changed = true
+        end
+    end
+    if changed then save() end
+end
+
+function actions.MUSIC_GIVEAWAY_OPEN(payload, sender)
+    local server = music.server(payload, sender)
+    local radioId = util.safeText(tostring(payload.radio_id or ""), 16)
+    local number = server.radio_numbers and server.radio_numbers[radioId]
+    need(number, "NO_NUMBER", "Give the radio a phone number first")
+    local open = music.giveawayFor(number)
+    if open then music.draw(open) end
+    local seconds = math.max(30, math.min(900, math.floor(tonumber(payload.seconds)
+        or tonumber(config.giveaway_seconds) or 180)))
+    state.giveaway_seq = (state.giveaway_seq or 0) + 1
+    local g = { giveaway_id = "GIVE" .. state.giveaway_seq, number = number,
+        server_id = server.server_id, radio_id = radioId,
+        radio_name = phone.store()[number] and phone.store()[number].name or "Radio",
+        opened_at = util.nowMs(), closes_at = util.nowMs() + seconds * 1000,
+        entries = {}, total = 0, status = "open" }
+    music.giveaways()[g.giveaway_id] = g
+    save()
+    logActivity("Giveaway on " .. g.radio_name .. ": call " .. number, colors.yellow)
+    return music.publicGiveaway(g)
+end
+
+function actions.MUSIC_GIVEAWAY_STATE(payload, sender)
+    music.server(payload, sender)
+    local g = music.giveaways()[tostring(payload.giveaway_id or "")]
+    need(g, "NOT_FOUND", "No such giveaway")
+    if g.status == "open" and g.closes_at <= util.nowMs() then
+        music.draw(g)
+        save()
+    end
+    return music.publicGiveaway(g)
+end
+
+-- Calling a number. A person's rings as Urgent Contact; a company's tells its
+-- owner who called; a radio's is an entry in its giveaway, while one is on.
+function actions.PHONE_CALL(payload)
+    phone.fromPocket(payload, true)
+    local account = requireSession(payload)
+    local number = phone.clean(payload.number)
+    local owner = number and phone.store()[number]
+    need(owner, "NO_SUCH_NUMBER", "Nobody has that number")
+    need(owner.kind ~= "person" or owner.account_id ~= account.account_id, "OWN_NUMBER",
+        "That is your own number")
+    phone.check(account, "calls")
+    if owner.kind == "person" then
+        local result = pair.forward("URGENT_CALL", { account_id = owner.account_id },
+            vaultCaller(account, { dialed = owner.account_id }))
+        phone.count(account, "calls")
+        save()
+        result.kind, result.name = "person", phone.name(owner)
+        return result
+    elseif owner.kind == "company" then
+        local company = state.companies[owner.company_id]
+        local boss = company and state.accounts[company.owner_account_id]
+        if boss then
+            notification(boss, "Call for " .. company.name, account.name .. " called "
+                .. number .. ". Their number: " .. tostring(account.phone), "urgent")
+        end
+        phone.count(account, "calls")
+        save()
+        return { kind = "company", name = phone.name(owner),
+            message = "They have been told you called" }
+    end
+    local g = music.giveawayFor(number)
+    need(g, "LINES_CLOSED", phone.name(owner) .. " is not taking calls right now")
+    local spender = requireSpender(payload)
+    local price = util.roundMoney(tonumber(config.phone_call_price) or 50)
+    need(spender.balance >= price, "INSUFFICIENT_FUNDS", "A call is "
+        .. util.money(price, config.currency))
+    spender.balance = util.roundMoney(spender.balance - price)
+    state.phone_revenue = util.roundMoney((state.phone_revenue or 0) + price)
+    transaction(spender, "phone_call", -price, phone.name(owner), "Giveaway call")
+    g.entries[account.account_id] = (g.entries[account.account_id] or 0) + 1
+    g.total = (g.total or 0) + 1
+    phone.count(account, "calls")
+    save()
+    return { kind = "radio", name = phone.name(owner), price = price,
+        entries = g.entries[account.account_id], all_entries = g.total,
+        closes_in_ms = math.max(0, g.closes_at - util.nowMs()) }
 end
 
 -- Sending money out, with the one distinction that matters --------------------
@@ -5775,7 +6287,7 @@ function actions.COMPANY_LIST(payload)
                 products = #(company.quick_items or {}),
                 open = company.shop ~= nil and company.shop.open == true,
                 terminals = #(company.linked_terminal_ids or {}),
-                sales = sales, created_day = company.created_day }
+                sales = sales, created_day = company.created_day, phone = company.phone }
         end
     end
     table.sort(list, function(a, b) return a.name < b.name end)
@@ -5946,7 +6458,20 @@ function actions.COMPANY_STATE(payload)
         held = shop.held(company),
         terminals = terminals,
         shop_site = company.shop_site and util.copy(company.shop_site) or nil,
+        phone = company.phone,
     }
+end
+
+-- FoxyOS 17: a company's own phone number. Calls to it tell the owner who
+-- called, with their number, to call back.
+function actions.COMPANY_PHONE(payload)
+    local _, company = shop.owned(payload)
+    if not company.phone then
+        company.phone = phone.new({ kind = "company", company_id = company.company_id })
+        logActivity(company.name .. " got a phone number", colors.cyan)
+        save()
+    end
+    return { company_id = company.company_id, phone = company.phone }
 end
 
 function actions.COMPANY_PRODUCT_ADD(payload)
@@ -6552,17 +7077,17 @@ pair.routes = {
     FRIEND_RESPOND = { auth = "session" },
     FRIEND_REMOVE = { auth = "session" },
     CHAT_LIST = { auth = "session" },
-    CHAT_START = { auth = "session" },
+    CHAT_START = { auth = "session", phone = true, dial = true },
     CHAT_OPEN = { auth = "session" },
-    CHAT_SEND = { auth = "session" },
-    CHAT_REQUEST_MONEY = { auth = "session" },
-    CHAT_SEND_MONEY = { auth = "spender", pin = true },
+    CHAT_SEND = { auth = "session", phone = "messages" },
+    CHAT_REQUEST_MONEY = { auth = "session", phone = "messages" },
+    CHAT_SEND_MONEY = { auth = "spender", pin = true, phone = "messages" },
     -- Session rather than spender: paying the government is never blocked by
     -- owing the government, and the transfer route applies the rest.
     CHAT_PAY_REQUEST = { auth = "session", pin = true },
     CHAT_DECLINE_REQUEST = { auth = "session" },
     URGENT_RING = { auth = "session" },
-    URGENT_CALL = { auth = "session", app = "optional" },
+    URGENT_CALL = { auth = "session", app = "optional", phone = "calls" },
     URGENT_ANSWER = { auth = "session" },
     URGENT_STATE = { auth = "session" },
     URGENT_SEND = { auth = "session" },
@@ -6706,10 +7231,10 @@ pair.routes = {
     -- FoxyCloud, 16.3. The directory is the Vault's; the plan that sizes it
     -- is the Core's and goes down with each request ("cloud"). Only the phone
     -- itself and the FoxyCloud app may ask: no other app reads your files.
-    CLOUD_FILES = { auth = "session", cloud = true, from = "CLOUD" },
+    CLOUD_FILES = { auth = "session", cloud = true, from = { "CLOUD", "MUSIC" } },
     CLOUD_PUT = { auth = "session", cloud = true, from = "CLOUD" },
     CLOUD_PUT_DONE = { auth = "session", cloud = true, from = "CLOUD" },
-    CLOUD_GET = { auth = "session", from = "CLOUD" },
+    CLOUD_GET = { auth = "session", from = { "CLOUD", "MUSIC" } },
     CLOUD_RENAME = { auth = "session", from = "CLOUD" },
     CLOUD_DELETE = { auth = "session", cloud = true, from = "CLOUD" },
     CLOUD_SHARE = { auth = "session", from = "CLOUD" },
@@ -6719,6 +7244,12 @@ pair.routes = {
     CLOUD_BEAT = { auth = "cloud" },
     CLOUD_TICKET = { auth = "cloud" },
     CLOUD_KEEP = { auth = "cloud" },
+    -- FoxyOS 17: the Music Server's songs, kept on the Cloud Servers too.
+    CLOUD_MUSIC_PUT = { auth = "music" },
+    CLOUD_MUSIC_PUT_DONE = { auth = "music" },
+    CLOUD_MUSIC_GET = { auth = "music" },
+    CLOUD_MUSIC_DELETE = { auth = "music" },
+    CLOUD_MUSIC_USED = { auth = "music" },
 }
 
 -- Everything the Core checks before a question goes down the cable.
@@ -6727,8 +7258,10 @@ local function routeToVault(action, spec, payload, sender)
     -- was installed under, and an app cannot take the stamp off. So no id
     -- is the phone itself, and "from" names the one app that may ask too.
     if spec.from then
-        need(payload.app_id == nil or payload.app_id == spec.from, "WRONG_APP",
-            "Only " .. spec.from .. " can do that")
+        local from = type(spec.from) == "table" and spec.from or { spec.from }
+        local allowed = payload.app_id == nil
+        for _, appId in ipairs(from) do allowed = allowed or payload.app_id == appId end
+        need(allowed, "WRONG_APP", "Only " .. table.concat(from, " or ") .. " can do that")
     end
     if spec.auth == "company" and not payload.terminal_id then
         local account, company = shop.owned(payload)
@@ -6782,6 +7315,17 @@ local function routeToVault(action, spec, payload, sender)
         return pair.forward(action, payload, { kind = "cloud",
             computer_id = sender })
     end
+    if spec.auth == "music" then
+        -- FoxyOS 17: a Music Server keeping songs on the Cloud Servers, under
+        -- the library's own name rather than anybody's account.
+        local server = music.server(payload, sender)
+        local forwarded = {}
+        for key, value in pairs(payload) do
+            if key ~= "server_token" then forwarded[key] = value end
+        end
+        return pair.forward(action, forwarded, { kind = "music",
+            server_id = server.server_id })
+    end
     local account = spec.auth == "spender" and requireSpender(payload)
         or requireSession(payload)
     if spec.pin then
@@ -6791,7 +7335,19 @@ local function routeToVault(action, spec, payload, sender)
         need(account.myid and account.myid.status == "active", "NEEDS_MYID",
             "Visas need a confirmed Digital ID. Sign up in MyID")
     end
+    -- FoxyOS 17: Messages and Urgent Contact need a phone number, and a day's
+    -- messages and calls are counted once they have gone.
+    if spec.phone then phone.check(account, spec.phone ~= true and spec.phone or nil) end
     local extra = {}
+    -- A chat started with somebody's number rather than with a friend.
+    if spec.dial and payload.number ~= nil then
+        local owner = phone.store()[phone.clean(payload.number) or ""]
+        need(owner and owner.kind == "person", "NO_SUCH_NUMBER",
+            "Nobody has that number")
+        need(owner.account_id ~= account.account_id, "OWN_NUMBER", "That is your own number")
+        payload.account_ids, payload.number = { owner.account_id }, nil
+        extra.dialed = owner.account_id
+    end
     -- FoxMail: which companies this person owns, and so which company
     -- addresses they may read and send as. Only the Core knows.
     if spec.companies then extra.companies = ownedCompanies(account) end
@@ -6824,6 +7380,10 @@ local function routeToVault(action, spec, payload, sender)
     end
     local result = pair.forward(action, forwarded,
         vaultCaller(account, extra))
+    if spec.phone and spec.phone ~= true then
+        phone.count(account, spec.phone)
+        save()
+    end
     if spec.account and type(result) == "table" then
         result.account = publicAccount(account)
     end
@@ -7021,6 +7581,7 @@ local function schedulerLoop()
     while running do
         cleanupEphemeral()
         processSubscriptions()
+        pcall(music.sweepGiveaways)
         processBetHolds()
         pcall(ledger.reconcile)
         pcall(ledger.sweep)
@@ -7891,7 +8452,7 @@ if TEST_MODE then
         records = records,
         read_records = readRecords,
         process_subscriptions = processSubscriptions,
-        cloud = cloud,
+        cloud = cloud, phone = phone, music = music,
     }
 end
 

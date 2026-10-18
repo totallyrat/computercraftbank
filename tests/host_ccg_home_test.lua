@@ -34,7 +34,7 @@ fs = {
         return tostring(left):gsub("/+$", "") .. "/" .. tostring(right):gsub("^/+", "")
     end,
 }
-shell = { getRunningProgram = function() return "/pumpe/ccg.lua" end }
+shell = { getRunningProgram = function() return "/pumpe/ccg_home.lua" end }
 sleep = function() end
 
 local hosted = {}
@@ -126,7 +126,7 @@ local function low(a) return a end
 -- The games --------------------------------------------------------------------------
 
 PUMPE_TEST_MODE = "ccg_home_games"
-local games = assert(loadfile("../ccg.lua"))()
+local games = assert(loadfile("../ccg_home.lua"))()
 PUMPE_TEST_MODE = nil
 assert(games.snake and games.meteors and games.simon and games["2048"], "four games")
 
@@ -243,7 +243,7 @@ end
 -- The console ----------------------------------------------------------------------
 
 PUMPE_TEST_MODE = "ccg_home"
-local console = assert(loadfile("../ccg.lua"))()
+local console = assert(loadfile("../ccg_home.lua"))()
 PUMPE_TEST_MODE = nil
 local device = console.device
 local function refused(code, ...)

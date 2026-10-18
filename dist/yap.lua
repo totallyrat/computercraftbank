@@ -1,4 +1,5 @@
 -- PUMPE APP: Yap!
+-- PUMPE APP ICON: 90000009/90099009/90099009/90000009/90099009/99099999
 -- PUMPE APP ACTION: feed | Yap! feed | What everybody is saying
 -- PUMPE APP ACTION: chat | Yap! chats | Private messages, behind your PIN
 -- PUMPE APP ACTION: map | Yap Map | Where your friends are

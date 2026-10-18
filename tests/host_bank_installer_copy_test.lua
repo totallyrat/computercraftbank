@@ -218,7 +218,7 @@ textutils = { serialize = function(value) return serialize(value) end,
 current = 1
 local installed = {
     ["pumpe/bank_server.lua"] = readRepo("dist/bank_server.lua"),
-    ["pumpe/installer.lua"] = readRepo("startup.lua"),
+    ["pumpe/installer.lua"] = readRepo("dist/startup.lua"),
     ["pumpe/config.lua"] = readRepo("config.lua"),
     ["startup.lua"] = '-- PUMPE ROLE STARTUP\nshell.run("/pumpe/installer.lua", "--boot", "bank")\n',
 }
@@ -293,7 +293,8 @@ local function handedInstaller()
     return body
 end
 
-local installer = readRepo("startup.lua")
+-- As published: since FoxyOS 17 Easy Deployment is stripped like the rest.
+local installer = readRepo("dist/startup.lua")
 
 -- 1. A Bank laid out as Easy Deployment leaves it hands out its own copy.
 assert(handedInstaller() == installer, "a Bank in /pumpe hands out its copy")

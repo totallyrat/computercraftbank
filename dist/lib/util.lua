@@ -438,11 +438,49 @@ function util.sizeText(bytes)
 bytes = math.max(0, math.floor(tonumber(bytes) or 0))
 if bytes < 1024 then return bytes .. " B" end
 local kb = bytes / 1024
-if kb >= 1024 then return string.format("%.1f MB", kb / 1024) end
+if kb >= 1024 then
+local mb = kb / 1024
+if mb >= 100 or mb == math.floor(mb) then return math.floor(mb + 0.5) .. " MB" end
+return string.format("%.1f MB", mb)
+end
 if kb >= 100 or kb == math.floor(kb) then
 return math.floor(kb + 0.5) .. " KB"
 end
 return string.format("%.1f KB", kb)
+end
+
+
+
+
+
+function util.validIcon(icon)
+if type(icon) ~= "string" or #icon ~= 53 then return false end
+local rows = 0
+for row in (icon .. "/"):gmatch("([^/]*)/") do
+if not row:match("^[0-9a-f]+$") or #row ~= 8 then return false end
+rows = rows + 1
+end
+return rows == 6
+end
+
+function util.appIcon(body)
+local icon = tostring(body or ""):match("%-%-%s*PUMPE APP ICON:%s*([0-9a-f/]+)")
+return util.validIcon(icon) and icon or nil
+end
+
+
+
+
+
+function util.withIcon(body, icon)
+body = tostring(body or "")
+if not util.validIcon(icon) then return body end
+local line = "-- PUMPE APP ICON: " .. icon
+local replaced, count = body:gsub("%-%-%s*PUMPE APP ICON:[^\n]*", line, 1)
+if count > 0 then return replaced end
+local first, rest = body:match("^(%-%-%s*PUMPE[^\n]*\n)(.*)$")
+if first then return first .. line .. "\n" .. rest end
+return line .. "\n" .. body
 end
 
 return util

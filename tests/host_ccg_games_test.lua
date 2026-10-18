@@ -57,7 +57,7 @@ fs = {
             close = function() files[path] = table.concat(parts) end }
     end,
 }
-shell = { getRunningProgram = function() return "/pumpe/ccg.lua" end }
+shell = { getRunningProgram = function() return "/pumpe/ccg_home.lua" end }
 sleep = function() end
 os.day = function() return 3 end
 os.time = function() return 12 end
@@ -93,7 +93,7 @@ local function offer(id, name, kind, body)
 end
 offer("BRICKS", "Brick Breaker", "game", readFile("../brickbreaker.lua"))
 offer("NOTES", "Notes", "app", "return function(api) end\n")
-offer("SNOOP", "Snoop", "game", "fs.delete('/pumpe/ccg.lua')\n"
+offer("SNOOP", "Snoop", "game", "fs.delete('/pumpe/ccg_home.lua')\n"
     .. "return { new = function() return {} end, draw = function() end }\n")
 offer("RADIO", "Radio", "game", "return { new = function() rednet.broadcast('hi')"
     .. " return {} end, draw = function() end }\n")
@@ -184,9 +184,9 @@ function ui.message() end
 package.loaded["lib.ui"] = ui
 
 PUMPE_TEST_MODE = "ccg_home"
-local console = assert(loadfile("../ccg.lua"))()
+local console = assert(loadfile("../ccg_home.lua"))()
 PUMPE_TEST_MODE = nil
-files["/pumpe/ccg.lua"] = "the console's own program"
+files["/pumpe/ccg_home.lua"] = "the console's own program"
 
 local home = { screen = "pair", active = true }
 console.new_code(home)
@@ -262,7 +262,7 @@ console.draw(home)
 local snoop = refused("BROKEN", "HOME_GET", { app_id = "SNOOP" })
 assert(tostring(snoop.message):find("fs", 1, true), "reaching for the disk is refused: "
     .. tostring(snoop.message))
-assert(files["/pumpe/ccg.lua"], "and the console's own file is untouched")
+assert(files["/pumpe/ccg_home.lua"], "and the console's own file is untouched")
 assert(not files["/pumpe/games/SNOOP.lua"] and not onMenu("SNOOP"), "and nothing is kept")
 -- What arrives is checked against what the App Server said it was.
 refused("DAMAGED", "HOME_GET", { app_id = "BENT" })
@@ -312,9 +312,9 @@ assert(type(string.rep) == "function" and type(math.random) == "function",
 ask("HOME_REMOVE", { app_id = "WILD" })
 assert(not files["/pumpe/games/WILD.lua"] and not onMenu("WILD"), "removed, file and all")
 refused("NOT_HERE", "HOME_REMOVE", { app_id = "WILD" })
--- Bet Play is not here at all: the browser is Home Mode's.
-local bet = io.open("../ccg.lua"):read("a")
-assert(not bet:match("local function gameMenu%(%)(.-)\nend\n"):find("HOME_BROWSE", 1, true),
-    "the Game Browser is only in Home Mode")
+-- FoxyOS 17: the Game Browser is CCG Home's. A CCG Casino runs no games
+-- from the App Server.
+local casinoConsole = io.open("../ccg_casino.lua"):read("a")
+assert(not casinoConsole:find("HOME_BROWSE", 1, true), "the Game Browser is only in CCG Home")
 
 print("host_ccg_games_test: OK")

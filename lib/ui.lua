@@ -626,6 +626,31 @@ function ui.icon(target, x, y, icon)
     end
 end
 
+-- FoxyOS 17: an icon in its frame -- half a cell of the frame colour down
+-- each side, just outside the picture, on whatever `back` is (the
+-- wallpaper). A 4-cell icon reads as a framed tile five cells wide, where it
+-- used to be a block of colour six wide. Every icon has its own coloured
+-- background inside, so the frame is what sets each one apart.
+ui.ICON_FRAME = colors.lightGray
+
+function ui.iconFramed(target, x, y, icon, frame, back)
+    target = surface(target)
+    frame, back = frame or ui.ICON_FRAME, back or ui.theme.background
+    -- 149 has its left column lit: the text colour on the left, the
+    -- background on the right.
+    for row = 0, ui.ICON_HEIGHT - 1 do
+        target.setCursorPos(x - 1, y + row)
+        target.setTextColor(back)
+        target.setBackgroundColor(frame)
+        target.write(string.char(149))
+        target.setCursorPos(x + ui.ICON_WIDTH, y + row)
+        target.setTextColor(frame)
+        target.setBackgroundColor(back)
+        target.write(string.char(149))
+    end
+    ui.icon(target, x, y, icon)
+end
+
 -- The colour around an icon on a wider tile: the one down its sides.
 function ui.iconEdge(icon)
     local rows, counts, best = ui.iconRows(icon), {}, nil
@@ -1097,10 +1122,12 @@ function ui.serverTabs(spec)
             or spec.subtitle or ""
         ui.header(target, spec.title, subtitle, util.formatClock(blink))
     end
-    -- The end of every page: the bar, then the wait. Nil means redraw.
-    local function finish(scene, tabSpec)
+    -- The end of every page: the bar, then the wait. Nil means redraw. A
+    -- page of the server's own (spec.pages) answers its own buttons first.
+    local function finish(scene, tabSpec, act)
         ui.tabBar(scene, target, tabSpec.list, tabSpec.active, nil, { home = false })
-        local action = scene:wait({ tickRate = spec.tickRate or 0.5, flash = false })
+        local action = scene:wait({ tickRate = spec.tickRate or 0.5, flash = false,
+            files = spec.files })
         blink = not blink
         if action == "__tick" or action == "__idle" then
             if spec.tick then spec.tick() end
@@ -1111,17 +1138,18 @@ function ui.serverTabs(spec)
             return nil
         end
         if action and action:match("^tab:") then return action end
+        if action and act and act(action, scene) then return nil end
         if action then run(action) end
         return nil
     end
-    local function page(draw)
+    local function page(draw, act)
         return function(tabSpec)
             while not spec.running or spec.running() do
                 ui.clear(target)
                 header()
                 local scene = ui.scene(target)
-                draw(scene)
-                local switched = finish(scene, tabSpec)
+                draw(scene, target)
+                local switched = finish(scene, tabSpec, act)
                 if switched then return switched end
             end
         end
@@ -1180,12 +1208,20 @@ function ui.serverTabs(spec)
         end
     end)
 
+    -- FoxyOS 17: a server's own tabs, between Status and the Log. Each is
+    -- { id, label, short, draw(scene, target), act(action, scene) }, and act
+    -- returns true for a button it answered.
+    local list = { { id = "status", label = "Status" } }
+    local pages = { status = status, activity = activity, server = server }
+    for _, extra in ipairs(spec.pages or {}) do
+        list[#list + 1] = { id = extra.id, label = extra.label, short = extra.short }
+        pages[extra.id] = page(extra.draw, extra.act)
+    end
+    list[#list + 1] = { id = "activity", label = "Activity", short = "Log" }
+    list[#list + 1] = { id = "server", label = spec.serverLabel or "Server" }
     ui.runTabs({
         target = target, title = spec.title, subtitle = "Everything here",
-        list = { { id = "status", label = "Status" }, { id = "activity", label = "Activity",
-            short = "Log" }, { id = "server", label = spec.serverLabel or "Server" } },
-        pages = { status = status, activity = activity, server = server },
-        running = spec.running,
+        list = list, pages = pages, running = spec.running,
     })
 end
 

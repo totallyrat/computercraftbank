@@ -136,6 +136,13 @@ end, function(seen)
     return "pickup"
 end, "back", function(seen)
     assert(phone.has(phone.last(seen), "Pickup points: on  >"), "and back on")
+    -- FoxyOS 17: a phone number for the company, from the Store tab.
+    assert(phone.has(phone.last(seen), "Get a phone number"))
+    return "phone"
+end, function(seen)
+    local number = bank.state.companies[company.company_id].phone
+    assert(number and phone.has(phone.last(seen), "Phone: " .. number),
+        "the company has a number of its own")
     return "home"
 end, "home")
 seen = run(ana, script)

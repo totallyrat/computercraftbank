@@ -7,6 +7,73 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 17 (17.0.0)
+
+Update the Bank (Core and Vault) first, then the App Server, the CCG Server, the Cloud Servers (five or more) and every CCG. Then set up one Music Server and a Music Player with Easy Deployment. Run the Beta 2 and Beta 3 sections below too: on 17.0 they are no longer a beta.
+
+### Coming from 16.3.1
+
+- [ ] An old CCG asks once: **CCG Casino** or **CCG Home**. Easy Deployment lists both, and `casino` and `music` find them.
+- [ ] A Pocket gets FoxyCloud and Music by itself: *New apps are here*, naming both (and Yap! if it was missing).
+
+### Icons
+
+- [ ] Every Home Screen icon is on a coloured background, never white or black, in a light grey frame down both sides; a tile looks five cells wide, not six.
+- [ ] The dock shows the same pictures, without the frame. An app opening shows its icon framed, on its colour.
+
+### Phone numbers
+
+- [ ] Messages has **Chats**, **Groups** and **Phone**. Without a number, **+ New chat** offers *Get a number*; **NOT NOW** leaves it. Government messages and VerCodes still arrive.
+- [ ] **Phone → Get a number**: a number like `482-7316`, and *Today: Messages 0 / 40, Calls 0 / 10*.
+- [ ] **Text a number** with a non-friend's number opens a chat with them. **Call a number** rings them through Urgent Contact.
+- [ ] The 41st message of the day is refused: *That is all your messages for today. FoxyCloud+ has more*. Tomorrow (in-game) it is 40 again.
+- [ ] Company app → a company → **Store → Get a phone number**. Calling it from another Pocket tells the owner who called, with their number.
+
+### FoxyCloud+ tiers
+
+- [ ] FoxyCloud → **Plus** shows two cards: **Tier 1** 25 MB 500, **Tier 2** 50 MB 1000. Tapping one shows its perks.
+- [ ] Get Tier 1 (PIN): 500 charged, 25 MB, Messages shows 500 a day.
+- [ ] Two days later, Tier 2: **Upgrade: $500 now**, charged 500, the next charge day unchanged; messages and calls unlimited.
+- [ ] Tier 1 again: **Step down at renewal**, nothing charged; it says *Tier 1 from day N*, and on that day 500 is charged and it is Tier 1.
+
+### The Music Server
+
+- [ ] Easy Deployment → **Music Server**: it asks for the operator code once and shows **Status**, **Library**, **Radios**.
+- [ ] Drop two `.dfpwm` songs, a short host clip, an ad and a giveaway clip on its **Library** tab: each asks title, artist, kind and credit, uploads with a bar, and is listed with its kind and length. The Cloud Servers' PIECES counts go up.
+- [ ] **Radios → NEW RADIO**: a name, then the radio's page shows *Call* and its number. Put the songs in rotation (**Songs**), the host, the ad and the clip. Change its colour.
+- [ ] Tap a track: rename it, change its kind, put it on a radio, **DELETE** it (it goes from the radio too).
+
+### A Music Player
+
+- [ ] Easy Deployment → **Music Player** on a computer with a speaker (and a monitor). Sign in with name and PIN, and name the player.
+- [ ] **Library**: songs only (no hosts, ads or clips), each *by* who uploaded it. Tap one: it plays through the speaker, Now Playing shows it with a bar. `+` queues another, and it plays next.
+- [ ] Pause and play resume where it was. **Next** moves on. Volume - and + change it within a few seconds.
+- [ ] Without FoxyCloud+, the 11th song of the day stops it: *10 songs a day without FoxyCloud+. Radios are free*.
+- [ ] **Radio**: the station in its colour; tap it and it plays, live, with the radio's name and number on Now Playing. Two players on the same radio play the same moment. Hosts talk between songs, ads every few songs; **SKIP** on the Music Server moves both on.
+- [ ] **Upload**: drop a `.dfpwm` file on its screen, give it a title and artist: it is in the library, by you. The third upload of the day is refused without FoxyCloud+.
+- [ ] The monitor shows the song, the radio's colour and number.
+
+### Radio giveaways
+
+- [ ] On the Music Server, a radio with a giveaway clip → **GIVEAWAY NOW**: after the current song the clip plays and the radio's page says *GIVEAWAY OPEN call ...*.
+- [ ] Now Playing on the Music Player, its monitor and the Music app all show **GIVEAWAY! Call <number>** and the time left.
+- [ ] Music app → **Call** (or Messages → Phone → Call a number): *A call is $50*, then *You're in!*. Call again: two entries, 100 paid.
+- [ ] Calling the radio when no giveaway is on: *Foxy FM is not taking calls right now*, nothing charged.
+- [ ] When it closes, one caller gets *You won on <radio>* and 100 to 500 in their account; Now Playing shows the winner for a few minutes.
+
+### The Music app
+
+- [ ] **Now**: your player at the top (tap to choose another), what it plays, the buttons. A player that is off says so.
+- [ ] **Library** → a song plays on the chosen player. **Radio** → a station. **Upload** → From this Pocket (a `.dfpwm` in Downloads), dropped on the screen, and From FoxyCloud (a `.dfpwm` saved there): each is in the library, by you.
+
+### CCG Casino music
+
+- [ ] My Casino → a table → **Music** has **MIDI** and **DFPWM**. MIDI: a song on the console, and **From FoxyCloud** plays a `.mid` from your FoxyCloud that is not on the console.
+- [ ] Restart the CCG Casino computer while a FoxyCloud song plays: it plays again by itself after the restart.
+- [ ] **DFPWM → Songs** without FoxyCloud+: *Songs and radios on a CCG Casino need FoxyCloud+*. With it: the song plays on repeat, quieter while a game is on. **Radios**: a station, live.
+- [ ] Cancel FoxyCloud+ and let it run out: when the song (or the radio's item) playing ends, the table stops, and My Casino shows *Cannot play: ... FoxyCloud+*.
+- [ ] A CCG Casino still on 16.5.1: My Casino says *Update the CCG first* instead of failing quietly.
+
 ## FoxyOS 17 Beta 3 (16.5.2)
 
 Update the Bank (Core and Vault) to 16.3 and set up two or more Cloud Servers first (see FoxyOS 16.3). Then sign up the Pockets, the CCG Server and the CCG Casinos to Beta Updates.

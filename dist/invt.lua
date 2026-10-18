@@ -1,4 +1,5 @@
 -- PUMPE APP: INVT
+-- PUMPE APP ICON: cccccccc/c000000c/c000000c/c00cc00c/c000000c/cccccccc
 -- PUMPE APP ACTION: feed | What's on | Events you can go to
 -- PUMPE APP ACTION: new | New event | Invite people to something
 -- PUMPE APP ACTION: tickets | My INVT tickets | The tickets you hold

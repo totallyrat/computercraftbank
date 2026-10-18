@@ -2,11 +2,11 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "16.5.2",
+    version = "17.0.0",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
-    release_name = "FoxyOS 17 Beta 3",
+    release_name = "FoxyOS 17",
     protocol = "PUMPE_BANK_V5",
     -- Shop, 11.0. In in-game time, like the rest of the Shop: a Minecraft
     -- day is twenty real minutes, so two hours is about a minute and forty
@@ -117,7 +117,9 @@ return {
     -- right gets the new default instead, because an update otherwise
     -- preserves every local setting and a retired placeholder would stay
     -- forever.
-    config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY" },
+    -- FoxyOS 17: a Cloud Server piece is 16 KB, the size a speaker plays at
+    -- once, where it was 6000.
+    config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY", cloud_chunk_size = 6000 },
 
     -- Foxy. The new bank inside the PUMPE: sub-accounts you can split money
     -- into, and Foxy Cash, an instant friends-only transfer with a flat fee
@@ -136,13 +138,21 @@ return {
     -- Cash fee, and early tickets for the events that offer them.
     cloud_protocol = "PUMPE_CLOUD_V1",
     cloud_free_bytes = 100 * 1024,
-    cloud_plus_bytes = 500 * 1024,
-    foxycloud_plus_price = 500,
     foxycloud_plus_days = 5,
+    -- FoxyOS 17: FoxyCloud+ has two tiers, now that every computer has 50 MB.
+    -- What a tier leaves out is unlimited. Messages, Urgent Contact calls,
+    -- songs played and songs uploaded are counted per in-game day.
+    foxycloud_free = { messages = 40, calls = 10, plays = 10, uploads = 2 },
+    foxycloud_tiers = {
+        { name = "FoxyCloud+ Tier 1", short = "Tier 1", price = 500,
+          bytes = 25 * 1024 * 1024, messages = 500, calls = 100 },
+        { name = "FoxyCloud+ Tier 2", short = "Tier 2", price = 1000,
+          bytes = 50 * 1024 * 1024 },
+    },
     -- A file is cut into pieces this big, each on whichever Cloud Server has
     -- the most room. One copy of each by default, which is the most storage;
     -- 2 keeps every piece on two servers, so one can be lost.
-    cloud_chunk_size = 6000,
+    cloud_chunk_size = 16 * 1024,
     cloud_copies = 1,
     cloud_max_files = 100,
     -- What a Cloud Server keeps free for itself, and how long one can go
@@ -150,6 +160,20 @@ return {
     cloud_server_reserve_bytes = 20000,
     cloud_server_seen_ms = 60 * 1000,
     cloud_ticket_ms = 2 * 60 * 1000,
+
+    -- Phone numbers, FoxyOS 17. Messages and Urgent Contact need one. A call
+    -- to a radio's number during a giveaway costs this, and every call is
+    -- another entry; the winner gets a random prize in this range.
+    phone_call_price = 50,
+    giveaway_prize = { 100, 500 },
+    giveaway_seconds = 180,
+
+    -- Music, FoxyOS 17. Songs are DFPWM1a, 48 kHz: 6000 bytes a second,
+    -- kept on the Cloud Servers. The Music Server holds the library and the
+    -- radios; Music Players and the CCG Casino play them through speakers.
+    music_protocol = "PUMPE_MUSIC_V1",
+    music_hostname = "MUSIC_SERVER",
+    music_max_bytes = 12 * 1024 * 1024,
 
     -- The App Server. Optional apps are downloaded from here rather than
     -- from the Bank, so a busy download never slows banking down. Publishing

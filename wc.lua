@@ -1,5 +1,5 @@
 -- PUMPE APP: Website Crafter
--- PUMPE APP ICON: ff5ff5ff/f5ffff5f/5ffffff5/f5ffff5f/ff5ff5ff/ffffffff
+-- PUMPE APP ICON: 55555555/55f55f55/5f5555f5/5f5555f5/55f55f55/55555555
 -- PUMPE APP ACTION: new | New website | Reserve a domain
 -- PUMPE APP ACTION: sites | My websites | Edit what you have made
 --

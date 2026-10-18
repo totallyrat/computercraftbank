@@ -26,7 +26,7 @@ end
 
 local icons = {}
 local SHIPPED = { "foxy", "foxmail", "yap", "foxycloud", "company", "shop", "internet",
-    "wc", "invt", "buckapp", "revolution", "brickbreaker" }
+    "wc", "invt", "buckapp", "revolution", "brickbreaker", "music" }
 for _, name in ipairs(SHIPPED) do
     local icon = util.appIcon(read("../" .. name .. ".lua"))
     assert(icon, name .. ".lua declares no icon")
@@ -76,6 +76,18 @@ for name, icon in pairs(icons) do
     end
 end
 
+-- FoxyOS 17: every icon has a coloured background -- never white or black --
+-- and it runs all the way down both sides, inside the frame.
+for name, icon in pairs(icons) do
+    local rows = ui.iconRows(icon)
+    local back = rows[1]:sub(1, 1)
+    assert(back ~= "0" and back ~= "f", name .. " has a white or black background")
+    for _, row in ipairs(rows) do
+        assert(row:sub(1, 1) == back and row:sub(8, 8) == back,
+            name .. ": its background does not reach both sides")
+    end
+end
+
 -- A cell painted in three colours shows its two most common, and draws.
 local char, fore, back = ui.iconCell({ "e", "e", "e", "0", "0", "b" })
 assert((fore == "e" or back == "e") and (fore == "0" or back == "0"),
@@ -95,6 +107,21 @@ end
 assert(terminal.backAt(4, 7) == colors.black and terminal.backAt(9, 7) == colors.black,
     "and nothing beside it")
 assert(chosen and foreAt)
+
+-- FoxyOS 17: the frame. Half a cell of light grey just outside each side of
+-- the picture, on the wallpaper: the tile reads as five cells wide, framed.
+local framed = screen.terminal(26, 20)
+ui.iconFramed(framed, 5, 3, icons.music)
+for row = 3, 4 do
+    assert(framed.foreAt(4, row) == colors.black and framed.backAt(4, row) == colors.lightGray,
+        "the left frame: its outer half the wallpaper, its inner half the frame")
+    assert(framed.foreAt(9, row) == colors.lightGray and framed.backAt(9, row) == colors.black,
+        "the right frame: its inner half the frame, its outer half the wallpaper")
+end
+assert(framed.backAt(5, 3) == colors.pink and framed.backAt(8, 4) == colors.pink,
+    "the picture between, on its own colour")
+assert(framed.backAt(3, 3) == colors.black and framed.backAt(10, 3) == colors.black,
+    "and nothing past the frame")
 
 -- The colour down an icon's sides, for padding a wider tile.
 assert(ui.iconEdge(icons.foxy) == colors.orange)

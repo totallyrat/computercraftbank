@@ -17,7 +17,6 @@ local function readRepo(path)
     return body
 end
 harness.readRepo = readRepo
-harness.installer = readRepo("startup.lua")
 harness.manifest = json.decode(readRepo("release_manifest.json"))
 
 -- Where each published path is downloaded from.
@@ -31,6 +30,10 @@ end
 function harness.published(path)
     return readRepo(harness.sources[path] or path)
 end
+-- Easy Deployment as the release publishes it: since FoxyOS 17 its comments
+-- are stripped like every program's, so what a computer is given is
+-- dist/startup.lua, not the readable source at the root.
+harness.installer = harness.published("startup.lua")
 
 local function norm(path)
     path = tostring(path or ""):gsub("\\", "/"):gsub("/+", "/")

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "16.3.1"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -412,8 +412,14 @@ end
 
 local middle = math.floor(height / 2)
 ui.fill(target, 1, 1, width, height, color)
+if app.icon and ui.iconFramed then
+ui.iconFramed(target, math.floor(width / 2) - 1, middle - 3, app.icon, nil, color)
+elseif app.icon and ui.icon then
+ui.icon(target, math.floor(width / 2) - 1, middle - 3, app.icon)
+else
 ui.fill(target, math.floor(width / 2) - 2, middle - 3, 5, 3, edge)
 ui.center(target, middle - 2, tostring(app.glyph or "?"), color, edge)
+end
 ui.center(target, middle + 1, ui.truncate(app.name or "", width - 2),
 ui.inkOn(color), color)
 sleep(0.15)
@@ -875,10 +881,19 @@ if phase == "general" then
 return "ON SALE" .. (event.from_price
 and ("  from " .. money(event.from_price)) or ""), colors.lime
 end
+
+local early = event.plus_member and event.plus_day
+if early and (phase == "plus" or phase == "presale") then
+return "OPEN FOR FOXYCLOUD+", colors.yellow
+end
+if early and phase == "soon" then
+return "FOXYCLOUD+ DAY " .. event.plus_day .. " "
+.. tostring(event.plus_time), colors.yellow
+end
 if phase == "presale" and event.invited then
 return "PRESALE OPEN FOR YOU", colors.magenta
 end
-if event.invited and event.presale_day and phase == "soon" then
+if event.invited and event.presale_day and (phase == "soon" or phase == "plus") then
 return "PRESALE DAY " .. event.presale_day .. " "
 .. tostring(event.presale_time), colors.magenta
 end
@@ -1097,14 +1112,17 @@ local width, height = target.getSize()
 ui.clear(target)
 local scene = ui.scene(target)
 if mine.waiting_room then
-local opens = mine.queue_phase == "presale"
+local opens = mine.queue_phase == "plus"
+and { event.plus_day, event.plus_time }
+or mine.queue_phase == "presale"
 and { event.presale_day, event.presale_time }
 or { event.release_day, event.release_time }
 local countdown = opens[1] and util.eventCountdown(opens[1], opens[2])
 or "soon"
 ui.header(target, "Waiting room", ui.truncate(event.title, width - 3))
-ui.center(target, 5, mine.queue_phase == "presale"
-and "THE PRESALE OPENS IN" or "THE SALE OPENS IN", ui.theme.muted)
+ui.center(target, 5, mine.queue_phase == "plus" and "FOXYCLOUD+ OPENS IN"
+or mine.queue_phase == "presale" and "THE PRESALE OPENS IN"
+or "THE SALE OPENS IN", ui.theme.muted)
 ui.center(target, 7, countdown, colors.yellow)
 ui.center(target, 8, "Day " .. tostring(opens[1]) .. "  "
 .. tostring(opens[2]), ui.theme.muted)
@@ -1163,6 +1181,7 @@ ui.message(target, "error", "Cannot open it", err, 1.6)
 return nil
 end
 local event, types = details.event, details.ticket_types or {}
+event.plus_member = details.plus_member
 local mine = details.mine or { status = "none", limit = 5, bought = 0 }
 local width, height = target.getSize()
 ui.clear(target)
@@ -1198,14 +1217,20 @@ ui.fill(target, 2, 13, width - 2, 1, color)
 ui.center(target, 13, ui.truncate(label, width - 2), colors.black, color)
 local note
 if (event.phase or "general") ~= "general" then
-local presale = event.invited and event.phase == "soon"
+local early = event.plus_member and event.plus_day and event.phase == "soon"
+local presale = event.invited and event.phase ~= "presale"
 and event.presale_day
-note = presale and ("Presale in " .. util.eventCountdown(
+note = early and ("FoxyCloud+ in " .. util.eventCountdown(
+event.plus_day, event.plus_time))
+or presale and ("Presale in " .. util.eventCountdown(
 event.presale_day, event.presale_time))
 or ("Sale in " .. util.eventCountdown(event.release_day,
 event.release_time))
-if event.phase == "presale" and not event.invited then
+if event.phase == "presale" and not event.invited
+and not (event.plus_member and event.plus_day) then
 note = "Presale is invite only"
+elseif event.phase == "plus" and not event.plus_member then
+note = "FoxyCloud+ members first"
 end
 end
 note = note or ("Up to " .. (mine.limit or 5) .. " each"
@@ -1222,6 +1247,9 @@ elseif event.sold_out or mine.sold_out or #types == 0 then
 cta, enabled = event.sold_out and "Sold out" or "Not on sale yet", false
 elseif (mine.bought or 0) >= (mine.limit or 5) then
 cta, enabled = "You have " .. mine.bought .. " of " .. mine.limit, false
+elseif event.plus_member and event.plus_day
+and (event.phase == "plus" or event.phase == "presale") then
+cta = "Join, FoxyCloud+ early"
 elseif event.phase == "presale" and event.invited then
 cta = "Join the presale"
 elseif (event.phase or "general") ~= "general" then
@@ -1252,6 +1280,7 @@ function eventsScreen(tabs)
 local result = request("LIST_EVENTS")
 if not result then return end
 local events, page, blink = result.events, 1, true
+for _, event in ipairs(events) do event.plus_member = result.plus_member end
 while running and sessionToken do
 local width = target.getSize()
 ui.clear(target)
@@ -1296,6 +1325,7 @@ local switched = eventPage(eventId)
 if switched and tabs then return switched end
 result = request("LIST_EVENTS", {}, true) or result
 events = result.events
+for _, event in ipairs(events) do event.plus_member = result.plus_member end
 end
 end
 end
@@ -2156,15 +2186,6 @@ end
 local ccgApp
 do
 
-local betColors = {
-red = colors.red,
-orange = colors.orange,
-yellow = colors.yellow,
-green = colors.lime,
-blue = colors.lightBlue,
-purple = colors.purple,
-}
-
 
 
 
@@ -2202,288 +2223,436 @@ end
 
 
 
-local function chooseBetSelection(lobby)
-local width, height = target.getSize()
-if lobby.game == "survivor" then
-ui.clear(target)
-ui.header(target, "Survivor", "Interactive // 3X", util.formatClock())
-ui.card(target, 2, 5, width - 2, 8, colors.purple)
-ui.center(target, 7, "LAST ONE STANDING", ui.theme.ink)
-ui.wrappedText(target, 4, 9,
-"Use the touch joystick. Get close and PUSH opponents off the ring.",
-width - 6, 3, ui.theme.muted)
-local scene = ui.scene(target)
-scene:button("continue", 2, 15, width - 2, 3,
-"SET WAGER", { background = colors.purple })
-scene:button("back", 1, height, 8, 1, "< Back",
-{ background = ui.theme.panel })
-return scene:wait() == "continue" and "survivor" or nil
-end
-while true do
-ui.clear(target)
-ui.header(target, lobby.game_name,
-"Choose your pick // " .. lobby.multiplier .. "X",
-util.formatClock())
-local scene = ui.scene(target)
-if lobby.game == "heads_tails" then
-scene:button("pick:heads", 2, 6, width - 2, 5,
-"H\nHEADS", { background = colors.orange,
-foreground = colors.black })
-scene:button("pick:tails", 2, 12, width - 2, 5,
-"T\nTAILS", { background = colors.blue })
-else
-local choices = {
-"red", "orange", "yellow", "green", "blue", "purple",
+
+
+
+
+local casino = {
+NAMES = { roulette = "Roulette", blackjack = "Blackjack",
+heads_tails = "Heads or Tails", poker = "Poker" },
+
+SHORT = { roulette = "Roulette", blackjack = "Blackjack", heads_tails = "Coin flip",
+poker = "Poker" },
+GAMES = { "roulette", "blackjack", "heads_tails", "poker" },
+COLORS = { roulette = colors.green, blackjack = colors.gray,
+heads_tails = colors.yellow, poker = colors.purple },
+SUITS = { string.char(3), string.char(4), string.char(5), string.char(6) },
+RANKS = { [11] = "J", [12] = "Q", [13] = "K", [14] = "A" },
+WHEEL = { 0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5,
+24, 16, 33, 1, 20, 14, 31, 9, 22, 18, 29, 7, 28, 12, 35, 3, 26 },
+RED = {},
 }
-local buttonWidth = math.floor((width - 5) / 2)
-for index, name in ipairs(choices) do
-local column = (index - 1) % 2
-local row = math.floor((index - 1) / 2)
-local x = column == 0 and 2 or width - buttonWidth
-local y = 5 + row * 4
-scene:button("pick:" .. name, x, y, buttonWidth, 3,
-string.upper(name), {
-background = betColors[name],
-foreground = (name == "yellow" or name == "orange"
-or name == "green") and colors.black or colors.white,
-})
+for _, number in ipairs({ 1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32,
+34, 36 }) do casino.RED[number] = true end
+
+function casino.ease(x)
+x = math.max(0, math.min(1, x))
+return 1 - (1 - x) ^ 3
 end
-end
-scene:button("back", 1, height, 8, 1, "< Back",
-{ background = ui.theme.panel })
-local action = scene:wait()
-local selection = action and action:match("^pick:(.+)$")
-if selection then return selection end
-if action == "back" or action == "__terminate" then return nil end
-end
+
+function casino.pocketColor(number)
+if number == 0 then return colors.green end
+return casino.RED[number] and colors.red or colors.black
 end
 
 
+function casino.card(x, y, card, small, lit)
+local w, h = small and 3 or 5, small and 2 or 4
+if card == 0 then
+ui.fill(target, x, y, w, h, colors.blue)
+ui.text(target, x, y, string.rep("\127", w), colors.lightBlue, colors.blue)
+return
+end
+local rank = (card - 1) % 13 + 2
+local suit = math.floor((card - 1) / 13) + 1
+local label = casino.RANKS[rank] or tostring(rank)
+local ink = suit <= 2 and colors.red or colors.black
+local face = lit and colors.yellow or colors.white
+ui.fill(target, x, y, w, h, face)
+ui.text(target, x, y, label, ink, face)
+if small then
+ui.text(target, x + w - 1, y + 1, casino.SUITS[suit], ink, face)
+else
+ui.text(target, x + 2, y + 1, casino.SUITS[suit], ink, face)
+ui.text(target, x + w - #label, y + h - 1, label, ink, face)
+end
+end
+
+function casino.hand(x, y, cards, small, room, litFrom)
+local w = small and 3 or 5
+local step = w + 1
+if #cards > 1 and (#cards - 1) * step + w > room then
+step = math.max(1, math.floor((room - w) / (#cards - 1)))
+end
+for index, card in ipairs(cards) do
+casino.card(x + (index - 1) * step, y, card, small, litFrom and index >= litFrom)
+end
+end
+
+
+function casino.betWords(bet)
+if bet.kind == "straight" then return "Number " .. tostring(bet.pick) end
+if bet.kind == "dozen" then return ({ "1-12", "13-24", "25-36" })[bet.pick] or "Dozen" end
+if bet.kind == "column" then return "Column " .. tostring(bet.pick) end
+if bet.kind == "hand" then return "Hand" end
+local words = { red = "Red", black = "Black", odd = "Odd", even = "Even",
+low = "1-18", high = "19-36", heads = "Heads", tails = "Tails" }
+return words[tostring(bet.pick)] or tostring(bet.pick)
+end
 
 
 
-local function betResultScreen(result, wallet, code)
+function casino.ask(code, action, extra)
+local payload = extra or {}
+payload.code = code
+return betRequest(action, payload, true)
+end
+
+
+function casino.slip(game, wallet)
+local bets = {}
+local function amountFor(title)
+local text = ui.input(target, title, {
+hint = "Bet Wallet " .. money(wallet and wallet.available or 0),
+mode = "number", maxLength = 10 })
+local amount = tonumber(text)
+if not amount or amount <= 0 then return nil end
+return amount
+end
+if game == "blackjack" or game == "poker" then
+local amount = amountFor(game == "poker" and "Your ante" or "Your bet")
+return amount and { { kind = "hand", amount = amount } } or nil
+end
+if game == "heads_tails" then
 local width, height = target.getSize()
-local cancelled = result.status == "cancelled"
-while running do
 ui.clear(target)
-ui.header(target, cancelled and "ROUND CANCELLED" or result.won and "YOU WON"
-or "ROUND COMPLETE", result.game_name, util.formatClock())
-ui.card(target, 2, 5, width - 2, 8, result.won and ui.theme.success
-or ui.theme.warning)
-if cancelled then
-ui.center(target, 7, "WAGER RETURNED", ui.theme.ink)
-ui.center(target, 9, ui.truncate(tostring(result.cancelled_reason
-or "Round stopped"), width - 6), ui.theme.muted)
-elseif result.won then
-ui.center(target, 7, money(result.payout), ui.theme.ink)
-ui.center(target, 9, "NOW HOLDING", ui.theme.warning)
-local release = "One full in-game day"
-for _, hold in ipairs(wallet and wallet.holds or {}) do
-if hold.hold_id == result.hold_id then
-release = "Day " .. hold.release_day .. " " .. hold.release_time
-break
-end
-end
-ui.center(target, 11, release, ui.theme.muted)
-else
-ui.center(target, 7, "NOT THIS ROUND", ui.theme.ink)
-ui.center(target, 9,
-result.game == "survivor" and (tostring(result.winner_name) .. " survived")
-or "Result: " .. string.upper(result.outcome or "?"),
-ui.theme.muted)
-end
-if wallet then
-ui.center(target, 11 + (result.won and 3 or 0), "BET WALLET "
-.. money(wallet.available), ui.theme.muted)
-end
-ui.center(target, height - 5, ui.truncate("Same code: " .. tostring(code),
-width - 2), colors.cyan)
+ui.header(target, "Heads or Tails", "Pays 2x", util.formatClock())
 local scene = ui.scene(target)
-local half = math.floor((width - 3) / 2)
-scene:button("leave", 2, height - 3, half, 2, "LEAVE",
+scene:button("heads", 2, 5, width - 2, 5, "H\nHEADS",
+{ background = colors.yellow, foreground = colors.black })
+scene:button("tails", 2, 11, width - 2, 5, "T\nTAILS",
+{ background = colors.orange, foreground = colors.black })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local pick = scene:wait()
+if pick ~= "heads" and pick ~= "tails" then return nil end
+local amount = amountFor("On " .. pick)
+return amount and { { kind = "pick", pick = pick, amount = amount } } or nil
+end
+
+local CHOICES = {
+{ "Number", "straight" }, { "Red", "even", "red", colors.red },
+{ "Black", "even", "black", colors.black }, { "Odd", "even", "odd" },
+{ "Even", "even", "even" }, { "1-18", "even", "low" }, { "19-36", "even", "high" },
+{ "1-12", "dozen", 1 }, { "13-24", "dozen", 2 }, { "25-36", "dozen", 3 },
+{ "Col 1", "column", 1 }, { "Col 2", "column", 2 }, { "Col 3", "column", 3 },
+}
+while running do
+local width, height = target.getSize()
+ui.clear(target)
+local total = 0
+for _, bet in ipairs(bets) do total = total + bet.amount end
+ui.header(target, "Roulette", #bets .. " bets  " .. money(total), util.formatClock())
+local scene = ui.scene(target)
+local columns, w = 3, math.floor((width - 4) / 3)
+for index, choice in ipairs(CHOICES) do
+local column = (index - 1) % columns
+local row = math.floor((index - 1) / columns)
+scene:button("choice:" .. index, 2 + column * (w + 1), 4 + row * 2, w, 1,
+choice[1], { background = choice[4] or ui.theme.panel,
+foreground = choice[4] and colors.white or nil,
+disabled = #bets >= 8 })
+end
+local listY = 4 + math.ceil(#CHOICES / columns) * 2
+for index, bet in ipairs(bets) do
+local y = listY + index - 1
+if y > height - 4 then break end
+ui.text(target, 2, y, ui.truncate(casino.betWords(bet) .. "  " .. money(bet.amount),
+width - 6), ui.theme.ink)
+scene:button("drop:" .. index, width - 3, y, 3, 1, "x",
 { background = ui.theme.danger })
-scene:button("stay", 3 + half, height - 3, width - 3 - half, 2, "NEXT GAME",
-{ background = ui.theme.accent,
-foreground = ui.theme.accentInk or ui.inkOn(ui.theme.accent) })
-local action = scene:wait({ tickRate = 2 })
-if action == "stay" then return "stay" end
-if action == "leave" then return "leave" end
-if action == "__terminate" then
-running = false
-return "leave"
 end
-if action == "__tick" then
-betRequest("BET_LOBBY_STATUS", { code = code }, true)
+scene:button("place", 2, height - 2, width - 2, 2, #bets > 0
+and ("PLACE " .. #bets .. (#bets == 1 and " BET" or " BETS")) or "PICK A BET",
+{ background = #bets > 0 and ui.theme.success or ui.theme.panel,
+foreground = colors.black, disabled = #bets == 0 })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return nil end
+if action == "place" then return bets end
+local drop = tonumber(action and action:match("^drop:(%d+)$"))
+if drop then table.remove(bets, drop) end
+local index = tonumber(action and action:match("^choice:(%d+)$"))
+local choice = index and CHOICES[index]
+if choice then
+local pick = choice[3]
+if choice[2] == "straight" then
+pick = tonumber(ui.input(target, "Which number?", { hint = "0 to 36",
+mode = "integer", maxLength = 2 }) or "")
+end
+if pick ~= nil and (choice[2] ~= "straight" or (pick >= 0 and pick <= 36)) then
+local amount = amountFor("On " .. (choice[2] == "straight"
+and tostring(pick) or choice[1]))
+if amount then
+bets[#bets + 1] = { kind = choice[2], pick = pick, amount = amount }
 end
 end
-return "leave"
+end
+end
+end
+
+
+function casino.outcomeCard(y, result, view, last)
+local width = target.getSize()
+local payout = result and result.payout or 0
+local pushed = result and result.pushed or 0
+local colour = payout > 0 and ui.theme.success or pushed > 0 and ui.theme.warning
+or ui.theme.danger
+ui.card(target, 2, y, width - 2, 4, colour)
+local words = payout > 0 and ("YOU WON " .. money(payout))
+or pushed > 0 and ("A TIE: " .. money(pushed) .. " BACK") or "NOT THIS TIME"
+ui.center(target, y + 1, words, ui.theme.ink, ui.theme.panel)
+local game, outcome = (last or view).game, (last or view).outcome
+local said
+if game == "roulette" and type(outcome) == "number" then
+said = "The ball: " .. outcome .. (outcome == 0 and " (zero)"
+or (casino.RED[outcome] and " red" or " black"))
+elseif game == "heads_tails" and outcome then
+said = "The coin: " .. string.upper(outcome)
+elseif game == "blackjack" then
+local total = last and last.dealer_total or (view.dealer and view.dealer.total)
+said = total and ("Dealer: " .. total .. (total > 21 and " bust" or "")) or nil
+elseif game == "poker" then
+local hand = last and last.dealer_hand or (view.dealer and view.dealer.hand_name)
+said = hand and ("Dealer: " .. hand) or nil
+end
+if said then ui.center(target, y + 2, ui.truncate(said, width - 4), ui.theme.muted,
+ui.theme.panel) end
+if payout > 0 then ui.center(target, y + 3, "Held for a day", ui.theme.muted, ui.theme.panel) end
 end
 
 
 
-local function waitForNextRound(code, status)
-local frame = 0
-while running and status and not status.lobby.closed
-and not (status.lobby.status == "lobby" and (status.player.wager or 0) <= 0) do
-local lobby, player = status.lobby, status.player
+function casino.sit(code, status)
+local view, me = status.table, status.me
+
+local polledAt, ticks, counts, fresh, reel, roll = util.nowMs(), 0, {}, {}, 0, 0
+local function litFrom(key, cards)
+local count = #(cards or {})
+if count > (counts[key] or 0) then fresh[key] = { from = (counts[key] or 0) + 1,
+at = util.nowMs() } end
+counts[key] = count
+local mark = fresh[key]
+return mark and util.nowMs() - mark.at < 500 and mark.from or nil
+end
+while running and sessionToken do
+if ticks >= 3 then
+ticks = 0
+local seen, err, errCode = casino.ask(code, "TABLE_STATUS")
+if seen then
+if seen.table.round ~= view.round then counts, fresh = {}, {} end
+status, view, me = seen, seen.table, seen.me
+elseif errCode == "TABLE_NOT_FOUND" or errCode == "NOT_JOINED" then
+ui.message(target, "warning", "Not at the table", err, 1.4)
+return
+end
+polledAt = util.nowMs()
+end
+local elapsed = util.nowMs() - polledAt
+local function left(field)
+return view[field] and math.max(0, view[field] - elapsed) or nil
+end
 local width, height = target.getSize()
-ui.clear(target, colors.black)
-ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
-ui.center(target, 6, ui.truncate(lobby.code, width - 4), colors.cyan,
-colors.black)
-ui.center(target, 8, player.display_name, colors.white, colors.black)
-ui.center(target, 11, lobby.status == "running" and "GAME IN PROGRESS"
-or "NEXT GAME SOON", colors.magenta, colors.black)
-ui.center(target, 13, (lobby.status == "running" and "YOU'RE IN THE NEXT ONE"
-or "THE CCG PICKS IT") .. string.rep(".", frame % 4),
-colors.lightGray, colors.black)
-local scene = ui.scene(target)
-scene:button("leave", 2, height - 3, width - 2, 2, "LEAVE LOBBY",
-{ background = colors.red })
-local action = scene:wait({ tickRate = 0.5 })
-if action == "leave" or action == "__terminate" then
-if action == "__terminate" then running = false end
-betRequest("BET_LEAVE", { code = code }, true)
-return nil
-end
-frame = frame + 1
-status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-end
-return status
-end
-
-
-
-local function roundResult(status, round)
-local lobby, player = status.lobby, status.player
-if (lobby.round or 1) == round
-and (lobby.status == "finished" or lobby.status == "cancelled") then
-return { status = lobby.status, game = lobby.game,
-game_name = lobby.game_name, outcome = lobby.outcome,
-winner_name = lobby.winner_name, cancelled_reason = lobby.cancelled_reason,
-won = player.won, payout = player.payout, hold_id = player.hold_id }
-end
-local last = status.last
-if last and last.round == round and last.played then return last end
-return nil
-end
-
-local function survivorController(code, initial)
-local status, pulse = initial, false
-while status and status.lobby.status == "running" do
-local lobby, player = status.lobby, status.player
-local width, height = target.getSize()
-ui.clear(target, colors.black)
-ui.header(target, "Survivor", player.alive and "YOU ARE IN" or "SPECTATING",
+ui.clear(target)
+ui.header(target, ui.truncate(view.name or "CCG Casino", width - 9),
+view.phase == "wheel" and "Choosing a game" or (view.game_name or ""),
 util.formatClock())
-ui.center(target, 5,
-player.alive and "MOVE + PUSH" or "YOU WERE PUSHED OUT",
-player.alive and colors.lime or colors.red)
 local scene = ui.scene(target)
-if player.alive then
-scene:button("move:0:-1", 10, 7, 7, 2, "UP",
-{ background = colors.gray })
-scene:button("move:-1:0", 2, 10, 7, 3, "LEFT",
-{ background = colors.gray })
-scene:button("move:0:1", 10, 10, 7, 3, "DOWN",
-{ background = colors.gray })
-scene:button("move:1:0", 18, 10, width - 18, 3, "RIGHT",
-{ background = colors.gray })
-scene:button("push", 4, 15, width - 7, 3,
-pulse and "PUSH // LOCKED" or "PUSH!", {
-background = pulse and colors.gray or colors.magenta,
-})
+local phase = view.phase
+me = me or {}
+if phase == "wheel" then
+local games = casino.GAMES
+local target_
+for index, game in ipairs(games) do
+if game == view.wheel_target then target_ = index - 1 end
+end
+local total, remaining = view.phase_ms, left("left_ms")
+if total and remaining and target_ then
+local spins = total >= 4000 and 3 or 1
+local goal = spins * #games + target_
+reel = goal * casino.ease(1 - remaining / total)
 else
-ui.center(target, 10, "Waiting for a winner...", ui.theme.muted)
+reel = reel + 0.06
 end
-local action = scene:wait({ tickRate = 0.25, flash = false })
-local dx, dy = action and action:match("^move:([%-0-9]+):([%-0-9]+)$")
-if dx then
-betRequest("BET_CONTROL", {
-code = code, dx = tonumber(dx), dy = tonumber(dy),
-}, true)
-elseif action == "push" then
-local pushed = betRequest("BET_CONTROL", {
-code = code, dx = 0, dy = 0, push = true,
-}, true)
-pulse = pushed and pushed.pushed == true
-elseif action == "__terminate" then
+local game = games[math.floor(reel) % #games + 1]
+ui.center(target, 5, "The next game", ui.theme.muted)
+ui.fill(target, 3, 7, width - 4, 5, casino.COLORS[game])
+ui.center(target, 9, string.upper(casino.NAMES[game]),
+game == "heads_tails" and colors.black or colors.white, casino.COLORS[game])
+ui.center(target, 13, view.controlled and "The dealer is choosing"
+or "Stopping...", ui.theme.muted)
+elseif phase == "betting" then
+ui.fill(target, 1, 4, width, 1, casino.COLORS[view.game] or ui.theme.accent)
+local remaining = left("left_ms")
+if remaining and view.phase_ms then
+ui.fill(target, 2, 6, width - 2, 1, ui.theme.panel)
+ui.fill(target, 2, 6, math.floor((width - 2) * remaining / view.phase_ms + 0.5), 1,
+remaining < 5000 and ui.theme.danger or ui.theme.success)
+ui.center(target, 7, "Bets close in " .. math.ceil(remaining / 1000) .. "s",
+ui.theme.ink)
+else
+ui.center(target, 7, "The dealer deals when ready", ui.theme.muted)
+end
+local y = 9
+if (me.total or 0) > 0 then
+ui.text(target, 2, y, "Your bets  " .. money(me.total), ui.theme.ink)
+for index, bet in ipairs(me.bets or {}) do
+if y + index > height - 5 then break end
+ui.text(target, 3, y + index, ui.truncate(casino.betWords(bet) .. "  "
+.. money(bet.amount), width - 4), ui.theme.muted)
+end
+else
+ui.wrappedText(target, 2, y, "Place a bet to play this round. "
+.. (view.game == "roulette" and "Up to eight at once." or ""),
+width - 2, 3, ui.theme.muted)
+end
+scene:button("bet", 2, height - 3, width - 2, 2,
+(me.total or 0) > 0 and "CHANGE BETS" or "BET",
+{ background = casino.COLORS[view.game] or ui.theme.accent,
+foreground = view.game == "heads_tails" and colors.black or colors.white })
+elseif phase == "playing" and (view.game == "roulette" or view.game == "heads_tails") then
+local progress = view.step_ms and left("step_left_ms")
+and (1 - left("step_left_ms") / view.step_ms) or 1
+if view.game == "roulette" then
+roll = roll + (1 - casino.ease(progress)) * 1.4 + 0.02
+local number = casino.WHEEL[math.floor(roll) % 37 + 1]
+ui.fill(target, math.floor(width / 2) - 3, 6, 8, 5, casino.pocketColor(number))
+ui.center(target, 8, tostring(number), colors.white, casino.pocketColor(number))
+ui.center(target, 12, "No more bets", ui.theme.muted)
+else
+local squash = math.abs(math.cos(casino.ease(progress) * 14 * math.pi))
+local half = math.max(1, math.floor(6 * squash + 0.5))
+ui.fill(target, math.floor(width / 2) + 1 - half, 6, half * 2, 5,
+math.floor(casino.ease(progress) * 14) % 2 == 0 and colors.yellow
+or colors.orange)
+ui.center(target, 12, "Flipping...", ui.theme.muted)
+end
+local y = 14
+for _, bet in ipairs(me.bets or {}) do
+if y > height - 2 then break end
+ui.text(target, 2, y, ui.truncate(casino.betWords(bet) .. "  " .. money(bet.amount),
+width - 2), ui.theme.ink)
+y = y + 1
+end
+elseif phase == "playing" then
+local dealer = view.dealer or { cards = {} }
+local mine
+for _, player in ipairs(view.players or {}) do if player.me then mine = player end end
+ui.text(target, 2, 4, "Dealer" .. (dealer.total and ("  " .. dealer.total) or ""),
+ui.theme.muted)
+local boardY = 5
+if view.game == "poker" then
+casino.hand(2, 5, dealer.cards or {}, true, 8, litFrom("dealer", dealer.cards))
+local board = {}
+for index = 1, 5 do board[index] = (view.board and view.board.cards[index]) or 0 end
+casino.hand(11, 5, board, true, width - 11, litFrom("board", view.board
+and view.board.cards))
+boardY = 8
+else
+casino.hand(2, 5, dealer.cards or {}, false, width - 2,
+litFrom("dealer", dealer.cards))
+boardY = 10
+end
+local cards = mine and mine.cards or {}
+ui.text(target, 2, boardY, "You", ui.theme.muted)
+casino.hand(2, boardY + 1, cards, false, width - 2, litFrom("me", cards))
+local words = mine and mine.hand_total and ("Total " .. mine.hand_total)
+or me.hand_name or ""
+if me.status and me.status ~= "playing" then
+words = words .. "  " .. string.upper(me.status)
+end
+ui.text(target, 2, boardY + 5, ui.truncate(words, width - 2), ui.theme.ink)
+local options = me.options or {}
+if #options > 0 then
+local each = math.floor((width - 1 - #options) / #options)
+for index, option in ipairs(options) do
+local colour = (option == "hit" or option == "raise") and ui.theme.success
+or (option == "fold") and ui.theme.danger or ui.theme.accent
+scene:button("act:" .. option, 2 + (index - 1) * (each + 1), height - 3,
+each, 2, string.upper(option), { background = colour,
+foreground = colors.black })
+end
+local remaining = left("step_left_ms")
+if remaining then
+ui.text(target, width - 4, boardY + 5, math.ceil(remaining / 1000) .. "s",
+ui.theme.warning)
+end
+elseif (me.total or 0) == 0 then
+ui.center(target, height - 3, "You are watching this one", ui.theme.muted)
+else
+ui.center(target, height - 3, view.step == "dealer" and "The dealer plays"
+or "Waiting for the table", ui.theme.muted)
+end
+elseif phase == "settling" then
+ui.center(target, 9, "Paying out...", ui.theme.muted)
+elseif phase == "result" then
+if (me.total or 0) > 0 or me.result then
+casino.outcomeCard(5, me.result, view)
+else
+ui.center(target, 6, "You sat this one out", ui.theme.muted)
+end
+local remaining = left("left_ms")
+ui.center(target, 11, remaining and ("Next game in " .. math.ceil(remaining / 1000)
+.. "s") or "Next game soon", ui.theme.muted)
+local winners = {}
+for _, winner in ipairs(view.winners or {}) do winners[#winners + 1] = winner.name end
+ui.wrappedText(target, 2, 13, #winners > 0 and ("Won: " .. table.concat(winners, ", "))
+or "The house won this round", width - 2, 3, ui.theme.muted)
+end
+
+if status.last and phase ~= "result" and phase ~= "playing" then
+local result = status.last.result or {}
+local said = (result.payout or 0) > 0 and ("Last round: won " .. money(result.payout))
+or (result.pushed or 0) > 0 and "Last round: a tie" or "Last round: lost"
+ui.text(target, 2, height - 5, ui.truncate(said, width - 2), ui.theme.muted)
+end
+ui.text(target, 2, height - 1, ui.truncate("Code " .. tostring(view.code)
+.. "  Seat " .. tostring(me.seat or "-"), width - 10), ui.theme.muted)
+scene:button("leave", width - 7, height, 7, 1, "LEAVE", { background = ui.theme.danger })
+local action = scene:wait({ tickRate = 0.15 })
+if action == "__tick" then ticks = ticks + 1 end
+if action == "__terminate" then
+casino.ask(code, "TABLE_LEAVE")
 running = false
-return nil
+return
+elseif action == "leave" then
+local done, err = casino.ask(code, "TABLE_LEAVE")
+if done then return end
+ui.message(target, "warning", "Not yet", err, 1.4)
+elseif action == "bet" then
+local bets = casino.slip(view.game, status.wallet)
+if bets then
+local placed, err = casino.ask(code, "TABLE_BET", { bets = bets })
+if placed then
+status, view, me = placed, placed.table, placed.me
+ui.message(target, "success", "Bet placed", money(me.total or 0), 0.8)
+else
+ui.message(target, "error", "Not placed", err, 1.6)
 end
-status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-if not status then return nil end
-if pulse and action == "__tick" then pulse = false end
+polledAt = util.nowMs()
 end
-return status
+elseif action and action:match("^act:") then
+local done, err = casino.ask(code, "TABLE_ACT", { action = action:sub(5) })
+if done then
+status, view, me = done, done.table, done.me
+polledAt = util.nowMs()
+else
+ui.message(target, "error", "Not now", err, 1.2)
 end
-
-local function waitForBetResult(code, initial)
-local status, frame = initial, 0
-
-
-while status and status.lobby.status == "lobby"
-and (status.player.wager or 0) > 0 do
-local lobby, player = status.lobby, status.player
-local width, height = target.getSize()
-ui.clear(target, colors.black)
-ui.header(target, "CCG Lobby", lobby.game_name, util.formatClock())
-ui.center(target, 6, ui.truncate(lobby.code, width - 4),
-colors.cyan, colors.black)
-ui.center(target, 8, player.display_name, colors.white, colors.black)
-ui.center(target, 10,
-string.upper(player.selection) .. " // " .. money(player.wager),
-betColors[player.selection] or colors.magenta, colors.black)
-ui.center(target, 13,
-"WAITING FOR START" .. string.rep(".", frame % 4),
-colors.lightGray, colors.black)
-local scene = ui.scene(target)
-scene:button("leave", 2, height - 3, width - 2, 2,
-"LEAVE + REFUND", { background = colors.red })
-local action = scene:wait({ tickRate = 0.5 })
-if action == "leave" then
-if ui.confirm(target, "Leave Lobby?",
-"Your wager returns to Bet Wallet", "LEAVE", "STAY") then
-local left, leaveError = betRequest("BET_LEAVE", { code = code }, true)
-if left then return nil end
-ui.message(target, "error", "STILL IN THE LOBBY", leaveError, 1.2)
 end
-elseif action == "__terminate" then
-betRequest("BET_LEAVE", { code = code }, true)
-running = false
-return nil
 end
-frame = frame + 1
-status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-if not status then return nil end
-end
-if status and status.lobby.status == "running"
-and status.lobby.game == "survivor" then
-return survivorController(code, status)
-end
-while status and status.lobby.status == "running" do
-local width, height = target.getSize()
-ui.clear(target, colors.black)
-ui.header(target, status.lobby.game_name, "BET LOCKED",
-util.formatClock())
-local symbols = status.lobby.game == "race"
-and { ">--", "->-", "-->", ">>-" }
-or { "H", "T", "H", "T" }
-ui.center(target, 8, symbols[frame % #symbols + 1], colors.magenta,
-colors.black)
-ui.center(target, 11, "GAME IN PROGRESS" .. string.rep(".", frame % 4),
-colors.lightGray, colors.black)
-ui.progress(target, 3, 15, width - 5, frame % 12, 12,
-colors.cyan, colors.gray)
-sleep(0.35)
-frame = frame + 1
-status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
-end
-return status
 end
 
-local function betApp()
+function casino.play()
 local pin = ui.pin(target, "Unlock Bet", true)
 if not pin then return end
 local unlocked, unlockError = request("BET_UNLOCK", { pin = pin }, true)
@@ -2496,100 +2665,475 @@ if (unlocked.wallet.available or 0) <= 0 then
 ui.message(target, "warning", "BET WALLET EMPTY",
 "Add money in Foxy > Bank > Bet Wallet", 1.4)
 end
-local code = ui.input(target, "Join CCG", {
-hint = "Letters + numbers",
-mode = "code",
-maxLength = math.huge,
-scrollToEnd = true,
-})
+local code = ui.input(target, "Table code", { hint = "On the casino's screen",
+mode = "code", maxLength = 12 })
 if not code then return end
 code = string.upper(util.trim(code))
-if not code:match("^[A-Z0-9]+$") then
-ui.message(target, "error", "INVALID CODE",
-"Use letters and numbers only", 1.1)
-return
-end
-local name = ui.input(target, "Player Name", {
-hint = "Shown on the big screen",
-maxLength = 14,
-minLength = 2,
-allowSpace = true,
-initial = account.name,
-})
+local name = ui.input(target, "Your name", { hint = "Shown at the table",
+maxLength = 14, minLength = 2, allowSpace = true, initial = account.name })
 if not name then return end
-local joined, joinError = betRequest("BET_JOIN", {
-code = code,
-display_name = name,
-}, true)
+local joined, err = casino.ask(code, "TABLE_JOIN", { display_name = name })
 if not joined then
-ui.message(target, "error", "CANNOT JOIN", joinError, 1.1)
+ui.message(target, "error", "Cannot sit down", err, 1.4)
 return
+end
+casino.sit(code, joined)
 end
 
 
 
-local status = { lobby = joined.lobby, player = joined.player,
-wallet = unlocked.wallet }
-local myRound
-while running and status do
-local lobby, player = status.lobby, status.player
-if lobby.closed then
-ui.message(target, "warning", "LOBBY CLOSED",
-lobby.cancelled_reason or "The CCG closed it", 1.2)
-return
+
+
+function casino.ownerAsk(action, payload)
+return betRequest(action, payload or {}, true)
 end
-if lobby.status == "lobby" and (player.wager or 0) <= 0 then
-local selection = chooseBetSelection(lobby)
-if not selection then
-betRequest("BET_LEAVE", { code = code }, true)
-return
+
+
+function casino.pick(title, items, empty)
+local page = 1
+while running and sessionToken do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, title, #items .. " to choose from", util.formatClock())
+local scene = ui.scene(target)
+local perPage = math.max(1, math.floor((height - 6) / 2))
+local shown, actual, pages = util.page(items, page, perPage)
+page = actual
+for index, item in ipairs(shown) do
+scene:button("pick:" .. ((page - 1) * perPage + index), 2, 2 + index * 2,
+width - 2, 1, ui.truncate(item.label, width - 4),
+{ background = ui.theme.panel })
 end
-local wallet = status.wallet or unlocked.wallet
-local amountText = ui.input(target, "Set Wager", {
-hint = lobby.multiplier .. "X if you win // Wallet "
-.. money(wallet.available),
-mode = "number",
-maxLength = 12,
-})
-if not amountText then
-betRequest("BET_LEAVE", { code = code }, true)
-return
+if #items == 0 then ui.wrappedText(target, 2, 5, empty, width - 2, 4, ui.theme.muted) end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+if pages > 1 then
+scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
+{ background = ui.theme.panel })
 end
-local placed, placeError, placeCode = betRequest("BET_PLACE_WAGER", {
-code = code,
-selection = selection,
-amount = tonumber(amountText),
-}, true)
-if placed then
-myRound = lobby.round or 1
-status = placed
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return nil end
+if action == "more" then page = page % pages + 1 end
+local picked = items[tonumber(action and action:match("^pick:(%d+)$")) or 0]
+if picked then return picked end
+end
+end
+
+
+
+function casino.sent(sent, sendError, field, name)
+if not sent then
+ui.message(target, "error", "Not playing", sendError, 1.6)
+elseif not (sent.table and sent.table.music and sent.table.music[field]) then
+ui.message(target, "error", "Update the CCG Server",
+"It needs FoxyOS 17 to play this", 2.2)
 else
-if placeCode == "LOBBY_CLOSED" then
-ui.message(target, "warning", "GAME STARTED",
-"You're in the next one", 1.2)
-else
-ui.message(target, "error", "WAGER REJECTED", placeError, 1.2)
+ui.message(target, "success", "Playing", name, 1)
+return true
 end
-status = betRequest("BET_LOBBY_STATUS", { code = code }, true)
 end
-elseif (player.wager or 0) > 0
-and (lobby.status == "lobby" or lobby.status == "running") then
-myRound = myRound or lobby.round or 1
-local final = waitForBetResult(code, status)
-if not final then return end
-local result = roundResult(final, myRound)
-if result and (result.status == "finished" or not final.lobby.closed) then
-if betResultScreen(result, final.wallet, code) == "leave" then
-betRequest("BET_LEAVE", { code = code }, true)
+
+
+
+
+
+function casino.cloudMusic(consoleId)
+local listed, err = request("CLOUD_FILES", {}, true)
+if not listed then
+ui.message(target, "error", "FoxyCloud", err, 1.6)
 return
 end
-final = betRequest("BET_LOBBY_STATUS", { code = code }, true)
+local songs = {}
+for _, file in ipairs(listed.files or {}) do
+if file.kind == "midi" then songs[#songs + 1] = { id = file.file_id, label = file.name } end
 end
-status = final
+local song = casino.pick("FoxyCloud", songs, "No MIDI files in your FoxyCloud. Add them"
+.. " in the FoxyCloud app.")
+if not song then return end
+local plan, planError = request("CLOUD_GET", { file_id = song.id, hold = true }, true)
+if not plan then
+ui.message(target, "error", "Not playing", planError, 1.6)
+return
+end
+casino.sent(casino.ownerAsk("CASINO_CONTROL", { console_id = consoleId, op = "music",
+action = "cloud", name = song.label, cloud = { ticket = plan.ticket,
+chunks = plan.chunks, hosts = plan.hosts } }), "cloud", song.label)
+end
+
+
+
+
+function casino.streamMusic(consoleId, kind)
+local music = net.musicApi and net.musicApi(config, function() return sessionToken end,
+offline, function()
+local where = request("MUSIC_WHERE", {}, true)
+return where and where.computer_id or nil
+end)
+if not music then return end
+local items, listed, err = {}, nil, nil
+if kind == "radio" then
+listed, err = music.ask("MUSIC_RADIOS")
+for _, radio in ipairs(listed and listed.radios or {}) do
+items[#items + 1] = { id = radio.radio_id, label = radio.name }
+end
 else
-status = waitForNextRound(code, status)
+listed, err = music.ask("MUSIC_LIBRARY", { per_page = 50 })
+for _, track in ipairs(listed and listed.tracks or {}) do
+items[#items + 1] = { id = track.track_id, label = track.title .. " - " .. track.artist }
 end
 end
+if not listed then
+ui.message(target, "error", "Music Server", err, 1.6)
+return
+end
+local picked = casino.pick(kind == "radio" and "Radios" or "Songs", items, kind == "radio"
+and "No radios on the Music Server yet." or "No songs in the Music Library yet.")
+if not picked then return end
+local grant, grantError = music.ask("MUSIC_GRANT", { kind = kind, id = picked.id,
+casino_id = consoleId })
+if not grant then
+ui.message(target, "error", "Not playing", grantError, 2)
+return
+end
+casino.sent(casino.ownerAsk("CASINO_CONTROL", { console_id = consoleId, op = "music",
+action = "stream", grant = grant.grant, kind = grant.kind, name = grant.label }),
+"stream", grant.label)
+end
+
+
+
+function casino.musicPage(consoleId)
+local page, mode = 1, nil
+while running and sessionToken do
+local seen = casino.ownerAsk("CASINO_VIEW", { console_id = consoleId })
+if not seen then return end
+local view = seen.table
+local music = view.music or {}
+local library = view.library or {}
+local features = view.features or {}
+mode = mode or (music.mode == "dfpwm" and "dfpwm" or "midi")
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Music", ui.truncate(view.name, width - 3), util.formatClock())
+local scene = ui.scene(target)
+local half = math.floor((width - 3) / 2)
+for index, option in ipairs({ { "midi", "MIDI" }, { "dfpwm", "DFPWM" } }) do
+local on = mode == option[1]
+scene:button("mode:" .. option[1], 2 + (index - 1) * (half + 1), 4,
+index == 1 and half or width - 2 - half, 1, option[2],
+{ background = on and ui.theme.accent or ui.theme.panel,
+foreground = on and (ui.theme.accentInk or colors.black) or ui.theme.ink })
+end
+ui.text(target, 2, 5, ui.truncate((music.playing and ("Playing " .. tostring(music.track))
+or "Not playing"), width - 2), music.playing and ui.theme.success or ui.theme.muted)
+local status = view.music_status
+ui.text(target, 2, 6, ui.truncate(status and status:match("^Cannot") and status
+or ("Volume " .. tostring(music.volume or 5) .. "/10"), width - 2),
+status and status:match("^Cannot") and ui.theme.warning or ui.theme.muted)
+local needs = mode == "dfpwm" and not features.dfpwm
+or mode == "midi" and not features.cloud_midi
+if mode == "dfpwm" then
+scene:button("songs", 2, 8, half, 2, "Songs", { background = colors.pink,
+foreground = colors.black, disabled = needs })
+scene:button("radios", 3 + half, 8, width - 3 - half, 2, "Radios",
+{ background = colors.pink, foreground = colors.black, disabled = needs })
+ui.wrappedText(target, 2, 11, needs and "This CCG Casino needs the FoxyOS 17"
+.. " update to play these." or "From the Music Library: a song on repeat,"
+.. " or a radio live. Needs your FoxyCloud+.", width - 2, 4,
+needs and ui.theme.warning or ui.theme.muted)
+else
+scene:button("cloud", 2, 8, width - 2, 1, needs and "Update the CCG first"
+or "From FoxyCloud", { background = colors.lightBlue,
+foreground = colors.black, disabled = needs })
+local perPage = math.max(1, math.floor((height - 14) / 2))
+local items, actual, pages = util.page(library, page, perPage)
+page = actual
+for index, name in ipairs(items) do
+scene:button("play:" .. ((page - 1) * perPage + index), 2, 8 + index * 2,
+width - 2, 1, ui.truncate(name, width - 4), { background = name
+== music.track and music.playing and ui.theme.accent or ui.theme.panel })
+end
+if #library == 0 then
+ui.wrappedText(target, 2, 10, "No songs on it yet. Drop .mid files onto the"
+.. " CCG Casino computer's screen, or play one from FoxyCloud.",
+width - 2, 4, ui.theme.muted)
+end
+if pages > 1 then
+scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
+{ background = ui.theme.panel })
+end
+end
+local quarter = math.floor((width - 5) / 4)
+scene:button("stop", 2, height - 3, quarter, 2, "STOP", { background = ui.theme.danger })
+scene:button("down", 3 + quarter, height - 3, quarter, 2, "VOL-", { background = ui.theme.panel })
+scene:button("up", 4 + quarter * 2, height - 3, quarter, 2, "VOL+", { background = ui.theme.panel })
+scene:button("next", 5 + quarter * 3, height - 3, width - 4 - quarter * 3, 2, "NEXT",
+{ background = ui.theme.panel, disabled = mode == "dfpwm" })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait({ tickRate = 2 })
+if action == "back" or action == "__terminate" then return end
+local payload = { console_id = consoleId, op = "music" }
+local index = tonumber(action and action:match("^play:(%d+)$"))
+local switched = action and action:match("^mode:(.+)$")
+if switched then mode = switched
+elseif action == "cloud" then casino.cloudMusic(consoleId)
+elseif action == "songs" then casino.streamMusic(consoleId, "track")
+elseif action == "radios" then casino.streamMusic(consoleId, "radio")
+elseif index then payload.action, payload.track = "play", library[index]
+elseif action == "stop" then payload.action = "stop"
+elseif action == "next" then payload.action = "next"
+elseif action == "down" or action == "up" then
+payload.action = "volume"
+payload.volume = (music.volume or 5) + (action == "up" and 1 or -1)
+elseif action == "more" then page = page + 1 end
+if payload.action then casino.ownerAsk("CASINO_CONTROL", payload) end
+end
+end
+
+
+function casino.control(consoleId)
+local data, polledAt, ticks = nil, 0, 2
+while running and sessionToken do
+if ticks >= 2 then
+ticks = 0
+local seen, err = casino.ownerAsk("CASINO_VIEW", { console_id = consoleId })
+if not seen then
+ui.message(target, "error", "CCG Casino", err, 1.4)
+return
+end
+data, polledAt = seen, util.nowMs()
+end
+local view, mine = data.table, data.you_control
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(view.name, width - 9), ui.truncate(view.company_name or "",
+width - 3), util.formatClock())
+local phaseWords = { wheel = "choosing the game", betting = "taking bets",
+playing = "playing", settling = "paying out", result = "showing the result" }
+ui.text(target, 2, 4, ui.truncate((view.game_name or "-") .. ", "
+.. (phaseWords[view.phase or ""] or ""), width - 2), ui.theme.ink)
+local seated = 0
+for _ in ipairs(view.players or {}) do seated = seated + 1 end
+ui.text(target, 2, 5, ui.truncate("Code " .. tostring(view.code) .. "  " .. seated
+.. " at the table", width - 2), ui.theme.muted)
+local scene = ui.scene(target)
+local half = math.floor((width - 3) / 2)
+scene:button("auto", 2, 7, half, 2, view.auto and "AUTO: ON" or "AUTO: OFF",
+{ background = view.auto and ui.theme.success or ui.theme.panel,
+foreground = view.auto and colors.black or nil })
+scene:button(mine and "release" or "take", 3 + half, 7, width - 3 - half, 2,
+mine and "RELEASE" or "BE THE DEALER", { background = mine and ui.theme.warning
+or ui.theme.accent, foreground = colors.black })
+if not mine and view.controlled then
+ui.text(target, 2, 10, ui.truncate("Dealer: " .. tostring(view.controller_name),
+width - 2), ui.theme.warning)
+end
+local y = 11
+if mine and view.phase ~= "wheel" and view.next_label then
+scene:button("next", 2, 10, width - 2, 3, view.next_label,
+{ background = ui.theme.success, foreground = colors.black })
+y = 14
+elseif mine and view.phase ~= "wheel" then
+ui.center(target, 11, "Dealing...", ui.theme.muted)
+y = 13
+end
+ui.text(target, 2, y, mine and view.phase == "wheel" and "Pick the game:"
+or "Next game:", ui.theme.muted)
+local each = math.floor((width - 3) / 2)
+for index, game in ipairs(casino.GAMES) do
+local column = (index - 1) % 2
+local row = math.floor((index - 1) / 2)
+scene:button("game:" .. game, 2 + column * (each + 1), y + 1 + row * 2, each, 1,
+casino.SHORT[game], { background = casino.COLORS[game],
+foreground = game == "heads_tails" and colors.black or colors.white })
+end
+scene:button("music", 2, height - 2, half, 1, "MUSIC", { background = ui.theme.panel })
+scene:button("rename", 3 + half, height - 2, width - 3 - half, 1, "RENAME",
+{ background = ui.theme.panel })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait({ tickRate = 0.35 })
+if action == "__tick" then ticks = ticks + 1 end
+if action == "back" or action == "__terminate" then
+if mine then casino.ownerAsk("CASINO_CONTROL", { console_id = consoleId, op = "release" }) end
+return
+end
+local payload = { console_id = consoleId }
+if action == "auto" then payload.op, payload.on = "auto", not view.auto
+elseif action == "take" or action == "release" or action == "next" then payload.op = action
+elseif action == "music" then casino.musicPage(consoleId)
+elseif action == "rename" then
+local name = ui.input(target, "Name this table", { initial = view.name,
+maxLength = 16, minLength = 2, allowSpace = true })
+if name then payload.op, payload.name = "rename", name end
+elseif action and action:match("^game:") then
+payload.op, payload.game = "game", action:sub(6)
+end
+if payload.op then
+local done, err = casino.ownerAsk("CASINO_CONTROL", payload)
+if done then data, polledAt = done, util.nowMs()
+else ui.message(target, "warning", "Not now", err, 1.2) end
+end
+end
+end
+
+
+
+
+
+function casino.companyMoney(companyId)
+while running and sessionToken do
+local finances = request("CASINO_FINANCES", {}, true)
+local row
+for _, entry in ipairs(finances and finances.casinos or {}) do
+if entry.company_id == companyId then row = entry end
+end
+if not row then return end
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, ui.truncate(row.name, width - 9), "Casino money", util.formatClock())
+local inDebt = row.balance < 0
+ui.card(target, 2, 4, width - 2, 3, inDebt and ui.theme.danger or ui.theme.success)
+ui.center(target, 5, inDebt and ("LOAN " .. money(row.loan)) or money(row.balance),
+inDebt and ui.theme.danger or ui.theme.success, ui.theme.panel)
+local lines = {
+{ "Players lost", money(row.earned) },
+{ "Paid out", money(row.paid) },
+{ "Borrowed, all", money(row.borrowed) },
+{ "Free to take out", money(row.free) },
+{ "Rounds", tostring(row.rounds) },
+}
+for index, line in ipairs(lines) do
+ui.text(target, 2, 7 + index, line[1], ui.theme.muted)
+ui.text(target, width - #line[2], 7 + index, line[2], ui.theme.ink)
+end
+if inDebt then
+ui.wrappedText(target, 2, 14, "Its earnings repay the loan first.",
+width - 2, 2, ui.theme.muted)
+end
+local scene = ui.scene(target)
+local half = math.floor((width - 3) / 2)
+scene:button("out", 2, height - 3, half, 2, "TAKE OUT", { background = ui.theme.success,
+foreground = colors.black, disabled = (row.free or 0) <= 0 })
+scene:button("in", 3 + half, height - 3, width - 3 - half, 2, "PUT IN",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk or colors.black })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+if action == "out" or action == "in" then
+local amount = tonumber(ui.input(target, action == "out" and "Take out"
+or "Put in", { hint = action == "out" and ("Up to " .. money(row.free))
+or ("From your account, " .. money(account.balance)),
+mode = "number", maxLength = 10 }) or "")
+if amount and amount > 0 then
+local pin = ui.pin(target, (action == "out" and "Take out " or "Put in ")
+.. money(amount), true)
+if pin then
+local done, err = request(action == "out" and "CASINO_CASHOUT"
+or "CASINO_DEPOSIT", { company_id = companyId, amount = amount,
+pin = pin }, true)
+if done then
+ui.message(target, "success", action == "out" and "Taken out"
+or "Put in", money(amount), 1)
+refreshSummary(true)
+else
+ui.message(target, "error", "Not moved", err, 1.6)
+end
+end
+end
+end
+end
+end
+
+function casino.moneyPage()
+while running and sessionToken do
+local finances, err = request("CASINO_FINANCES", {}, true)
+local list = finances and finances.casinos or {}
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Casino money", finances and ("Owed " .. money(finances.owed)
+.. " of " .. money(finances.credit)) or "Offline", util.formatClock())
+local scene = ui.scene(target)
+for index, row in ipairs(list) do
+local y = index * 4
+if y + 2 > height - 2 then break end
+local inDebt = row.balance < 0
+ui.card(target, 2, y, width - 2, 3, inDebt and ui.theme.danger or ui.theme.success)
+local words = inDebt and ("LOAN " .. money(row.loan)) or money(row.balance)
+ui.text(target, 4, y, ui.truncate(row.name, width - 7 - #words), ui.theme.ink,
+ui.theme.panel)
+ui.text(target, width - #words, y, words, inDebt and ui.theme.danger
+or ui.theme.success, ui.theme.panel)
+ui.text(target, 4, y + 1, ui.truncate(row.tables .. " tables, " .. row.rounds
+.. " rounds", width - 5), ui.theme.muted, ui.theme.panel)
+scene:hotspot("company:" .. row.company_id, 2, y, width - 2, 3)
+end
+if not finances then
+ui.wrappedText(target, 2, 5, tostring(err or "The Bank is not answering."),
+width - 2, 3, ui.theme.muted)
+elseif #list == 0 then
+ui.wrappedText(target, 2, 5, "No casino money yet. A CCG Casino set up for"
+.. " one of your companies keeps its money here.", width - 2, 5,
+ui.theme.muted)
+end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+local companyId = action and action:match("^company:(.+)$")
+if companyId then casino.companyMoney(companyId) end
+end
+end
+
+
+function casino.minePage(spec)
+local page = 1
+while running and sessionToken do
+local listed, err = casino.ownerAsk("CASINO_LIST")
+local tables = listed and listed.casinos or {}
+local width = target.getSize()
+ui.clear(target)
+ui.header(target, "My Casino", listed and (#tables .. " tables") or "Offline",
+util.formatClock())
+local scene = ui.scene(target)
+local items, actual, pages = util.page(tables, page, 4)
+page = actual
+for index, entry in ipairs(items) do
+local y = 1 + index * 3
+local line2 = entry.online and ((entry.game_name or "Starting") .. "  "
+.. entry.players .. " playing" .. (entry.controlled and "  DEALER"
+or entry.auto and "  AUTO" or "")) or "Offline"
+scene:button("open:" .. entry.console_id, 2, y, width - 2, 2,
+ui.truncate(entry.name .. "  " .. entry.company_name, width - 4) .. "\n"
+.. ui.truncate(line2, width - 4),
+{ background = entry.online and ui.theme.accent or ui.theme.panel,
+foreground = entry.online and (ui.theme.accentInk or colors.black) or nil })
+end
+if not listed then
+ui.wrappedText(target, 2, 5, tostring(err or "The CCG Server is not answering."),
+width - 2, 4, ui.theme.muted)
+elseif #tables == 0 then
+ui.wrappedText(target, 2, 5, "No CCG Casinos yet. Install CCG Casino on a computer"
+.. " with a monitor and set it up with a company you own: it appears here.",
+width - 2, 6, ui.theme.muted)
+end
+local moneyY = ui.contentBottom(target) - 1
+scene:button("money", 2, moneyY, pages > 1 and width - 9 or width - 2, 1,
+"CASINO MONEY", { background = ui.theme.success, foreground = colors.black })
+if pages > 1 then
+scene:button("more", width - 6, moneyY, 6, 1,
+page .. "/" .. pages, { background = ui.theme.panel })
+end
+ui.tabBar(scene, target, spec.list, spec.active)
+local action = scene:wait({ tickRate = 3 })
+if action == "money" then
+casino.moneyPage()
+elseif action == "more" then
+page = page % pages + 1
+elseif action and action:match("^open:") then
+casino.control(action:sub(6))
+elseif action ~= "__tick" and action ~= "__wake" then
+return action
+end
+end
+return "home"
 end
 
 
@@ -2901,17 +3445,17 @@ local function betPage(spec)
 while running and sessionToken do
 local width = target.getSize()
 ui.clear(target)
-ui.header(target, "Bet Play", "Wager at a CCG", util.formatClock())
-ui.wrappedText(target, 2, 5, "Join a lobby on a CCG with its code."
-.. " Wagers come from your Bet Wallet; winnings are held a"
-.. " day.", width - 2, 5, ui.theme.muted)
+ui.header(target, "Bet", "CCG Casino", util.formatClock())
+ui.wrappedText(target, 2, 5, "Roulette, Blackjack, Heads or Tails and Poker"
+.. " at a CCG Casino. Type the code on its screen and stay from game to"
+.. " game. Winnings are held a day.", width - 2, 7, ui.theme.muted)
 local scene = ui.scene(target)
-scene:button("join", 2, 11, width - 2, 3, "Join a lobby",
-{ background = colors.magenta })
+scene:button("join", 2, 13, width - 2, 3, "Sit at a table",
+{ background = colors.red })
 ui.tabBar(scene, target, spec.list, spec.active)
 local pressed = scene:wait()
 if pressed == "join" then
-betApp()
+casino.play()
 else
 return pressed
 end
@@ -2953,9 +3497,13 @@ end
 ui.runTabs({
 title = "CCG",
 list = { { id = "home", label = "Home" }, { id = "bet", label = "Bet" },
+
+{ id = "mine", label = "My Casino", short = "Casino" },
 { id = "scores", label = "Scores" } },
-start = (action == "bet" or action == "scores") and action or "home",
-pages = { home = homePage, bet = betPage, scores = scoresPage },
+start = (action == "bet" or action == "scores" or action == "mine") and action
+or "home",
+pages = { home = homePage, bet = betPage, mine = casino.minePage,
+scores = scoresPage },
 running = function() return running and sessionToken ~= nil end,
 })
 
@@ -3736,6 +4284,11 @@ end
 
 
 
+local phone = { me = nil }
+
+
+
+
 local function messagesScreen(tabs, which)
 local page = 1
 local groups = which == "groups"
@@ -3784,6 +4337,8 @@ end
 if action == "back" or action == "__terminate" then return
 elseif action == "prev" then page = page - 1
 elseif action == "next" then page = page + 1
+elseif (action == "new" or action == "group") and not phone.ready() then
+
 elseif action == "new" or action == "group" then
 local overview = request("FRIEND_OVERVIEW")
 if overview then
@@ -3985,8 +4540,9 @@ end
 
 
 
-local function placeUrgentCall(name, accountId, appId)
-local started = request("URGENT_CALL",
+local function placeUrgentCall(name, accountId, appId, started)
+
+started = started or request("URGENT_CALL",
 { account_id = accountId, app_id = appId })
 if not started then return end
 local call = started.call
@@ -4032,12 +4588,140 @@ inCall = false
 end
 
 local function urgentScreen()
+if not phone.ready() then return end
 local overview = request("FRIEND_OVERVIEW")
 if not overview then return end
 local friend = pickFriend("Urgent Contact", overview.friends,
 "Reach a friend now")
 if not friend then return end
-return placeUrgentCall(friend.name, friend.account_id)
+placeUrgentCall(friend.name, friend.account_id)
+phone.refresh()
+end
+
+function phone.refresh()
+phone.me = request("PHONE_ME", {}, true) or phone.me
+return phone.me
+end
+
+function phone.get()
+local got = request("PHONE_GET")
+if got then
+phone.me = got
+ui.message(target, "success", "Your number", got.number, 1.8)
+end
+return got
+end
+
+
+function phone.ready()
+local me = phone.me or phone.refresh()
+if not me or me.number then return me ~= nil end
+if ui.confirm(target, "Get a number", "Messages and Urgent Contact need a phone"
+.. " number of your own. It is free.", "GET ONE", "NOT NOW") then
+return phone.get() ~= nil
+end
+return false
+end
+
+function phone.limit(used, limit)
+if limit == nil then return "Unlimited" end
+return tostring(used or 0) .. " / " .. tostring(limit)
+end
+
+
+function phone.dial(title)
+local typed = ui.input(target, title, { mode = "number", maxLength = 7,
+hint = "Seven digits, like 2345678" })
+if not typed then return nil end
+local digits = typed:gsub("%D", "")
+if #digits ~= 7 then
+ui.message(target, "error", "Not a number", "Phone numbers have seven digits", 1.4)
+return nil
+end
+return digits:sub(1, 3) .. "-" .. digits:sub(4)
+end
+
+
+
+function phone.call(number)
+if not phone.ready() then return end
+number = number or phone.dial("Call a number")
+if not number then return end
+local who = request("PHONE_LOOKUP", { number = number })
+if not who then return end
+if who.kind == "radio" and not ui.confirm(target, "Call " .. who.name, "A call is "
+.. money(config.phone_call_price or 50) .. ". Every call is one more entry in"
+.. " the giveaway.", "CALL", "BACK") then
+return
+end
+local placed = request("PHONE_CALL", { number = number })
+if placed and placed.kind == "person" then
+placeUrgentCall(placed.name, nil, nil, placed)
+elseif placed and placed.kind == "company" then
+ui.message(target, "success", "Called " .. placed.name, placed.message, 1.8)
+elseif placed then
+ui.message(target, "success", "You're in!", placed.entries .. " entr"
+.. (placed.entries == 1 and "y" or "ies") .. " to win on " .. placed.name
+.. ". " .. money(placed.price) .. " paid", 2.2)
+end
+phone.refresh()
+end
+
+function phone.text()
+if not phone.ready() then return end
+local number = phone.dial("Text a number")
+if not number then return end
+local started = request("CHAT_START", { number = number })
+if started then conversationScreen(started.conversation) end
+phone.refresh()
+end
+
+
+function phone.screen(tabs)
+while true do
+local me = phone.refresh()
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Phone", me and me.number and "Your number" or "No number yet",
+util.formatClock())
+local scene = ui.scene(target)
+if me and me.number then
+ui.center(target, 5, me.number, ui.theme.accent)
+ui.text(target, 2, 7, "Today", ui.theme.muted)
+ui.text(target, 2, 8, "Messages", ui.theme.ink)
+local line = phone.limit(me.messages, me.messages_limit)
+ui.text(target, width - #line, 8, line, ui.theme.ink)
+ui.text(target, 2, 9, "Calls", ui.theme.ink)
+line = phone.limit(me.calls, me.calls_limit)
+ui.text(target, width - #line, 9, line, ui.theme.ink)
+if me.messages_limit or me.calls_limit then
+ui.text(target, 2, 10, ui.truncate("FoxyCloud+ has more", width - 2),
+ui.theme.muted)
+end
+scene:button("call", 2, 12, width - 2, 2, "Call a number",
+{ background = ui.theme.success, foreground = colors.black })
+scene:button("text", 2, 15, width - 2, 2, "Text a number",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk
+or ui.inkOn(ui.theme.accent) })
+else
+ui.wrappedText(target, 2, 5, "A number of your own lets you send messages and"
+.. " make calls, to friends or to any number: a company, or a radio"
+.. " giving money away.", width - 2, 6, ui.theme.ink)
+scene:button("get", 2, 12, width - 2, 3, "Get a number",
+{ background = ui.theme.accent, foreground = ui.theme.accentInk
+or ui.inkOn(ui.theme.accent) })
+end
+pageFooter(scene, 1, 1, tabs)
+local action = scene:wait({ tickRate = 5 })
+if tabs and (action == "home" or (action or ""):match("^tab:")) then
+return action
+end
+if action == "back" or action == "__terminate" then return
+elseif action == "get" then phone.get()
+elseif action == "call" then phone.call()
+elseif action == "text" then phone.text()
+end
+end
 end
 
 
@@ -5054,13 +5738,17 @@ end
 
 
 
+
 local function messagesApp(action)
+phone.refresh()
 ui.runTabs({
-list = { { id = "chats", label = "Chats" }, { id = "groups", label = "Groups" } },
+list = { { id = "chats", label = "Chats" }, { id = "groups", label = "Groups" },
+{ id = "phone", label = "Phone" } },
 color = colors.green,
-start = action == "groups" and "groups" or "chats",
+start = (action == "groups" or action == "phone") and action or "chats",
 pages = { chats = function(spec) return messagesScreen(spec, "chats") end,
-groups = function(spec) return messagesScreen(spec, "groups") end },
+groups = function(spec) return messagesScreen(spec, "groups") end,
+phone = phone.screen },
 running = function() return running and sessionToken ~= nil end,
 })
 end
@@ -6304,6 +6992,28 @@ action = function() return wantedAction end,
 app_id = entry.app_id,
 
 
+
+
+
+
+
+music = entry.app_id == "MUSIC" and net.musicApi and net.musicApi(config,
+function() return sessionToken end, offline, function()
+local where = request("MUSIC_WHERE", {}, true)
+return where and where.computer_id or nil
+end) or nil,
+cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC") and net.cloud
+and net.cloud.api
+and net.cloud.api(function(action, payload)
+local scoped = {}
+for key, value in pairs(type(payload) == "table" and payload or {}) do
+scoped[key] = value
+end
+scoped.app_id = entry.app_id
+return request(action, scoped, true)
+end, config.cloud_protocol or "PUMPE_CLOUD_V1", offline, "/downloads") or nil,
+
+
 shop_store = entry.shop_store,
 domain = entry.domain,
 })
@@ -6445,6 +7155,17 @@ local body = about and util.readFile(fs.combine(devDir, name))
 if about and not body then
 ui.message(target, "error", "Cannot read it", name, 1.6)
 elseif body then
+
+
+
+local icon = out and out.icon or (util.appIcon and util.appIcon(body))
+if ui.iconCreator and ui.confirm(target, "Icon", icon
+and "Keep its icon, or paint a new one?"
+or "Paint the icon it has on the Home Screen?", "Paint",
+icon and "Keep" or "Skip") then
+icon = ui.iconCreator(target, icon, title) or icon
+end
+if icon and util.withIcon then body = util.withIcon(body, icon) end
 local published, err = storeRequest("APP_PUBLISH", {
 developer_id = mine.developer_id,
 developer_token = mine.developer_token,
@@ -6453,7 +7174,7 @@ description = about, body = body,
 }, true)
 if published then
 device.published[name] = { id = published.app.app_id,
-kind = published.app.kind or kind }
+kind = published.app.kind or kind, icon = icon }
 saveDevice()
 ui.message(target, "success", kind == "game"
 and "In the Game Browser" or "In the App Browser",
@@ -6507,6 +7228,8 @@ author = app.author, description = app.description,
 
 bank_name = app.bank_name,
 actions = declaredActions(app.app_id),
+
+icon = util.appIcon and util.appIcon(body:sub(1, 2000)) or false,
 }
 for index, entry in ipairs(installed.list) do
 if entry.app_id == app.app_id then
@@ -6672,8 +7395,11 @@ ui.clear(target)
 ui.header(target, app.name, "by " .. (app.author or "Unknown"),
 util.formatClock())
 ui.card(target, 2, 5, width - 2, 8, ui.theme.accent)
+
+local icon = app.icon or (here and here.icon) or nil
+if icon and ui.icon then ui.icon(target, width - 6, 6, icon) end
 ui.wrappedText(target, 4, 6, app.description or "No description",
-width - 6, 4, ui.theme.muted, ui.theme.panel)
+icon and ui.icon and width - 12 or width - 6, 4, ui.theme.muted, ui.theme.panel)
 ui.text(target, 4, 11, "v" .. tostring(app.version) .. "  "
 .. math.ceil((app.size or 0) / 1024) .. " KiB",
 ui.theme.muted, ui.theme.panel, width - 6)
@@ -6803,7 +7529,8 @@ end
 
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
 SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
-BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua" }
+BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua",
+CLOUD = "foxycloud.lua", MUSIC = "music.lua" }
 
 
 
@@ -6847,6 +7574,7 @@ local body = update.fetchFile(url, file, manifest.version)
 if body and pcall(util.writeFile, appPath(entry.app_id), body) then
 entry.beta, entry.beta_sum = config.version, file.checksum
 entry.actions = declaredActions(entry.app_id)
+entry.icon = util.appIcon and util.appIcon(body:sub(1, 2000)) or false
 changed = true
 end
 end
@@ -7137,27 +7865,34 @@ end
 
 
 
+
+
 local APPS = {
 
 
 messages = { name = "Messages", glyph = "\"", color = colors.green,
+icon = "dddddddd/d000000d/d000000d/d000000d/dd0ddddd/dddddddd",
 open = messagesApp, actions = {
 { id = "chats", label = "Chats", hint = "One to one" },
 { id = "groups", label = "Group Chats", hint = "Everybody at once" },
+{ id = "phone", label = "Phone", hint = "Your number, call any number" },
 } },
 friends = { name = "Friends", glyph = "@", color = colors.cyan,
+icon = "99999999/99009999/99009909/99999999/90000009/90000009",
 open = friendsApp, actions = {
 { id = "people", label = "Friends", hint = "Add or find someone" },
 { id = "urgent", label = "Urgent Contact",
 hint = "Reach a friend fast" },
 } },
 tickets = { name = "Tickets", glyph = "#", color = colors.orange,
+icon = "11111111/10000001/11000011/11000011/10000001/11111111",
 open = ticketsApp, actions = {
 { id = "events", label = "Browse Events", hint = "What is on" },
 { id = "mine", label = "My Tickets", hint = "What you hold" },
 } },
 
 myid = { name = "MyID", glyph = "I", color = colors.lightBlue,
+icon = "33333333/30000003/30330303/30330303/30000003/33333333",
 open = myIdApp, actions = {
 { id = "id", label = "Digital ID", hint = "Your MyID Code" },
 { id = "visas", label = "My Visas", hint = "Travel papers" },
@@ -7165,23 +7900,30 @@ open = myIdApp, actions = {
 { id = "countries", label = "Countries", hint = "Land you run" },
 } },
 
-ccg = { name = "CCG", glyph = "?", color = colors.magenta, actions = {
+ccg = { name = "CCG", glyph = "?", color = colors.magenta,
+icon = "22222222/20000002/20200202/20000002/20200202/22222222", actions = {
 { id = "home", label = "Home Mode", hint = "Play free on your CCG" },
-{ id = "bet", label = "Bet Play", hint = "Join a lobby" },
+{ id = "bet", label = "Bet", hint = "Sit at a CCG Casino" },
+{ id = "mine", label = "My Casino", hint = "Run your company's CCG Casinos" },
 { id = "scores", label = "CCG scores", hint = "Your best at home" },
 } },
-subs = { name = "Subs", glyph = "~", color = colors.magenta },
-browser = { name = "Apps", glyph = "+", color = colors.blue, actions = {
+subs = { name = "Subs", glyph = "~", color = colors.magenta,
+icon = "aaaaaaaa/aa00000a/aaaaa0aa/aa0aaaaa/a00000aa/aaaaaaaa" },
+browser = { name = "Apps", glyph = "+", color = colors.blue,
+icon = "bbbbbbbb/b00bb00b/b00bb00b/bbbbbbbb/b00bb00b/b00bb00b", actions = {
 { id = "search", label = "Search apps", hint = "Find something new" },
 } },
 reminders = { name = "Reminders", glyph = "!", color = colors.yellow,
+icon = "444cc444/44cccc44/44cccc44/4cccccc4/44444444/444cc444",
 actions = {
 { id = "new", label = "New reminder", hint = "Something later" },
 } },
-quick = { name = "Quick", glyph = "&", color = colors.lime, actions = {
+quick = { name = "Quick", glyph = "&", color = colors.lime,
+icon = "55550055/55500555/55000055/55500555/55005555/55055555", actions = {
 { id = "new", label = "New QuickAction", hint = "A few steps in a row" },
 } },
-settings = { name = "Settings", glyph = "*", color = colors.gray },
+settings = { name = "Settings", glyph = "*", color = colors.gray,
+icon = "77077077/70000007/70077007/70077007/70000007/77077077" },
 }
 local APP_ORDER = {
 "friends", "messages", "tickets", "myid", "ccg", "subs",
@@ -7230,10 +7972,19 @@ if not entry.actions then
 entry.actions = declaredActions(entry.app_id)
 saveApps()
 end
+
+if entry.icon == nil then
+entry.icon = util.appIcon
+and util.appIcon((appHeader(entry.app_id) or ""):sub(1, 2000)) or false
+saveApps()
+end
 APPS[id] = {
 name = entry.name,
 glyph = string.upper(entry.name:sub(1, 1)),
-color = entry.app_id == "YAP" and colors.cyan
+icon = entry.icon or nil,
+color = entry.icon and ui.iconEdge and ui.iconEdge(entry.icon)
+or entry.app_id == "YAP" and colors.cyan
+or entry.app_id == "CLOUD" and colors.lightBlue
 or EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
 actions = entry.actions,
 open = function(action) runInstalledApp(entry, action) end,
@@ -7360,9 +8111,22 @@ end
 
 
 
+
+
 local function drawIcon(scene, action, app, x, y, layout, badge)
-scene:button(action, x, y, layout.iconWidth, 2, app.glyph,
+local iconWidth = tonumber(ui.ICON_WIDTH)
+local pictured = app.icon and ui.icon and iconWidth and layout.iconWidth >= iconWidth
+local framed = pictured and ui.iconFramed and layout.iconWidth >= iconWidth + 2
+if framed then
+scene:hotspot(action, x, y, layout.iconWidth, 2)
+ui.iconFramed(target, x + math.floor((layout.iconWidth - iconWidth) / 2), y, app.icon)
+else
+scene:button(action, x, y, layout.iconWidth, 2, pictured and "" or app.glyph,
 { background = app.color, foreground = colors.white })
+end
+if pictured and not framed then
+ui.icon(target, x + math.floor((layout.iconWidth - iconWidth) / 2), y, app.icon)
+end
 opening.spots[action:match("^open:(.+)$") or ""] =
 { x + math.floor(layout.iconWidth / 2), y + 1 }
 if badge then
@@ -7397,9 +8161,15 @@ for slot = 1, FAVOURITE_SLOTS do
 local x = left + (slot - 1) * (slotWidth + 1)
 local id = chosen[slot]
 if id then
+local iconWidth = tonumber(ui.ICON_WIDTH)
+local pictured = APPS[id].icon and ui.icon and iconWidth and slotWidth >= iconWidth
 scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
-APPS[id].glyph, { background = APPS[id].color,
+pictured and "" or APPS[id].glyph, { background = APPS[id].color,
 corner = ui.theme.panel })
+if pictured then
+ui.icon(target, x + math.floor((slotWidth - iconWidth) / 2),
+layout.dockY, APPS[id].icon)
+end
 opening.spots[id] = opening.spots[id]
 or { x + math.floor(slotWidth / 2), layout.dockY + 1 }
 local badge = appBadge(id, poll)
@@ -7502,18 +8272,22 @@ end
 
 
 
+
 local function ensureFoxy()
 local missing = {}
 for _, appId in ipairs({ "FOXY", "MAIL" }) do
 if not installedApp(appId) then missing[appId] = true end
 end
 device.included = type(device.included) == "table" and device.included or {}
-if not device.included.YAP and installedApp("YAP") then
-device.included.YAP = true
+local wanted = {}
+for _, appId in ipairs({ "YAP", "CLOUD", "MUSIC" }) do
+if not device.included[appId] and installedApp(appId) then
+device.included[appId] = true
 saveDevice()
 end
-local wantYap = not device.included.YAP
-if next(missing) == nil and not wantYap then return end
+if not device.included[appId] then wanted[#wanted + 1] = appId end
+end
+if next(missing) == nil and #wanted == 0 then return end
 local listed = storeRequest("APP_LIST", {}, true)
 local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
 for _, app in ipairs(listed and listed.apps or {}) do
@@ -7524,25 +8298,32 @@ if missing[app.app_id] and (app.app_id == "FOXY" or room > 0) then
 if installApp(app) then room = room - 1 end
 end
 end
-if not wantYap or room <= 0 then return end
+local brought
+for _, appId in ipairs(wanted) do
+if room <= 0 then break end
 local body, app, sum
 if beta.isBeta(config.version) then
-body, app, sum = beta.fetchApp("YAP")
+body, app, sum = beta.fetchApp(appId)
 else
 for _, listedApp in ipairs(listed and listed.apps or {}) do
-if listedApp.app_id == "YAP" then app = listedApp end
+if listedApp.app_id == appId then app = listedApp end
 end
 body = app and fetchApp(app)
 end
-if not body or not keepApp(app, body) then return end
-local entry = installedApp("YAP")
+if body and keepApp(app, body) then
+local entry = installedApp(appId)
 if entry and sum then
 entry.beta, entry.beta_sum = config.version, sum
 saveApps()
 end
-device.included.YAP = true
+device.included[appId] = true
 saveDevice()
-return tostring(app.name or "Yap!")
+room = room - 1
+brought = brought and (brought:gsub(" and ", ", ") .. " and "
+.. tostring(app.name or appId)) or tostring(app.name or appId)
+end
+end
+return brought
 end
 
 
@@ -8114,7 +8895,9 @@ if restoredOk and #restored > 0 then
 showBanner({ title = #restored == 1 and "App is back"
 or (#restored .. " apps are back"), body = table.concat(restored, ", ") })
 elseif includedOk and included then
-showBanner({ title = included .. " is here", body = "New in FoxyOS 16, by Foxy" })
+local several = included:find(" and ", 1, true)
+showBanner({ title = several and "New apps are here" or (included .. " is here"),
+body = several and included or "New on your Pocket, by Foxy" })
 end
 
 local blink, tick, page, alertOffset = true, 0, 1, 0

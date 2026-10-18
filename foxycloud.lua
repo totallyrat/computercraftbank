@@ -1,5 +1,5 @@
 -- PUMPE APP: FoxyCloud
--- PUMPE APP ICON: 33333333/33330033/30000003/00000000/30000003/33333333
+-- PUMPE APP ICON: 33333333/33330033/33000003/30000003/30000003/33333333
 -- PUMPE APP ACTION: files | FoxyCloud files | Your files, on every device
 -- PUMPE APP ACTION: plus | FoxyCloud+ | More room and more perks
 -- PUMPE APP ACTION: account | Foxy Account | Your name, PIN and plan
@@ -7,11 +7,12 @@
 -- FoxyCloud, by Foxy, FoxyOS 17: the home for your Foxy Account, and your
 -- files on every device you sign in to.
 --
---   Files    text and MIDI files kept on the Cloud Servers. One is
+--   Files    text, MIDI and songs kept on the Cloud Servers. One is
 --            downloaded only to open it, like a website, and let go again
 --            after; nothing stays on this Pocket unless you save it here.
---   Plus     FoxyCloud+: 500 KB instead of 100 KB, no Foxy Cash fee, early
---            tickets for the events that offer them
+--   Plus     FoxyCloud+, two tiers since FoxyOS 17: 25 MB or 50 MB instead
+--            of 100 KB, more messages and calls a day, songs without a limit,
+--            no Foxy Cash fee, early tickets for the events that offer them
 --   Account  your name, your PIN and your plan
 --
 -- Moving a file's pieces is the Pocket's job (api.cloud), and only this app
@@ -27,6 +28,7 @@ return function(api)
     local KINDS = {
         text = { mark = "T", color = colors.lightBlue, word = "Text" },
         midi = { mark = string.char(14), color = colors.magenta, word = "MIDI" },
+        audio = { mark = string.char(13), color = colors.pink, word = "Song" },
         lua = { mark = "<", color = colors.orange, word = "Program" },
         image = { mark = "#", color = colors.lime, word = "Picture" },
         file = { mark = "?", color = colors.lightGray, word = "File" },
@@ -288,6 +290,8 @@ return function(api)
             width - 6), ui.theme.ink)
         ui.wrappedText(target, 2, 8, file.kind == "midi"
             and "Play it on a CCG Casino: CCG app, My Casino, a table, Music, FoxyCloud."
+            or file.kind == "audio"
+            and "A song. Put it in the Music Library from the Music app: Upload, From FoxyCloud."
             or "This Pocket cannot open it here. Save it to the Pocket to use it.",
             width - 2, 5, ui.theme.muted)
         local scene = ui.scene(target)
@@ -590,45 +594,80 @@ return function(api)
         end
     end
 
+    -- FoxyOS 17: two tiers. Tier 1 is 25 MB, Tier 2 is 50 MB and has no daily
+    -- limit on messages or calls. Moving up is now, for the difference; down
+    -- is at the next charge.
+    local TIER_COLORS = { GOLD, colors.magenta }
+    local view = { tier = nil }
+
+    local function tierCard(scene, tier, x, y, width, plan)
+        local on = view.tier == tier.tier
+        local color = TIER_COLORS[tier.tier] or GOLD
+        scene:button("tier:" .. tier.tier, x, y, width, 3, "", {
+            background = on and color or ui.theme.panel })
+        local ink = on and colors.black or ui.theme.ink
+        local back = on and color or ui.theme.panel
+        ui.text(target, x + 1, y, ui.truncate(tier.short .. (plan.tier == tier.tier
+            and " *" or ""), width - 2), ink, back)
+        ui.text(target, x + 1, y + 1, ui.truncate(util.sizeText(tier.bytes), width - 2), ink, back)
+        ui.text(target, x + 1, y + 2, ui.truncate(util.money(tier.price, "$"), width - 2),
+            ink, back)
+    end
+
+    -- What the button at the bottom does for the tier being looked at.
+    local function plusChoice(plan, tier)
+        if not plus() then
+            return "join", "Get " .. tier.short
+        elseif tier.tier == plan.tier then
+            if plan.ends_day or plan.next_tier then return "join", "Keep " .. tier.short end
+            return "cancel", "Cancel FoxyCloud+"
+        elseif tier.tier > plan.tier then
+            return "join", "Upgrade: " .. util.money(math.max(0, tier.price
+                - (plan.price or 0)), "$") .. " now"
+        end
+        return "join", "Step down at renewal"
+    end
+
     local function plusPage(tabs)
         refreshPlan()
         while running() do
-            local width, height = target.getSize()
+            local width = target.getSize()
             local plan = state.plan
             ui.clear(target)
-            ui.header(target, "FoxyCloud+", plus() and "Yours" or "Get more",
+            ui.header(target, "FoxyCloud+", plan and plan.tier_name or "Get more",
                 util.formatClock())
             local scene = ui.scene(target)
-            if not plan then
+            local tiers = plan and plan.tiers or {}
+            if not plan or #tiers == 0 then
                 ui.wrappedText(target, 2, 5, "The Bank is not answering.", width - 2, 3,
                     ui.theme.muted)
             else
-                ui.fill(target, 2, 4, width - 2, 3, GOLD)
-                ui.text(target, 3, 4, "FoxyCloud+", colors.black, GOLD)
-                ui.text(target, 3, 5, ui.truncate(util.money(plan.price, api.config
-                    and api.config.currency or "$") .. " " .. util.everyText(plan.every_days),
-                    width - 4), colors.black, GOLD)
+                view.tier = view.tier or math.max(1, plan.tier or 1)
+                local tier = tiers[view.tier] or tiers[1]
+                local cardWidth = math.floor((width - 3) / #tiers)
+                for index, each in ipairs(tiers) do
+                    tierCard(scene, each, 2 + (index - 1) * (cardWidth + 1), 4,
+                        index == #tiers and width - 1 - (index - 1) * (cardWidth + 1)
+                        or cardWidth, plan)
+                end
                 local status = plus() and (plan.ends_day and ("Ends day " .. plan.ends_day)
+                    or plan.next_tier and ("Tier " .. plan.next_tier .. " from day "
+                        .. tostring(plan.next_charge_day))
                     or ("Next charge day " .. tostring(plan.next_charge_day)))
-                    or "Billed every " .. tostring(plan.every_days) .. " days"
-                ui.text(target, 3, 6, ui.truncate(status, width - 4), colors.black, GOLD)
-                local y = 8
-                for _, perk in ipairs(plan.perks or {}) do
-                    ui.text(target, 2, y, "+", GOLD)
-                    y = y + ui.wrappedText(target, 4, y, perk, width - 4, 2, ui.theme.ink)
-                end
-                ui.text(target, 4, y, ui.truncate("More coming soon", width - 4), ui.theme.muted)
+                    or ("Billed every " .. tostring(plan.every_days) .. " days")
+                ui.text(target, 2, 8, ui.truncate(status, width - 2), ui.theme.muted)
+                local y = 9
                 local bottom = ui.contentBottom(target) - 1
-                if not plus() then
-                    scene:button("join", 2, bottom, width - 2, 2, "Get FoxyCloud+",
-                        { background = GOLD, foreground = colors.black })
-                elseif plan.ends_day then
-                    scene:button("join", 2, bottom, width - 2, 2, "Keep FoxyCloud+",
-                        { background = GOLD, foreground = colors.black })
-                else
-                    scene:button("cancel", 2, bottom, width - 2, 2, "Cancel FoxyCloud+",
-                        { background = ui.theme.panel })
+                for _, perk in ipairs(tier.perks or {}) do
+                    if y >= bottom then break end
+                    ui.text(target, 2, y, "+", TIER_COLORS[tier.tier] or GOLD)
+                    y = y + ui.wrappedText(target, 4, y, perk, width - 4, 1, ui.theme.ink)
                 end
+                local id, label = plusChoice(plan, tier)
+                scene:button(id, 2, bottom, width - 2, 2, label, {
+                    background = id == "cancel" and ui.theme.panel
+                        or (TIER_COLORS[tier.tier] or GOLD),
+                    foreground = id == "cancel" and ui.theme.ink or colors.black })
             end
             ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
             local action = scene:wait()
@@ -636,23 +675,39 @@ return function(api)
                 or (action or ""):match("^tab:") then
                 return action
             end
-            if action == "join" then
-                local resume = plan.ends_day ~= nil
-                local pin = (resume or ui.confirm(target, "FoxyCloud+", util.money(plan.price,
-                    "$") .. " now, then " .. util.everyText(plan.every_days)
-                    .. " until you cancel.", "Join", "Not now"))
+            local picked = tonumber(action and action:match("^tier:(%d+)$"))
+            if picked then
+                view.tier = picked
+            elseif action == "join" then
+                local tier = plan.tiers[view.tier]
+                local wasPlus, before = plus(), plan.tier
+                local body
+                if not wasPlus then
+                    body = util.money(tier.price, "$") .. " now, then "
+                        .. util.everyText(plan.every_days) .. " until you cancel."
+                elseif tier.tier > before then
+                    body = util.money(math.max(0, tier.price - (plan.price or 0)), "$")
+                        .. " now. Your next charge day stays day "
+                        .. tostring(plan.next_charge_day) .. ", at " .. util.money(tier.price, "$")
+                        .. "."
+                elseif tier.tier < before then
+                    body = tier.short .. " from day " .. tostring(plan.next_charge_day)
+                        .. ", at " .. util.money(tier.price, "$") .. ". Nothing changes until then."
+                end
+                local pin = (body == nil or ui.confirm(target, tier.name, body, "OK", "Not now"))
                     and ui.pin(target, "Confirm with PIN", true)
                 if pin then
-                    local joined, err = ask("CLOUD_PLUS_JOIN", { pin = pin })
+                    local joined, err = ask("CLOUD_PLUS_JOIN", { pin = pin, tier = tier.tier })
                     if joined then
                         state.plan = joined
                         refreshFiles()
                         api.refresh()
-                        if not resume then sparkle() end
-                        said("success", resume and "Keeping it" or "Welcome to FoxyCloud+",
+                        if not wasPlus or joined.tier > before then sparkle() end
+                        said("success", wasPlus and joined.tier == before and "Keeping it"
+                            or (joined.tier_name or "FoxyCloud+"),
                             util.sizeText(joined.quota) .. " is yours", 1.6)
                     else
-                        said("error", "Not joined", err, 2)
+                        said("error", "Not changed", err, 2)
                     end
                 end
             elseif action == "cancel" then
@@ -679,7 +734,7 @@ return function(api)
             local rows = {
                 { "Name", account.name or "-" },
                 { "Account", account.account_id or "-" },
-                { "Plan", plus() and "FoxyCloud+" or "Free" },
+                { "Plan", state.plan and state.plan.tier_name or "Free" },
                 { "Storage", state.files and (util.sizeText(state.files.used) .. " of "
                     .. util.sizeText(state.files.quota)) or "-" },
             }

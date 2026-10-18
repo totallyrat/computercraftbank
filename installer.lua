@@ -14,7 +14,7 @@
 --   installer.lua --boot <program>   update if the release is newer, then start
 --   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local INSTALLER_VERSION = "16.3.1"
+local INSTALLER_VERSION = "17.0.0"
 local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -95,10 +95,21 @@ local PROGRAMS = {
       detail = "For the government",
       about = "Taxes, Digital IDs and the government's tools. Needs the operator's code.",
       words = "government tax admin myid id" },
-    { id = "ccg", name = "CCG Bet Console", file = "ccg.lua",
-      detail = "ComputerCraftGaming",
-      about = "Heads or tails and the rest, with a Bet Wallet.",
-      words = "casino bet game gaming gamble" },
+    -- FoxyOS 17: the CCG is two. Each is its own download.
+    { id = "ccgcasino", name = "CCG Casino", file = "ccg_casino.lua",
+      detail = "A casino table, run by a company",
+      about = "Roulette, Blackjack, Heads or Tails and Poker. Controlled from the CCG app.",
+      words = "ccg casino bet roulette blackjack poker gamble dealer table music",
+      extra = { "lib/music.lua" } },
+    { id = "ccghome", name = "CCG Home", file = "ccg_home.lua",
+      detail = "Free games at home",
+      about = "Home Mode: free games for one player, a Pocket as the controller.",
+      words = "ccg home game gaming snake arcade" },
+    -- Until FoxyOS 17. Still bootable, so a CCG that updates is asked which
+    -- of the two it is to be.
+    { id = "ccg", name = "CCG", file = "ccg.lua",
+      detail = "Now CCG Home or CCG Casino", about = "Split in FoxyOS 17.",
+      hidden = true },
     { id = "ccgserver", name = "CCG Server", file = "ccg_server.lua",
       detail = "Runs the games",
       about = "The server the CCG consoles play against.",
@@ -113,7 +124,7 @@ local PROGRAMS = {
       words = "apps store browser server",
       extra = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
           "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
-          "brickbreaker.lua", "invt.lua", "yap.lua" } },
+          "brickbreaker.lua", "invt.lua", "yap.lua", "foxycloud.lua", "music.lua" } },
     { id = "internet", name = "Internet Server", file = "internet_server.lua",
       detail = "Hosts the web",
       about = "Serves the websites and domains of the web.",
@@ -124,6 +135,16 @@ local PROGRAMS = {
       detail = "Storage for FoxyCloud",
       about = "Holds pieces of everybody's FoxyCloud files. Run five or more.",
       words = "cloud storage files foxycloud disk server" },
+    -- FoxyOS 17: music. One Music Server keeps the library and runs the
+    -- radios; a Music Player is a computer with speakers, signed in once.
+    { id = "music", name = "Music Server", file = "music_server.lua",
+      detail = "The Music Library and radios",
+      about = "Keeps every song and runs the radios. Needs the operator's code.",
+      words = "music songs radio dfpwm library server", extra = { "lib/music.lua" } },
+    { id = "musicplayer", name = "Music Player", file = "music_player.lua",
+      detail = "Plays music through speakers",
+      about = "Plays the Music Library and the radios. Sign in, add a speaker.",
+      words = "music player speaker songs radio dfpwm", extra = { "lib/music.lua" } },
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
     -- so instead of failing with an unknown program.
     { id = "tax", name = "Tax Controller", file = "tax_controller.lua",

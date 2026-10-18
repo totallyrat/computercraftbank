@@ -1,4 +1,5 @@
 -- PUMPE APP: Shop
+-- PUMPE APP ICON: eeeeeeee/ee0ee0ee/e000000e/e000000e/e000000e/eeeeeeee
 -- PUMPE APP ACTION: delivery | My deliveries | Where my orders are
 -- PUMPE APP ACTION: stores | Browse stores | Order something home
 

@@ -352,6 +352,8 @@ update.PUBLISHED_FILES = {
 update.PUBLISHED_OPTIONAL = {
 "border_controller.lua",
 "ccg.lua",
+"ccg_home.lua",
+"ccg_casino.lua",
 "gps_anchor.lua",
 "admin_terminal.lua",
 "app_server.lua",
@@ -372,6 +374,12 @@ update.PUBLISHED_OPTIONAL = {
 "invt.lua",
 "yap.lua",
 "cloud_server.lua",
+"foxycloud.lua",
+
+"music_server.lua",
+"music_player.lua",
+"music.lua",
+"lib/music.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -391,6 +399,9 @@ tax = "tax_controller.lua",
 admin = "admin_terminal.lua",
 border = "border_controller.lua",
 ccg = "ccg.lua",
+
+ccghome = "ccg_home.lua",
+ccgcasino = "ccg_casino.lua",
 anchor = "gps_anchor.lua",
 apps = "app_server.lua",
 tpbank = "bank_app_server.lua",
@@ -404,6 +415,9 @@ delivery = "delivery_terminal.lua",
 vault = "bank_vault.lua",
 
 cloud = "cloud_server.lua",
+
+music = "music_server.lua",
+musicplayer = "music_player.lua",
 }
 
 function update.roleProgram(role)
@@ -420,7 +434,13 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 
 "invt.lua",
 
-"yap.lua" },
+"yap.lua",
+
+"foxycloud.lua", "music.lua" },
+
+music = { "lib/music.lua" },
+musicplayer = { "lib/music.lua" },
+ccgcasino = { "lib/music.lua" },
 }
 
 

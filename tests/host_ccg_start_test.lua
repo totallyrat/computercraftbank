@@ -1,10 +1,10 @@
--- The CCG console starting up, 12.0 Final: the real lib/ui on a 1x1 Advanced
+-- CCG Home starting up, FoxyOS 17: the real lib/ui on a 1x1 Advanced
 -- Monitor, every tap aimed at a button that is really on it.
 --
--- Until 12.0 a console that could not reach its CCG Server said "BANK
--- OFFLINE" -- with a Bank right there -- and stopped: no Home Mode, no Bet
--- Play, no PIN. Now it starts on a menu that needs no server at all, Home
--- Mode is always there, and Bet Play says exactly what it is missing.
+-- Since FoxyOS 17 the console is CCG Home (Home Mode on its own) or a CCG
+-- Casino, which has tests of its own. CCG Home needs no server and no Bank:
+-- a new one asks for its colour and the owner's Home PIN and goes straight
+-- into Home Mode; closing that leaves a menu with Home Mode and Close.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 local screen = dofile("screen_harness.lua")
@@ -24,7 +24,7 @@ local function boot(options)
         exists = function(path)
             return options.color ~= nil and tostring(path):find("main_color", 1, true) ~= nil
         end }
-    shell = { getRunningProgram = function() return "/pumpe/ccg.lua" end }
+    shell = { getRunningProgram = function() return "/pumpe/ccg_home.lua" end }
     os.getComputerID = function() return 5 end
     os.day = function() return 3 end
     os.time = function() return 12 end
@@ -71,7 +71,7 @@ local function boot(options)
     local ui, state = screen.install({ display = monitor, steps = options.steps })
     package.loaded["lib.ui"] = ui
     package.loaded.config = nil
-    local ok, err = pcall(assert(loadfile("../ccg.lua")))
+    local ok, err = pcall(assert(loadfile("../ccg_home.lua")))
     assert(ok, err)
     assert(#state.steps == 0, #state.steps .. " scripted steps never used")
     return { monitor = monitor, requests = requests, saved = saved, hosted = hosted }
@@ -88,63 +88,42 @@ local function pin(...)
     return steps
 end
 
--- A new console, no CCG Server and no Bank on the network ---------------------------
+-- A new console, nothing on the network ----------------------------------------------
 
 local steps = {}
-screen.push(steps, "done", pin("1234", "1234"), function(state)
-    local monitor = state.display
-    assert(monitor.has("HOME MODE") and monitor.has("BET PLAY"),
-        "it reaches a menu with both modes, with nothing on the network\n" .. monitor.dump())
-    assert(monitor.has("CCG SERVER  NOT FOUND") and monitor.has("BANK  NOT FOUND"),
-        "and says what it looked for")
-    return "bet"
+screen.push(steps, "done", pin("1234", "1234"), pin("1234"), function(state)
+    assert(state.display.has("PAIR A POCKET"),
+        "straight into Home Mode, behind the new PIN, with a code to pair\n"
+        .. state.display.dump())
+    local width, height = state.display.getSize()
+    return { raw = { "monitor_touch", "top", width - 5, height } }
 end, function(state)
-    assert(state.display.has("No CCG Server answers"),
-        "Bet Play says what it is missing, and what to do about it")
-    return "ok"
-end, "home", pin("1234"), function(state)
-    assert(state.display.has("PAIR A POCKET"), "Home Mode opens, and shows a code")
+    assert(state.display.has("HOME MODE") and state.display.has("CLOSE"),
+        "closing Home Mode leaves its menu\n" .. state.display.dump())
+    assert(not state.display.has("BET PLAY"), "Bet Play is the CCG Casino's now")
+    return "home"
+end, pin("1234"), function(state)
+    assert(state.display.has("PAIR A POCKET"), "Home Mode again, behind the PIN")
     local width, height = state.display.getSize()
     return { raw = { "monitor_touch", "top", width - 5, height } }
 end, "close")
 local run = boot({ steps = steps })
-local pinSaved = false
+local pinSaved
 for _, value in ipairs(run.saved) do
-    if value.home_pin then pinSaved = true end
+    if value.home_pin then pinSaved = value.home_pin end
 end
 assert(pinSaved, "the Home PIN was set on the monitor")
+assert(#run.requests == 0, "and it asked no server for anything")
 
--- A console that already has its PIN, next to a Bank and a CCG Server -----------------
+-- A console that already has its colour and PIN ----------------------------------------
 
 steps = {}
-screen.push(steps, function(state)
-    assert(state.display.has("CCG SERVER  FOUND") and state.display.has("BANK  FOUND"), state.display.dump())
-    return "bet"
-end, function(state)
-    assert(state.display.has("SELECT A GAME"), "signed in, Bet Play shows its games")
-    return "back"
+screen.push(steps, pin("1234"), function(state)
+    assert(state.display.has("PAIR A POCKET"), state.display.dump())
+    local width, height = state.display.getSize()
+    return { raw = { "monitor_touch", "top", width - 5, height } }
 end, "close")
-run = boot({ steps = steps, ccg = 7, bank = 1, color = { color = "blue" },
-    device = { console_id = "CCGC00001", console_token = "T", name = "Arcade",
-        home_pin = "anything", home_best = {} } })
-assert(run.requests[1] == "CCG_REGISTER", "the console signs in when Bet Play is opened")
-
--- An arena in Auto Mode with its CCG Server down --------------------------------------
--- It asks nobody for a colour or a PIN, waits for its server, and still
--- offers STOP AUTO with the code it was started with.
-
-local util = dofile("../lib/util.lua")
-local hash = util.checksum("ARCADE1")
-steps = {}
-screen.push(steps, function(state)
-    assert(state.display.has("CCG SERVER OFFLINE"),
-        "an arena waits for its CCG Server instead of stopping\n" .. state.display.dump())
-    return { tick = true }
-end, "stop", screen.typed("ARCADE1"), function(state)
-    assert(state.display.has("No CCG Server answers"))
-    return "ok"
-end, "close")
-boot({ steps = steps, device = { console_id = "CCGC00001", console_token = "T",
-    name = "Arena", home_best = {}, auto = { game = "rotate", hash = hash, index = 0 } } })
+boot({ steps = steps, color = { color = "blue" },
+    device = { name = "Arcade", home_pin = pinSaved, home_best = {} } })
 
 print("host_ccg_start_test: OK")

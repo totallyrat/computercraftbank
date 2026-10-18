@@ -90,6 +90,12 @@ const forwardOptionalFiles = [
   "cloud_server.lua",
   // FoxyOS 17: FoxyCloud, by Foxy, on every Pocket.
   "foxycloud.lua",
+  // FoxyOS 17: music -- the server, the players, the Pocket app, and the
+  // streaming they share.
+  "music_server.lua",
+  "music_player.lua",
+  "music.lua",
+  "lib/music.lua",
 ];
 
 function checksum(buffer) {
@@ -227,7 +233,7 @@ const strippedFiles = [
 // size. Their headers stay: the App Server and the Pocket read them.
 const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
   "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
-  "invt.lua", "yap.lua", "foxycloud.lua"];
+  "invt.lua", "yap.lua", "foxycloud.lua", "music.lua"];
 strippedFiles.push(...strippedApps);
 
 // FoxyOS 14.1: everything a computer downloads is in dist/, the files that
@@ -308,9 +314,10 @@ const depotOnlyFiles = [
 // Every role updates itself and downloads only its own files, and since 11.2
 // the Bank keeps other roles' programs in memory rather than on its disk. The
 // peak that matters is therefore the largest single role: its installed files
-// plus a staged copy of the same set, inside a computer of 1,000,000 bytes.
-// ComputerCraft's computer_space_limit: 1,000,000 bytes, not 1000 KiB.
-const COMPUTER_LIMIT = 1000 * 1000;
+// plus a staged copy of the same set, inside the computer's disk.
+// ComputerCraft's computer_space_limit, in bytes: FoxyOS 17's world gives
+// every computer 50 MB (it was the default 1,000,000 until then).
+const COMPUTER_LIMIT = 50 * 1000 * 1000;
 const DATABASE_HEADROOM = 150 * 1024;
 const sharedFiles = ["config.lua", "startup.lua", "lib/net.lua", "lib/ui.lua",
   "lib/update.lua", "lib/util.lua"];

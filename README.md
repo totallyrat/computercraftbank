@@ -1,6 +1,6 @@
 # FoxyOS
 
-A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. Every device runs **FoxyOS** — the phone is the **Pocket** — and it includes personal banking, a Digital ID, ComputerCraftGaming (CCG) Bet Play, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
+A working, touch-first digital economy and gaming network for ComputerCraft: Tweaked. Every device runs **FoxyOS** — the phone is the **Pocket** — and it includes personal banking, a Digital ID, phone numbers, ComputerCraftGaming (CCG) casinos and Home Mode, music and live radio stations with giveaways, FoxyCloud storage, a Square-style merchant POS, an optional customer-facing order display, subscriptions, event tickets, customs, citizenships, visas, border gates, taxes, and a persistent central bank.
 
 ## What is included
 
@@ -8,8 +8,14 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | --- | --- | --- |
 | `bank_server.lua` | Advanced Computer + wireless/Ender modem + wired modem to its Vault | The Bank Core: balances, sessions, PINs, the inter-bank ledger, tax, CCG escrow, pay codes, companies, Easy Deployment. Everything else goes to its Vault |
 | `bank_vault.lua` | Advanced Computer + wired modem to its Core | The Bank Vault: friends and chat, travel, events and tickets, app records, the Shop's orders, FoxMail, and since 11.2 every account's history and notifications |
-| `pumpe.lua` | Advanced Pocket Computer + wireless modem | The Pocket: personal phone, payments, the CCG app (Bet Play and Home Mode), MyID (Digital ID, visas, countries, tax), events, tickets, subscriptions |
-| `ccg.lua` | Advanced Computer + Ender modem + Advanced Monitor | ComputerCraftGaming Bet Play lobbies, game animations, Race track and Survivor arena; since 12.0 Home Mode, four free games for one player with a Pocket as the controller |
+| `pumpe.lua` | Advanced Pocket Computer + wireless modem | The Pocket: personal phone, payments, Messages and phone numbers, the CCG app (casino tables, My Casino and Home Mode), MyID (Digital ID, visas, countries, tax), events, tickets, subscriptions |
+| `ccg_casino.lua` | Advanced Computer + Ender modem + Advanced Monitor + speakers | A CCG Casino table, run by a company: Roulette, Blackjack, Heads or Tails and Poker, with MIDI or DFPWM music (FoxyOS 17) |
+| `ccg_home.lua` | Advanced Computer + Ender modem + Advanced Monitor | CCG Home: Home Mode, free games for one player with a Pocket as the controller, and the Game Browser's |
+| `ccg.lua` | (until FoxyOS 17) | The CCG before it was two. An old CCG that updates asks once whether it is CCG Home or a CCG Casino |
+| `ccg_server.lua` | Advanced Computer + wireless/Ender modem | Deals every CCG Casino's games; the money stays on the Bank |
+| `cloud_server.lua` | Computer + wireless/Ender modem | Holds pieces of FoxyCloud files and of the Music Library's songs. Run five or more |
+| `music_server.lua` | Advanced Computer + wireless/Ender modem | The Music Library and the radio stations (FoxyOS 17) |
+| `music_player.lua` | Advanced Computer + wireless/Ender modem + speakers (a monitor if you like) | Plays the Music Library and the radios, signed in as one person (FoxyOS 17) |
 | `service_kiosk.lua` | (retired) | Since FoxyOS 13 the till is the Company app's **Sell** tab. An updated kiosk says so, pays out any money it still holds, and turns itself into a Pocket |
 | `event_kiosk.lua` | Advanced Computer + wireless/Ender modem | Event creation, ticket inventory, release dates, presales and invitations, the queue's numbers, door admission |
 | `admin_terminal.lua` | Advanced Computer + wireless/Ender modem | Government-only tax controls, account approval, balances, bans, tax demands, announcements |
@@ -23,6 +29,8 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | `company.lua` | Downloaded to a Pocket from the App Browser | Start and run companies from the phone: products, the online store, what pickup points sell, and Delivery Mode |
 | `foxy.lua` | Downloaded to a Pocket from the App Browser | The Foxy Account and the bank behind it: card, sub-accounts, Foxy Cash |
 | `yap.lua` | Installed on every Pocket once, since FoxyOS 16 | Yap!, by Foxy: a feed, private chats behind your PIN, and Yap Map |
+| `foxycloud.lua` | Installed on every Pocket once, since FoxyOS 17 | FoxyCloud, by Foxy: your Foxy Account, your files on every device, and FoxyCloud+ |
+| `music.lua` | Installed on every Pocket once, since FoxyOS 17 | Music, by Foxy: the remote for your Music Players, and uploading songs |
 | `apps/` | Written here, published from inside the game | Notes on writing apps. Its two apps, Yap and Yap Chat, became Yap! in FoxyOS 16, which Foxy ships (`yap.lua`) |
 | `lib/` | Copied with every program | Shared UI, clock, storage, and networking code |
 
@@ -42,6 +50,7 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How Pocket Works** in Settings → Account re-opens the same guide at any time.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your Pocket**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
+- **Every app has an icon** (FoxyOS 17): 8 by 6 pixels in the 16 colours, always on a coloured background, in a light grey frame — half a cell down each side, so a tile reads five cells wide. Publishing an app in Dev Mode opens **Icon Creator** to paint one. A cell of the screen shows two colours, so an icon is drawn so that every 2×3 block of it uses two at most.
 - Every Pocket screen is laid out against the Advanced Pocket Computer's native 26×20 character canvas. Buttons, messages, confirmations, activity, events, tickets, notifications, and subscriptions wrap onto readable lines instead of hiding labels beyond the edge.
 - The **dock** sits under every app page: search first, then up to three favourites. An empty slot opens the picker, and so does **Edit Your Dock** in Settings.
 - Unread counts appear as a badge in an icon's corner.
@@ -101,6 +110,25 @@ The Bank's Vault keeps INVT's events and tickets. Only the INVT app may ask, and
 - **Map** — **Yap Map** — is not a map: it lists your friends' coordinates while they are in a **Coordinate Zone**, which is anywhere the GPS Anchors can place their Pocket (a fix from the last minute and a half). Only friends who use Yap! are listed, and **Hide me** takes you off everybody's. You see your own coordinates at the top, and how far away each friend is.
 
 It opens with three typing dots that become a speech bubble, and moves throughout: yaps slide in, a like pops a heart, a post rises off the screen, the Chat lock opens, Yap Map pings. Yap Boost did not come along from the old Yap, and nothing was moved over from it: Yap! is a different app to the Bank.
+
+## FoxyCloud (FoxyOS 17)
+
+**FoxyCloud**, by Foxy, comes with the update on every Pocket, once. It is the home for your Foxy Account — your name, your PIN and your plan — and your files on every device you sign in to.
+
+- **Files**: notes written in the app, text, MIDI, `.dfpwm` songs and anything dropped onto the Pocket's screen. A file is downloaded only to open it, like a website, and let go again; **Save here** puts a copy in the Pocket's Downloads. Any file can be shared with a six-letter code, read-only, and taking the share away stops the code working.
+- **Storage**: the files live on the **Cloud Servers**, never on the Bank. The Bank's Vault knows which pieces are where, and a Cloud Server stores or hands out a piece only with a ticket from the Bank that names it and how big it may be.
+- **The free plan**: 100 KB, 40 messages and 10 calls a day, 10 songs from the Music Library a day and 2 uploads.
+- **FoxyCloud+**, in the app's **Plus** tab, has two tiers, billed every 5 days and listed with your other subscriptions:
+
+  | | Tier 1 | Tier 2 |
+  | --- | --- | --- |
+  | Price | 500 | 1000 |
+  | Storage | 25 MB | 50 MB |
+  | Messages a day | 500 | unlimited |
+  | Urgent Contact calls a day | 100 | unlimited |
+  | Songs and uploads | unlimited | unlimited |
+
+  Both also take away the Foxy Cash fee, let you queue early for events that offer it, and play DFPWM songs and radios on your CCG Casinos. **Moving up** costs the difference now and keeps your renewal day; **moving down** happens when it renews, so nobody pays for room they then lose. Cancelled or unpaid, it runs to the end of what was paid for; your files are kept, and nothing new fits until they are back under the free room.
 
 ## Search, App Actions and QuickActions
 
@@ -190,6 +218,16 @@ Tapping a friend opens your chat with them. `X` removes them after a confirmatio
 - A chat from an app's publisher holds its VerCodes, and cannot be answered.
 - A chat raises an alert only when it goes from read to unread, so a busy group never floods the Alerts list.
 
+### Phone numbers (FoxyOS 17)
+
+Sending a message and making a call need a **phone number** of your own: Messages → **Phone** → **Get a number** gives you a random one, like `482-7316`. Reading what arrives never needs one, so the government's messages and VerCodes still reach you.
+
+- **Call a number** rings a person through Urgent Contact, friend or not. A company's number tells its owner who called and your number, to call back. A radio's number is how you enter its giveaway (see *Radio giveaways*).
+- **Text a number** starts a chat with anybody who has one.
+- A day's messages and calls are counted per in-game day: **40 messages and 10 calls** free, **500 and 100** on FoxyCloud+ Tier 1, **no limit** on Tier 2. The Phone tab shows what today has left.
+- Companies get a number in the Company app → **Store** → **Get a phone number**.
+- Only the Pocket itself, and Foxy's Music app for a giveaway's Call button, can place a call; no other installed app can, since a call to a radio costs money without a PIN.
+
 ### Urgent Contact
 
 **Urgent Contact** reaches a friend right now. Since FoxyOS 16 they get a banner at the top of the screen with **Accept** and **Decline**, whatever app they had open, and that app keeps working under it; the check runs in the shared wait loop rather than in any one screen.
@@ -215,27 +253,22 @@ Two codes still work on a Foxy account, because neither is the thing Foxy Pay re
 
 Foxy Pay is a route of its own rather than a flag on the code route. An offer is *addressed* — the kiosk chose who may pay it — so the Bank checks the offer, never the client's word for how it came by the code.
 
-## ComputerCraftGaming Bet Play
+## ComputerCraftGaming (CCG)
 
-CCG is a shared big-screen gaming system. Create a lobby on `ccg.lua`, then players open **Bet** on their Pocket, verify their PIN, enter the screen's alphanumeric lobby code, choose a display name, make their pick, and set a wager from their Bet Wallet.
+Since FoxyOS 17 a CCG is one of two things, each its own download in Easy Deployment: a **CCG Casino**, a table a company runs, or **CCG Home**, free games at home. A CCG from before asks once which it is to be.
 
-Three games are included:
+### CCG Casino (FoxyOS 17)
 
-1. **Heads or Tails** — pick a side. A correct pick pays `2×` the wager.
-2. **Race** — pick one of six red, orange, yellow, green, blue, or purple cars. The six-lane animated race has a server-random winner and pays `3×`.
-3. **Survivor** — use the Pocket touch joystick to move and **PUSH** nearby players from a shrinking circular platform. The last player standing receives `3×` their wager.
+Set up on the computer's own screen: sign in with Foxy, choose one of your companies, name the table. The name is in the monitor's top left corner; the monitor is only a display.
 
-Since 9.1 the games run on their own computer — a **CCG Server** — while the money stays on the Bank. The CCG Server generates chance-game outcomes, simulates Survivor, decides the winner and settles each lobby once; a modified Pocket or CCG console still cannot submit its preferred result.
+- **Four games.** Roulette (single zero, up to eight bets), Blackjack (3 to 2, double, the dealer stands on 17), Heads or Tails, and Poker (Hold'em against the dealer: raise doubles your stake, ties go to the dealer). The **CCG Server** deals; players sit at the table from the CCG app's **Bet** tab with its code, and stay from game to game.
+- **My Casino**, in the CCG app, lists every table your companies own: switch **Auto** (it picks and deals by itself), choose the next game, or take the dealer and pace the round yourself.
+- **The money.** A table's rounds go into its company's casino balance: what players lose comes in, what they win goes out. A win bigger than the balance is a loan from the Bank, paid back before there is profit again, and all of an owner's casinos may owe `ccg_casino_credit` (10,000) together; a bet that could go past it is refused. **CASINO MONEY** takes profit out or puts money in, with your PIN. You cannot bet at your own casino.
+- **Sound and music.** Speakers play the games' sounds, and music that goes quieter while a game is on. My Casino → a table → **Music** switches between **MIDI** — `.mid` files dropped on the CCG Casino computer's screen, or one from your FoxyCloud — and **DFPWM**: a Music Library song on repeat, or a radio, live. DFPWM needs the owner's FoxyCloud+; the table is given a grant by the Music Server, never the owner's session, and stops if the plan ends. The console tells My Casino what it can play and how its music is going, so a CCG that needs updating says so.
 
-**Lobbies stay open (FoxyOS 16).** A lobby lasts from game to game under the same code. After a round every player stays in it: their Pocket shows how it went, with **NEXT GAME** to stay or **LEAVE**, and asks for a pick and a wager again when the next round opens — no code to type. The console's result has **NEXT GAME** (the same game), **OTHER GAME** (the code stays) and **CLOSE**; a console keeps its code for its next lobby too. A round starts once enough players have wagered, and anybody still choosing sits that round out and plays the next. Somebody can join mid-round, for the next one, and leave between rounds. A player who never wagers and whose Pocket goes quiet for two minutes is dropped.
+What a table cannot do is touch money. Every wager sits on the Bank, and the CCG Server settles with only who won; the Bank works out the payout. Winnings go into **Holding** for 24 in-game hours, then the **Bet Wallet**, which moves back to the Foxy Account with the PIN. CCG uses fictional game currency only.
 
-What it cannot do is touch money. A wager sits in **escrow on the Bank**, and a settle carries only the list of winners — the Bank multiplies the stake it is already holding by its own copy of the game's multiplier, so a CCG Server can pick the wrong winner but cannot invent a payout. It registers with the Bank once using the operator code before the Bank will settle for it at all.
-
-Waiting lobbies expire after five minutes and return every reserved wager, and a CCG Server restart during an active Survivor round refunds everyone rather than guessing a winner. If a CCG Server is switched off holding wagers, the Bank refunds that escrow itself after two hours.
-
-Winnings do not enter the normal Foxy Account directly. They enter **Holding** for exactly 24 in-game hours, including the original stake in the advertised multiplier, then release into the **Bet Wallet**. Bet Wallet money can be transferred back to the Foxy Account in any positive amount. Adding or cashing out money requires the account PIN. CCG uses fictional game currency only.
-
-### Home Mode (12.0)
+### CCG Home: Home Mode (12.0)
 
 Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048** — free: no lobby, no wager, and no CCG Server. The console runs them and your Pocket is the controller.
 
@@ -243,27 +276,43 @@ Four games made for one player — **Snake**, **Meteors**, **Simon** and **2048*
 2. The console shows a **six digit code**. Open **CCG → Home** on your Pocket and type it.
 3. Your Pocket shows the games, then a pad: arrows and **A** (arrow keys and Space work too). The game is on the big screen, the score on your phone.
 
-**Games from the Game Browser (12.0 Final).** Home Mode plays more than the four: **CCG → Home → Game Browser** on the paired Pocket lists the App Server's games, and **Get it** has the console fetch one — in pieces, checked against what the App Server says it is — and keep it beside the four, with its own best score. Up to twelve; **Remove** takes one off. Only in Home Mode: Bet Play is untouched. The App Server ships **Brick Breaker**, and `brickbreaker.lua` is the example for writing one.
+**Games from the Game Browser (12.0 Final).** Home Mode plays more than the four: **CCG → Home → Game Browser** on the paired Pocket lists the App Server's games, and **Get it** has the console fetch one — in pieces, checked against what the App Server says it is — and keep it beside the four, with its own best score. Up to twelve; **Remove** takes one off. The App Server ships **Brick Breaker**, and `brickbreaker.lua` is the example for writing one.
 
 A game is published from **Dev Mode** in the Pocket's Settings: the first time a file goes out, it asks **App or Game**, and a game goes to the CCG's Game Browser instead of the Pocket's App Browser. A game is a file that returns one table — `new(width, height, random)`, `input(state, key)`, `tick(state)`, `speed(state)`, `draw(state, screen)`; `state.score`, `state.over` and `state.status` are read from it — and it runs in a box on the console: it is handed maths, strings, tables, colours and a board to paint (`screen.fill`, `screen.text`, clipped to the board), and nothing that reaches the disk, the network or the monitor. A game that errors ends its round and the console carries on; the console only ever reads plain copies of the score, the end and the status.
 
-**The console always starts (12.0 Final).** A console opens on a menu — **HOME MODE** and **BET PLAY** — with what it found on the network: the CCG Server and the Bank. Home Mode needs neither. Bet Play signs the console in to its CCG Server when it is opened, and says exactly what is missing if there is none. A new console asks for its main colour and Home PIN before anything else.
+**It always starts.** CCG Home needs no CCG Server and no Bank. A new one asks for its main colour and Home PIN, then goes straight into Home Mode; closing Home Mode leaves a menu with **HOME MODE** and **CLOSE**.
 
 One controller at a time. Five wrong codes and the console shows a new one. **Unpair** on the phone, closing the app, or **EXIT** on the console lets it go, and it shows a new code for the next player. The best score at each game is kept on the console; **Scores** on the phone keeps yours. A console that cannot reach the CCG Server still offers Home Mode, and its main colour is changed with **COLOR** on the pairing screen, behind the PIN.
 
-### Auto Mode
+## Music and radios (FoxyOS 17)
 
-Auto Mode turns a CCG console into an unattended arcade cabinet. Tap **AUTO MODE // NON-STOP** on the game picker, choose one game or **Rotate All Games**, then type a stop code twice.
+Songs are **DFPWM1a** (`.dfpwm`, 48 kHz): 6000 bytes a second, kept on the Cloud Servers like FoxyCloud files and fetched a piece ahead of the speaker. MIDI is now only for a CCG Casino.
 
-From then on the console runs by itself:
+### The Music Server
 
-1. It opens a lobby and shows the join code — the same code from then on.
-2. Once enough players are **READY**, a countdown starts (`ccg_auto_start_seconds`, default 15; four times that while somebody is still choosing, who then sits the round out). The operator can still tap **START** to begin immediately.
-3. The game plays and settles as usual.
-4. The result stays up for `ccg_auto_next_seconds` (default 8), then the next round opens in the same lobby, with the same players. Rotate changes the game, not the code.
-5. If nobody starts a lobby before it expires, every reserved wager is returned and a fresh lobby opens straight away, under the same code.
+One per world, set up with Easy Deployment and registered with the operator code. Its own screen has:
 
-Auto Mode never stops on its own. **STOP AUTO** asks for the code entered when the mode was started; a wrong code leaves it running. The setting is saved to the console, so a restart — including one caused by an automatic update — comes back into Auto Mode instead of the game menu. Rotate mode remembers which game is next across restarts.
+- **Library**: every track, by kind — **Song**, **Host** (talking between songs), **Ad** and **Giveaway** (a clip that starts a giveaway). Drop `.dfpwm` files on its screen, or **IMPORT** them from a disk drive, then give each a title, an artist, its kind and the name to credit. Tap a track to rename it, change its kind, put it on radios or delete it — from every radio, queue and Cloud Server at once.
+- **Radios**: make a station with a name and a colour; the Bank gives it a phone number. Choose its songs in rotation, its hosts, its ads and its giveaway clips, and set the dials: how often a host talks, ads every how many songs, how often a giveaway comes by chance, and specials on or off. **GIVEAWAY NOW** runs one at the next break, **NON-STOP NOW** starts 20 minutes of songs only, and **SKIP** moves every listener on.
+- **Status** lists the Music Players and what each is playing.
+
+### How a radio plays
+
+A radio is live: a timeline worked out on the Music Server as it goes, and every listener hears the same moment. After each song comes a break: a giveaway now and then (or when asked for), ads every few songs (one or two), or a host. A host can bring in a special: **20 MINUTE NON-STOP** (songs only), **DOUBLE PLAY** (two in a row by one artist) or **THROWBACK** (three from the oldest in rotation). A song is never one of the last few again while others are waiting. Radios are always free.
+
+### Radio giveaways
+
+A giveaway clip playing opens a giveaway at the Bank, for `giveaway_seconds` (180). Now Playing — on the Music Player, its monitor and the Music app — shows **GIVEAWAY! Call 482-7316** and how long is left, and the Music app has a **Call** button. A call costs `phone_call_price` (50) and every call is another entry, so more calls is a better chance. When the lines close, one entry is drawn and that caller wins a random amount between `giveaway_prize` (100 to 500), paid into their account by the Bank — money it makes rather than takes from anybody. The winner is on Now Playing for a few minutes.
+
+### Music Players
+
+Easy Deployment → **Music Player**, on a computer with speakers. Sign in once with your Foxy name and PIN and it is yours until you sign it out. Its screen has **Now Playing**, **Library** (play a song, `+` to queue it), **Radio** and **Upload**: drop a `.dfpwm` file on its screen, or pick one from a disk, and it goes into the Music Library with your name on it. A monitor beside it shows what is on, in the radio's colour, big enough to read across a room.
+
+A song from the library counts against your day when it starts — 10 a day without FoxyCloud+ — and pausing and resuming it does not count again. Uploads are 2 a day without FoxyCloud+. Radios never count.
+
+### The Music app
+
+**Music**, by Foxy, comes with the update on every Pocket, once. It is the remote for your Music Players — choose which at the top of **Now** — with **Library**, **Radio** and **Upload**: from the Pocket's Downloads, dropped on its screen, or from your FoxyCloud.
 
 ## Foxy Pay
 
@@ -636,7 +685,7 @@ Since 12.0 Easy Deployment is a downloader. One file, `startup.lua`, sets up any
 
 2. Run `startup` (or restart the computer).
 3. **The Pocket has the first screen** — unless this is a new world. On a computer with nothing installed and a modem, Easy Deployment first asks the network for a Bank; if none answers, the first screen is **Welcome to Foxy** (12.0 Final), and **GET THE BANK SERVER** fetches it from GitHub (operator's code `4040`). **NOT NOW** goes to the Pocket. Otherwise tap **INSTALL POCKET**, or press Enter.
-4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Pocket (the till is in its Company app), `casino` the CCG Bet Console, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the Pocket.
+4. **Anything else: press the down arrow, or just start typing.** A search box opens and the results change with every key. It reads keywords as well as names — `shop` finds the Pocket (the till is in its Company app), `casino` the CCG Casino, `music` the Music Server and Music Player, `web` the Internet Server, `pickup` the Delivery Terminal. Up/down move through the results; Enter or a tap opens one. Up from the first result, or Backspace on an empty box, goes back to the Pocket.
 5. Every program gets the same full screen as the Pocket, with one big **INSTALL** button. The **Bank Server** (Foxy's) and the **Admin Terminal** ask for the operator's code, `4040`. The 3rd Party Bank Server is its own entry and needs no code.
 6. It downloads the program, `config.lua`, the shared `lib/` files and its own copy as `/pumpe/installer.lua`, writes `/startup.lua` to boot through that copy, and restarts into the program.
 
@@ -772,14 +821,22 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 - The header clock uses ComputerCraft's in-game clock.
 - Event cards and tickets show a live countdown calculated from `event_day` and `event_time`.
 
-### CCG Bet Console
+### CCG Casino and CCG Home
 
-- Use an Advanced Computer with an Ender modem and an Advanced Monitor.
-- The console sets the monitor to text scale `0.5` and responsively supports a 1×1 monitor or a larger wall.
-- Lobby codes, ready states, coin flips, six race lanes, the shrinking Survivor ring, players, and results all render on the monitor.
-- **Start** works once one player is ready (two for Survivor); anybody not ready sits that round out. Heads or Tails and Race take up to 24 players, Survivor 8.
-- **Auto Mode** does that waiting for you and keeps playing rounds in its lobby. It stops only for the code entered when it was started.
-- The console stores only its server-issued ID/token. It never stores Pocket PINs or decides payouts.
+- Use an Advanced Computer with an Ender modem and an Advanced Monitor; a CCG Casino wants speakers too.
+- The monitor is set to text scale `0.5` and works from a 1×1 monitor up to a wall.
+- A CCG Casino stores only its table's ID and token. It never stores a PIN, decides a payout or holds anybody's session.
+
+### Cloud Servers
+
+- Run five or more, each its own computer: FoxyCloud files and the Music Library's songs are spread across all of them, piece by piece, to whichever has the most room. Each registers with the Bank once, with the operator code.
+- Since FoxyOS 17 every computer in the world has 50 MB, so a Cloud Server holds about that much; a server keeps enough free to update itself.
+
+### Music Server and Music Players (FoxyOS 17)
+
+- One **Music Server**, an Advanced Computer: it registers with the Bank once, with the operator code. Its songs live on the Cloud Servers, so it needs them running.
+- A **Music Player** is any Advanced Computer with a modem and one or more speakers beside it. A monitor shows what is on and, in a giveaway, the number to call.
+- Music Players and Pockets ask the Bank which computer the registered Music Server is before they hand it a session, so a computer that takes the name cannot collect anybody's.
 
 ### A till (the Pocket on a standing computer)
 
@@ -889,6 +946,14 @@ pumpe/
 ├── tax_controller.lua
 ├── border_controller.lua
 ├── ccg.lua
+├── ccg_home.lua
+├── ccg_casino.lua
+├── ccg_server.lua
+├── cloud_server.lua
+├── music_server.lua
+├── music_player.lua
+├── foxycloud.lua
+├── music.lua
 ├── startup.lua
 ├── installer.lua
 ├── launcher.lua
@@ -900,6 +965,7 @@ pumpe/
 │   ├── build_release_manifest.js
 │   └── run_tests.sh
 └── lib/
+    ├── music.lua
     ├── net.lua
     ├── ui.lua
     ├── update.lua
@@ -908,7 +974,7 @@ pumpe/
 
 ## Tests
 
-`tools/run_tests.sh` runs every host-side test with any Lua 5.2+ interpreter; ComputerCraft is not required. They cover the Bank routes, CCG settlement and Auto Mode, the update manifest, Easy Deployment, and screen layout at pocket, computer, and monitor sizes.
+`tools/run_tests.sh` runs every host-side test with any Lua 5.2+ interpreter; ComputerCraft is not required. They cover the Bank routes, CCG casinos and settlement, FoxyCloud, music and radios, phone numbers, the update manifest, Easy Deployment, and screen layout at pocket, computer, and monitor sizes.
 
 ## Troubleshooting
 

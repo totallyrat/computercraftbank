@@ -76,6 +76,9 @@ function cloud.start(harness, bank)
     local BANK_ID, POCKET_ID = bank.core_id, 100
     local current = POCKET_ID
     local mail, servers, lose = {}, {}, {}
+    -- FoxyOS 17: other servers on the same network, such as a Music Server:
+    -- [computer id] = { protocol, hostname, actions }.
+    local others = {}
 
     local function deliver(to, from, message, protocol)
         mail[to] = mail[to] or {}
@@ -116,6 +119,9 @@ function cloud.start(harness, bank)
         host = function() end, unhost = function() end,
         lookup = function(protocol)
             if protocol == config.protocol then return BANK_ID end
+            for id, other in pairs(others) do
+                if other.protocol == protocol and other.up ~= false then return id end
+            end
             return nil
         end,
         send = function(to, message, protocol)
@@ -130,6 +136,14 @@ function cloud.start(harness, bank)
                 current = to
                 local handler = servers[to].program.actions[message.action]
                 local reply = answer(message, pcall(handler, message.payload or {}, from))
+                current = from
+                deliver(from, to, reply, protocol)
+            elseif others[to] and others[to].up ~= false and protocol == others[to].protocol then
+                current = to
+                local handler = others[to].actions[message.action]
+                local reply = handler and answer(message, pcall(handler, message.payload or {},
+                    from)) or { version = 5, kind = "response", request_id = message.request_id,
+                    ok = false, error = "Unknown action", code = "UNKNOWN_ACTION" }
                 current = from
                 deliver(from, to, reply, protocol)
             end
@@ -193,10 +207,26 @@ function cloud.start(harness, bank)
         for _, id in ipairs(ids) do count = count + held(id).count end
         return count
     end
+    -- A program of another kind on computer `computerId`, loaded in its test
+    -- mode with a disk of its own, answering `protocol`.
+    local function attach(computerId, program, protocol, mode)
+        shell = { getRunningProgram = function()
+            return "/" .. mode .. computerId .. "/" .. program
+        end }
+        disks[mode .. computerId] = { files = {}, dirs = {}, capacity = 50 * 1000 * 1000 }
+        PUMPE_TEST_MODE = mode
+        local before = current
+        current = computerId
+        local loaded = assert(loadfile("../" .. program))()
+        current = before
+        PUMPE_TEST_MODE = nil
+        others[computerId] = { protocol = protocol, actions = loaded.actions, up = true }
+        return loaded, others[computerId]
+    end
     return {
         disks = disks, servers = servers, lose = lose, ids = ids,
         as = as, beatAll = beatAll, held = held, heldTotal = heldTotal,
-        loadServer = loadServer, pocket = POCKET_ID,
+        loadServer = loadServer, pocket = POCKET_ID, attach = attach, mail = mail,
     }
 end
 

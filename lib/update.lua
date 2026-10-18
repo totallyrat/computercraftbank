@@ -375,6 +375,11 @@ update.PUBLISHED_OPTIONAL = {
     "yap.lua",
     "cloud_server.lua",
     "foxycloud.lua",
+    -- FoxyOS 17: music.
+    "music_server.lua",
+    "music_player.lua",
+    "music.lua",
+    "lib/music.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -410,6 +415,9 @@ local ROLE_PROGRAMS = {
     vault = "bank_vault.lua",
     -- FoxyOS 16.3: FoxyCloud's storage, as many as the world runs.
     cloud = "cloud_server.lua",
+    -- FoxyOS 17: the Music Library and the radios, and what plays them.
+    music = "music_server.lua",
+    musicplayer = "music_player.lua",
 }
 
 function update.roleProgram(role)
@@ -427,8 +435,12 @@ local ROLE_EXTRA_FILES = {
         "invt.lua",
         -- FoxyOS 16: Yap!, by Foxy.
         "yap.lua",
-        -- FoxyOS 17: FoxyCloud, by Foxy.
-        "foxycloud.lua" },
+        -- FoxyOS 17: FoxyCloud and Music, by Foxy.
+        "foxycloud.lua", "music.lua" },
+    -- FoxyOS 17: streaming DFPWM from the Cloud Servers to speakers.
+    music = { "lib/music.lua" },
+    musicplayer = { "lib/music.lua" },
+    ccgcasino = { "lib/music.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

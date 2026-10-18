@@ -610,4 +610,46 @@ function net.cloud.api(ask, protocol, offline, downloads)
     return api
 end
 
+-- What the Music app is given on a Pocket, as api.music, FoxyOS 17: asking
+-- the Music Server as whoever is signed in, and sending a song's pieces to
+-- the Cloud Servers for an upload. `where()` asks the Bank which computer is
+-- the registered Music Server: a session goes there and nowhere else.
+function net.musicApi(config, session, offline, where)
+    local client
+    local api = {}
+    local function off()
+        if offline and offline() then return nil, "Modem is off", "MODEM_OFF" end
+        return true
+    end
+    function api.ask(action, payload)
+        local ok, err, code = off()
+        if not ok then return nil, err, code end
+        if not client then
+            client = net.client({ protocol = config.music_protocol or "PUMPE_MUSIC_V1",
+                hostname = config.music_hostname or "MUSIC_SERVER" })
+            function client:discover()
+                self.serverId = where()
+                return self.serverId
+            end
+        end
+        local scoped = {}
+        for key, value in pairs(type(payload) == "table" and payload or {}) do
+            scoped[key] = value
+        end
+        scoped.session_token, scoped.player_token = session(), nil
+        local answer, askError, askCode = client:request(tostring(action), scoped, 6)
+        if not answer and not askCode and not client.serverId then
+            askError = "The Music Server is not running"
+        end
+        return answer, askError, askCode
+    end
+    function api.upload(plan, body, progress)
+        local ok, err, code = off()
+        if not ok then return nil, err, code end
+        return net.cloud.put(plan, tostring(body or ""),
+            config.cloud_protocol or "PUMPE_CLOUD_V1", progress)
+    end
+    return api
+end
+
 return net

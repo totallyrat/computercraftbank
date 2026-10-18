@@ -1,5 +1,85 @@
 # Changelog
 
+## 17.0.0
+
+FoxyOS 17. Everything from the three betas, finished, and music, radios,
+phone numbers and two FoxyCloud+ tiers. Update the Bank (Core and Vault)
+first, then the App Server, the CCG Server, the Cloud Servers and every CCG.
+Then set up a Music Server and Music Players with Easy Deployment. Coming
+from 16.3.1: your CCG asks once whether it is CCG Home or a CCG Casino.
+
+**Music.** Songs are DFPWM1a now, and MIDI is only for a CCG Casino. A new
+Music Server keeps the Music Library, with every song's pieces on the Cloud
+Servers. Import songs on the Music Server itself (drop .dfpwm files on its
+screen, or from a disk), with the name to credit. Anybody can upload from a
+Music Player or the Music app, with their own name on the track.
+
+**Radios.** The Music Server's Radios tab makes stations, each with a name,
+a colour and its own phone number. Put songs in rotation, then hosts who
+talk between songs, ads every few songs and giveaway clips, all played in a
+random order. Now and then a station goes 20 Minute Non-Stop, plays a Double
+Play by one artist or a Throwback. Radios are live, everybody hears the same
+moment, and they are always free.
+
+**Music Players.** A computer with a speaker, signed in once with your Foxy
+name and PIN. Now Playing, Library, Radio and Upload on its screen, and a
+monitor beside it shows what is on across the room. Without FoxyCloud+, 10
+songs from the library a day and 2 uploads; radios never count.
+
+**The Music app.** On every Pocket, by Foxy: the remote for your Music
+Players. Play a song, queue one, tune in a radio, pause, skip, volume. Upload
+a song from the Pocket's Downloads, dropped on its screen, or from your
+FoxyCloud.
+
+**Phone numbers.** Messages and Urgent Contact need a number of your own:
+Messages, Phone tab, Get a number. Then call or text any number, a friend's
+or not. 40 messages and 10 calls a day, 500 and 100 on Tier 1, unlimited on
+Tier 2. Companies get a number in the Company app's Store tab, and a call to
+it tells the owner who called.
+
+**Radio giveaways.** When a giveaway clip plays, the station's number is on
+Now Playing, on the Music Player's monitor and in the Music app, with a Call
+button. A call is 50, and every call is another entry. When the lines close,
+one caller wins a random 100 to 500, paid by the Bank. The Music Server can
+start one at the next break too.
+
+**FoxyCloud+ Tier 1 and Tier 2.** Tier 1 is 500 every 5 days: 25 MB, 500
+messages and 100 calls a day. Tier 2 is 1000: 50 MB and no daily limits.
+Both have unlimited songs and uploads, no Foxy Cash fee, early tickets, and
+DFPWM on your CCG Casinos. Moving up costs the difference and keeps your
+renewal day; moving down happens when it renews.
+
+**CCG Casino music: MIDI or DFPWM.** My Casino, a table, Music switches
+between them. MIDI plays songs on the console or from your FoxyCloud. DFPWM
+plays a Music Library song on repeat, or a radio live, while you have
+FoxyCloud+.
+
+**Casino music from FoxyCloud fixed.** It played only when the CCG Casino
+already had a file of the same name. A CCG Server or console from before
+Beta 3 ignored the song. Now the console tells My Casino what it can play
+and how it is going, and says when the CCG needs updating. The song's
+ticket lasts hours, so a restart or an update does not lose it, and a fetch
+that fails is tried again.
+
+**App icons.** Every icon has a coloured background and a light frame down
+both sides. The tile reads five cells wide, a little narrower than before.
+Icon Creator paints a new app's icon in Dev Mode.
+
+**The CCG is two.** CCG Home is Home Mode on its own. CCG Casino is a table
+run by a company: Roulette, Blackjack, Heads or Tails and Poker, dealt by
+the CCG Server and played from the CCG app's Bet tab. Owners run it from My
+Casino: Auto, the next game, or being the dealer. Both are in Easy
+Deployment.
+
+**Casinos earn.** A table's rounds go into its company's casino balance. A
+big win can be a loan from the Bank that the casino pays back first, and
+all of an owner's casinos may owe 10,000 together. CASINO MONEY in My Casino
+takes profit out or puts money in.
+
+**FoxyCloud.** The FoxyCloud app on every Pocket: your Foxy Account, and
+your files on every device. Write notes, drop files on the screen, keep one
+in the Pocket's Downloads, and share any file with a six-letter code.
+
 ## 16.5.2
 
 FoxyOS 17 Beta 3. Everything from Beta 2, and FoxyCloud, app icons and

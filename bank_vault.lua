@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -629,7 +629,8 @@ function actions.CHAT_START(payload, caller)
     }
     for _, accountId in ipairs(requested) do
         if not seen[accountId] then
-            requireFriend(account, accountId)
+            if caller.dialed == accountId then activeAccount(accountId)
+            else requireFriend(account, accountId) end
             seen[accountId] = true
             memberIds[#memberIds + 1] = accountId
         end
@@ -1070,7 +1071,12 @@ end
 function actions.URGENT_CALL(payload, caller)
     local account = whoIsAsking(caller)
     cleanupUrgentCalls()
-    requireFriend(account, payload.account_id)
+    -- FoxyOS 17: a number dialled on the Core reaches anybody, friend or not.
+    if caller.dialed ~= nil and caller.dialed == payload.account_id then
+        activeAccount(payload.account_id)
+    else
+        requireFriend(account, payload.account_id)
+    end
     local other = holder(payload.account_id)
     local appName = caller.app_name
     need(not busyCall(account.account_id), "CALL_BUSY",
@@ -5562,7 +5568,7 @@ end
 
 -- Tickets --------------------------------------------------------------------------
 
-function cloud.ticket(mode, record, chunks)
+function cloud.ticket(mode, record, chunks, ttl)
     local token = util.token("CT")
     local servers = {}
     for _, chunk in ipairs(chunks) do
@@ -5572,7 +5578,7 @@ function cloud.ticket(mode, record, chunks)
         end
     end
     cloud.tickets[token] = { mode = mode, file_id = record.file_id,
-        expires_at = util.nowMs() + cloud.ticket_ms, servers = servers }
+        expires_at = util.nowMs() + (ttl or cloud.ticket_ms), servers = servers }
     return token
 end
 
@@ -5705,6 +5711,7 @@ function cloud.kindOf(name)
     local ending = string.lower(tostring(name):match("%.(%w+)$") or "")
     if ending == "txt" or ending == "md" or ending == "" then return "text" end
     if ending == "mid" or ending == "midi" then return "midi" end
+    if ending == "dfpwm" then return "audio" end
     if ending == "lua" then return "lua" end
     if ending == "nfp" then return "image" end
     return "file"
@@ -5743,13 +5750,16 @@ function cloud.byName(accountId, name)
     return nil
 end
 
-function cloud.open(record)
+-- A song's ticket lasts as long as it plays, and more: DFPWM is 6000 bytes a
+-- second, and a Music Player fetches each piece just before it is heard.
+function cloud.open(record, ttl)
     need(record.status == "ready", "UPLOADING", "That file is still uploading")
+    ttl = ttl or cloud.ticket_ms
     return {
         file = cloud.public(record),
-        ticket = cloud.ticket("get", record, record.chunks),
+        ticket = cloud.ticket("get", record, record.chunks, ttl),
         chunks = util.copy(record.chunks), hosts = cloud.hosts(record.chunks),
-        expires_in_ms = cloud.ticket_ms,
+        expires_in_ms = ttl,
     }
 end
 
@@ -5778,7 +5788,6 @@ end
 function actions.CLOUD_PUT(payload, caller)
     local account = whoIsAsking(caller)
     cloud.expire()
-    local data = cloud.store()
     local size = math.floor(tonumber(payload.size) or -1)
     need(size >= 0, "BAD_SIZE", "That file has no size")
     local record, name
@@ -5799,6 +5808,14 @@ function actions.CLOUD_PUT(payload, caller)
         .. util.sizeText(size) .. " and you have "
         .. util.sizeText(math.max(0, quota - others)) .. " free"
         .. (caller.cloud_plan == "plus" and "" or ". FoxyCloud+ has more room"))
+    return cloud.upload(account.account_id, record, name, size,
+        cloud.ticket_ms + math.ceil(size / cloud.chunk) * 3000)
+end
+
+-- Where a new file or version goes, and the ticket to put it there. A big
+-- one is given longer: a piece every couple of seconds, from a slow Pocket.
+function cloud.upload(ownerId, record, name, size, ttl)
+    local data = cloud.store()
     local fileId = record and record.file_id
     if not fileId then
         data.seq = data.seq + 1
@@ -5806,25 +5823,25 @@ function actions.CLOUD_PUT(payload, caller)
     end
     local version = record and ((record.next and record.next.version
         or record.version or 0) + 1) or 1
-    local untilMs = util.nowMs() + cloud.ticket_ms
+    local untilMs = util.nowMs() + ttl
     local chunks = cloud.place(fileId, version, size, untilMs)
     if record then
         -- A version already on its way is overtaken by this one.
         if record.next then cloud.retire(record.next.chunks) end
     else
-        record = { file_id = fileId, owner = account.account_id, name = name,
+        record = { file_id = fileId, owner = ownerId, name = name,
             kind = cloud.kindOf(name), size = 0, version = 0, chunks = {},
             status = "new", created_day = util.ingameDay() }
         data.files[fileId] = record
-        cloud.owned(account.account_id)[fileId] = true
+        cloud.owned(ownerId)[fileId] = true
     end
     record.next = { version = version, size = size, chunks = chunks,
         expires_at = untilMs }
     cloud.save()
     return { file_id = fileId, version = version,
-        ticket = cloud.ticket("put", record, chunks),
+        ticket = cloud.ticket("put", record, chunks, ttl),
         chunks = util.copy(chunks), hosts = cloud.hosts(chunks),
-        chunk_size = cloud.chunk, expires_in_ms = cloud.ticket_ms }
+        chunk_size = cloud.chunk, expires_in_ms = ttl }
 end
 
 -- Every piece is on its server: this version is the file now, and the last
@@ -5832,8 +5849,14 @@ end
 function actions.CLOUD_PUT_DONE(payload, caller)
     local account = whoIsAsking(caller)
     local record = cloud.mine(account, payload.file_id)
+    cloud.finish(record, payload.version)
+    return { file = cloud.public(record), used = cloud.used(account.account_id),
+        quota = math.floor(tonumber(caller.cloud_quota) or 0) }
+end
+
+function cloud.finish(record, version)
     local upload = record.next
-    need(upload and upload.version == math.floor(tonumber(payload.version) or -1),
+    need(upload and upload.version == math.floor(tonumber(version) or -1),
         "NOT_UPLOADING", "That upload is over. Try it again")
     cloud.retire(record.chunks)
     record.chunks, record.size, record.version = upload.chunks, upload.size,
@@ -5856,13 +5879,15 @@ function actions.CLOUD_PUT_DONE(payload, caller)
         end
     end
     cloud.save()
-    return { file = cloud.public(record), used = cloud.used(account.account_id),
-        quota = math.floor(tonumber(caller.cloud_quota) or 0) }
 end
 
 function actions.CLOUD_GET(payload, caller)
     local account = whoIsAsking(caller)
-    return cloud.open(cloud.mine(account, payload.file_id))
+    local record = cloud.mine(account, payload.file_id)
+    -- FoxyOS 17: a MIDI file sent to a CCG Casino keeps its ticket for hours,
+    -- so the console can fetch it again after a restart or an update.
+    local ttl = payload.hold == true and record.kind == "midi" and 12 * 60 * 60 * 1000 or nil
+    return cloud.open(record, ttl)
 end
 
 function actions.CLOUD_RENAME(payload, caller)
@@ -5880,15 +5905,79 @@ end
 function actions.CLOUD_DELETE(payload, caller)
     local account = whoIsAsking(caller)
     local record = cloud.mine(account, payload.file_id)
+    cloud.remove(record)
+    return { deleted = record.file_id, used = cloud.used(account.account_id),
+        quota = math.floor(tonumber(caller.cloud_quota) or 0) }
+end
+
+function cloud.remove(record)
     local data = cloud.store()
     cloud.retire(record.chunks)
     if record.next then cloud.retire(record.next.chunks) end
     if record.share then data.shares[record.share] = nil end
     data.files[record.file_id] = nil
-    cloud.owned(account.account_id)[record.file_id] = nil
+    cloud.owned(record.owner)[record.file_id] = nil
     cloud.save()
-    return { deleted = record.file_id, used = cloud.used(account.account_id),
-        quota = math.floor(tonumber(caller.cloud_quota) or 0) }
+end
+
+-- Music, FoxyOS 17 -------------------------------------------------------------------
+-- The Music Server's songs are kept on the Cloud Servers like anybody's
+-- files, under the library's own name rather than a person's: no plan, no
+-- quota and no limit on how many, only the room the Cloud Servers have. The
+-- Core has checked it is a registered Music Server before any of this.
+cloud.MUSIC = "MUSIC"
+
+function cloud.music(caller)
+    need(type(caller) == "table" and caller.kind == "music", "MUSIC_AUTH",
+        "Only a Music Server asks that")
+end
+
+function cloud.song(fileId)
+    local record = cloud.store().files[tostring(fileId or "")]
+    need(record and record.owner == cloud.MUSIC
+        and (record.status == "ready" or record.next), "NOT_FOUND",
+        "That song is not stored")
+    return record
+end
+
+function actions.CLOUD_MUSIC_PUT(payload, caller)
+    cloud.music(caller)
+    cloud.expire()
+    local size = math.floor(tonumber(payload.size) or -1)
+    local most = math.floor(tonumber(config.music_max_bytes) or 12 * 1024 * 1024)
+    need(size > 0, "BAD_SIZE", "That song has no size")
+    need(size <= most, "TOO_BIG", "A song is at most " .. util.sizeText(most))
+    local name = cloud.name(payload.name or "song.dfpwm")
+    local pieces = math.ceil(size / cloud.chunk)
+    return cloud.upload(cloud.MUSIC, nil, name, size, cloud.ticket_ms + pieces * 3000)
+end
+
+function actions.CLOUD_MUSIC_PUT_DONE(payload, caller)
+    cloud.music(caller)
+    local record = cloud.song(payload.file_id)
+    cloud.finish(record, payload.version)
+    return { file = cloud.public(record) }
+end
+
+function actions.CLOUD_MUSIC_GET(payload, caller)
+    cloud.music(caller)
+    local record = cloud.song(payload.file_id)
+    return cloud.open(record, cloud.ticket_ms + 5 * 60 * 1000
+        + math.floor(record.size / 6000 * 1000))
+end
+
+function actions.CLOUD_MUSIC_DELETE(payload, caller)
+    cloud.music(caller)
+    local record = cloud.song(payload.file_id)
+    cloud.remove(record)
+    return { deleted = record.file_id }
+end
+
+function actions.CLOUD_MUSIC_USED(payload, caller)
+    cloud.music(caller)
+    cloud.expire()
+    local servers, room = cloud.capacity()
+    return { used = cloud.used(cloud.MUSIC), servers = servers, room = room }
 end
 
 -- Sharing: a code that opens one file, read-only, for whoever has it -- like

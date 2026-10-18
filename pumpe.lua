@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -412,7 +412,9 @@ do
         -- A beat on the app's icon and name, on its colour.
         local middle = math.floor(height / 2)
         ui.fill(target, 1, 1, width, height, color)
-        if app.icon and ui.icon then
+        if app.icon and ui.iconFramed then
+            ui.iconFramed(target, math.floor(width / 2) - 1, middle - 3, app.icon, nil, color)
+        elseif app.icon and ui.icon then
             ui.icon(target, math.floor(width / 2) - 1, middle - 3, app.icon)
         else
             ui.fill(target, math.floor(width / 2) - 2, middle - 3, 5, 3, edge)
@@ -2686,113 +2688,203 @@ do
         return betRequest(action, payload or {}, true)
     end
 
-    -- FoxyOS 17: a song from your FoxyCloud. The table is sent where its
-    -- pieces are and a ticket to read them for two minutes; the console
-    -- fetches it into memory, plays it, and keeps nothing.
-    function casino.cloudMusic(consoleId)
-        local listed, err = request("CLOUD_FILES", {}, true)
-        if not listed then
-            ui.message(target, "error", "FoxyCloud", err, 1.6)
-            return
-        end
-        local songs, page = {}, 1
-        for _, file in ipairs(listed.files or {}) do
-            if file.kind == "midi" then songs[#songs + 1] = file end
-        end
+    -- One of a list, a page at a time: { id, label } items. Nil for back.
+    function casino.pick(title, items, empty)
+        local page = 1
         while running and sessionToken do
             local width, height = target.getSize()
             ui.clear(target)
-            ui.header(target, "FoxyCloud", #songs .. " song" .. (#songs == 1 and "" or "s"),
-                util.formatClock())
+            ui.header(target, title, #items .. " to choose from", util.formatClock())
             local scene = ui.scene(target)
             local perPage = math.max(1, math.floor((height - 6) / 2))
-            local items, actual, pages = util.page(songs, page, perPage)
+            local shown, actual, pages = util.page(items, page, perPage)
             page = actual
-            for index, file in ipairs(items) do
-                scene:button("song:" .. ((page - 1) * perPage + index), 2, 2 + index * 2,
-                    width - 2, 1, ui.truncate(file.name, width - 4),
+            for index, item in ipairs(shown) do
+                scene:button("pick:" .. ((page - 1) * perPage + index), 2, 2 + index * 2,
+                    width - 2, 1, ui.truncate(item.label, width - 4),
                     { background = ui.theme.panel })
             end
-            if #songs == 0 then
-                ui.wrappedText(target, 2, 5, "No MIDI files in your FoxyCloud. Add them"
-                    .. " in the FoxyCloud app.", width - 2, 4, ui.theme.muted)
-            end
+            if #items == 0 then ui.wrappedText(target, 2, 5, empty, width - 2, 4, ui.theme.muted) end
             scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
             if pages > 1 then
                 scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
                     { background = ui.theme.panel })
             end
             local action = scene:wait()
-            if action == "back" or action == "__terminate" then return end
+            if action == "back" or action == "__terminate" then return nil end
             if action == "more" then page = page % pages + 1 end
-            local song = songs[tonumber(action and action:match("^song:(%d+)$")) or 0]
-            if song then
-                local plan, planError = request("CLOUD_GET", { file_id = song.file_id }, true)
-                local sent, sendError = plan and casino.ownerAsk("CASINO_CONTROL", {
-                    console_id = consoleId, op = "music", action = "cloud", name = song.name,
-                    cloud = { ticket = plan.ticket, chunks = plan.chunks, hosts = plan.hosts },
-                })
-                if sent then
-                    ui.message(target, "success", "Playing", song.name, 1)
-                    return
-                end
-                ui.message(target, "error", "Not playing", sendError or planError, 1.6)
-            end
+            local picked = items[tonumber(action and action:match("^pick:(%d+)$")) or 0]
+            if picked then return picked end
         end
     end
 
+    -- What the CCG Server answered, checked: an old one takes the request and
+    -- quietly does nothing with it.
+    function casino.sent(sent, sendError, field, name)
+        if not sent then
+            ui.message(target, "error", "Not playing", sendError, 1.6)
+        elseif not (sent.table and sent.table.music and sent.table.music[field]) then
+            ui.message(target, "error", "Update the CCG Server",
+                "It needs FoxyOS 17 to play this", 2.2)
+        else
+            ui.message(target, "success", "Playing", name, 1)
+            return true
+        end
+    end
+
+    -- FoxyOS 17: a MIDI file from your FoxyCloud. The table is sent where
+    -- its pieces are and a ticket to read them that lasts hours, so the
+    -- console can fetch it again after a restart; it plays it from memory
+    -- and keeps nothing.
+    function casino.cloudMusic(consoleId)
+        local listed, err = request("CLOUD_FILES", {}, true)
+        if not listed then
+            ui.message(target, "error", "FoxyCloud", err, 1.6)
+            return
+        end
+        local songs = {}
+        for _, file in ipairs(listed.files or {}) do
+            if file.kind == "midi" then songs[#songs + 1] = { id = file.file_id, label = file.name } end
+        end
+        local song = casino.pick("FoxyCloud", songs, "No MIDI files in your FoxyCloud. Add them"
+            .. " in the FoxyCloud app.")
+        if not song then return end
+        local plan, planError = request("CLOUD_GET", { file_id = song.id, hold = true }, true)
+        if not plan then
+            ui.message(target, "error", "Not playing", planError, 1.6)
+            return
+        end
+        casino.sent(casino.ownerAsk("CASINO_CONTROL", { console_id = consoleId, op = "music",
+            action = "cloud", name = song.label, cloud = { ticket = plan.ticket,
+            chunks = plan.chunks, hosts = plan.hosts } }), "cloud", song.label)
+    end
+
+    -- FoxyOS 17: DFPWM from the Music Library -- a song on repeat or a radio,
+    -- live. The Music Server gives the table a grant while you have
+    -- FoxyCloud+; the table never sees your session.
+    function casino.streamMusic(consoleId, kind)
+        local music = net.musicApi and net.musicApi(config, function() return sessionToken end,
+            offline, function()
+                local where = request("MUSIC_WHERE", {}, true)
+                return where and where.computer_id or nil
+            end)
+        if not music then return end
+        local items, listed, err = {}, nil, nil
+        if kind == "radio" then
+            listed, err = music.ask("MUSIC_RADIOS")
+            for _, radio in ipairs(listed and listed.radios or {}) do
+                items[#items + 1] = { id = radio.radio_id, label = radio.name }
+            end
+        else
+            listed, err = music.ask("MUSIC_LIBRARY", { per_page = 50 })
+            for _, track in ipairs(listed and listed.tracks or {}) do
+                items[#items + 1] = { id = track.track_id, label = track.title .. " - " .. track.artist }
+            end
+        end
+        if not listed then
+            ui.message(target, "error", "Music Server", err, 1.6)
+            return
+        end
+        local picked = casino.pick(kind == "radio" and "Radios" or "Songs", items, kind == "radio"
+            and "No radios on the Music Server yet." or "No songs in the Music Library yet.")
+        if not picked then return end
+        local grant, grantError = music.ask("MUSIC_GRANT", { kind = kind, id = picked.id,
+            casino_id = consoleId })
+        if not grant then
+            ui.message(target, "error", "Not playing", grantError, 2)
+            return
+        end
+        casino.sent(casino.ownerAsk("CASINO_CONTROL", { console_id = consoleId, op = "music",
+            action = "stream", grant = grant.grant, kind = grant.kind, name = grant.label }),
+            "stream", grant.label)
+    end
+
+    -- A table's music: MIDI -- songs on the console and in your FoxyCloud --
+    -- or DFPWM, songs and radios from the Music Library.
     function casino.musicPage(consoleId)
-        local page = 1
+        local page, mode = 1, nil
         while running and sessionToken do
             local seen = casino.ownerAsk("CASINO_VIEW", { console_id = consoleId })
             if not seen then return end
             local view = seen.table
             local music = view.music or {}
             local library = view.library or {}
+            local features = view.features or {}
+            mode = mode or (music.mode == "dfpwm" and "dfpwm" or "midi")
             local width, height = target.getSize()
             ui.clear(target)
             ui.header(target, "Music", ui.truncate(view.name, width - 3), util.formatClock())
-            ui.text(target, 2, 4, ui.truncate((music.playing and ("Playing " .. tostring(music.track))
-                or "Not playing"), width - 2), music.playing and ui.theme.success or ui.theme.muted)
-            ui.text(target, 2, 5, "Volume " .. tostring(music.volume or 5) .. "/10", ui.theme.muted)
             local scene = ui.scene(target)
-            scene:button("cloud", width - 10, 5, 11, 1, "FoxyCloud",
-                { background = colors.lightBlue, foreground = colors.black })
-            local items, actual, pages = util.page(library, page, 5)
-            page = actual
-            for index, name in ipairs(items) do
-                scene:button("play:" .. ((page - 1) * 5 + index), 2, 5 + index * 2, width - 2, 1,
-                    ui.truncate(name, width - 4), { background = name == music.track and music.playing
-                        and ui.theme.accent or ui.theme.panel })
+            local half = math.floor((width - 3) / 2)
+            for index, option in ipairs({ { "midi", "MIDI" }, { "dfpwm", "DFPWM" } }) do
+                local on = mode == option[1]
+                scene:button("mode:" .. option[1], 2 + (index - 1) * (half + 1), 4,
+                    index == 1 and half or width - 2 - half, 1, option[2],
+                    { background = on and ui.theme.accent or ui.theme.panel,
+                      foreground = on and (ui.theme.accentInk or colors.black) or ui.theme.ink })
             end
-            if #library == 0 then
-                ui.wrappedText(target, 2, 7, "No songs on it yet. Drop .mid files onto the CCG"
-                    .. " Casino computer's screen, or play one from FoxyCloud.", width - 2, 5,
-                    ui.theme.muted)
+            ui.text(target, 2, 5, ui.truncate((music.playing and ("Playing " .. tostring(music.track))
+                or "Not playing"), width - 2), music.playing and ui.theme.success or ui.theme.muted)
+            local status = view.music_status
+            ui.text(target, 2, 6, ui.truncate(status and status:match("^Cannot") and status
+                or ("Volume " .. tostring(music.volume or 5) .. "/10"), width - 2),
+                status and status:match("^Cannot") and ui.theme.warning or ui.theme.muted)
+            local needs = mode == "dfpwm" and not features.dfpwm
+                or mode == "midi" and not features.cloud_midi
+            if mode == "dfpwm" then
+                scene:button("songs", 2, 8, half, 2, "Songs", { background = colors.pink,
+                    foreground = colors.black, disabled = needs })
+                scene:button("radios", 3 + half, 8, width - 3 - half, 2, "Radios",
+                    { background = colors.pink, foreground = colors.black, disabled = needs })
+                ui.wrappedText(target, 2, 11, needs and "This CCG Casino needs the FoxyOS 17"
+                    .. " update to play these." or "From the Music Library: a song on repeat,"
+                    .. " or a radio live. Needs your FoxyCloud+.", width - 2, 4,
+                    needs and ui.theme.warning or ui.theme.muted)
+            else
+                scene:button("cloud", 2, 8, width - 2, 1, needs and "Update the CCG first"
+                    or "From FoxyCloud", { background = colors.lightBlue,
+                    foreground = colors.black, disabled = needs })
+                local perPage = math.max(1, math.floor((height - 14) / 2))
+                local items, actual, pages = util.page(library, page, perPage)
+                page = actual
+                for index, name in ipairs(items) do
+                    scene:button("play:" .. ((page - 1) * perPage + index), 2, 8 + index * 2,
+                        width - 2, 1, ui.truncate(name, width - 4), { background = name
+                            == music.track and music.playing and ui.theme.accent or ui.theme.panel })
+                end
+                if #library == 0 then
+                    ui.wrappedText(target, 2, 10, "No songs on it yet. Drop .mid files onto the"
+                        .. " CCG Casino computer's screen, or play one from FoxyCloud.",
+                        width - 2, 4, ui.theme.muted)
+                end
+                if pages > 1 then
+                    scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
+                        { background = ui.theme.panel })
+                end
             end
             local quarter = math.floor((width - 5) / 4)
             scene:button("stop", 2, height - 3, quarter, 2, "STOP", { background = ui.theme.danger })
             scene:button("down", 3 + quarter, height - 3, quarter, 2, "VOL-", { background = ui.theme.panel })
             scene:button("up", 4 + quarter * 2, height - 3, quarter, 2, "VOL+", { background = ui.theme.panel })
             scene:button("next", 5 + quarter * 3, height - 3, width - 4 - quarter * 3, 2, "NEXT",
-                { background = ui.theme.panel })
+                { background = ui.theme.panel, disabled = mode == "dfpwm" })
             scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
-            if pages > 1 then
-                scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
-                    { background = ui.theme.panel })
-            end
             local action = scene:wait({ tickRate = 2 })
             if action == "back" or action == "__terminate" then return end
             local payload = { console_id = consoleId, op = "music" }
             local index = tonumber(action and action:match("^play:(%d+)$"))
-            if action == "cloud" then casino.cloudMusic(consoleId)
+            local switched = action and action:match("^mode:(.+)$")
+            if switched then mode = switched
+            elseif action == "cloud" then casino.cloudMusic(consoleId)
+            elseif action == "songs" then casino.streamMusic(consoleId, "track")
+            elseif action == "radios" then casino.streamMusic(consoleId, "radio")
             elseif index then payload.action, payload.track = "play", library[index]
             elseif action == "stop" then payload.action = "stop"
             elseif action == "next" then payload.action = "next"
             elseif action == "down" or action == "up" then
                 payload.action = "volume"
                 payload.volume = (music.volume or 5) + (action == "up" and 1 or -1)
-            elseif action == "more" then page = page % pages + 1 end
+            elseif action == "more" then page = page + 1 end
             if payload.action then casino.ownerAsk("CASINO_CONTROL", payload) end
         end
     end
@@ -4189,6 +4281,11 @@ local function newGroupScreen(friends)
     end
 end
 
+-- FoxyOS 17: phone numbers. Sending a message or making a call needs one of
+-- your own, got in Messages; reading what arrives never does. Filled in
+-- below Urgent Contact, which a call to a person is.
+local phone = { me = nil }
+
 -- FoxyOS 16: Messages has two tabs, Chats and Groups. `which` is "groups"
 -- for the group chats and anything else for the rest -- one person, the
 -- Government, and the app publishers that send VerCodes.
@@ -4240,6 +4337,8 @@ local function messagesScreen(tabs, which)
         if action == "back" or action == "__terminate" then return
         elseif action == "prev" then page = page - 1
         elseif action == "next" then page = page + 1
+        elseif (action == "new" or action == "group") and not phone.ready() then
+            -- No number yet: getting one is the first step, not an error.
         elseif action == "new" or action == "group" then
             local overview = request("FRIEND_OVERVIEW")
             if overview then
@@ -4441,8 +4540,9 @@ end
 
 -- Placing a call and waiting on it. Shared by Urgent Contact and by the
 -- Urgent Contact API, so an app's call behaves exactly like the PUMPE's own.
-local function placeUrgentCall(name, accountId, appId)
-    local started = request("URGENT_CALL",
+local function placeUrgentCall(name, accountId, appId, started)
+    -- FoxyOS 17: a number dialled in Messages arrives already placed.
+    started = started or request("URGENT_CALL",
         { account_id = accountId, app_id = appId })
     if not started then return end
     local call = started.call
@@ -4488,12 +4588,140 @@ local function placeUrgentCall(name, accountId, appId)
 end
 
 local function urgentScreen()
+    if not phone.ready() then return end
     local overview = request("FRIEND_OVERVIEW")
     if not overview then return end
     local friend = pickFriend("Urgent Contact", overview.friends,
         "Reach a friend now")
     if not friend then return end
-    return placeUrgentCall(friend.name, friend.account_id)
+    placeUrgentCall(friend.name, friend.account_id)
+    phone.refresh()
+end
+
+function phone.refresh()
+    phone.me = request("PHONE_ME", {}, true) or phone.me
+    return phone.me
+end
+
+function phone.get()
+    local got = request("PHONE_GET")
+    if got then
+        phone.me = got
+        ui.message(target, "success", "Your number", got.number, 1.8)
+    end
+    return got
+end
+
+-- True with a number. Without one, offers to get one there and then.
+function phone.ready()
+    local me = phone.me or phone.refresh()
+    if not me or me.number then return me ~= nil end
+    if ui.confirm(target, "Get a number", "Messages and Urgent Contact need a phone"
+        .. " number of your own. It is free.", "GET ONE", "NOT NOW") then
+        return phone.get() ~= nil
+    end
+    return false
+end
+
+function phone.limit(used, limit)
+    if limit == nil then return "Unlimited" end
+    return tostring(used or 0) .. " / " .. tostring(limit)
+end
+
+-- Seven digits, typed on the number pad.
+function phone.dial(title)
+    local typed = ui.input(target, title, { mode = "number", maxLength = 7,
+        hint = "Seven digits, like 2345678" })
+    if not typed then return nil end
+    local digits = typed:gsub("%D", "")
+    if #digits ~= 7 then
+        ui.message(target, "error", "Not a number", "Phone numbers have seven digits", 1.4)
+        return nil
+    end
+    return digits:sub(1, 3) .. "-" .. digits:sub(4)
+end
+
+-- Calling a number: a person rings, a company is told you called, a radio
+-- in a giveaway takes your entry -- and your money, so it asks first.
+function phone.call(number)
+    if not phone.ready() then return end
+    number = number or phone.dial("Call a number")
+    if not number then return end
+    local who = request("PHONE_LOOKUP", { number = number })
+    if not who then return end
+    if who.kind == "radio" and not ui.confirm(target, "Call " .. who.name, "A call is "
+        .. money(config.phone_call_price or 50) .. ". Every call is one more entry in"
+        .. " the giveaway.", "CALL", "BACK") then
+        return
+    end
+    local placed = request("PHONE_CALL", { number = number })
+    if placed and placed.kind == "person" then
+        placeUrgentCall(placed.name, nil, nil, placed)
+    elseif placed and placed.kind == "company" then
+        ui.message(target, "success", "Called " .. placed.name, placed.message, 1.8)
+    elseif placed then
+        ui.message(target, "success", "You're in!", placed.entries .. " entr"
+            .. (placed.entries == 1 and "y" or "ies") .. " to win on " .. placed.name
+            .. ". " .. money(placed.price) .. " paid", 2.2)
+    end
+    phone.refresh()
+end
+
+function phone.text()
+    if not phone.ready() then return end
+    local number = phone.dial("Text a number")
+    if not number then return end
+    local started = request("CHAT_START", { number = number })
+    if started then conversationScreen(started.conversation) end
+    phone.refresh()
+end
+
+-- Messages' Phone tab: your number, and what today has left.
+function phone.screen(tabs)
+    while true do
+        local me = phone.refresh()
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Phone", me and me.number and "Your number" or "No number yet",
+            util.formatClock())
+        local scene = ui.scene(target)
+        if me and me.number then
+            ui.center(target, 5, me.number, ui.theme.accent)
+            ui.text(target, 2, 7, "Today", ui.theme.muted)
+            ui.text(target, 2, 8, "Messages", ui.theme.ink)
+            local line = phone.limit(me.messages, me.messages_limit)
+            ui.text(target, width - #line, 8, line, ui.theme.ink)
+            ui.text(target, 2, 9, "Calls", ui.theme.ink)
+            line = phone.limit(me.calls, me.calls_limit)
+            ui.text(target, width - #line, 9, line, ui.theme.ink)
+            if me.messages_limit or me.calls_limit then
+                ui.text(target, 2, 10, ui.truncate("FoxyCloud+ has more", width - 2),
+                    ui.theme.muted)
+            end
+            scene:button("call", 2, 12, width - 2, 2, "Call a number",
+                { background = ui.theme.success, foreground = colors.black })
+            scene:button("text", 2, 15, width - 2, 2, "Text a number",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk
+                    or ui.inkOn(ui.theme.accent) })
+        else
+            ui.wrappedText(target, 2, 5, "A number of your own lets you send messages and"
+                .. " make calls, to friends or to any number: a company, or a radio"
+                .. " giving money away.", width - 2, 6, ui.theme.ink)
+            scene:button("get", 2, 12, width - 2, 3, "Get a number",
+                { background = ui.theme.accent, foreground = ui.theme.accentInk
+                    or ui.inkOn(ui.theme.accent) })
+        end
+        pageFooter(scene, 1, 1, tabs)
+        local action = scene:wait({ tickRate = 5 })
+        if tabs and (action == "home" or (action or ""):match("^tab:")) then
+            return action
+        end
+        if action == "back" or action == "__terminate" then return
+        elseif action == "get" then phone.get()
+        elseif action == "call" then phone.call()
+        elseif action == "text" then phone.text()
+        end
+    end
 end
 
 -- Polled from every screen so a call reaches the user wherever they are.
@@ -5510,13 +5738,17 @@ end
 -- the last tab back.
 -- FoxyOS 16: the Messages app, with Chats and Groups. Friends' Chats tab
 -- moved here.
+-- FoxyOS 17: and Phone, for your number and calling or texting any number.
 local function messagesApp(action)
+    phone.refresh()
     ui.runTabs({
-        list = { { id = "chats", label = "Chats" }, { id = "groups", label = "Groups" } },
+        list = { { id = "chats", label = "Chats" }, { id = "groups", label = "Groups" },
+            { id = "phone", label = "Phone" } },
         color = colors.green,
-        start = action == "groups" and "groups" or "chats",
+        start = (action == "groups" or action == "phone") and action or "chats",
         pages = { chats = function(spec) return messagesScreen(spec, "chats") end,
-            groups = function(spec) return messagesScreen(spec, "groups") end },
+            groups = function(spec) return messagesScreen(spec, "groups") end,
+            phone = phone.screen },
         running = function() return running and sessionToken ~= nil end,
     })
 end
@@ -6763,7 +6995,15 @@ local function runInstalledApp(entry, wantedAction)
         -- id like any app's, and the Bank answers file requests from it
         -- alone; this is the radio half. Files kept on this Pocket go in its
         -- Downloads folder and nowhere else.
-        cloud = entry.app_id == "CLOUD" and net.cloud and net.cloud.api
+        -- FoxyOS 17: Music, Foxy's own, talks to the Music Server as you, and
+        -- reads FoxyCloud (to upload a song kept there) through the same door.
+        music = entry.app_id == "MUSIC" and net.musicApi and net.musicApi(config,
+            function() return sessionToken end, offline, function()
+                local where = request("MUSIC_WHERE", {}, true)
+                return where and where.computer_id or nil
+            end) or nil,
+        cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC") and net.cloud
+            and net.cloud.api
             and net.cloud.api(function(action, payload)
                 local scoped = {}
                 for key, value in pairs(type(payload) == "table" and payload or {}) do
@@ -7290,7 +7530,7 @@ end
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
     SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
     BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua",
-    CLOUD = "foxycloud.lua" }
+    CLOUD = "foxycloud.lua", MUSIC = "music.lua" }
 
 -- The manifest of the beta this Pocket is on. Only that one: a newer beta is
 -- an update to take first, and its apps come with it.
@@ -7631,27 +7871,28 @@ local APPS = {
     -- FoxyOS 16: Messages, an app of its own. The same chats are on the
     -- Friends hub's Chats tab.
     messages = { name = "Messages", glyph = "\"", color = colors.green,
-        icon = "dddddddd/dd0000dd/d000000d/dd0000dd/dd0ddddd/dddddddd",
+        icon = "dddddddd/d000000d/d000000d/d000000d/dd0ddddd/dddddddd",
         open = messagesApp, actions = {
             { id = "chats", label = "Chats", hint = "One to one" },
             { id = "groups", label = "Group Chats", hint = "Everybody at once" },
+            { id = "phone", label = "Phone", hint = "Your number, call any number" },
         } },
     friends = { name = "Friends", glyph = "@", color = colors.cyan,
-        icon = "99999999/90099009/90099009/99999999/00099000/00099000",
+        icon = "99999999/99009999/99009909/99999999/90000009/90000009",
         open = friendsApp, actions = {
             { id = "people", label = "Friends", hint = "Add or find someone" },
             { id = "urgent", label = "Urgent Contact",
               hint = "Reach a friend fast" },
         } },
     tickets = { name = "Tickets", glyph = "#", color = colors.orange,
-        icon = "11111111/00000100/10000001/10000001/00000100/11111111",
+        icon = "11111111/10000001/11000011/11000011/10000001/11111111",
         open = ticketsApp, actions = {
             { id = "events", label = "Browse Events", hint = "What is on" },
             { id = "mine", label = "My Tickets", hint = "What you hold" },
         } },
     -- FoxyOS 12: MyID took over from Tax and Customs.
     myid = { name = "MyID", glyph = "I", color = colors.lightBlue,
-        icon = "33333333/30300033/30303303/30303303/30300033/33333333",
+        icon = "33333333/30000003/30330303/30330303/30000003/33333333",
         open = myIdApp, actions = {
             { id = "id", label = "Digital ID", hint = "Your MyID Code" },
             { id = "visas", label = "My Visas", hint = "Travel papers" },
@@ -7660,14 +7901,14 @@ local APPS = {
         } },
     -- 12.0: Bet grew into CCG, with Home Mode.
     ccg = { name = "CCG", glyph = "?", color = colors.magenta,
-        icon = "22000022/20200202/20000002/20000002/20200202/22000022", actions = {
+        icon = "22222222/20000002/20200202/20000002/20200202/22222222", actions = {
         { id = "home", label = "Home Mode", hint = "Play free on your CCG" },
         { id = "bet", label = "Bet", hint = "Sit at a CCG Casino" },
         { id = "mine", label = "My Casino", hint = "Run your company's CCG Casinos" },
         { id = "scores", label = "CCG scores", hint = "Your best at home" },
     } },
     subs = { name = "Subs", glyph = "~", color = colors.magenta,
-        icon = "22000202/20222002/20222202/20222202/20222202/22000022" },
+        icon = "aaaaaaaa/aa00000a/aaaaa0aa/aa0aaaaa/a00000aa/aaaaaaaa" },
     browser = { name = "Apps", glyph = "+", color = colors.blue,
         icon = "bbbbbbbb/b00bb00b/b00bb00b/bbbbbbbb/b00bb00b/b00bb00b", actions = {
         { id = "search", label = "Search apps", hint = "Find something new" },
@@ -7682,7 +7923,7 @@ local APPS = {
         { id = "new", label = "New QuickAction", hint = "A few steps in a row" },
     } },
     settings = { name = "Settings", glyph = "*", color = colors.gray,
-        icon = "77877877/78888887/88877888/88877888/78888887/77877877" },
+        icon = "77077077/70000007/70077007/70077007/70000007/77077077" },
 }
 local APP_ORDER = {
     "friends", "messages", "tickets", "myid", "ccg", "subs",
@@ -7870,12 +8111,20 @@ end
 
 -- One icon: a small coloured square, the app name under it, and an unread
 -- badge in the corner. The caption shares the icon's tap target.
+-- FoxyOS 17: with room, a picture in its frame on the wallpaper; without,
+-- the picture on its colour as before.
 local function drawIcon(scene, action, app, x, y, layout, badge)
     local iconWidth = tonumber(ui.ICON_WIDTH)
     local pictured = app.icon and ui.icon and iconWidth and layout.iconWidth >= iconWidth
-    scene:button(action, x, y, layout.iconWidth, 2, pictured and "" or app.glyph,
-        { background = app.color, foreground = colors.white })
-    if pictured then
+    local framed = pictured and ui.iconFramed and layout.iconWidth >= iconWidth + 2
+    if framed then
+        scene:hotspot(action, x, y, layout.iconWidth, 2)
+        ui.iconFramed(target, x + math.floor((layout.iconWidth - iconWidth) / 2), y, app.icon)
+    else
+        scene:button(action, x, y, layout.iconWidth, 2, pictured and "" or app.glyph,
+            { background = app.color, foreground = colors.white })
+    end
+    if pictured and not framed then
         ui.icon(target, x + math.floor((layout.iconWidth - iconWidth) / 2), y, app.icon)
     end
     opening.spots[action:match("^open:(.+)$") or ""] =
@@ -8022,7 +8271,7 @@ end
 -- keeps it off, so it is remembered as included the moment it is here. It
 -- arrives quietly, waits for a free slot and for the room on the disk, and
 -- on a beta it is the beta's own copy: the App Server runs the release.
--- FoxyOS 17: FoxyCloud comes the same way, and the same once.
+-- FoxyOS 17: FoxyCloud and Music come the same way, and the same once.
 -- Returns the name of an app it brought, for the Home Screen to say so.
 local function ensureFoxy()
     local missing = {}
@@ -8031,7 +8280,7 @@ local function ensureFoxy()
     end
     device.included = type(device.included) == "table" and device.included or {}
     local wanted = {}
-    for _, appId in ipairs({ "YAP", "CLOUD" }) do
+    for _, appId in ipairs({ "YAP", "CLOUD", "MUSIC" }) do
         if not device.included[appId] and installedApp(appId) then
             device.included[appId] = true
             saveDevice()
@@ -8070,8 +8319,8 @@ local function ensureFoxy()
             device.included[appId] = true
             saveDevice()
             room = room - 1
-            brought = brought and (brought .. " and " .. tostring(app.name or appId))
-                or tostring(app.name or appId)
+            brought = brought and (brought:gsub(" and ", ", ") .. " and "
+                .. tostring(app.name or appId)) or tostring(app.name or appId)
         end
     end
     return brought

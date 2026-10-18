@@ -12,6 +12,9 @@
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 sleep = function() end
+-- The arithmetic below is in pieces of 6000 bytes, the size until FoxyOS 17
+-- made them 16 KB. Nothing here depends on which.
+require("config").cloud_chunk_size = 6000
 local harness = require("bank_pair_harness")
 local rejected = harness.rejected
 local bank = harness.pair()
@@ -137,8 +140,11 @@ assert(tooBig == "TOO_BIG", "a 10 byte ticket does not store 5000 bytes")
 -- whatever was stored for it.
 assert(server(upload.hosts[piece.servers[1]], "CHUNK_PUT",
     { ticket = upload.ticket, chunk_id = piece.id, data = "0123456789" }))
+-- FoxyOS 17: a put ticket lasts three seconds longer for every piece, for a
+-- 50 MB upload from a slow Pocket.
+assert(upload.expires_in_ms == config.cloud_ticket_ms + 3000, upload.expires_in_ms)
 local before = heldTotal()
-bank.advanceMs(config.cloud_ticket_ms + 31000)
+bank.advanceMs(upload.expires_in_ms + 31000)
 beatAll()
 assert(#anaAsk("CLOUD_FILES", {}).files == 2, "the unfinished file is not a file")
 for _, id in ipairs(ids) do as(id, servers[id].program.sweep) end
@@ -208,7 +214,8 @@ rejected(bank.request, "WRONG_APP", "CLOUD_PLUS_JOIN",
     bank.as(ana, { pin = "1234", app_id = "YAP" }))
 local balance = bank.balanceOf(ana)
 local joined = bank.request("CLOUD_PLUS_JOIN", bank.as(ana, { pin = "1234" }))
-assert(joined.plan == "plus" and joined.quota == 500 * 1024)
+-- FoxyOS 17: asking for no tier is Tier 1, 25 MB.
+assert(joined.plan == "plus" and joined.tier == 1 and joined.quota == 25 * 1024 * 1024)
 assert(bank.balanceOf(ana) == balance - 500, "the first five days, paid now")
 assert(joined.cash_fee_rate == 0, "no Foxy Cash fee with FoxyCloud+")
 assert(cashFee() == 0, "and the quote says so")
@@ -225,7 +232,7 @@ assert(joined.next_charge_day == today + 5)
 -- The room is the plan's: 80 KB that did not fit now does.
 local bigger = net.cloud.save(anaAsk, { name = "big.txt" }, string.rep("a", 80000),
     PROTOCOL)
-assert(bigger and bigger.quota == 500 * 1024, "80 KB fits in 500 KB")
+assert(bigger and bigger.quota == 25 * 1024 * 1024, "80 KB fits in 25 MB")
 
 -- It is with the rest of the subscriptions, billed every five days.
 local function plusRow(who)

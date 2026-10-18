@@ -12,7 +12,9 @@
 --
 -- Music: drop .mid files onto this computer's screen and they are kept in
 -- its music folder; the app plays them through the speakers, and they go
--- quieter while a game is on.
+-- quieter while a game is on. FoxyOS 17: MIDI from the owner's FoxyCloud,
+-- and DFPWM -- songs and radios from the Music Library -- while the owner
+-- has FoxyCloud+.
 
 local ROOT = fs.getDir(shell.getRunningProgram())
 if ROOT == "" then ROOT = "." end
@@ -21,7 +23,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -913,6 +915,7 @@ function console.status()
             or "-" },
         { "Speakers", tostring(#sound.speakers) },
         { "Music", #midi.library() .. " songs" },
+        { "Playing", console.musicStatus or "-" },
         { "Version", PROGRAM_VERSION },
     }
     for index, line in ipairs(lines) do
@@ -965,7 +968,12 @@ function loops.poll()
     local libraryAt, updatedAt, lastLibrary = 0, now(), nil
     while running do
         if device.console_id then
-            local payload = { console_id = device.console_id, console_token = device.console_token }
+            -- FoxyOS 17: what this console can play, and how it is going, so
+            -- My Casino can say so rather than leave the owner guessing.
+            local payload = { console_id = device.console_id, console_token = device.console_token,
+                version = PROGRAM_VERSION,
+                features = { cloud_midi = true, dfpwm = console.musiclib() ~= nil },
+                music_status = console.musicStatus }
             local library = midi.library()
             local joined = table.concat(library, "|")
             if joined ~= lastLibrary or now() - libraryAt > 30000 then
@@ -987,7 +995,7 @@ function loops.poll()
                 if music.seq ~= console.musicSeq then
                     console.musicSeq = music.seq
                     console.music = { track = music.track, playing = music.playing,
-                        volume = music.volume or 5, cloud = music.cloud }
+                        volume = music.volume or 5, cloud = music.cloud, stream = music.stream }
                     os.queueEvent("ccg_music")
                 end
                 if console.music then console.music.volume = music.volume or 5 end
@@ -1077,12 +1085,97 @@ end
 
 -- The music: the song the app chose, round and round, quieter while a game
 -- is on, until it is stopped or changed.
+
+-- How loud, now: the owner's volume, and quieter while a game is on.
+function console.level()
+    local level = ((console.music and console.music.volume) or 5) / 10 * 3
+    local phase = show.table and show.table.phase
+    if phase and phase ~= "wheel" then level = level * 0.35 end
+    return level
+end
+
+-- Waits `seconds`, or less if the owner chooses something else. True when
+-- they did.
+function console.waitOrChange(seconds, seq)
+    local timer = os.startTimer(seconds)
+    while true do
+        local event, id = os.pullEvent()
+        if event == "ccg_music" and console.musicSeq ~= seq then return true end
+        if event == "timer" and id == timer then return console.musicSeq ~= seq end
+    end
+end
+
+-- lib/music came with FoxyOS 17.0. A console updated by an updater from
+-- before it does not have it until its next check fetches what its role
+-- lacks, so it is loaded when it is first wanted -- and asked again until it
+-- is there -- rather than stopping the console from starting.
+function console.musiclib()
+    if not console.loadedMusic then
+        local ok, lib = pcall(require, "lib.music")
+        if ok and type(lib) == "table" then console.loadedMusic = lib end
+    end
+    return console.loadedMusic
+end
+
+-- FoxyOS 17: a song or a radio from the Music Library, as DFPWM, through the
+-- speakers. The console holds a grant for it, never the owner's session; the
+-- Music Server checks the owner still has FoxyCloud+ every time it is asked.
+function console.stream(want, seq)
+    local musiclib = console.musiclib()
+    if not musiclib then return nil, "This CCG Casino is still updating", "UPDATING" end
+    console.musicClient = console.musicClient or musiclib.client(config)
+    local answer, err, code = console.musicClient:request("MUSIC_STREAM",
+        { grant = want.stream.grant }, 6)
+    if not answer then return nil, err, code end
+    console.musicStatus = (answer.mode == "radio" and answer.radio and (answer.radio.name .. ": ")
+        or "") .. tostring(answer.item and answer.item.title)
+    local startedAt = now()
+    local finished, playError, playCode
+    parallel.waitForAny(function()
+        finished, playError, playCode = musiclib.play(answer.plan, sound.speakers, {
+            offset_ms = answer.offset_ms, protocol = config.cloud_protocol, volume = console.level })
+    end, function()
+        repeat os.pullEvent("ccg_music") until console.musicSeq ~= seq
+    end)
+    if not finished then
+        musiclib.stop(sound.speakers)
+        if playError then return nil, playError, playCode end
+        return true
+    end
+    -- A radio's next item starts when this one has been heard to the end.
+    if answer.mode == "radio" and answer.item then
+        local wait = (startedAt + answer.item.length_ms - (answer.offset_ms or 0) - now()) / 1000
+        if wait > 0 then console.waitOrChange(wait, seq) end
+    end
+    return true
+end
+
+-- A song that will not play is tried again a few times -- a Cloud Server
+-- can be out of reach for a moment -- before the console gives up on it.
+function console.failed(want, seq, err, code)
+    console.failures = (console.failSeq == seq and console.failures or 0) + 1
+    console.failSeq = seq
+    console.musicStatus = "Cannot play: " .. tostring(err or "no answer")
+    if code == "NEEDS_PLUS" or code == "NO_GRANT" or console.failures >= 5 then
+        want.playing = false
+        return
+    end
+    console.waitOrChange(10 + console.failures * 5, seq)
+end
+
 function loops.music()
     local cached = {}
     while running do
         local want = console.music
         if not (want and want.playing and want.track) then
+            if want and not want.playing and not (console.musicStatus or ""):match("^Cannot") then
+                console.musicStatus = nil
+            end
             os.pullEvent("ccg_music")
+        elseif want.stream then
+            local seq = console.musicSeq
+            local ok, err, code = console.stream(want, seq)
+            if not ok and console.musicSeq == seq then console.failed(want, seq, err, code) end
         else
             local seq = console.musicSeq
             -- FoxyOS 17: a song from FoxyCloud is fetched into memory and
@@ -1096,18 +1189,18 @@ function loops.music()
                 else
                     notes, err = midi.load(want.track)
                 end
-                if notes then cached = { [key] = notes } else
-                    console.dropped = "Cannot play " .. want.track .. ": " .. tostring(err)
-                    want.playing = false
+                if notes then
+                    cached = { [key] = notes }
+                elseif console.musicSeq == seq then
+                    console.failed(want, seq, err)
                 end
             end
             if notes and #notes > 0 then
+                console.musicStatus = want.track
                 local start, index = now() / 1000, 1
                 while running and console.musicSeq == seq and index <= #notes do
                     local at = now() / 1000 - start
-                    local phase = show.table and show.table.phase
-                    local master = (console.music.volume or 5) / 10 * 3
-                    if phase and phase ~= "wheel" then master = master * 0.35 end
+                    local master = console.level()
                     while index <= #notes and notes[index].t <= at + 0.03 do
                         local note = notes[index]
                         if master > 0 then

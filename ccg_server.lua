@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1606,6 +1606,13 @@ function casino.view(t, how)
     if how.display or how.owner then
         view.music, view.library = t.music, t.library or {}
     end
+    -- FoxyOS 17: what the console can play and how its music is going, so My
+    -- Casino can tell an owner the console needs updating rather than
+    -- leaving them wondering why a song never starts.
+    if how.owner then
+        view.features, view.version = t.features or {}, t.version
+        view.music_status = t.music_status
+    end
     if how.owner then view.next_label = casino.nextLabel(t) end
     return view
 end
@@ -1682,6 +1689,13 @@ end
 -- files it has.
 function actions.CASINO_TICK(payload)
     local t = casino.console(payload)
+    if type(payload.features) == "table" then
+        t.features = { cloud_midi = payload.features.cloud_midi == true,
+            dfpwm = payload.features.dfpwm == true }
+    end
+    t.version = payload.version and util.safeText(tostring(payload.version), 12) or t.version
+    t.music_status = payload.music_status and util.safeText(tostring(payload.music_status), 60)
+        or nil
     if type(payload.library) == "table" then
         local library = {}
         for index, name in ipairs(payload.library) do
@@ -1823,14 +1837,24 @@ function actions.CASINO_CONTROL(payload)
         -- FoxyOS 17: a song in the owner's FoxyCloud. What comes is where its
         -- pieces are and a ticket to read them for a couple of minutes; the
         -- console fetches it into memory, plays it, and keeps no copy.
-        if action ~= "volume" then music.cloud = nil end
+        if action ~= "volume" then music.cloud, music.stream = nil, nil end
         if action == "cloud" then
             music.cloud = casino.cloudSong(payload.cloud)
             music.track = util.safeText(tostring(payload.name or "Song"), 32)
-            music.playing = true
+            music.playing, music.mode = true, "midi"
+        elseif action == "stream" then
+            -- FoxyOS 17: DFPWM from the Music Library, a song or a radio. The
+            -- grant is the Music Server's; it plays while the owner has
+            -- FoxyCloud+, and the Music Server is the one that checks.
+            need(type(payload.grant) == "string" and #payload.grant <= 40, "BAD_SONG",
+                "Choose a song or a radio")
+            music.stream = { grant = payload.grant,
+                kind = payload.kind == "radio" and "radio" or "track" }
+            music.track = util.safeText(tostring(payload.name or "Music"), 32)
+            music.playing, music.mode = true, "dfpwm"
         elseif action == "play" then
             music.track = util.safeText(tostring(payload.track or ""), 32)
-            music.playing = music.track ~= ""
+            music.playing, music.mode = music.track ~= "", "midi"
         elseif action == "stop" then
             music.playing = false
         elseif action == "volume" then

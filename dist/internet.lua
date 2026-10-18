@@ -1,4 +1,5 @@
 -- PUMPE APP: Internet
+-- PUMPE APP ICON: bbbbbbbb/bb0000bb/b0b00b0b/b000000b/b0b00b0b/bb0000bb
 -- PUMPE APP ACTION: go | Go to a domain | Type an address
 
 

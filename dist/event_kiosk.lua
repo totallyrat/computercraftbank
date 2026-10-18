@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.3.1"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -235,6 +235,20 @@ local function saleScreen(event)
     end
     changes.limit = askLimit(event.limit)
     if not changes.limit then return event end
+    -- FoxyOS 17: FoxyCloud+ members first, before the presale -- or before
+    -- the sale when there is none. Set here, or taken away.
+    if event.plus_day then
+        if not ui.confirm(target, "FOXYCLOUD+ FIRST", "Members queue from day "
+            .. event.plus_day .. " " .. tostring(event.plus_time) .. ".", "KEEP",
+            "REMOVE") then
+            changes.plus = false
+        end
+    elseif (event.release_day or changes.release_day) and ui.confirm(target,
+        "FOXYCLOUD+ FIRST", "Let FoxyCloud+ members queue before "
+            .. (event.presale_day and "the presale" or "the sale") .. "?", "YES", "NO") then
+        changes.plus_day, changes.plus_time = askMoment("FOXYCLOUD+",
+            "When members may queue")
+    end
     changes.event_id = event.event_id
     local result, err = request("EVENT_SALE", changes, true)
     if not result then
@@ -374,14 +388,19 @@ local function analyticsScreen(event)
         local phase = event.phase or "general"
         local saleLine = phase == "general" and "ON SALE"
             or phase == "presale" and "PRESALE OPEN"
+            or phase == "plus" and "FOXYCLOUD+ OPEN"
             or ("ON SALE DAY " .. tostring(event.release_day) .. " "
                 .. tostring(event.release_time))
-        if event.presale_day and phase == "soon" then
+        if event.presale_day and (phase == "soon" or phase == "plus") then
             saleLine = saleLine .. "  PRESALE DAY " .. event.presale_day
                 .. " " .. event.presale_time
         end
+        if event.plus_day and phase == "soon" then
+            saleLine = saleLine .. "  FOXYCLOUD+ DAY " .. event.plus_day
+                .. " " .. tostring(event.plus_time)
+        end
         ui.text(target, 2, 9, ui.truncate(saleLine, width - 2),
-            phase == "soon" and colors.yellow or ui.theme.success)
+            (phase == "soon" or phase == "plus") and colors.yellow or ui.theme.success)
         ui.text(target, 2, 10, ui.truncate((event.waiting or 0) .. " in line  "
             .. (event.shopping or 0) .. " choosing  " .. (event.limit or "?")
             .. " per person  " .. (event.invited_count or 0) .. " invited",

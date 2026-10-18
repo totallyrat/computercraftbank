@@ -64,28 +64,48 @@ end, "note",
     function(seen)
         local frame = phone.last(seen)
         assert(phone.has(frame, "Billed every 5 days"))
+        assert(phone.has(frame, "25 MB") and phone.has(frame, "50 MB"), "both tiers")
         assert(phone.has(frame, "0% fee on Foxy Cash"), "the perks are listed")
+        assert(phone.has(frame, "500 messages a day"), "Tier 1's, to start with")
         return "join"
     end,
     function(seen)
-        assert(phone.has(phone.last(seen), "Ends day") == false)
+        local frame = phone.last(seen)
+        assert(phone.has(frame, "Ends day") == false)
+        assert(phone.has(frame, "Cancel FoxyCloud+"))
+        return "tier:2"
+    end,
+    function(seen)
+        local frame = phone.last(seen)
+        assert(phone.has(frame, "Unlimited messages"), "Tier 2's perks")
+        assert(phone.has(frame, "Upgrade: $500 now"), "up costs the difference")
+        return "join"
+    end,
+    function(seen)
+        assert(phone.has(phone.last(seen), "Cancel FoxyCloud+"), "Tier 2 is yours")
+        return "tier:1"
+    end,
+    function(seen)
+        assert(phone.has(phone.last(seen), "Step down at renewal"))
         return "tab:account"
     end,
     function(seen)
         local frame = phone.last(seen)
-        assert(phone.has(frame, "Ana Fox") and phone.has(frame, "FoxyCloud+"),
+        assert(phone.has(frame, "Ana Fox") and phone.has(frame, "FoxyCloud+ Tier 2"),
             "the account, on its new plan")
         return "home"
     end)
 phone.push(script.inputs, "Shopping", "milk", "eggs", "oat milk")
 phone.push(script.confirms, true)                  -- share it
-phone.push(script.confirms, true)                  -- join FoxyCloud+
-phone.push(script.pins, "1234")
+phone.push(script.confirms, true, true)            -- join FoxyCloud+, then upgrade
+phone.push(script.pins, "1234", "1234")
+local balanceBefore = bank.balanceOf(ana)
 local seen, downloads = run(ana, script)
 assert(phone.said(seen, "Saved"), "the note went up")
 assert(phone.said(seen, "Shared"), "and was shared")
 assert(phone.said(seen, "On this Pocket"), "and kept on the Pocket")
-assert(phone.said(seen, "Welcome to FoxyCloud+"))
+assert(phone.said(seen, "FoxyCloud+ Tier 1") and phone.said(seen, "FoxyCloud+ Tier 2"))
+assert(balanceBefore - bank.balanceOf(ana) == 1000, "500 to join, 500 more for Tier 2")
 
 local mine = files(ana)
 assert(#mine == 1 and mine[1].name == "Shopping.txt" and mine[1].version == 2)
@@ -94,7 +114,7 @@ local code = mine[1].share
 assert(code and #code == 6)
 local kept = world.disks["pocket" .. ana.id].files["pocket" .. ana.id .. "/downloads/Shopping.txt"]
 assert(kept == "oat milk\neggs", "the copy kept on the Pocket")
-assert(bank.request("CLOUD_PLAN", bank.as(ana)).plan == "plus")
+assert(bank.request("CLOUD_PLAN", bank.as(ana)).tier == 2)
 
 -- Kit: a share code, read, and a copy kept ------------------------------------------------
 

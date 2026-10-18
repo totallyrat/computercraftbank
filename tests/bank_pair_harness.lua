@@ -167,14 +167,21 @@ function harness.pair(options)
         vault.sync_waiting()
     end
 
-    function bank.register(name, pin)
+    -- FoxyOS 17: Messages and Urgent Contact need a phone number. Everyone a
+    -- test registers gets one the way a person does, in Messages, unless the
+    -- test is about not having one.
+    function bank.register(name, pin, options)
         local created = bank.request("REGISTER",
             { name = name, pin = pin, gender = "Not set" })
-        return {
+        local who = {
             token = created.session_token,
             id = created.account.account_id,
             name = name, pin = pin,
         }
+        if not (options and options.no_phone) then
+            who.phone = bank.request("PHONE_GET", bank.as(who)).number
+        end
+        return who
     end
 
     function bank.as(who, extra)

@@ -1,4 +1,5 @@
 -- PUMPE APP: Foxy
+-- PUMPE APP ICON: 10111101/10011001/10000001/10f00f01/10000001/11000011
 -- PUMPE APP ACTION: bank | Foxy Bank | Your balance and accounts
 -- PUMPE APP ACTION: cash | Foxy Cash | Send money to a friend
 -- PUMPE APP ACTION: wallet | Bet Wallet | Game money

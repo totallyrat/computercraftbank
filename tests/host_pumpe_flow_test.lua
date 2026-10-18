@@ -38,7 +38,8 @@ local actions = {
     "__tick", "__tick", "__tick", "leave",
     -- My Casino: the table, the dealer, a game, a song.
     "tab:mine", "open:CAS00001", "take", "next", "game:poker", "music",
-    "cloud", "song:1",                               -- FoxyOS 17: a song from FoxyCloud
+    "cloud", "pick:1",                               -- FoxyOS 17: a song from FoxyCloud
+    "mode:dfpwm", "radios", "pick:1", "mode:midi",    -- and a radio from the Music Library
     "play:1", "back",
     "back",
     -- Casino money: in debt, so money goes in to pay the loan back.
@@ -254,6 +255,8 @@ local client = {
             assert(payload.name == "FoxyUser")
             assert(payload.pin == "1234")
             return { account = account, session_token = "SESSION" }
+        elseif action == "MUSIC_WHERE" then
+            return { computer_id = 30 }
         elseif action == "CLOUD_FILES" then
             assert(payload.app_id == nil, "the CCG app is the Pocket's own")
             return { files = { { file_id = "F7", name = "Notes.txt", kind = "text", size = 9 },
@@ -261,6 +264,7 @@ local client = {
                 used = 5009, quota = 102400 }
         elseif action == "CLOUD_GET" then
             assert(payload.file_id == "F9", "the song, not the note")
+            assert(payload.hold == true, "a ticket that outlasts a console restart")
             return { file = { file_id = "F9", name = "Theme.mid" }, ticket = "CT_T",
                 chunks = { { id = "F9.1.1", size = 5000, servers = { "CS1" } } },
                 hosts = { CS1 = 11 } }
@@ -611,6 +615,11 @@ local client = {
                 if payload.action == "cloud" then
                     assert(payload.name == "Theme.mid" and payload.cloud.ticket == "CT_T"
                         and payload.cloud.hosts.CS1 == 11, "where the song's pieces are")
+                    casinoState.cloud = payload.cloud
+                elseif payload.action == "stream" then
+                    assert(payload.grant == "MG_7" and payload.kind == "radio"
+                        and payload.name == "Foxy FM", "the grant, not the session")
+                    casinoState.stream = { grant = payload.grant, kind = payload.kind }
                 end
                 casinoState.ops[#casinoState.ops + 1] = payload.op .. ":"
                     .. tostring(payload.game or payload.action or payload.track or "")
@@ -621,7 +630,10 @@ local client = {
             return { table = casinoView("betting", { controlled = casinoState.controlling,
                 controller_name = casinoState.controlling and "FoxyUser" or nil,
                 next_label = casinoState.controlling and "DEAL" or nil,
-                library = { "theme.mid", "jazz.mid" }, music = { playing = false, volume = 5 } }),
+                library = { "theme.mid", "jazz.mid" }, features = { cloud_midi = true, dfpwm = true },
+                music = { playing = casinoState.cloud ~= nil, volume = 5, cloud = casinoState.cloud,
+                    stream = casinoState.stream,
+                    track = casinoState.cloud and "Theme.mid" or nil } }),
                 you_control = casinoState.controlling == true }
         elseif action == "TABLE_LEAVE" then
             assert(payload.code == "ABC234")
@@ -674,10 +686,27 @@ local client = {
     end,
 }
 
+-- FoxyOS 17: the Music Server, as My Casino's DFPWM choice reaches it. Found
+-- through the Bank, and handed the session.
+local musicAsked = {}
 package.loaded["lib.net"] = {
     client = function() return client end,
     autoUpdate = function() end,
     locate = function() return nil end,
+    musicApi = function(_, session, _, where)
+        return { ask = function(action, payload)
+            musicAsked[#musicAsked + 1] = action
+            assert(session() == "SESSION" and where() == 30, "the Music Server the Bank names")
+            if action == "MUSIC_RADIOS" then
+                return { radios = { { radio_id = "R1", name = "Foxy FM", color = "lime" } } }
+            elseif action == "MUSIC_GRANT" then
+                assert(payload.kind == "radio" and payload.id == "R1"
+                    and payload.casino_id == "CAS00001")
+                return { grant = "MG_7", kind = "radio", id = "R1", label = "Foxy FM" }
+            end
+            error("Unexpected music request " .. action)
+        end }
+    end,
 }
 
 local ui = {
@@ -971,6 +1000,9 @@ assert(find(requests, "TABLE_JOIN") and find(requests, "TABLE_BET")
     and find(requests, "TABLE_ACT"), "sat down, bet, and played the hand")
 assert(find(requests, "TABLE_LEAVE"), "LEAVE leaves the table")
 assert(find(drawnText, "YOU WON $20"), "the result, in its card")
+assert(find(drawnText, "Playing"), "the CCG Server took the FoxyCloud song")
+assert(casinoState.stream and musicAsked[1] == "MUSIC_RADIOS" and musicAsked[2] == "MUSIC_GRANT",
+    "a radio for the table, by grant")
 assert(casinoState.deposited, "money put into the casino, with the PIN")
 assert(find(drawnText, "LOAN $300"), "a casino below zero shows its loan")
 local ops = table.concat(casinoState.ops or {}, " ")

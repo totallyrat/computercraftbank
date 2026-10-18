@@ -14,9 +14,10 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.2"
+local PROGRAM_VERSION = "17.0.0"
 local config = require("config")
 local util = require("lib.util")
+local net = require("lib.net")
 local ui = require("lib.ui")
 
 local CHOICES = {
@@ -128,6 +129,11 @@ end
 if rawget(_G, "PUMPE_TEST_MODE") == "ccg_split" then
     return { choices = CHOICES, become = become, fetch = fetchProgram }
 end
+
+-- A newer release first, like every program: a CCG nobody has answered yet
+-- is not left on the release that brought it here.
+pcall(net.autoUpdate, config, "ccg", ROOT, nil,
+    { force = true, programVersion = PROGRAM_VERSION })
 
 -- On the computer's own screen too, when the choice is on a monitor.
 if target ~= term.current() then
