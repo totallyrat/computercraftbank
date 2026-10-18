@@ -95,6 +95,10 @@ Only devices signed up to Beta Updates get this. Sign up the **CCG Server** (its
 
 - [ ] Drag a .mid file onto the CCG Casino computer's screen: *Added ...*. My Casino → **MUSIC** lists it; tap it to play through the speakers. **VOL-/VOL+**, **NEXT**, **STOP**.
 - [ ] The music is quieter while a game is on, louder on the wheel.
+## FoxyOS 16.3.1 (16.3.1)
+
+- [ ] Each Cloud Server updates itself to 16.3.1. Its FREE card is about 180 KB less than before: the room it keeps to update itself.
+
 ## FoxyOS 16.3 (16.3.0)
 
 Update the Bank (Core and Vault) first. The FoxyCloud app is in the FoxyOS 17 beta; this checks the servers and the Bank under it.

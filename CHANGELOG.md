@@ -87,6 +87,15 @@ coin, cards dealt one at a time.
 **Sound and music.** Speakers play the games' sounds. Drop .mid files onto
 the CCG Casino computer's screen and play them from My Casino; the music
 goes quieter while a game is on.
+## 16.3.1
+
+FoxyOS 16.3.1, for Cloud Servers. Update them now, before they fill up.
+
+**Room to update.** A Cloud Server keeps a staged copy of its own programs'
+worth of room free, and never gives it to FoxyCloud files. Before this, a
+full Cloud Server had too little room left to update itself -- even to this
+fix. The room it tells the Bank it has leaves that out.
+
 ## 16.3.0
 
 FoxyOS 16.3: Cloud Servers, and the Bank behind FoxyCloud, ahead of the

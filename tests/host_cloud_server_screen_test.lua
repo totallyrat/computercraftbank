@@ -60,7 +60,9 @@ package.loaded["lib.net"] = {
                 assert(payload.name == "Cloud 21")
                 return { server_id = "CS3", server_token = "CLOUD_T" }
             elseif action == "CLOUD_BEAT" then
-                assert(payload.server_token == "CLOUD_T" and payload.free == 700000)
+                -- What it has, less the room it keeps to update itself.
+                assert(payload.server_token == "CLOUD_T" and payload.free < 700000
+                    and payload.free > 600000, tostring(payload.free))
                 return { server_id = "CS3", name = "Cloud 21", drop = {} }
             end
             return nil, "unexpected " .. action

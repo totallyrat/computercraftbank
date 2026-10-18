@@ -176,7 +176,7 @@ function cloud.start(harness, bank)
         { code = "0000", computer_id = 11 })
     local ids = { 11, 12, 13, 14, 15 }
     for _, id in ipairs(ids) do
-        local program = loadServer(id, 60000)
+        local program = loadServer(id, 80000)
         local registered = bank.request("CLOUD_SERVER_REGISTER",
             { code = "4040", name = "Cloud " .. id, computer_id = id })
         program.state.server_token = registered.server_token
