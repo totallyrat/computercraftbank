@@ -1398,7 +1398,7 @@ local function subscriptionsScreen()
     while true do
         local width, height = target.getSize()
         ui.clear(target)
-        ui.header(target, "Subscriptions", "Daily billing", util.formatClock(blink))
+        ui.header(target, "Subscriptions", "Billing", util.formatClock(blink))
         local pageItems, actualPage, pages = util.page(items, page, 1)
         page = actualPage
         local scene = ui.scene(target)
@@ -1409,7 +1409,8 @@ local function subscriptionsScreen()
                 item.active and ui.theme.accent or colors.gray)
             ui.wrappedText(target, 4, y, item.description,
                 width - 6, 6, ui.theme.ink, ui.theme.panel)
-            ui.text(target, 4, y + 6, money(item.amount) .. " per day",
+            ui.text(target, 4, y + 6, ui.truncate(money(item.amount) .. " "
+                .. util.everyText(item.every_days), width - 6),
                 ui.theme.muted, ui.theme.panel)
             ui.text(target, 4, y + 7, "Next: day " .. item.next_charge_day,
                 ui.theme.muted, ui.theme.panel)
@@ -6021,15 +6022,19 @@ local function purchaseSheet(quote, appName)
         ui.card(target, 2, 5, width - 2, 7, ui.theme.accent)
         ui.wrappedText(target, 4, 6, quote.name, width - 6, 2,
             ui.theme.ink, ui.theme.panel)
+        -- FoxyOS 16.3: every 1, 2, 5, 10 or 15 days, not only daily.
+        local every = quote.period and (quote.every_days or 1) or nil
         ui.text(target, 4, 9, money(quote.amount)
-            .. (quote.period == "day" and " a day" or ""),
+            .. (every and (" " .. util.everyText(every)) or ""),
             ui.theme.ink, ui.theme.panel, width - 6)
         ui.text(target, 4, 10, ui.truncate("To " .. quote.seller, width - 6),
             ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 11, ui.truncate("Tax " .. money(quote.tax),
             width - 6), ui.theme.muted, ui.theme.panel)
-        ui.wrappedText(target, 2, 13, quote.period == "day"
-            and "Charged every in-game day until you cancel it in Settings."
+        ui.wrappedText(target, 2, 13, every
+            and ("Charged " .. (every == 1 and "every in-game day"
+                or ("every " .. every .. " in-game days"))
+                .. " until you cancel it in Settings.")
             or "A one-off purchase.", width - 2, 3, ui.theme.muted)
         local scene = ui.scene(target)
         scene:button("buy", 2, height - 5, width - 2, 2,
@@ -6058,6 +6063,7 @@ local function appPurchase(entry, spec)
         name = spec.name or productId,
         amount = spec.amount,
         period = spec.period,
+        every_days = spec.every_days,
         target = spec.target,
     }
     local quote, err = request("APP_PURCHASE_QUOTE", ask, true)

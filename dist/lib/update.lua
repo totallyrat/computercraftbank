@@ -371,6 +371,7 @@ update.PUBLISHED_OPTIONAL = {
 "brickbreaker.lua",
 "invt.lua",
 "yap.lua",
+"cloud_server.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -401,6 +402,8 @@ delivery = "delivery_terminal.lua",
 
 
 vault = "bank_vault.lua",
+
+cloud = "cloud_server.lua",
 }
 
 function update.roleProgram(role)

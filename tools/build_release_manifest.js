@@ -86,6 +86,8 @@ const forwardOptionalFiles = [
   // FoxyOS 17: the CCG is two, each its own download.
   "ccg_home.lua",
   "ccg_casino.lua",
+  // FoxyOS 16.3: the Cloud Servers that hold FoxyCloud's files.
+  "cloud_server.lua",
 ];
 
 function checksum(buffer) {

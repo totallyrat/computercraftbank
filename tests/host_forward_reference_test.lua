@@ -23,6 +23,7 @@ local PROGRAMS = {
     "bank_vault.lua", "delivery_terminal.lua", "internet_server.lua",
     "wc.lua", "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
     "invt.lua", "yap.lua", "ccg_home.lua", "ccg_casino.lua",
+    "cloud_server.lua",
 }
 
 local function readLines(path)

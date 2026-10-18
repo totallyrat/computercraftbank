@@ -145,6 +145,11 @@ package.loaded["lib.util"] = {
         return (symbol or "$") .. tostring(value)
     end,
     formatClock = function() return "12:00" end,
+    -- FoxyOS 16.3: how often a subscription is charged.
+    everyText = function(days)
+        days = tonumber(days) or 1
+        return days <= 1 and "a day" or ("every " .. days .. " days")
+    end,
     -- A turn in the ticket queue counts down from a clock.
     nowMs = function() return 1000000 end,
     ingameDay = function() return 42 end,

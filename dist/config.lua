@@ -2,11 +2,11 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "16.2.0",
+    version = "16.3.0",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
-    release_name = "FoxyOS 16.2",
+    release_name = "FoxyOS 16.3",
     protocol = "PUMPE_BANK_V5",
     -- Shop, 11.0. In in-game time, like the rest of the Shop: a Minecraft
     -- day is twenty real minutes, so two hours is about a minute and forty
@@ -124,6 +124,32 @@ return {
     -- and no daily ceiling. BuckApp keeps working through the migration.
     foxy_cash_fee_rate = 0.02,
     max_pots_per_account = 8,
+
+    -- Subscriptions, FoxyOS 16.3: how often one may be charged, in days. A
+    -- product at a till and a subscription in an app each pick one of these.
+    subscription_periods = { 1, 2, 5, 10, 15 },
+
+    -- FoxyCloud, FoxyOS 16.3. Every Foxy Account has cloud storage. The
+    -- files are kept on Cloud Servers -- as many as the world runs, five or
+    -- more, each holding pieces -- and never on the Bank, which only knows
+    -- where each piece is. FoxyCloud+ is the paid plan: more room, no Foxy
+    -- Cash fee, and early tickets for the events that offer them.
+    cloud_protocol = "PUMPE_CLOUD_V1",
+    cloud_free_bytes = 100 * 1024,
+    cloud_plus_bytes = 500 * 1024,
+    foxycloud_plus_price = 500,
+    foxycloud_plus_days = 5,
+    -- A file is cut into pieces this big, each on whichever Cloud Server has
+    -- the most room. One copy of each by default, which is the most storage;
+    -- 2 keeps every piece on two servers, so one can be lost.
+    cloud_chunk_size = 6000,
+    cloud_copies = 1,
+    cloud_max_files = 100,
+    -- What a Cloud Server keeps free for itself, and how long one can go
+    -- unheard before nothing new is put on it.
+    cloud_server_reserve_bytes = 20000,
+    cloud_server_seen_ms = 60 * 1000,
+    cloud_ticket_ms = 2 * 60 * 1000,
 
     -- The App Server. Optional apps are downloaded from here rather than
     -- from the Bank, so a busy download never slows banking down. Publishing

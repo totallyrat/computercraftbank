@@ -14,7 +14,7 @@
 --   installer.lua --boot <program>   update if the release is newer, then start
 --   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local INSTALLER_VERSION = "16.2.0"
+local INSTALLER_VERSION = "16.3.0"
 local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -128,6 +128,12 @@ local PROGRAMS = {
       detail = "Hosts the web",
       about = "Serves the websites and domains of the web.",
       words = "web website internet domain server" },
+    -- FoxyOS 16.3: FoxyCloud's storage. Run as many as you like -- five or
+    -- more -- and everybody's files are spread across all of them.
+    { id = "cloud", name = "Cloud Server", file = "cloud_server.lua",
+      detail = "Storage for FoxyCloud",
+      about = "Holds pieces of everybody's FoxyCloud files. Run five or more.",
+      words = "cloud storage files foxycloud disk server" },
     -- Retired in 7.1. Still bootable so an installed Tax Controller can say
     -- so instead of failing with an unknown program.
     { id = "tax", name = "Tax Controller", file = "tax_controller.lua",

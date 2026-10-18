@@ -50,6 +50,36 @@ coin, cards dealt one at a time.
 **Sound and music.** Speakers play the games' sounds. Drop .mid files onto
 the CCG Casino computer's screen and play them from My Casino; the music
 goes quieter while a game is on.
+## 16.3.0
+
+FoxyOS 16.3: Cloud Servers, and the Bank behind FoxyCloud, ahead of the
+FoxyCloud app in the next FoxyOS 17 beta. Update the Bank (Core and Vault),
+then set up Cloud Servers with Easy Deployment.
+
+**Cloud Servers.** A new role in Easy Deployment. Run five or more: each
+registers with the Bank once, with the operator code, and FoxyCloud spreads
+everybody's files across all of them, piece by piece, to whichever has the
+most room. The Bank keeps the directory on its Vault and never stores a byte
+of a file. `cloud_copies = 2` keeps every piece on two servers instead.
+
+**FoxyCloud storage.** Every Foxy Account has 100 KB. A file goes onto the
+Cloud Servers, and comes back, only with a ticket from the Bank that names
+each piece and how big it may be. A share code opens one file, read-only,
+for whoever has it.
+
+**FoxyCloud+.** 500 every 5 days: 500 KB of storage, no Foxy Cash fee, and
+early tickets for events that offer them. It is listed with your other
+subscriptions. Cancelled or unpaid, it runs to the end of what was paid for
+and stops; your files are kept, and nothing new fits until they are under
+100 KB.
+
+**Subscriptions every 1, 2, 5, 10 or 15 days.** A till product or an app
+subscription can be charged every few days, not only daily, and the Pocket
+says how often. Existing subscriptions stay daily.
+
+**FoxyCloud+ pre-presale.** An event can let FoxyCloud+ members into its
+queue before the presale. They stay in for the presale too.
+
 ## 16.2.0
 
 FoxyOS 16.2, for the Bank: casino money for the CCG Casino of FoxyOS 17.
