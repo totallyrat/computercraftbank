@@ -547,4 +547,67 @@ function net.cloud.shared(request, code, protocol, progress)
     return body, plan.file
 end
 
+-- What FoxyCloud is given on a Pocket, as api.cloud: saving, opening and
+-- opening shared files, and the Pocket's own Downloads folder. `ask` asks the
+-- Bank as the app; `offline()` is true while the modem is switched off.
+function net.cloud.api(ask, protocol, offline, downloads)
+    downloads = downloads or "/downloads"
+    local function off()
+        if offline and offline() then return nil, "Modem is off", "MODEM_OFF" end
+        return true
+    end
+    local function here(name)
+        return fs.combine(downloads, fs.getName(tostring(name or "")))
+    end
+    local api = {}
+    function api.save(fields, body, progress)
+        local ok, err, code = off()
+        if not ok then return nil, err, code end
+        return net.cloud.save(ask, type(fields) == "table" and fields or {},
+            tostring(body or ""), protocol, progress)
+    end
+    function api.load(fileId, progress)
+        local ok, err, code = off()
+        if not ok then return nil, err, code end
+        return net.cloud.load(ask, fileId, protocol, progress)
+    end
+    function api.shared(code, progress)
+        local ok, err, errCode = off()
+        if not ok then return nil, err, errCode end
+        return net.cloud.shared(ask, code, protocol, progress)
+    end
+    function api.pocketFiles()
+        local names = {}
+        if fs.exists(downloads) and fs.isDir(downloads) then
+            for _, name in ipairs(fs.list(downloads)) do
+                if not fs.isDir(fs.combine(downloads, name)) then names[#names + 1] = name end
+            end
+        end
+        table.sort(names)
+        return names
+    end
+    function api.readPocket(name)
+        local path = here(name)
+        local file = fs.exists(path) and fs.open(path, "rb")
+        if not file then return nil, "That file is not here" end
+        local body = file.readAll()
+        file.close()
+        return body or ""
+    end
+    function api.keep(name, body)
+        body = tostring(body or "")
+        if type(fs.getFreeSpace) == "function" and fs.getFreeSpace("/") < #body + 4096 then
+            return nil, "Not enough room on this Pocket"
+        end
+        if not fs.exists(downloads) then fs.makeDir(downloads) end
+        local path = here(name)
+        local file = fs.open(path, "wb")
+        if not file then return nil, "Cannot write here" end
+        file.write(body)
+        file.close()
+        return path
+    end
+    return api
+end
+
 return net

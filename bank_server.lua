@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.1"
+local PROGRAM_VERSION = "16.5.2"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -133,6 +133,7 @@ RELEASE.optional = {
     "invt.lua",
     "yap.lua",
     "cloud_server.lua",
+    "foxycloud.lua",
 }
 
 RELEASE.programs = {

@@ -127,4 +127,23 @@ sleep = function()
 end
 opening.play("friends", APPS.friends)
 
+-- FoxyOS 17: an app with an icon ends on its icon, drawn where the glyph's
+-- box was: the middle of the screen, three rows above it.
+ui.clear(display, colors.black)
+sleep = function() end
+opening.spots = {}
+local friends = { name = "Friends", glyph = "@", color = colors.cyan,
+    icon = "99999999/90099009/90099009/99999999/00099000/00099000" }
+opening.play("friends", friends)
+local white = 0
+for x = 12, 15 do
+    for y = 7, 8 do
+        if display.backAt(x, y) == colors.white or display.foreAt(x, y) == colors.white then
+            white = white + 1
+        end
+    end
+end
+assert(white >= 4, "the two white figures of its icon are on screen: " .. white)
+assert(not display.has("@"), "and not the glyph")
+
 print("host_app_opening_test: OK")

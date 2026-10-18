@@ -374,6 +374,7 @@ update.PUBLISHED_OPTIONAL = {
     "invt.lua",
     "yap.lua",
     "cloud_server.lua",
+    "foxycloud.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -425,7 +426,9 @@ local ROLE_EXTRA_FILES = {
         -- FoxyOS 14: INVT, by Foxy.
         "invt.lua",
         -- FoxyOS 16: Yap!, by Foxy.
-        "yap.lua" },
+        "yap.lua",
+        -- FoxyOS 17: FoxyCloud, by Foxy.
+        "foxycloud.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

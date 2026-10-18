@@ -222,6 +222,28 @@ server.seed()
 local invite = listedId("INVT")
 assert(invite and invite.name == "INVT" and invite.author == "Foxy",
     "INVT is in the App Browser, by Foxy")
+-- FoxyOS 17: an app's icon is listed with it, read from its own file --
+-- shipped apps and published ones alike.
+local function realFile(name)
+    local handle = assert(io.open("../" .. name, "r"))
+    local body = handle:read("a")
+    handle:close()
+    return body
+end
+files["/pumpe/yap.lua"] = realFile("yap.lua")
+server.seed()
+local yap = listedId("YAP")
+assert(yap and util.validIcon(yap.icon) and yap.icon == util.appIcon(realFile("yap.lua")),
+    "Yap! is listed with its icon")
+local painted = "eeeeeeee/e000000e/e0eeee0e/e0eeee0e/e000000e/eeeeeeee"
+local withIcon = actions.APP_PUBLISH({
+    developer_id = GOOD.developer_id, developer_token = GOOD.developer_token,
+    name = "Painted", description = "Has an icon",
+    body = util.withIcon("return function(api) end\n", painted),
+}).app
+assert(withIcon.icon == painted, "an icon from Icon Creator is listed too")
+actions.APP_DELETE({ developer_id = GOOD.developer_id,
+    developer_token = GOOD.developer_token, app_id = withIcon.app_id })
 
 -- Games, 12.0 Final ------------------------------------------------------------------
 -- An app is for the PUMPE and a game is for a CCG in Home Mode. The App

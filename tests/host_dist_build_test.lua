@@ -21,17 +21,20 @@ local function lines(body)
     return count
 end
 
-local STRIPPED = { "bank_server.lua", "bank_vault.lua", "pumpe.lua", "lib/net.lua",
+local STRIPPED = { "config.lua", "bank_server.lua", "bank_vault.lua", "pumpe.lua", "lib/net.lua",
     "lib/ui.lua", "lib/update.lua", "lib/util.lua" }
 -- FoxyOS 13: the apps the App Server ships, with their headers kept.
 local APPS = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
     "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
-    "invt.lua", "yap.lua" }
+    "invt.lua", "yap.lua", "foxycloud.lua" }
 local isApp = {}
 for _, path in ipairs(APPS) do
     STRIPPED[#STRIPPED + 1] = path
     isApp[path] = true
 end
+-- FoxyOS 17: Easy Deployment too, which keeps its header the same way.
+STRIPPED[#STRIPPED + 1] = "startup.lua"
+isApp["startup.lua"] = true
 
 local saved, total = 0, 0
 for _, path in ipairs(STRIPPED) do

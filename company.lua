@@ -1,4 +1,5 @@
 -- PUMPE APP: Company
+-- PUMPE APP ICON: b000000b/b0b00b0b/b000000b/b0b00b0b/b000000b/b00bb00b
 -- PUMPE APP ACTION: companies | My companies | Start and run your companies
 -- PUMPE APP ACTION: delivery | Delivery Mode | What is out for delivery
 -- PUMPE APP ACTION: sell | Point of Sale | Sell at your till
@@ -97,6 +98,29 @@ return function(api)
     end
     local function labelOf(item) return item.label end
 
+    -- FoxyOS 17: a subscription is charged every 1, 2, 5, 10 or 15 days, not
+    -- only daily. Products made before say nothing, which is every day.
+    local PERIODS = { 1, 2, 5, 10, 15 }
+    local function every(days)
+        days = tonumber(days) or 1
+        return days <= 1 and "a day" or ("every " .. days .. " days")
+    end
+    local function per(days, short)
+        days = tonumber(days) or 1
+        if short then return days <= 1 and "/d" or ("/" .. days .. "d") end
+        return days <= 1 and "/day" or ("/" .. days .. " days")
+    end
+    local function choosePeriod(title, current)
+        local choices = {}
+        for _, days in ipairs(PERIODS) do
+            choices[#choices + 1] = option((days == 1 and "Every day"
+                or ("Every " .. days .. " days")) .. (days == current and "  *" or ""),
+                tostring(days))
+        end
+        local picked = choose(title, "How often it is charged", choices, labelOf)
+        return picked and tonumber(picked.id)
+    end
+
     -- Products ---------------------------------------------------------------------
 
     local function addProduct(company)
@@ -108,14 +132,16 @@ return function(api)
         if not price then return end
         local kind = choose("What kind?", name, {
             option("One-time purchase", "one_time"),
-            option("Subscription, daily", "subscription") }, labelOf)
+            option("Subscription", "subscription") }, labelOf)
         if not kind then return end
+        local days = kind.id == "subscription" and choosePeriod(name) or nil
+        if kind.id == "subscription" and not days then return end
         local added, err = ask("COMPANY_PRODUCT_ADD", {
             company_id = company.company_id, name = name,
-            price = tonumber(price), kind = kind.id })
+            price = tonumber(price), kind = kind.id, every_days = days })
         if not added then return failed("Not added", err) end
         ui.message(target, "success", "Added", name .. "  "
-            .. money(added.item.price), 1.2)
+            .. money(added.item.price) .. (days and per(added.item.every_days) or ""), 1.2)
     end
 
     local function editProduct(company, item)
@@ -129,15 +155,17 @@ return function(api)
             option("Change the price", "price"),
             option(item.favorite and "Unfavourite" or "Favourite on the till",
                 "favorite") }
-        if item.kind ~= "subscription" then
+        if item.kind == "subscription" then
+            choices[#choices + 1] = option("How often", "period")
+        else
             choices[#choices + 1] = option(item.online and "Take it offline"
                 or "Sell it in the Shop app", "online")
             choices[#choices + 1] = option("Shop app line", "blurb")
         end
         choices[#choices + 1] = option("Delete", "delete")
         local chosen = choose(item.name, money(item.price)
-            .. (item.kind == "subscription" and " a day" or ""), choices,
-            labelOf)
+            .. (item.kind == "subscription" and (" " .. every(item.every_days)) or ""),
+            choices, labelOf)
         if not chosen then return end
         if chosen.id == "name" then
             local name = ui.input(target, "Rename", { mode = "text",
@@ -150,6 +178,10 @@ return function(api)
             if price then change({ price = tonumber(price) }) end
         elseif chosen.id == "favorite" then
             change({ favorite = not item.favorite })
+        elseif chosen.id == "period" then
+            -- New subscribers get the new period; nobody's bill changes.
+            local days = choosePeriod(item.name, item.every_days or 1)
+            if days then change({ every_days = days }) end
         elseif chosen.id == "online" then
             change({ online = not item.online })
         elseif chosen.id == "blurb" then
@@ -186,7 +218,9 @@ return function(api)
                 local index = (page - 1) * per + slot
                 local item = products[index]
                 if not item then break end
-                local where = item.kind == "subscription" and "Daily, at the till"
+                local where = item.kind == "subscription"
+                    and ((tonumber(item.every_days) or 1) <= 1 and "Daily, at the till"
+                        or ("Till, every " .. item.every_days .. " days"))
                     or item.online and "Till and Shop app" or "At the till"
                 scene:button("item:" .. index, 2, 2 + slot * 3, width - 2, 2,
                     ui.truncate((item.favorite and "* " or "") .. item.name
@@ -822,8 +856,9 @@ return function(api)
     end
 
     -- The basket, sorted, with its total and whether it is daily.
+    -- FoxyOS 17: and, for subscriptions, every how many days.
     function till.basket(desk)
-        local items, total, kind = {}, 0, nil
+        local items, total, kind, days = {}, 0, nil, nil
         for _, entry in pairs(desk.cart) do
             if (entry.quantity or 0) > 0 then
                 items[#items + 1] = { item_id = entry.item_id, name = entry.name,
@@ -831,28 +866,33 @@ return function(api)
                     kind = entry.kind }
                 total = total + entry.price * entry.quantity
                 kind = kind or entry.kind
+                days = days or (entry.kind == "subscription" and (entry.every_days or 1)) or nil
             end
         end
         table.sort(items, function(a, b) return a.name < b.name end)
-        return items, util.roundMoney(total) or 0, kind or "one_time"
+        return items, util.roundMoney(total) or 0, kind or "one_time", days or 1
     end
 
     function till.clear(desk)
         for key in pairs(desk.cart) do desk.cart[key] = nil end
     end
 
-    -- One more of something. A basket is either paid once or daily, so
-    -- adding the other kind asks before it starts again.
+    -- One more of something. A basket is paid once, or every so many days,
+    -- so adding something paid another way asks before it starts again.
     function till.add(desk, item)
-        local items, _, kind = till.basket(desk)
-        if #items > 0 and kind ~= item.kind then
+        local items, _, kind, days = till.basket(desk)
+        local itemDays = item.kind == "subscription" and (item.every_days or 1) or nil
+        if #items > 0 and (kind ~= item.kind
+            or (itemDays and itemDays ~= days)) then
             if not ui.confirm(target, "New basket?", item.kind == "subscription"
-                and "Daily things are sold on their own" or "This basket is daily",
+                and ("Things paid " .. every(itemDays) .. " are sold on their own")
+                or ("This basket is paid " .. every(days)),
                 "Start over", "Keep") then return end
             till.clear(desk)
         end
         local entry = desk.cart[item.item_id] or { item_id = item.item_id,
-            name = item.name, price = item.price, kind = item.kind, quantity = 0 }
+            name = item.name, price = item.price, kind = item.kind,
+            every_days = itemDays, quantity = 0 }
         entry.quantity = entry.quantity + 1
         desk.cart[item.item_id] = entry
     end
@@ -880,7 +920,8 @@ return function(api)
             ui.fill(screen, math.floor((width - pulse) / 2) + 1,
                 math.min(height, compact and 8 or 9), pulse, 1, ACCENT)
         elseif mode == "cart" then
-            title(data.kind == "subscription" and "EVERY DAY" or "YOUR ORDER", ACCENT)
+            title(data.kind == "subscription" and string.upper("Paid "
+                .. every(data.every_days)) or "YOUR ORDER", ACCENT)
             local items = data.items or {}
             local rows = math.max(1, height - 5)
             local row = 3
@@ -908,7 +949,8 @@ return function(api)
         elseif mode == "code" then
             title("PAY WITH YOUR BANK", ACCENT)
             ui.center(screen, 3, money(data.amount or 0)
-                .. (data.kind == "subscription" and "/DAY" or ""), white, dark)
+                .. (data.kind == "subscription" and string.upper(per(data.every_days))
+                    or ""), white, dark)
             local code = tostring(data.code or "------")
             ui.fill(screen, 2, compact and 4 or 5, width - 2, compact and 2 or 3, white)
             ui.center(screen, compact and 5 or 6, code:sub(1, 3) .. " " .. code:sub(4, 6),
@@ -943,10 +985,10 @@ return function(api)
 
     -- What the customer sees between sales: the basket, or the welcome.
     function till.resting(desk)
-        local items, total, kind = till.basket(desk)
+        local items, total, kind, days = till.basket(desk)
         if #items > 0 then
             desk.view.mode, desk.view.data = "cart", { items = items, total = total,
-                kind = kind }
+                kind = kind, every_days = days }
         elseif desk.view.mode ~= "idle" then
             desk.view.mode, desk.view.data = "idle", {}
         end
@@ -1061,7 +1103,7 @@ return function(api)
             ui.center(target, 13, "Waiting" .. string.rep(".", frame % 4), ui.theme.accent)
             desk.view.frame = frame
             till.show(desk, "code", { amount = created.amount, code = created.code,
-                kind = kind, left = left })
+                kind = kind, every_days = created.every_days, left = left })
             local scene = ui.scene(target)
             scene:button("cancel", 2, height - 2, width - 2, 2, "Cancel code",
                 { background = ui.theme.danger })
@@ -1089,12 +1131,13 @@ return function(api)
     -- Charge: the customer this sale was rung up for, or whoever is nearest
     -- with Foxy, or a code for another bank.
     function till.charge(desk)
-        local items, total, kind = till.basket(desk)
+        local items, total, kind, days = till.basket(desk)
         if total <= 0 then
             ui.message(target, "warning", "Nothing to charge", "Add something first", 1.2)
             return
         end
         local payload = { amount = total, items = items, purchase_type = kind,
+            every_days = kind == "subscription" and days or nil,
             description = till.describe(items) }
         if desk.customer then
             payload.offer_id = desk.customer.offer_id
@@ -1216,11 +1259,12 @@ return function(api)
     -- The basket on its own, for a narrow screen.
     function till.basketSheet(desk)
         while running() do
-            local items, total, kind = till.basket(desk)
+            local items, total, kind, days = till.basket(desk)
             local width, height = target.getSize()
             ui.clear(target)
-            ui.header(target, "Basket", #items .. " lines  " .. money(total)
-                .. (kind == "subscription" and "/day" or ""), util.formatClock())
+            ui.header(target, "Basket", ui.truncate(#items .. " lines  " .. money(total)
+                .. (kind == "subscription" and per(days) or ""), width - 3),
+                util.formatClock())
             local scene = ui.scene(target)
             local rows = height - 9
             for index, item in ipairs(items) do
@@ -1312,7 +1356,7 @@ return function(api)
             end
             local width, height = target.getSize()
             local wide = width >= 40
-            local items, total, kind = till.basket(desk)
+            local items, total, kind, days = till.basket(desk)
             local shelf = till.shelf(desk)
             local bottom = tillMode and height or ui.contentBottom(target)
             ui.clear(target)
@@ -1352,8 +1396,9 @@ return function(api)
                 if #items == 0 then
                     ui.text(target, 2, 6, "Tap a product", ui.theme.muted, ui.theme.panel)
                 end
-                ui.text(target, 2, bottom - 4, kind == "subscription" and "PER DAY"
-                    or "TOTAL", ui.theme.muted, ui.theme.panel)
+                ui.text(target, 2, bottom - 4, kind == "subscription"
+                    and string.upper(per(days)):gsub("^/", "PER ") or "TOTAL",
+                    ui.theme.muted, ui.theme.panel)
                 local totalText = money(total)
                 ui.text(target, receiptWidth - #totalText + 1, bottom - 4, totalText,
                     ui.theme.ink, ui.theme.panel)
@@ -1404,7 +1449,7 @@ return function(api)
                     and desk.cart[product.item_id].quantity or 0
                 local label = ui.truncate(product.name, tileWidth - 2) .. "\n"
                     .. ui.truncate(money(product.price) .. (product.kind == "subscription"
-                        and "/d" or "") .. (inBasket > 0 and not wide
+                        and per(product.every_days, true) or "") .. (inBasket > 0 and not wide
                             and ("  x" .. inBasket) or ""), tileWidth - 2)
                 if wide then
                     label = label .. "\n" .. (inBasket > 0 and ("x" .. inBasket) or "")
@@ -1510,7 +1555,7 @@ return function(api)
                     local product = shelf[productIndex]
                     till.add(desk, { item_id = product.item_id, name = product.name,
                         price = product.price, kind = product.kind == "subscription"
-                            and "subscription" or "one_time" })
+                            and "subscription" or "one_time", every_days = product.every_days })
                 elseif less and items[less] then
                     local entry = desk.cart[items[less].item_id]
                     entry.quantity = entry.quantity - 1

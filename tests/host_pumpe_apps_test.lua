@@ -165,6 +165,11 @@ local notesDownloads = 0
 local YAP_BODY = "-- PUMPE APP: Yap!\nreturn function() end\n"
 local YAP_APP = { app_id = "YAP", name = "Yap!", version = 1, author = "Foxy",
     description = "Posts, private chats and Yap Map.", size = #YAP_BODY }
+-- FoxyOS 17: FoxyCloud, fetched once the same way, with its icon.
+local CLOUD_BODY = "-- PUMPE APP: FoxyCloud\n-- PUMPE APP ICON: "
+    .. "33333333/33330033/30000003/00000000/30000003/33333333\nreturn function() end\n"
+local CLOUD_APP = { app_id = "CLOUD", name = "FoxyCloud", version = 1, author = "Foxy",
+    description = "Your Foxy Account, and your files.", size = #CLOUD_BODY }
 local chunked = {}
 local storeClient = {
     discover = function() return true end,
@@ -176,13 +181,14 @@ local storeClient = {
                 { app_id = "FOXY", name = "Foxy", version = published and 2 or 1,
                   author = "PUMPE", description = "Your Foxy Account",
                   size = #BODY, checksum = "0" },
-                published and APP2 or APP, ROTTEN, MAIL_APP, YAP_APP,
+                published and APP2 or APP, ROTTEN, MAIL_APP, YAP_APP, CLOUD_APP,
             } }
         elseif action == "APP_CHUNK" then
             chunked[#chunked + 1] = payload.app_id
             if payload.app_id == "NOTES" then notesDownloads = notesDownloads + 1 end
             local body = payload.app_id == "MAIL" and MAIL_BODY
                 or payload.app_id == "YAP" and YAP_BODY
+                or payload.app_id == "CLOUD" and CLOUD_BODY
                 or payload.app_id == "NOTES" and notesDownloads > 1 and BODY2 or BODY
             return { app_id = payload.app_id, offset = 0, data = body,
                 next_offset = #body, total_size = #body, done = true }
@@ -194,6 +200,7 @@ APP.checksum = package.loaded["lib.util"].checksum(BODY)
 APP2.checksum = package.loaded["lib.util"].checksum(BODY2)
 MAIL_APP.checksum = package.loaded["lib.util"].checksum(MAIL_BODY)
 YAP_APP.checksum = package.loaded["lib.util"].checksum(YAP_BODY)
+CLOUD_APP.checksum = package.loaded["lib.util"].checksum(CLOUD_BODY)
 package.loaded["lib.net"] = {
     client = function(config)
         if config.protocol == "PUMPE_APPS_V1" then return storeClient end
@@ -284,13 +291,18 @@ ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 
 actions = {
     "login",
+    -- FoxyOS 17: FoxyCloud came with Yap!, so the App Browser and Settings
+    -- are on the second page now.
+    "next",
     "open:browser",                      -- the App Browser
     "explore",                           -- FoxyOS 15: every app, in a list
     "open:NOTES", "get",                 -- install one; that closes it
+    "next",                              -- FoxyOS 17: FoxyCloud is listed too
     "open:ROTTEN", "get", "back",        -- one that arrives damaged
     "back",                              -- back to the front page
     "back",                              -- leave the browser
     "__tick",                            -- 12.0 Final: apps update themselves
+    "prev",                              -- back to the first page
     "open:ext:FOXY",                     -- 11.0: opens on its Bank tab
     "new",                               -- open another account
     "down", "up",                        -- scroll the account column
@@ -333,8 +345,13 @@ function ui.scene()
         if type(action) == "function" then action = action(live) end
         assert(action, "PUMPE asked for more actions than the script has")
         if not action:match("^__") then
-            assert(live[action], "tapped '" .. action
-                .. "' but no such button is on screen")
+            if not live[action] then
+                local shown = {}
+                for id in pairs(live) do shown[#shown + 1] = tostring(id) end
+                table.sort(shown)
+                error("tapped '" .. action .. "' but no such button is on screen: "
+                    .. table.concat(shown, " "), 0)
+            end
         end
         return action
     end
@@ -452,9 +469,11 @@ assert(not pressed("Code Pay"),
 -- Fetched at sign-in from the App Server, quietly, and said so on the Home
 -- Screen. Taken off, it is not put back at the next sign-in.
 assert(written["/pumpe/apps/YAP.lua"] == YAP_BODY, "Yap! is installed at sign-in")
-assert(drew("Yap! is here"), "and the Home Screen says so")
-assert(savedDevice and savedDevice.included and savedDevice.included.YAP,
-    "remembered as included, the moment it is here")
+assert(written["/pumpe/apps/CLOUD.lua"] == CLOUD_BODY, "and FoxyCloud with it")
+assert(drew("New apps are here") and drew("Yap! and FoxyCloud"),
+    "and the Home Screen says so")
+assert(savedDevice and savedDevice.included and savedDevice.included.YAP
+    and savedDevice.included.CLOUD, "each remembered as included, the moment it is here")
 written["/pumpe/apps/YAP.lua"] = nil     -- removed (the app list never had it)
 chunked, storeCalls, buttonLabels, drawnText = {}, {}, {}, {}
 -- Signed in already, it boots to the Home Screen: Foxy and Yap! were looked
@@ -467,6 +486,7 @@ local againOk, againErr = pcall(assert(loadfile("../pumpe.lua")))
 assert(againOk or tostring(againErr):find("more actions", 1, true), tostring(againErr))
 for _, appId in ipairs(chunked) do
     assert(appId ~= "YAP", "a Yap! that was taken off stays off")
+    assert(appId ~= "CLOUD", "and FoxyCloud is not fetched twice")
 end
 assert(written["/pumpe/apps/YAP.lua"] == nil and not drew("Yap! is here"))
 savedDevice = nil                        -- a fresh Pocket for what follows

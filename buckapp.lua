@@ -1,4 +1,5 @@
 -- PUMPE BANK APP: BuckApp
+-- PUMPE APP ICON: dddddddd/00000000/000dd000/000dd000/00000000/dddddddd
 -- PUMPE APP ACTION: send | Send money | Pay somebody at BuckApp
 -- PUMPE APP ACTION: id | My Account ID | Sixteen digits
 --

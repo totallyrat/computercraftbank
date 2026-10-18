@@ -7,6 +7,49 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 17 Beta 3 (16.5.2)
+
+Update the Bank (Core and Vault) to 16.3 and set up two or more Cloud Servers first (see FoxyOS 16.3). Then sign up the Pockets, the CCG Server and the CCG Casinos to Beta Updates.
+
+### FoxyCloud
+
+- [ ] A signed-up Pocket gets FoxyCloud by itself: *FoxyCloud is here* (*New apps are here* if Yap! came with it). Its tile is a white cloud on light blue.
+- [ ] FoxyCloud opens with its cloud animation on Files: *0 files*, *0 B of 100 KB*.
+- [ ] **+ Add → New note**: name it, **+ Line** twice, **Save**. It is listed. On a second Pocket signed in to the same account, the same note opens.
+- [ ] Open the note and tap a line to change it (empty removes it). **Save** makes it version 2.
+- [ ] **+ Add → Drop files**, then drag a .mid and a .txt from your computer onto the Pocket's screen. Both upload with a bar; brackets in a name become underscores. Opening the .mid says to play it on a CCG Casino.
+- [ ] **Share** a file: a six-letter code. On another account, **+ Add → Open a share code** shows it read-only and offers to keep a copy. **Unshare**: the code stops working.
+- [ ] **Save here** puts the file in the Pocket's `/downloads`. **+ Add → From this Pocket** uploads it again and offers to replace the one with that name.
+- [ ] **Delete** a file: it is gone on every device, and within a few seconds the Cloud Servers' PIECES count drops.
+- [ ] A file that would go over 100 KB is refused: *FoxyCloud+ has more room*.
+- [ ] With every Cloud Server stopped, Files says *No Cloud Server is running*, and opening a file says so rather than crashing.
+
+### FoxyCloud+
+
+- [ ] **Plus → Get FoxyCloud+**, PIN: 500 is charged, sparkles, *500 KB is yours*. The storage bar turns yellow.
+- [ ] Foxy Cash to a friend costs no fee.
+- [ ] Settings → Subscriptions lists FoxyCloud+, *every 5 days*. **Cancel** in the Plus tab: *Ends day N*. **Keep FoxyCloud+** resumes it without a charge.
+- [ ] **Account**: changing the name and the PIN works, with the PIN.
+
+### Casino music from FoxyCloud
+
+- [ ] My Casino → a table → **Music → FoxyCloud** lists your MIDI files. One plays on the casino's speakers within a few seconds. Nothing is added to the casino's music folder.
+
+### Icons and Icon Creator
+
+- [ ] Every Home Screen tile and dock slot shows a pixel icon, not a letter; an app opens on its icon.
+- [ ] Settings → Dev Mode → publish an app → **Paint**: tap and drag pixels, pick colours, **Fill**, **Done**. Install it on another Pocket: its tile and its App Browser page show that icon.
+
+### Subscriptions every few days
+
+- [ ] Company app → Products → **+ Add**, Subscription, **Every 5 days**. It is listed as *Till, every 5 days*; **How often** changes it.
+- [ ] Sell it at the till: the customer screen says *PAID EVERY 5 DAYS*; the customer's Subscriptions shows *every 5 days*, next charged five days later.
+
+### FoxyCloud+ first at events
+
+- [ ] Event Kiosk → an event → **SALE** → *FoxyCloud+ first?* **YES**, a day and time before the presale. The event page shows *FOXYCLOUD+ DAY ...*.
+- [ ] A FoxyCloud+ member sees *FOXYCLOUD+ DAY ...* on the event in Tickets, and once it opens *OPEN FOR FOXYCLOUD+* and **Join, FoxyCloud+ early**. Somebody without it sees *FoxyCloud+ members first*.
+
 ## FoxyOS 17 Beta 2 (16.5.1)
 
 Only devices signed up to Beta Updates get this. Sign up the **CCG Server** (its Server tab), each **CCG** (Home Mode settings, **BETA**) and the Pockets that will play. The Bank stays on the release, which must be 16.2.

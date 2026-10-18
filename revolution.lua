@@ -1,4 +1,5 @@
 -- PUMPE BANK APP: Revolution
+-- PUMPE APP ICON: aa000aaa/aa0aa0aa/aa000aaa/aa00aaaa/aa0a0aaa/aa0aa0aa
 -- PUMPE BANK CLEARING: 1
 -- PUMPE BANK FEE: 0
 -- PUMPE APP ACTION: take | Take a payment | Charge somebody nearby

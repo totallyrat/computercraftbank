@@ -539,9 +539,178 @@ idleTimer = scheduleIdleTimer()
 elseif timer and event[1] == "timer" and event[2] == timer then
 if handleIdle() then return finish("__idle") end
 return finish("__tick")
+elseif event[1] == "mouse_drag" and options.drag then
+
+
+recordActivity()
+local action = self:hit(event[3], event[4])
+if action then return finish(action) end
+elseif event[1] == "file_transfer" and options.files then
+
+
+recordActivity()
+self.dropped = event[2]
+return finish("__files")
 elseif event[1] == "terminate" then
 return finish("__terminate")
 end
+end
+end
+
+
+
+
+
+
+
+ui.ICON_WIDTH, ui.ICON_HEIGHT = 4, 2
+local ICON_HEX = "0123456789abcdef"
+local ICON_BITS = { 1, 2, 4, 8, 16 }
+
+function ui.hexColor(digit)
+local at = ICON_HEX:find(tostring(digit or ""), 1, true)
+return at and 2 ^ (at - 1) or colors.black
+end
+
+function ui.iconRows(icon)
+local rows = {}
+for row in (tostring(icon or "") .. "/"):gmatch("([^/]*)/") do rows[#rows + 1] = row end
+return rows
+end
+
+
+
+function ui.iconCell(pixels)
+local counts, order = {}, {}
+for _, pixel in ipairs(pixels) do
+if not counts[pixel] then
+counts[pixel] = 0
+order[#order + 1] = pixel
+end
+counts[pixel] = counts[pixel] + 1
+end
+table.sort(order, function(a, b) return counts[a] > counts[b] end)
+local first, second = order[1], order[2] or order[1]
+local mapped = {}
+for index, pixel in ipairs(pixels) do
+mapped[index] = (pixel == first or pixel == second) and pixel or first
+end
+local back = mapped[6]
+local fore = back == first and second or first
+local code = 0
+for index = 1, 5 do
+if mapped[index] == fore and fore ~= back then code = code + ICON_BITS[index] end
+end
+return string.char(128 + code), fore, back
+end
+
+function ui.icon(target, x, y, icon)
+target = surface(target)
+local rows = ui.iconRows(icon)
+for cellY = 0, ui.ICON_HEIGHT - 1 do
+for cellX = 0, ui.ICON_WIDTH - 1 do
+local pixels = {}
+for dy = 1, 3 do
+local row = rows[cellY * 3 + dy] or ""
+for dx = 1, 2 do
+local at = cellX * 2 + dx
+pixels[#pixels + 1] = row:sub(at, at) ~= "" and row:sub(at, at) or "f"
+end
+end
+local char, fore, back = ui.iconCell(pixels)
+target.setCursorPos(x + cellX, y + cellY)
+target.setTextColor(ui.hexColor(fore))
+target.setBackgroundColor(ui.hexColor(back))
+target.write(char)
+end
+end
+end
+
+
+function ui.iconEdge(icon)
+local rows, counts, best = ui.iconRows(icon), {}, nil
+for _, row in ipairs(rows) do
+for _, at in ipairs({ 1, 8 }) do
+local pixel = row:sub(at, at)
+if pixel ~= "" then counts[pixel] = (counts[pixel] or 0) + 1 end
+end
+end
+best = (rows[1] or ""):sub(1, 1)
+for pixel, count in pairs(counts) do
+if count > (counts[best] or 0) then best = pixel end
+end
+return ui.hexColor(best)
+end
+
+
+
+
+
+function ui.iconCreator(target, icon, title)
+target = surface(target)
+local start = util.validIcon(icon) and ui.iconRows(icon) or nil
+local pixels = {}
+for y = 1, 6 do
+pixels[y] = {}
+for x = 1, 8 do pixels[y][x] = start and start[y]:sub(x, x) or "b" end
+end
+local pen = "0"
+local function painted()
+local rows = {}
+for y = 1, 6 do rows[y] = table.concat(pixels[y]) end
+return table.concat(rows, "/")
+end
+while true do
+local width, height = target.getSize()
+local pixelWidth = width >= 40 and 3 or 2
+local pixelHeight = height >= 19 and 2 or 1
+local left, top = 2, 4
+ui.clear(target)
+ui.header(target, "Icon Creator", ui.truncate(title or "Your app", width - 3),
+util.formatClock())
+local scene = ui.scene(target)
+for y = 1, 6 do
+for x = 1, 8 do
+local cellX = left + (x - 1) * pixelWidth
+local cellY = top + (y - 1) * pixelHeight
+ui.fill(target, cellX, cellY, pixelWidth, pixelHeight, ui.hexColor(pixels[y][x]))
+scene:hotspot("px:" .. x .. ":" .. y, cellX, cellY, pixelWidth, pixelHeight)
+end
+end
+local side = left + 8 * pixelWidth + 2
+ui.text(target, side, top, "Real", ui.theme.muted)
+ui.icon(target, side, top + 1, painted())
+ui.text(target, side, top + 4, "Pen", ui.theme.muted)
+ui.fill(target, side, top + 5, 4, 1, ui.hexColor(pen))
+local paletteY = top + 6 * pixelHeight + (pixelHeight > 1 and 0 or 1)
+local swatch = math.max(1, math.floor((width - 2) / 8))
+for index = 1, 16 do
+local digit = ICON_HEX:sub(index, index)
+local x = 2 + ((index - 1) % 8) * swatch
+local y = paletteY + math.floor((index - 1) / 8)
+local color = ui.hexColor(digit)
+ui.fill(target, x, y, swatch, 1, color)
+if digit == pen then
+ui.text(target, x + math.floor((swatch - 1) / 2), y, "*", ui.inkOn(color), color)
+end
+scene:hotspot("pen:" .. digit, x, y, swatch, 1)
+end
+local third = math.floor((width - 4) / 3)
+scene:button("cancel", 2, height, third, 1, "Cancel", { background = ui.theme.panel })
+scene:button("fill", 3 + third, height, third, 1, "Fill", { background = ui.theme.panel })
+scene:button("done", 4 + third * 2, height, width - 3 - third * 2, 1, "Done",
+{ background = ui.theme.success, foreground = colors.black })
+local action = scene:wait({ drag = true, flash = false,
+keys = keyBindings({ enter = "done", escape = "cancel" }) })
+if action == "done" then return painted() end
+if action == "cancel" or action == "__terminate" then return nil end
+if action == "fill" then
+for y = 1, 6 do for x = 1, 8 do pixels[y][x] = pen end end
+end
+local chosen = action and action:match("^pen:(%x)$")
+if chosen then pen = chosen end
+local x, y = (action or ""):match("^px:(%d+):(%d+)$")
+if x then pixels[tonumber(y)][tonumber(x)] = pen end
 end
 end
 

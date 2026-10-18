@@ -382,6 +382,19 @@ function ui.input() return table.remove(inputs, 1) end
 function ui.networkError(_, err) error("network error: " .. tostring(err)) end
 function ui.pin() return "1234" end
 function ui.confirm() return true end
+-- FoxyOS 17: Icon Creator, answered with a painted icon. The icon helpers
+-- are the real ones.
+do
+    local real = dofile("../lib/util.lua")
+    local stub = package.loaded["lib.util"]
+    stub.validIcon, stub.appIcon, stub.withIcon = real.validIcon, real.appIcon, real.withIcon
+end
+local PAINTED = "eeeeeeee/e000000e/e0eeee0e/e0eeee0e/e000000e/eeeeeeee"
+local iconTitle
+function ui.iconCreator(_, _, title)
+    iconTitle = title
+    return PAINTED
+end
 
 actions = {
     "cancel",                          -- the update question, before anything
@@ -528,6 +541,12 @@ assert(published and published.developer_id == "DEV1" and published.kind == "app
     "Dev Mode on the Pocket publishes what is in /apps, as the developer")
 assert(savedDevice.published and savedDevice.published["notes.lua"].id == "APP00042",
     "and remembers it, so the next publish is an update")
+assert(iconTitle == "Notes", "Icon Creator was opened for it")
+assert(published.body:find("-- PUMPE APP ICON: " .. PAINTED, 1, true),
+    "the painted icon went up in the app's own header")
+assert(savedDevice.published["notes.lua"].icon == PAINTED,
+    "and is kept for the next update")
+assert(written["/apps/notes.lua"] == nil, "the file on this computer is left as it was")
 
 -- Updates ------------------------------------------------------------------------
 

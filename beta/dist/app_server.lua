@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.1"
+local PROGRAM_VERSION = "16.5.2"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -143,6 +143,7 @@ local function publicApp(app)
         downloads = app.downloads or 0,
         added = app.added,
         trending = catalogueStats.trending(app),
+        icon = app.icon,
     }
 end
 
@@ -212,6 +213,9 @@ local SHIPPED = {
     -- FoxyOS 16: Yap!, by Foxy. Every Pocket fetches it once, like Foxy.
     { file = "yap.lua", id = "YAP", name = "Yap!", author = "Foxy",
       description = "Posts, private chats and Yap Map." },
+    -- FoxyOS 17: FoxyCloud, by Foxy. Every Pocket fetches it once, like Yap!.
+    { file = "foxycloud.lua", id = "CLOUD", name = "FoxyCloud", author = "Foxy",
+      description = "Your Foxy Account, and your files on every device." },
 }
 
 local function seedShippedApps()
@@ -239,6 +243,8 @@ local function seedShippedApps()
                 bank_name = declaredBank(body),
                 clearing_hours = select(1, declaredTerms(body)),
                 fee_rate = select(2, declaredTerms(body)),
+                -- FoxyOS 17: the icon it declares, painted in Icon Creator.
+                icon = util.appIcon and util.appIcon(body) or nil,
             }
             if not existing then
                 table.insert(state.order, 1, shipped.id)
@@ -369,6 +375,8 @@ function actions.APP_PUBLISH(payload)
         bank_name = declaredBank(body),
         clearing_hours = select(1, declaredTerms(body)),
         fee_rate = select(2, declaredTerms(body)),
+        -- FoxyOS 17: the icon it declares, painted in Icon Creator.
+        icon = util.appIcon and util.appIcon(body) or nil,
     }
     if not fs.exists(appsDir) then fs.makeDir(appsDir) end
     util.writeFile(appPath(appId), body)

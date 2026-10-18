@@ -445,4 +445,38 @@ function util.sizeText(bytes)
     return string.format("%.1f KB", kb)
 end
 
+-- App icons, FoxyOS 17: eight pixels across by six down, a colour in each,
+-- written as six rows of eight colour digits (0-f, as blit takes them)
+-- joined by "/". An app carries its own in its file, on a line of its own:
+--     -- PUMPE APP ICON: 11ffff11/11111111/...
+function util.validIcon(icon)
+    if type(icon) ~= "string" or #icon ~= 53 then return false end
+    local rows = 0
+    for row in (icon .. "/"):gmatch("([^/]*)/") do
+        if not row:match("^[0-9a-f]+$") or #row ~= 8 then return false end
+        rows = rows + 1
+    end
+    return rows == 6
+end
+
+function util.appIcon(body)
+    local icon = tostring(body or ""):match("%-%-%s*PUMPE APP ICON:%s*([0-9a-f/]+)")
+    return util.validIcon(icon) and icon or nil
+end
+
+-- The app's file with this icon in it: in place of the one it had, or as a
+-- comment line near the top -- under the app's own "-- PUMPE APP:" line, if
+-- it starts with one -- where the Pocket reads its header. A comment changes
+-- nothing about the program.
+function util.withIcon(body, icon)
+    body = tostring(body or "")
+    if not util.validIcon(icon) then return body end
+    local line = "-- PUMPE APP ICON: " .. icon
+    local replaced, count = body:gsub("%-%-%s*PUMPE APP ICON:[^\n]*", line, 1)
+    if count > 0 then return replaced end
+    local first, rest = body:match("^(%-%-%s*PUMPE[^\n]*\n)(.*)$")
+    if first then return first .. line .. "\n" .. rest end
+    return line .. "\n" .. body
+end
+
 return util

@@ -373,6 +373,8 @@ update.PUBLISHED_OPTIONAL = {
 "brickbreaker.lua",
 "invt.lua",
 "yap.lua",
+"cloud_server.lua",
+"foxycloud.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -406,6 +408,8 @@ delivery = "delivery_terminal.lua",
 
 
 vault = "bank_vault.lua",
+
+cloud = "cloud_server.lua",
 }
 
 function update.roleProgram(role)
@@ -422,7 +426,9 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 
 "invt.lua",
 
-"yap.lua" },
+"yap.lua",
+
+"foxycloud.lua" },
 }
 
 

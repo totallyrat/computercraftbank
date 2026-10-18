@@ -22,7 +22,7 @@ local PROGRAMS = {
     "lib/net.lua", "lib/ui.lua", "lib/update.lua", "lib/util.lua",
     "bank_vault.lua", "delivery_terminal.lua", "internet_server.lua",
     "wc.lua", "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
-    "invt.lua", "yap.lua", "ccg_home.lua", "ccg_casino.lua",
+    "invt.lua", "yap.lua", "ccg_home.lua", "ccg_casino.lua", "foxycloud.lua",
     "cloud_server.lua",
 }
 

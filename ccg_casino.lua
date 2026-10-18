@@ -21,7 +21,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.1"
+local PROGRAM_VERSION = "16.5.2"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -389,6 +389,15 @@ function midi.library()
     return names
 end
 
+function midi.notes(data)
+    local ok, notes = pcall(midi.parse, data or "", function()
+        os.queueEvent("ccg_midi_yield")
+        os.pullEvent("ccg_midi_yield")
+    end)
+    if not ok then return nil, tostring(notes) end
+    return notes
+end
+
 function midi.load(name)
     local path = fs.combine(musicDir, fs.getName(tostring(name or "")))
     if not fs.exists(path) then return nil, "No such song here" end
@@ -396,12 +405,16 @@ function midi.load(name)
     if not file then return nil, "Cannot read it" end
     local data = file.readAll()
     file.close()
-    local ok, notes = pcall(midi.parse, data or "", function()
-        os.queueEvent("ccg_midi_yield")
-        os.pullEvent("ccg_midi_yield")
-    end)
-    if not ok then return nil, tostring(notes) end
-    return notes
+    return midi.notes(data)
+end
+
+-- FoxyOS 17: a song in the owner's FoxyCloud, fetched from the Cloud Servers
+-- with the ticket My Casino sent, and kept only in memory.
+function midi.fromCloud(plan)
+    if not (net.cloud and net.cloud.get) then return nil, "This console needs an update" end
+    local data, err = net.cloud.get(plan, config.cloud_protocol or "PUMPE_CLOUD_V1")
+    if not data then return nil, err end
+    return midi.notes(data)
 end
 
 -- The display ----------------------------------------------------------------------------------
@@ -974,7 +987,7 @@ function loops.poll()
                 if music.seq ~= console.musicSeq then
                     console.musicSeq = music.seq
                     console.music = { track = music.track, playing = music.playing,
-                        volume = music.volume or 5 }
+                        volume = music.volume or 5, cloud = music.cloud }
                     os.queueEvent("ccg_music")
                 end
                 if console.music then console.music.volume = music.volume or 5 end
@@ -1072,11 +1085,18 @@ function loops.music()
             os.pullEvent("ccg_music")
         else
             local seq = console.musicSeq
-            local notes = cached[want.track]
+            -- FoxyOS 17: a song from FoxyCloud is fetched into memory and
+            -- played from there; nothing of it is written to this disk.
+            local key = (want.cloud and "cloud:" or "") .. want.track
+            local notes = cached[key]
             if not notes then
                 local err
-                notes, err = midi.load(want.track)
-                if notes then cached = { [want.track] = notes } else
+                if want.cloud then
+                    notes, err = midi.fromCloud(want.cloud)
+                else
+                    notes, err = midi.load(want.track)
+                end
+                if notes then cached = { [key] = notes } else
                     console.dropped = "Cannot play " .. want.track .. ": " .. tostring(err)
                     want.playing = false
                 end

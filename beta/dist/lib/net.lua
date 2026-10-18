@@ -429,4 +429,185 @@ end
 return done
 end
 
+
+
+
+function net.ask(computerId, protocol, action, payload, timeout)
+timeout = timeout or 4
+local requestId = util.token("REQ")
+if not computerId or not rednet.send(computerId, {
+version = 5, kind = "request", request_id = requestId,
+action = action, payload = payload or {}, sent_at = util.nowMs(),
+}, protocol) then
+return nil, "Could not reach that computer", "UNREACHABLE"
+end
+local deadline = util.nowMs() + timeout * 1000
+while util.nowMs() < deadline do
+local remaining = math.max(0.05, (deadline - util.nowMs()) / 1000)
+local sender, message = rednet.receive(protocol, remaining)
+if sender == computerId and type(message) == "table"
+and message.kind == "response" and message.request_id == requestId then
+if message.ok then return message.data end
+return nil, message.error or "Request rejected", message.code
+end
+end
+return nil, "It did not answer", "TIMEOUT"
+end
+
+
+
+
+net.cloud = { tries = 3 }
+
+function net.cloud.ask(plan, serverId, action, payload, protocol)
+local host = type(plan.hosts) == "table" and plan.hosts[serverId]
+if not host then return nil, "A Cloud Server is missing", "CLOUD_OFFLINE" end
+local data, err, code
+for _ = 1, net.cloud.tries do
+data, err, code = net.ask(host, protocol, action, payload, 3)
+if data or code ~= "TIMEOUT" then break end
+end
+if not data and code == "TIMEOUT" then
+err, code = "A Cloud Server is not answering", "CLOUD_OFFLINE"
+end
+return data, err, code
+end
+
+
+
+function net.cloud.put(plan, body, protocol, progress)
+local offset = 0
+for index, chunk in ipairs(plan.chunks or {}) do
+local data = body:sub(offset + 1, offset + chunk.size)
+offset = offset + chunk.size
+for _, serverId in ipairs(chunk.servers) do
+local stored, err, code = net.cloud.ask(plan, serverId, "CHUNK_PUT",
+{ ticket = plan.ticket, chunk_id = chunk.id, data = data }, protocol)
+if not stored then return nil, err, code end
+end
+if progress then progress(index, #plan.chunks) end
+end
+return true
+end
+
+
+
+function net.cloud.get(plan, protocol, progress)
+local parts = {}
+for index, chunk in ipairs(plan.chunks or {}) do
+local err, code
+for _, serverId in ipairs(chunk.servers) do
+local got
+got, err, code = net.cloud.ask(plan, serverId, "CHUNK_GET",
+{ ticket = plan.ticket, chunk_id = chunk.id }, protocol)
+if got and type(got.data) == "string" and #got.data == chunk.size then
+parts[index] = got.data
+break
+elseif got then
+err, code = "A piece came back damaged", "CLOUD_DAMAGED"
+end
+end
+if not parts[index] then
+return nil, err or "A Cloud Server is not answering", code or "CLOUD_OFFLINE"
+end
+if progress then progress(index, #plan.chunks) end
+end
+return table.concat(parts)
+end
+
+
+
+
+function net.cloud.save(request, fields, body, protocol, progress)
+body = tostring(body or "")
+local plan, err, code = request("CLOUD_PUT", { name = fields.name,
+file_id = fields.file_id, size = #body })
+if not plan then return nil, err, code end
+local ok, putError, putCode = net.cloud.put(plan, body, protocol, progress)
+if not ok then return nil, putError, putCode end
+return request("CLOUD_PUT_DONE", { file_id = plan.file_id,
+version = plan.version })
+end
+
+function net.cloud.load(request, fileId, protocol, progress)
+local plan, err, code = request("CLOUD_GET", { file_id = fileId })
+if not plan then return nil, err, code end
+local body, getError, getCode = net.cloud.get(plan, protocol, progress)
+if not body then return nil, getError, getCode end
+return body, plan.file
+end
+
+
+function net.cloud.shared(request, code, protocol, progress)
+local plan, err, errCode = request("CLOUD_SHARED", { code = code })
+if not plan then return nil, err, errCode end
+local body, getError, getCode = net.cloud.get(plan, protocol, progress)
+if not body then return nil, getError, getCode end
+plan.file.owner_name = plan.owner_name
+return body, plan.file
+end
+
+
+
+
+function net.cloud.api(ask, protocol, offline, downloads)
+downloads = downloads or "/downloads"
+local function off()
+if offline and offline() then return nil, "Modem is off", "MODEM_OFF" end
+return true
+end
+local function here(name)
+return fs.combine(downloads, fs.getName(tostring(name or "")))
+end
+local api = {}
+function api.save(fields, body, progress)
+local ok, err, code = off()
+if not ok then return nil, err, code end
+return net.cloud.save(ask, type(fields) == "table" and fields or {},
+tostring(body or ""), protocol, progress)
+end
+function api.load(fileId, progress)
+local ok, err, code = off()
+if not ok then return nil, err, code end
+return net.cloud.load(ask, fileId, protocol, progress)
+end
+function api.shared(code, progress)
+local ok, err, errCode = off()
+if not ok then return nil, err, errCode end
+return net.cloud.shared(ask, code, protocol, progress)
+end
+function api.pocketFiles()
+local names = {}
+if fs.exists(downloads) and fs.isDir(downloads) then
+for _, name in ipairs(fs.list(downloads)) do
+if not fs.isDir(fs.combine(downloads, name)) then names[#names + 1] = name end
+end
+end
+table.sort(names)
+return names
+end
+function api.readPocket(name)
+local path = here(name)
+local file = fs.exists(path) and fs.open(path, "rb")
+if not file then return nil, "That file is not here" end
+local body = file.readAll()
+file.close()
+return body or ""
+end
+function api.keep(name, body)
+body = tostring(body or "")
+if type(fs.getFreeSpace) == "function" and fs.getFreeSpace("/") < #body + 4096 then
+return nil, "Not enough room on this Pocket"
+end
+if not fs.exists(downloads) then fs.makeDir(downloads) end
+local path = here(name)
+local file = fs.open(path, "wb")
+if not file then return nil, "Cannot write here" end
+file.write(body)
+file.close()
+return path
+end
+return api
+end
+
 return net

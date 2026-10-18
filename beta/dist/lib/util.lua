@@ -413,4 +413,70 @@ function util.setBetaJoined(root, joined)
 util.saveTable(betaFile(root), { joined = joined == true })
 end
 
+
+
+
+function util.billingDays(value, allowed)
+if value == "day" then return 1 end
+local days = math.floor(tonumber(value) or 0)
+for _, choice in ipairs(type(allowed) == "table" and allowed
+or { 1, 2, 5, 10, 15 }) do
+if days == choice then return days end
+end
+return nil
+end
+
+
+function util.everyText(days)
+days = math.floor(tonumber(days) or 1)
+if days <= 1 then return "a day" end
+return "every " .. days .. " days"
+end
+
+
+function util.sizeText(bytes)
+bytes = math.max(0, math.floor(tonumber(bytes) or 0))
+if bytes < 1024 then return bytes .. " B" end
+local kb = bytes / 1024
+if kb >= 1024 then return string.format("%.1f MB", kb / 1024) end
+if kb >= 100 or kb == math.floor(kb) then
+return math.floor(kb + 0.5) .. " KB"
+end
+return string.format("%.1f KB", kb)
+end
+
+
+
+
+
+function util.validIcon(icon)
+if type(icon) ~= "string" or #icon ~= 53 then return false end
+local rows = 0
+for row in (icon .. "/"):gmatch("([^/]*)/") do
+if not row:match("^[0-9a-f]+$") or #row ~= 8 then return false end
+rows = rows + 1
+end
+return rows == 6
+end
+
+function util.appIcon(body)
+local icon = tostring(body or ""):match("%-%-%s*PUMPE APP ICON:%s*([0-9a-f/]+)")
+return util.validIcon(icon) and icon or nil
+end
+
+
+
+
+
+function util.withIcon(body, icon)
+body = tostring(body or "")
+if not util.validIcon(icon) then return body end
+local line = "-- PUMPE APP ICON: " .. icon
+local replaced, count = body:gsub("%-%-%s*PUMPE APP ICON:[^\n]*", line, 1)
+if count > 0 then return replaced end
+local first, rest = body:match("^(%-%-%s*PUMPE[^\n]*\n)(.*)$")
+if first then return first .. line .. "\n" .. rest end
+return line .. "\n" .. body
+end
+
 return util

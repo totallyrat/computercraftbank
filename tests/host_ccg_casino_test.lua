@@ -292,6 +292,27 @@ rejected(actions.CASINO_VIEW, "NOT_YOURS", asOf(players[1].account, { console_id
 actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music", action = "play",
     track = "theme.mid" }))
 assert(tick().music.playing, "music, for the console")
+-- FoxyOS 17: a song from the owner's FoxyCloud. The console is handed where
+-- its pieces are and a ticket to read them -- checked for shape here, and
+-- for whether it may be read at the Bank.
+rejected(actions.CASINO_CONTROL, "BAD_SONG", asOf(owner, { console_id = made.console_id,
+    op = "music", action = "cloud", name = "Theme.mid", cloud = { ticket = "CT_X" } }))
+actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music",
+    action = "cloud", name = "Theme.mid", cloud = { ticket = "CT_X",
+        chunks = { { id = "F9.1.1", size = 5000, servers = { "CS1", "CS2" } } },
+        hosts = { CS1 = 11, CS2 = "12", CS9 = 99 } } }))
+local cloudMusic = tick().music
+assert(cloudMusic.playing and cloudMusic.track == "Theme.mid")
+assert(cloudMusic.cloud and cloudMusic.cloud.ticket == "CT_X"
+    and cloudMusic.cloud.hosts.CS1 == 11 and cloudMusic.cloud.hosts.CS2 == 12
+    and cloudMusic.cloud.hosts.CS9 == nil, "only the servers its pieces are on")
+actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music",
+    action = "volume", volume = 7 }))
+assert(tick().music.cloud, "turning it up keeps the song")
+assert(casino.view(t, {}).music == nil, "players are never handed the ticket")
+actions.CASINO_CONTROL(asOf(owner, { console_id = made.console_id, op = "music", action = "play",
+    track = "theme.mid" }))
+assert(tick().music.cloud == nil, "a song on the console replaces it")
 
 -- Render smoke: the console's display, every phase, three sizes.
 local screen = dofile("screen_harness.lua")
@@ -351,5 +372,24 @@ assert(#notes == 3, "three notes: " .. #notes)
 assert(notes[1].instrument == "guitar" and notes[3].instrument == "basedrum", notes[1].instrument)
 assert(math.abs(notes[2].t - 0.25) < 0.001, "48 ticks at 96 a beat and 120 bpm is a quarter second: "
     .. notes[2].t)
+-- FoxyOS 17: the same song from FoxyCloud, fetched with its plan and played
+-- from memory: nothing is written to the console's disk.
+local net = require("lib.net")
+net.cloud = net.cloud or {}
+-- A long song yields while it is read; here there is nothing to yield to.
+os.queueEvent = os.queueEvent or function() end
+os.pullEvent = os.pullEvent or function() end
+local realGet, askedFor = net.cloud.get, nil
+net.cloud.get = function(plan, protocol)
+    askedFor = { plan = plan, protocol = protocol }
+    return file
+end
+local fromCloud = console.midi.fromCloud({ ticket = "CT_X", chunks = {}, hosts = {} })
+net.cloud.get = function() return nil, "A Cloud Server is not answering" end
+local missing, why = console.midi.fromCloud({ ticket = "CT_Y", chunks = {}, hosts = {} })
+net.cloud.get = realGet
+assert(fromCloud and #fromCloud == 3, "the cloud song plays like one on the disk")
+assert(askedFor.plan.ticket == "CT_X" and askedFor.protocol == require("config").cloud_protocol)
+assert(not missing and why == "A Cloud Server is not answering", "and says why when it cannot")
 
 print("host_ccg_casino_test: OK")

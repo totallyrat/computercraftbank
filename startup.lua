@@ -123,7 +123,7 @@ local PROGRAMS = {
       words = "apps store browser server",
       extra = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
           "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
-          "brickbreaker.lua", "invt.lua", "yap.lua" } },
+          "brickbreaker.lua", "invt.lua", "yap.lua", "foxycloud.lua" } },
     { id = "internet", name = "Internet Server", file = "internet_server.lua",
       detail = "Hosts the web",
       about = "Serves the websites and domains of the web.",

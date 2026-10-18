@@ -1,4 +1,5 @@
 -- PUMPE GAME: Brick Breaker
+-- PUMPE APP ICON: eeefeeef/efeeefee/ffffffff/fffff0ff/ffffffff/ff0000ff
 --
 -- A game for CCG Home Mode, shipped by the App Server so a new world's Game
 -- Browser has something in it -- and the example for anybody writing one.

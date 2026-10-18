@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "16.5.1"
+local PROGRAM_VERSION = "16.5.2"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -412,8 +412,12 @@ do
         -- A beat on the app's icon and name, on its colour.
         local middle = math.floor(height / 2)
         ui.fill(target, 1, 1, width, height, color)
-        ui.fill(target, math.floor(width / 2) - 2, middle - 3, 5, 3, edge)
-        ui.center(target, middle - 2, tostring(app.glyph or "?"), color, edge)
+        if app.icon and ui.icon then
+            ui.icon(target, math.floor(width / 2) - 1, middle - 3, app.icon)
+        else
+            ui.fill(target, math.floor(width / 2) - 2, middle - 3, 5, 3, edge)
+            ui.center(target, middle - 2, tostring(app.glyph or "?"), color, edge)
+        end
         ui.center(target, middle + 1, ui.truncate(app.name or "", width - 2),
             ui.inkOn(color), color)
         sleep(0.15)
@@ -875,10 +879,19 @@ do
             return "ON SALE" .. (event.from_price
                 and ("  from " .. money(event.from_price)) or ""), colors.lime
         end
+        -- FoxyOS 17: FoxyCloud+ members in before the presale.
+        local early = event.plus_member and event.plus_day
+        if early and (phase == "plus" or phase == "presale") then
+            return "OPEN FOR FOXYCLOUD+", colors.yellow
+        end
+        if early and phase == "soon" then
+            return "FOXYCLOUD+ DAY " .. event.plus_day .. " "
+                .. tostring(event.plus_time), colors.yellow
+        end
         if phase == "presale" and event.invited then
             return "PRESALE OPEN FOR YOU", colors.magenta
         end
-        if event.invited and event.presale_day and phase == "soon" then
+        if event.invited and event.presale_day and (phase == "soon" or phase == "plus") then
             return "PRESALE DAY " .. event.presale_day .. " "
                 .. tostring(event.presale_time), colors.magenta
         end
@@ -1097,14 +1110,17 @@ do
             ui.clear(target)
             local scene = ui.scene(target)
             if mine.waiting_room then
-                local opens = mine.queue_phase == "presale"
+                local opens = mine.queue_phase == "plus"
+                    and { event.plus_day, event.plus_time }
+                    or mine.queue_phase == "presale"
                     and { event.presale_day, event.presale_time }
                     or { event.release_day, event.release_time }
                 local countdown = opens[1] and util.eventCountdown(opens[1], opens[2])
                     or "soon"
                 ui.header(target, "Waiting room", ui.truncate(event.title, width - 3))
-                ui.center(target, 5, mine.queue_phase == "presale"
-                    and "THE PRESALE OPENS IN" or "THE SALE OPENS IN", ui.theme.muted)
+                ui.center(target, 5, mine.queue_phase == "plus" and "FOXYCLOUD+ OPENS IN"
+                    or mine.queue_phase == "presale" and "THE PRESALE OPENS IN"
+                    or "THE SALE OPENS IN", ui.theme.muted)
                 ui.center(target, 7, countdown, colors.yellow)
                 ui.center(target, 8, "Day " .. tostring(opens[1]) .. "  "
                     .. tostring(opens[2]), ui.theme.muted)
@@ -1163,6 +1179,7 @@ do
                 return nil
             end
             local event, types = details.event, details.ticket_types or {}
+            event.plus_member = details.plus_member
             local mine = details.mine or { status = "none", limit = 5, bought = 0 }
             local width, height = target.getSize()
             ui.clear(target)
@@ -1198,14 +1215,20 @@ do
             ui.center(target, 13, ui.truncate(label, width - 2), colors.black, color)
             local note
             if (event.phase or "general") ~= "general" then
-                local presale = event.invited and event.phase == "soon"
+                local early = event.plus_member and event.plus_day and event.phase == "soon"
+                local presale = event.invited and event.phase ~= "presale"
                     and event.presale_day
-                note = presale and ("Presale in " .. util.eventCountdown(
+                note = early and ("FoxyCloud+ in " .. util.eventCountdown(
+                        event.plus_day, event.plus_time))
+                    or presale and ("Presale in " .. util.eventCountdown(
                         event.presale_day, event.presale_time))
                     or ("Sale in " .. util.eventCountdown(event.release_day,
                         event.release_time))
-                if event.phase == "presale" and not event.invited then
+                if event.phase == "presale" and not event.invited
+                    and not (event.plus_member and event.plus_day) then
                     note = "Presale is invite only"
+                elseif event.phase == "plus" and not event.plus_member then
+                    note = "FoxyCloud+ members first"
                 end
             end
             note = note or ("Up to " .. (mine.limit or 5) .. " each"
@@ -1222,6 +1245,9 @@ do
                 cta, enabled = event.sold_out and "Sold out" or "Not on sale yet", false
             elseif (mine.bought or 0) >= (mine.limit or 5) then
                 cta, enabled = "You have " .. mine.bought .. " of " .. mine.limit, false
+            elseif event.plus_member and event.plus_day
+                and (event.phase == "plus" or event.phase == "presale") then
+                cta = "Join, FoxyCloud+ early"
             elseif event.phase == "presale" and event.invited then
                 cta = "Join the presale"
             elseif (event.phase or "general") ~= "general" then
@@ -1252,6 +1278,7 @@ do
         local result = request("LIST_EVENTS")
         if not result then return end
         local events, page, blink = result.events, 1, true
+        for _, event in ipairs(events) do event.plus_member = result.plus_member end
         while running and sessionToken do
             local width = target.getSize()
             ui.clear(target)
@@ -1296,6 +1323,7 @@ do
                     if switched and tabs then return switched end
                     result = request("LIST_EVENTS", {}, true) or result
                     events = result.events
+                    for _, event in ipairs(events) do event.plus_member = result.plus_member end
                 end
             end
         end
@@ -2658,6 +2686,61 @@ do
         return betRequest(action, payload or {}, true)
     end
 
+    -- FoxyOS 17: a song from your FoxyCloud. The table is sent where its
+    -- pieces are and a ticket to read them for two minutes; the console
+    -- fetches it into memory, plays it, and keeps nothing.
+    function casino.cloudMusic(consoleId)
+        local listed, err = request("CLOUD_FILES", {}, true)
+        if not listed then
+            ui.message(target, "error", "FoxyCloud", err, 1.6)
+            return
+        end
+        local songs, page = {}, 1
+        for _, file in ipairs(listed.files or {}) do
+            if file.kind == "midi" then songs[#songs + 1] = file end
+        end
+        while running and sessionToken do
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "FoxyCloud", #songs .. " song" .. (#songs == 1 and "" or "s"),
+                util.formatClock())
+            local scene = ui.scene(target)
+            local perPage = math.max(1, math.floor((height - 6) / 2))
+            local items, actual, pages = util.page(songs, page, perPage)
+            page = actual
+            for index, file in ipairs(items) do
+                scene:button("song:" .. ((page - 1) * perPage + index), 2, 2 + index * 2,
+                    width - 2, 1, ui.truncate(file.name, width - 4),
+                    { background = ui.theme.panel })
+            end
+            if #songs == 0 then
+                ui.wrappedText(target, 2, 5, "No MIDI files in your FoxyCloud. Add them"
+                    .. " in the FoxyCloud app.", width - 2, 4, ui.theme.muted)
+            end
+            scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+            if pages > 1 then
+                scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
+                    { background = ui.theme.panel })
+            end
+            local action = scene:wait()
+            if action == "back" or action == "__terminate" then return end
+            if action == "more" then page = page % pages + 1 end
+            local song = songs[tonumber(action and action:match("^song:(%d+)$")) or 0]
+            if song then
+                local plan, planError = request("CLOUD_GET", { file_id = song.file_id }, true)
+                local sent, sendError = plan and casino.ownerAsk("CASINO_CONTROL", {
+                    console_id = consoleId, op = "music", action = "cloud", name = song.name,
+                    cloud = { ticket = plan.ticket, chunks = plan.chunks, hosts = plan.hosts },
+                })
+                if sent then
+                    ui.message(target, "success", "Playing", song.name, 1)
+                    return
+                end
+                ui.message(target, "error", "Not playing", sendError or planError, 1.6)
+            end
+        end
+    end
+
     function casino.musicPage(consoleId)
         local page = 1
         while running and sessionToken do
@@ -2673,6 +2756,8 @@ do
                 or "Not playing"), width - 2), music.playing and ui.theme.success or ui.theme.muted)
             ui.text(target, 2, 5, "Volume " .. tostring(music.volume or 5) .. "/10", ui.theme.muted)
             local scene = ui.scene(target)
+            scene:button("cloud", width - 10, 5, 11, 1, "FoxyCloud",
+                { background = colors.lightBlue, foreground = colors.black })
             local items, actual, pages = util.page(library, page, 5)
             page = actual
             for index, name in ipairs(items) do
@@ -2681,8 +2766,9 @@ do
                         and ui.theme.accent or ui.theme.panel })
             end
             if #library == 0 then
-                ui.wrappedText(target, 2, 7, "No songs yet. Drop .mid files onto the CCG Casino"
-                    .. " computer's own screen.", width - 2, 4, ui.theme.muted)
+                ui.wrappedText(target, 2, 7, "No songs on it yet. Drop .mid files onto the CCG"
+                    .. " Casino computer's screen, or play one from FoxyCloud.", width - 2, 5,
+                    ui.theme.muted)
             end
             local quarter = math.floor((width - 5) / 4)
             scene:button("stop", 2, height - 3, quarter, 2, "STOP", { background = ui.theme.danger })
@@ -2699,7 +2785,8 @@ do
             if action == "back" or action == "__terminate" then return end
             local payload = { console_id = consoleId, op = "music" }
             local index = tonumber(action and action:match("^play:(%d+)$"))
-            if index then payload.action, payload.track = "play", library[index]
+            if action == "cloud" then casino.cloudMusic(consoleId)
+            elseif index then payload.action, payload.track = "play", library[index]
             elseif action == "stop" then payload.action = "stop"
             elseif action == "next" then payload.action = "next"
             elseif action == "down" or action == "up" then
@@ -6671,6 +6758,20 @@ local function runInstalledApp(entry, wantedAction)
         -- opens normally, which is what every app did before 10.0.
         action = function() return wantedAction end,
         app_id = entry.app_id,
+        -- FoxyOS 17: FoxyCloud, and only FoxyCloud, moves a file's pieces
+        -- to and from the Cloud Servers. Its Bank calls are stamped with its
+        -- id like any app's, and the Bank answers file requests from it
+        -- alone; this is the radio half. Files kept on this Pocket go in its
+        -- Downloads folder and nowhere else.
+        cloud = entry.app_id == "CLOUD" and net.cloud and net.cloud.api
+            and net.cloud.api(function(action, payload)
+                local scoped = {}
+                for key, value in pairs(type(payload) == "table" and payload or {}) do
+                    scoped[key] = value
+                end
+                scoped.app_id = entry.app_id
+                return request(action, scoped, true)
+            end, config.cloud_protocol or "PUMPE_CLOUD_V1", offline, "/downloads") or nil,
         -- FoxyOS 15: the store a .shop address opened, which Shop shows on
         -- its own, and the address itself.
         shop_store = entry.shop_store,
@@ -6814,6 +6915,17 @@ function developerScreen()
             if about and not body then
                 ui.message(target, "error", "Cannot read it", name, 1.6)
             elseif body then
+                -- FoxyOS 17: Icon Creator. The icon goes in the copy that is
+                -- uploaded, as a header line the Pocket reads; the file on
+                -- this computer is left as it is.
+                local icon = out and out.icon or (util.appIcon and util.appIcon(body))
+                if ui.iconCreator and ui.confirm(target, "Icon", icon
+                    and "Keep its icon, or paint a new one?"
+                    or "Paint the icon it has on the Home Screen?", "Paint",
+                    icon and "Keep" or "Skip") then
+                    icon = ui.iconCreator(target, icon, title) or icon
+                end
+                if icon and util.withIcon then body = util.withIcon(body, icon) end
                 local published, err = storeRequest("APP_PUBLISH", {
                     developer_id = mine.developer_id,
                     developer_token = mine.developer_token,
@@ -6822,7 +6934,7 @@ function developerScreen()
                 }, true)
                 if published then
                     device.published[name] = { id = published.app.app_id,
-                        kind = published.app.kind or kind }
+                        kind = published.app.kind or kind, icon = icon }
                     saveDevice()
                     ui.message(target, "success", kind == "game"
                         and "In the Game Browser" or "In the App Browser",
@@ -6876,6 +6988,8 @@ local function keepApp(app, body)
         -- read off disk instead.
         bank_name = app.bank_name,
         actions = declaredActions(app.app_id),
+        -- FoxyOS 17: the icon it declares, painted in Icon Creator.
+        icon = util.appIcon and util.appIcon(body:sub(1, 2000)) or false,
     }
     for index, entry in ipairs(installed.list) do
         if entry.app_id == app.app_id then
@@ -7041,8 +7155,11 @@ local function appDetail(app, mine)
         ui.header(target, app.name, "by " .. (app.author or "Unknown"),
             util.formatClock())
         ui.card(target, 2, 5, width - 2, 8, ui.theme.accent)
+        -- FoxyOS 17: its icon, beside what it says about itself.
+        local icon = app.icon or (here and here.icon) or nil
+        if icon and ui.icon then ui.icon(target, width - 6, 6, icon) end
         ui.wrappedText(target, 4, 6, app.description or "No description",
-            width - 6, 4, ui.theme.muted, ui.theme.panel)
+            icon and ui.icon and width - 12 or width - 6, 4, ui.theme.muted, ui.theme.panel)
         ui.text(target, 4, 11, "v" .. tostring(app.version) .. "  "
             .. math.ceil((app.size or 0) / 1024) .. " KiB",
             ui.theme.muted, ui.theme.panel, width - 6)
@@ -7172,7 +7289,8 @@ end
 -- the App Server's updates until it is on a release again.
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
     SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
-    BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua" }
+    BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua",
+    CLOUD = "foxycloud.lua" }
 
 -- The manifest of the beta this Pocket is on. Only that one: a newer beta is
 -- an update to take first, and its apps come with it.
@@ -7216,6 +7334,7 @@ function beta.syncApps()
             if body and pcall(util.writeFile, appPath(entry.app_id), body) then
                 entry.beta, entry.beta_sum = config.version, file.checksum
                 entry.actions = declaredActions(entry.app_id)
+                entry.icon = util.appIcon and util.appIcon(body:sub(1, 2000)) or false
                 changed = true
             end
         end
@@ -7502,6 +7621,8 @@ appBrowser = function(wanted)
 end
 
 -- The app catalogue the Home Screen, the dock and the picker share.
+-- FoxyOS 17: every app has an icon, 8x6 pixels (see ui.icon). The glyph is
+-- what is shown where icons cannot be drawn.
 -- App Actions. Every app can be opened, and most of them can be opened at a
 -- particular place instead of at their front door. Search finds these, and a
 -- QuickAction is a list of them, so the one list below is what makes both
@@ -7510,23 +7631,27 @@ local APPS = {
     -- FoxyOS 16: Messages, an app of its own. The same chats are on the
     -- Friends hub's Chats tab.
     messages = { name = "Messages", glyph = "\"", color = colors.green,
+        icon = "dddddddd/dd0000dd/d000000d/dd0000dd/dd0ddddd/dddddddd",
         open = messagesApp, actions = {
             { id = "chats", label = "Chats", hint = "One to one" },
             { id = "groups", label = "Group Chats", hint = "Everybody at once" },
         } },
     friends = { name = "Friends", glyph = "@", color = colors.cyan,
+        icon = "99999999/90099009/90099009/99999999/00099000/00099000",
         open = friendsApp, actions = {
             { id = "people", label = "Friends", hint = "Add or find someone" },
             { id = "urgent", label = "Urgent Contact",
               hint = "Reach a friend fast" },
         } },
     tickets = { name = "Tickets", glyph = "#", color = colors.orange,
+        icon = "11111111/00000100/10000001/10000001/00000100/11111111",
         open = ticketsApp, actions = {
             { id = "events", label = "Browse Events", hint = "What is on" },
             { id = "mine", label = "My Tickets", hint = "What you hold" },
         } },
     -- FoxyOS 12: MyID took over from Tax and Customs.
     myid = { name = "MyID", glyph = "I", color = colors.lightBlue,
+        icon = "33333333/30300033/30303303/30303303/30300033/33333333",
         open = myIdApp, actions = {
             { id = "id", label = "Digital ID", hint = "Your MyID Code" },
             { id = "visas", label = "My Visas", hint = "Travel papers" },
@@ -7534,24 +7659,30 @@ local APPS = {
             { id = "countries", label = "Countries", hint = "Land you run" },
         } },
     -- 12.0: Bet grew into CCG, with Home Mode.
-    ccg = { name = "CCG", glyph = "?", color = colors.magenta, actions = {
+    ccg = { name = "CCG", glyph = "?", color = colors.magenta,
+        icon = "22000022/20200202/20000002/20000002/20200202/22000022", actions = {
         { id = "home", label = "Home Mode", hint = "Play free on your CCG" },
         { id = "bet", label = "Bet", hint = "Sit at a CCG Casino" },
         { id = "mine", label = "My Casino", hint = "Run your company's CCG Casinos" },
         { id = "scores", label = "CCG scores", hint = "Your best at home" },
     } },
-    subs = { name = "Subs", glyph = "~", color = colors.magenta },
-    browser = { name = "Apps", glyph = "+", color = colors.blue, actions = {
+    subs = { name = "Subs", glyph = "~", color = colors.magenta,
+        icon = "22000202/20222002/20222202/20222202/20222202/22000022" },
+    browser = { name = "Apps", glyph = "+", color = colors.blue,
+        icon = "bbbbbbbb/b00bb00b/b00bb00b/bbbbbbbb/b00bb00b/b00bb00b", actions = {
         { id = "search", label = "Search apps", hint = "Find something new" },
     } },
     reminders = { name = "Reminders", glyph = "!", color = colors.yellow,
+        icon = "444cc444/44cccc44/44cccc44/4cccccc4/44444444/444cc444",
         actions = {
             { id = "new", label = "New reminder", hint = "Something later" },
         } },
-    quick = { name = "Quick", glyph = "&", color = colors.lime, actions = {
+    quick = { name = "Quick", glyph = "&", color = colors.lime,
+        icon = "55550055/55500555/55000055/55500555/55005555/55055555", actions = {
         { id = "new", label = "New QuickAction", hint = "A few steps in a row" },
     } },
-    settings = { name = "Settings", glyph = "*", color = colors.gray },
+    settings = { name = "Settings", glyph = "*", color = colors.gray,
+        icon = "77877877/78888887/88877888/88877888/78888887/77877877" },
 }
 local APP_ORDER = {
     "friends", "messages", "tickets", "myid", "ccg", "subs",
@@ -7600,10 +7731,19 @@ local function refreshInstalledApps()
             entry.actions = declaredActions(entry.app_id)
             saveApps()
         end
+        -- FoxyOS 17: and its icon, for an app installed before there were any.
+        if entry.icon == nil then
+            entry.icon = util.appIcon
+                and util.appIcon((appHeader(entry.app_id) or ""):sub(1, 2000)) or false
+            saveApps()
+        end
         APPS[id] = {
             name = entry.name,
             glyph = string.upper(entry.name:sub(1, 1)),
-            color = entry.app_id == "YAP" and colors.cyan
+            icon = entry.icon or nil,
+            color = entry.icon and ui.iconEdge and ui.iconEdge(entry.icon)
+                or entry.app_id == "YAP" and colors.cyan
+                or entry.app_id == "CLOUD" and colors.lightBlue
                 or EXTRA_COLORS[(index - 1) % #EXTRA_COLORS + 1],
             actions = entry.actions,
             open = function(action) runInstalledApp(entry, action) end,
@@ -7731,8 +7871,13 @@ end
 -- One icon: a small coloured square, the app name under it, and an unread
 -- badge in the corner. The caption shares the icon's tap target.
 local function drawIcon(scene, action, app, x, y, layout, badge)
-    scene:button(action, x, y, layout.iconWidth, 2, app.glyph,
+    local iconWidth = tonumber(ui.ICON_WIDTH)
+    local pictured = app.icon and ui.icon and iconWidth and layout.iconWidth >= iconWidth
+    scene:button(action, x, y, layout.iconWidth, 2, pictured and "" or app.glyph,
         { background = app.color, foreground = colors.white })
+    if pictured then
+        ui.icon(target, x + math.floor((layout.iconWidth - iconWidth) / 2), y, app.icon)
+    end
     opening.spots[action:match("^open:(.+)$") or ""] =
         { x + math.floor(layout.iconWidth / 2), y + 1 }
     if badge then
@@ -7767,9 +7912,15 @@ local function drawDock(scene, layout, poll, width)
         local x = left + (slot - 1) * (slotWidth + 1)
         local id = chosen[slot]
         if id then
+            local iconWidth = tonumber(ui.ICON_WIDTH)
+            local pictured = APPS[id].icon and ui.icon and iconWidth and slotWidth >= iconWidth
             scene:button("open:" .. id, x, layout.dockY, slotWidth, 2,
-                APPS[id].glyph, { background = APPS[id].color,
+                pictured and "" or APPS[id].glyph, { background = APPS[id].color,
                     corner = ui.theme.panel })
+            if pictured then
+                ui.icon(target, x + math.floor((slotWidth - iconWidth) / 2),
+                    layout.dockY, APPS[id].icon)
+            end
             opening.spots[id] = opening.spots[id]
                 or { x + math.floor(slotWidth / 2), layout.dockY + 1 }
             local badge = appBadge(id, poll)
@@ -7871,6 +8022,7 @@ end
 -- keeps it off, so it is remembered as included the moment it is here. It
 -- arrives quietly, waits for a free slot and for the room on the disk, and
 -- on a beta it is the beta's own copy: the App Server runs the release.
+-- FoxyOS 17: FoxyCloud comes the same way, and the same once.
 -- Returns the name of an app it brought, for the Home Screen to say so.
 local function ensureFoxy()
     local missing = {}
@@ -7878,12 +8030,15 @@ local function ensureFoxy()
         if not installedApp(appId) then missing[appId] = true end
     end
     device.included = type(device.included) == "table" and device.included or {}
-    if not device.included.YAP and installedApp("YAP") then
-        device.included.YAP = true
-        saveDevice()
+    local wanted = {}
+    for _, appId in ipairs({ "YAP", "CLOUD" }) do
+        if not device.included[appId] and installedApp(appId) then
+            device.included[appId] = true
+            saveDevice()
+        end
+        if not device.included[appId] then wanted[#wanted + 1] = appId end
     end
-    local wantYap = not device.included.YAP
-    if next(missing) == nil and not wantYap then return end
+    if next(missing) == nil and #wanted == 0 then return end
     local listed = storeRequest("APP_LIST", {}, true)
     local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
     for _, app in ipairs(listed and listed.apps or {}) do
@@ -7894,25 +8049,32 @@ local function ensureFoxy()
             if installApp(app) then room = room - 1 end
         end
     end
-    if not wantYap or room <= 0 then return end
-    local body, app, sum
-    if beta.isBeta(config.version) then
-        body, app, sum = beta.fetchApp("YAP")
-    else
-        for _, listedApp in ipairs(listed and listed.apps or {}) do
-            if listedApp.app_id == "YAP" then app = listedApp end
+    local brought
+    for _, appId in ipairs(wanted) do
+        if room <= 0 then break end
+        local body, app, sum
+        if beta.isBeta(config.version) then
+            body, app, sum = beta.fetchApp(appId)
+        else
+            for _, listedApp in ipairs(listed and listed.apps or {}) do
+                if listedApp.app_id == appId then app = listedApp end
+            end
+            body = app and fetchApp(app)
         end
-        body = app and fetchApp(app)
+        if body and keepApp(app, body) then
+            local entry = installedApp(appId)
+            if entry and sum then
+                entry.beta, entry.beta_sum = config.version, sum
+                saveApps()
+            end
+            device.included[appId] = true
+            saveDevice()
+            room = room - 1
+            brought = brought and (brought .. " and " .. tostring(app.name or appId))
+                or tostring(app.name or appId)
+        end
     end
-    if not body or not keepApp(app, body) then return end
-    local entry = installedApp("YAP")
-    if entry and sum then
-        entry.beta, entry.beta_sum = config.version, sum
-        saveApps()
-    end
-    device.included.YAP = true
-    saveDevice()
-    return tostring(app.name or "Yap!")
+    return brought
 end
 
 -- 12.0 Final: apps keep themselves up to date. A release puts new versions
@@ -8484,7 +8646,9 @@ local function mainMenu()
         showBanner({ title = #restored == 1 and "App is back"
             or (#restored .. " apps are back"), body = table.concat(restored, ", ") })
     elseif includedOk and included then
-        showBanner({ title = included .. " is here", body = "New in FoxyOS 16, by Foxy" })
+        local several = included:find(" and ", 1, true)
+        showBanner({ title = several and "New apps are here" or (included .. " is here"),
+            body = several and included or "New on your Pocket, by Foxy" })
     end
 
     local blink, tick, page, alertOffset = true, 0, 1, 0

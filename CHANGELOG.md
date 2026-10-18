@@ -1,5 +1,42 @@
 # Changelog
 
+## 16.5.2
+
+FoxyOS 17 Beta 3. Everything from Beta 2, and FoxyCloud, app icons and
+subscriptions every few days. Needs the Bank on 16.3 and Cloud Servers set
+up with Easy Deployment. Sign up the Pockets, the CCG Server and the CCG
+Casinos.
+
+**FoxyCloud.** A new app on every Pocket, by Foxy, and now the home for your
+Foxy Account: your name, your PIN and your plan. Text and MIDI files, 100 KB
+of them, on every device you sign in to. A file is downloaded only to open
+it, like a website, and let go after. Write notes in it, drop files onto the
+Pocket's screen, save one to the Pocket's Downloads, and share any file with
+a six-letter code.
+
+**FoxyCloud+.** 500 every 5 days: 500 KB, no Foxy Cash fee (Foxy Pay at a
+till never had one), and early tickets for events that offer them. Join and
+cancel in FoxyCloud's Plus tab; cancelled, it lasts until the day it would
+have renewed.
+
+**Casino music from FoxyCloud.** My Casino, a table, Music, FoxyCloud: a
+MIDI file from your FoxyCloud plays on the CCG Casino's speakers. The
+console streams it into memory and keeps no copy.
+
+**Icon Creator.** Publishing an app in Dev Mode asks for its icon: paint 8
+by 6 pixels in the 16 colours, tapping or dragging, with a preview at real
+size. Every app FoxyOS has, built in or shipped, has an icon now -- on the
+Home Screen, the dock, the App Browser and as it opens.
+
+**Subscriptions every 1 to 15 days.** In the Company app a subscription is
+charged every 1, 2, 5, 10 or 15 days, chosen when the product is made and
+changed under How often. The till, the customer screen and the pay code all
+say how often.
+
+**FoxyCloud+ first at events.** The Event Kiosk's SALE settings can let
+FoxyCloud+ members queue before the presale. Members see it on the event in
+Tickets.
+
 ## 16.5.1
 
 FoxyOS 17 Beta 2. Everything from Beta 1, and casinos earn for their

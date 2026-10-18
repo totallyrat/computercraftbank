@@ -245,4 +245,34 @@ local developer = bank.request("DEV_REGISTER", bank.as(kit, { pin = "5678" }))
 assert(developer.developer_id and developer.name == "Kit Wolf",
     "a developer without a company or a kiosk")
 
+-- FoxyOS 17: subscriptions every few days ---------------------------------------------------
+-- A product is charged every 1, 2, 5, 10 or 15 days, chosen when it is made
+-- and changeable after; the till charges that, and says so.
+script = phone.script()
+phone.push(script.actions, "tab:products", "add", "pick:2", "pick:3", function(seen)
+    assert(phone.said(seen, "Added").body:find("/5 days", 1, true), "every five days")
+    assert(phone.has(phone.last(seen), "Till, every 5 days"))
+    return "item:4"
+end, "pick:4", "pick:4", "tab:sell", "cat:subs", function(seen)
+    assert(phone.has(phone.last(seen), "/10d"), "the tile says how often")
+    return "product:2"
+end, "charge", "pick:2", function(seen)
+    assert(phone.has(phone.last(seen), "TYPE IN YOUR BANK"))
+    return "cancel"
+end, "home", "home")
+phone.push(script.inputs, "Wine Club", "40")
+run(script)
+local wine
+for _, item in ipairs(bank.state.companies[company.company_id].quick_items) do
+    if item.name == "Wine Club" then wine = item end
+end
+assert(wine and wine.kind == "subscription" and wine.every_days == 10,
+    "made every five days, then changed to ten")
+local wineCode
+for _, code in pairs(bank.state.active_pay_codes) do
+    if code.amount == 40 then wineCode = code end
+end
+assert(wineCode and wineCode.kind == "subscription" and wineCode.every_days == 10,
+    "and the code the till made charges every ten days")
+
 print("host_company_till_test: OK")

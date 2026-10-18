@@ -76,6 +76,8 @@ function phone.run(options)
     end
     function ui.fill(_, x, y, width, height) box("fill", x, y, width, height) end
     function ui.card(_, x, y, width, height) box("card", x, y, width, height) end
+    -- FoxyOS 17: FoxyCloud's upload and download bars.
+    function ui.progress(_, x, y, width) box("progress", x, y, width, 1) end
     function ui.truncate(value, maximum)
         return tostring(value or ""):sub(1, math.max(0, maximum))
     end
@@ -156,6 +158,18 @@ function phone.run(options)
         end
         function scene:wait(spec)
             local action = take(script.actions, "tap")
+            -- FoxyOS 17: { drop = { files } } drops files onto the screen,
+            -- each { name = , body = }, the way ComputerCraft hands them over.
+            if type(action) == "table" and action.drop then
+                assert(spec and spec.files, "files dropped on a screen that does not take them")
+                local handles = {}
+                for index, file in ipairs(action.drop) do
+                    handles[index] = { getName = function() return file.name end,
+                        readAll = function() return file.body end, close = function() end }
+                end
+                self.dropped = { getFiles = function() return handles end }
+                return "__files"
+            end
             assert(action ~= "__tick" or (spec and spec.tickRate),
                 "a tick reached a screen that never asked to refresh")
             assert(action:sub(1, 2) == "__" or tappable[action],

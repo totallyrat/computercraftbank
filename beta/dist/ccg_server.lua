@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "16.5.1"
+local PROGRAM_VERSION = "16.5.2"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -1708,6 +1708,29 @@ function actions.CASINO_UNLINK(payload)
     return { unlinked = true }
 end
 
+-- What the console is handed to fetch a FoxyCloud song: checked for shape
+-- only. The Bank's ticket is what decides whether it can be read.
+function casino.cloudSong(plan)
+    need(type(plan) == "table" and type(plan.ticket) == "string"
+        and type(plan.chunks) == "table" and #plan.chunks >= 1 and #plan.chunks <= 100
+        and type(plan.hosts) == "table", "BAD_SONG", "That song cannot be fetched")
+    local chunks, hosts = {}, {}
+    for index, chunk in ipairs(plan.chunks) do
+        need(type(chunk) == "table" and type(chunk.id) == "string"
+            and tonumber(chunk.size) and type(chunk.servers) == "table",
+            "BAD_SONG", "That song cannot be fetched")
+        local servers = {}
+        for at, serverId in ipairs(chunk.servers) do
+            if at > 4 then break end
+            servers[at] = tostring(serverId)
+            hosts[servers[at]] = tonumber(plan.hosts[servers[at]])
+        end
+        chunks[index] = { id = util.safeText(chunk.id, 32),
+            size = math.floor(tonumber(chunk.size)), servers = servers }
+    end
+    return { ticket = util.safeText(plan.ticket, 40), chunks = chunks, hosts = hosts }
+end
+
 -- Actions: the owner, from My Casino -------------------------------------------------------------
 
 function actions.CASINO_LIST(payload)
@@ -1797,7 +1820,15 @@ function actions.CASINO_CONTROL(payload)
     elseif op == "music" then
         local music = t.music
         local action = tostring(payload.action or "")
-        if action == "play" then
+        -- FoxyOS 17: a song in the owner's FoxyCloud. What comes is where its
+        -- pieces are and a ticket to read them for a couple of minutes; the
+        -- console fetches it into memory, plays it, and keeps no copy.
+        if action ~= "volume" then music.cloud = nil end
+        if action == "cloud" then
+            music.cloud = casino.cloudSong(payload.cloud)
+            music.track = util.safeText(tostring(payload.name or "Song"), 32)
+            music.playing = true
+        elseif action == "play" then
             music.track = util.safeText(tostring(payload.track or ""), 32)
             music.playing = music.track ~= ""
         elseif action == "stop" then

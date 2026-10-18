@@ -73,8 +73,12 @@ local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
     "invt.lua",
     -- FoxyOS 16: Yap!, by Foxy.
     "yap.lua",
+    -- FoxyOS 17: the CCG is two.
+    "ccg_home.lua", "ccg_casino.lua",
     -- FoxyOS 16.3: the Cloud Servers.
-    "cloud_server.lua" }
+    "cloud_server.lua",
+    -- FoxyOS 17: FoxyCloud, by Foxy.
+    "foxycloud.lua" }
 
 local function verify(section, expected, label)
     local entries = readEntries(section)

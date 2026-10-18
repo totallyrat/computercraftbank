@@ -37,7 +37,9 @@ local actions = {
     "open:ccg", "tab:bet", "join", "bet", "__tick", "__tick", "__tick", "act:stand",
     "__tick", "__tick", "__tick", "leave",
     -- My Casino: the table, the dealer, a game, a song.
-    "tab:mine", "open:CAS00001", "take", "next", "game:poker", "music", "play:1", "back",
+    "tab:mine", "open:CAS00001", "take", "next", "game:poker", "music",
+    "cloud", "song:1",                               -- FoxyOS 17: a song from FoxyCloud
+    "play:1", "back",
     "back",
     -- Casino money: in debt, so money goes in to pay the loan back.
     "money", "company:COM9", "in", "back", "back",
@@ -252,6 +254,16 @@ local client = {
             assert(payload.name == "FoxyUser")
             assert(payload.pin == "1234")
             return { account = account, session_token = "SESSION" }
+        elseif action == "CLOUD_FILES" then
+            assert(payload.app_id == nil, "the CCG app is the Pocket's own")
+            return { files = { { file_id = "F7", name = "Notes.txt", kind = "text", size = 9 },
+                { file_id = "F9", name = "Theme.mid", kind = "midi", size = 5000 } },
+                used = 5009, quota = 102400 }
+        elseif action == "CLOUD_GET" then
+            assert(payload.file_id == "F9", "the song, not the note")
+            return { file = { file_id = "F9", name = "Theme.mid" }, ticket = "CT_T",
+                chunks = { { id = "F9.1.1", size = 5000, servers = { "CS1" } } },
+                hosts = { CS1 = 11 } }
         elseif action == "ACCOUNT_SUMMARY" then
             return { account = account, unread_notifications = 0 }
         elseif action == "PUMPE_POLL" then
@@ -282,7 +294,10 @@ local client = {
                 },
             }
         elseif action == "LIST_EVENTS" then
+            -- FoxyOS 17: this person has FoxyCloud+, and this event lets
+            -- members in first.
             return {
+                plus_member = true,
                 events = {
                     {
                         event_id = "EVT000001",
@@ -291,17 +306,22 @@ local client = {
                         event_day = 50,
                         event_time = "18:30",
                         from_price = 25,
+                        phase = "plus", plus_day = 41, plus_time = "12:00",
+                        release_day = 49, release_time = "12:00",
                     },
                 },
             }
         elseif action == "EVENT_DETAILS" then
             return {
+                plus_member = true,
                 event = {
                     event_id = "EVT000001",
                     title = "Summer Festival at the Riverside",
                     location = "Riverside Arena, Gate Two",
                     event_day = 50,
                     event_time = "18:30",
+                    phase = "plus", plus_day = 41, plus_time = "12:00",
+                    release_day = 49, release_time = "12:00",
                 },
                 ticket_types = {
                     {
@@ -316,7 +336,7 @@ local client = {
         elseif action == "QUEUE_JOIN" then
             queueCalls = 0
             return { queue = { status = "waiting", waiting_room = true,
-                queue_phase = "general", in_room = 3, turn_ms = 120000,
+                queue_phase = "plus", in_room = 3, turn_ms = 120000,
                 limit = 4, bought = 0 } }
         elseif action == "QUEUE_STATUS" then
             queueCalls = queueCalls + 1
@@ -588,6 +608,10 @@ local client = {
             assert(payload.console_id == "CAS00001" and payload.session_token)
             if action == "CASINO_CONTROL" then
                 casinoState.ops = casinoState.ops or {}
+                if payload.action == "cloud" then
+                    assert(payload.name == "Theme.mid" and payload.cloud.ticket == "CT_T"
+                        and payload.cloud.hosts.CS1 == 11, "where the song's pieces are")
+                end
                 casinoState.ops[#casinoState.ops + 1] = payload.op .. ":"
                     .. tostring(payload.game or payload.action or payload.track or "")
                     .. ":" .. tostring(payload.track or "")
@@ -865,6 +889,8 @@ local function find(items, expected)
     end
 end
 
+assert(find(drawnText, "OPEN FOR FOXYCLOUD+") and find(drawnText, "FOXYCLOUD+ OPENS IN"),
+    "FoxyCloud+ members first: the badge, and their own waiting room")
 assert(find(drawnText, "Waiting room") and find(drawnText, "In the queue")
     and find(drawnText, "Your turn"), "the waiting room, the line, the turn")
 assert(find(drawnText, "You're going!"), "and the tickets, celebrated")
@@ -952,6 +978,7 @@ assert(find(requests, "CASINO_LIST") and find(requests, "CASINO_VIEW"),
     "My Casino lists the tables and opens one")
 assert(ops:find("take::", 1, true) and ops:find("next::", 1, true)
     and ops:find("game:poker:", 1, true) and ops:find("music:play:theme.mid", 1, true)
+    and ops:find("music:cloud:", 1, true)
     and ops:find("release::", 1, true),
     "the dealer taken, dealt, a game chosen, a song played, and the dealer let go: " .. ops)
 -- The bet wallet moved into Foxy in 9.4, so the PUMPE itself no longer

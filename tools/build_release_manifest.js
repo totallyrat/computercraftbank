@@ -88,6 +88,8 @@ const forwardOptionalFiles = [
   "ccg_casino.lua",
   // FoxyOS 16.3: the Cloud Servers that hold FoxyCloud's files.
   "cloud_server.lua",
+  // FoxyOS 17: FoxyCloud, by Foxy, on every Pocket.
+  "foxycloud.lua",
 ];
 
 function checksum(buffer) {
@@ -208,6 +210,9 @@ if (!betaBuild) {
 // FoxyOS 12 adds the Pocket's own program: a phone holds its apps too, and
 // with every app installed a staged update no longer fitted beside them.
 const strippedFiles = [
+  // FoxyOS 17: config.lua is read with load(), and a device writes its own
+  // back without comments the first time it merges an update anyway.
+  "config.lua",
   "bank_server.lua",
   "bank_vault.lua",
   "pumpe.lua",
@@ -222,7 +227,7 @@ const strippedFiles = [
 // size. Their headers stay: the App Server and the Pocket read them.
 const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
   "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
-  "invt.lua", "yap.lua"];
+  "invt.lua", "yap.lua", "foxycloud.lua"];
 strippedFiles.push(...strippedApps);
 
 // FoxyOS 14.1: everything a computer downloads is in dist/, the files that
@@ -244,8 +249,15 @@ for (const relativePath of allPublished) {
     fs.writeFileSync(target, stripped);
   } else if (relativePath === "startup.lua") {
     // Stamped here too, so a beta's copy carries the beta's version while
-    // the root file stays the release's.
-    fs.writeFileSync(target, stampedStartup);
+    // the root file stays the release's. FoxyOS 17: and stripped, keeping its
+    // "-- PUMPE EASY DEPLOYMENT" header, which is read. Every computer holds
+    // it twice while it updates, and it was the biggest file left with its
+    // comments in -- what took a Pocket's update past its disk.
+    const stripped = stripLua(stampedStartup, relativePath, { keepMarkers: true });
+    if (stripped.split("\n").length !== stampedStartup.split("\n").length) {
+      throw new Error(`${relativePath}: stripping moved lines`);
+    }
+    fs.writeFileSync(target, stripped);
   } else {
     fs.copyFileSync(path.join(projectRoot, relativePath), target);
   }

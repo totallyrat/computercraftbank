@@ -86,4 +86,24 @@ assert(not event.invites[sam.id], "Sam's invite was taken back")
 local inbox = bank.request("MAIL_LIST", bank.as(kit, { address = "kit@foxy.com" }))
 assert(inbox.messages[1].from == "ana@foxy.com", "the invite, from the organizer")
 
+-- FoxyOS 17: FoxyCloud+ members first ----------------------------------------------------
+-- In the sale settings: keep the sale and the limit, and let members queue
+-- the day before the presale.
+script = kiosk.script()
+kiosk.push(script.actions, "login")
+kiosk.push(script.inputs, "Ana Fox")
+kiosk.push(script.pins, "1234")
+kiosk.push(script.actions, "tab:events", "event:EVT000001", "sale")
+kiosk.push(script.confirms, false)                -- keep when the sale opens
+kiosk.push(script.inputs, "3")                    -- still 3 each
+kiosk.push(script.confirms, true)                 -- FoxyCloud+ first: yes
+kiosk.push(script.inputs, "46", "1000")           -- day 46 10:00
+kiosk.push(script.actions, "back", "tab:home", "exit")
+seen = kiosk.run({ file = "event_kiosk.lua", bank = real, script = script,
+    device = { last_name = "" }, color = { color = "orange" } })
+assert(kiosk.said(seen, "SALE UPDATED"))
+assert(event.plus_day == 46 and event.plus_time == "10:00",
+    "members queue from day 46 10:00, before the presale")
+assert(event.presale_day == 47 and event.limit == 3, "and nothing else changed")
+
 print("host_event_presale_test: OK")

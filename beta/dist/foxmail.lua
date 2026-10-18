@@ -1,4 +1,5 @@
 -- PUMPE APP: FoxMail
+-- PUMPE APP ICON: 10000001/01000010/00100100/00011000/00000000/00000000
 -- PUMPE APP ACTION: inbox | Inbox | Your mail
 -- PUMPE APP ACTION: write | Write an email | To anybody with an address
 
