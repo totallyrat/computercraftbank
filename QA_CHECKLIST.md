@@ -7,6 +7,18 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 16.3 (16.3.0)
+
+Update the Bank (Core and Vault) first. The FoxyCloud app is in the FoxyOS 17 beta; this checks the servers and the Bank under it.
+
+- [ ] The Bank and its Vault update to 16.3.0 by themselves and start normally.
+- [ ] Easy Deployment lists **Cloud Server** (search *cloud*). Install it on five computers with modems. Each asks for the operator code once, then shows *SERVER CS1* (to CS5) and *BANK OK at …*.
+- [ ] A wrong operator code is refused, and the Cloud Server asks again.
+- [ ] The Vault's Status tab shows *CLOUD 5 servers online* and the free space.
+- [ ] Stop one Cloud Server: within a minute the Vault counts one fewer.
+- [ ] Existing daily till subscriptions still charge once a day; Pocket → Subscriptions shows *a day*.
+- [ ] Foxy Cash to a friend still costs 2% without FoxyCloud+.
+
 ## FoxyOS 16.2 (16.2.0)
 
 Bank only; FoxyOS 17's CCG Casino uses it (see its beta section).

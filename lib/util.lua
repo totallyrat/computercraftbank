@@ -413,4 +413,36 @@ function util.setBetaJoined(root, joined)
     util.saveTable(betaFile(root), { joined = joined == true })
 end
 
+-- Subscriptions, FoxyOS 16.3: charged every 1, 2, 5, 10 or 15 days rather
+-- than only every day. What a request asked for, as a number of days this
+-- release allows, or nil. "day" is how a daily one was asked for before.
+function util.billingDays(value, allowed)
+    if value == "day" then return 1 end
+    local days = math.floor(tonumber(value) or 0)
+    for _, choice in ipairs(type(allowed) == "table" and allowed
+        or { 1, 2, 5, 10, 15 }) do
+        if days == choice then return days end
+    end
+    return nil
+end
+
+-- "a day", "every 5 days": how often, after an amount.
+function util.everyText(days)
+    days = math.floor(tonumber(days) or 1)
+    if days <= 1 then return "a day" end
+    return "every " .. days .. " days"
+end
+
+-- A file's size the way FoxyCloud shows it: 512 B, 4.2 KB, 100 KB.
+function util.sizeText(bytes)
+    bytes = math.max(0, math.floor(tonumber(bytes) or 0))
+    if bytes < 1024 then return bytes .. " B" end
+    local kb = bytes / 1024
+    if kb >= 1024 then return string.format("%.1f MB", kb / 1024) end
+    if kb >= 100 or kb == math.floor(kb) then
+        return math.floor(kb + 0.5) .. " KB"
+    end
+    return string.format("%.1f KB", kb)
+end
+
 return util

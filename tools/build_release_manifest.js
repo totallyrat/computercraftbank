@@ -83,6 +83,8 @@ const forwardOptionalFiles = [
   "invt.lua",
   // FoxyOS 16: Yap!, by Foxy, on every Pocket.
   "yap.lua",
+  // FoxyOS 16.3: the Cloud Servers that hold FoxyCloud's files.
+  "cloud_server.lua",
 ];
 
 function checksum(buffer) {

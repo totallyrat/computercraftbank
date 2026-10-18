@@ -371,6 +371,7 @@ update.PUBLISHED_OPTIONAL = {
     "brickbreaker.lua",
     "invt.lua",
     "yap.lua",
+    "cloud_server.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -401,6 +402,8 @@ local ROLE_PROGRAMS = {
     -- program in the public release and fell back to the depot for every
     -- update it ever did.
     vault = "bank_vault.lua",
+    -- FoxyOS 16.3: FoxyCloud's storage, as many as the world runs.
+    cloud = "cloud_server.lua",
 }
 
 function update.roleProgram(role)

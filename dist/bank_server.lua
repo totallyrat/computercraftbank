@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "16.2.0"
+local PROGRAM_VERSION = "16.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -79,6 +79,7 @@ RELEASE.depot_files = {
 "shop.lua",
 "foxmail.lua",
 "company.lua",
+"cloud_server.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -127,6 +128,7 @@ RELEASE.optional = {
 "brickbreaker.lua",
 "invt.lua",
 "yap.lua",
+"cloud_server.lua",
 }
 
 RELEASE.programs = {
@@ -152,6 +154,8 @@ delivery = "delivery_terminal.lua",
 
 
 vault = "bank_vault.lua",
+
+cloud = "cloud_server.lua",
 }
 
 
@@ -1095,6 +1099,21 @@ end
 
 
 
+local function billingDays(value)
+if value == nil then return 1 end
+local days = util.billingDays(value, config.subscription_periods)
+local offered = {}
+for _, choice in ipairs(config.subscription_periods or { 1 }) do
+offered[#offered + 1] = tostring(choice)
+end
+need(days, "INVALID_PERIOD", "Charge every "
+.. table.concat(offered, ", ") .. " days")
+return days
+end
+
+
+
+
 
 
 
@@ -1169,6 +1188,153 @@ return { settled = settled ~= nil, code = code }
 end
 
 local actions = {}
+
+
+
+
+
+
+local cloud = { PLUS_ID = "FOXYCLOUD_PLUS", APP_ID = "CLOUD" }
+
+function cloud.price()
+return math.max(1, util.roundMoney(tonumber(config.foxycloud_plus_price) or 500))
+end
+
+function cloud.every()
+return util.billingDays(config.foxycloud_plus_days, config.subscription_periods) or 5
+end
+
+function cloud.plus(account)
+local plan = account and account.foxycloud
+return type(plan) == "table" and plan.plan == "plus"
+end
+
+function cloud.quota(account)
+if cloud.plus(account) then return tonumber(config.cloud_plus_bytes) or 512000 end
+return tonumber(config.cloud_free_bytes) or 102400
+end
+
+
+function cloud.cashRate(account)
+if cloud.plus(account) then return 0 end
+return tonumber(config.foxy_cash_fee_rate) or 0.02
+end
+
+
+function cloud.summary(account)
+local plan = cloud.plus(account) and account.foxycloud or nil
+local plusBytes = tonumber(config.cloud_plus_bytes) or 512000
+return {
+plan = plan and "plus" or "free",
+quota = cloud.quota(account),
+free_quota = tonumber(config.cloud_free_bytes) or 102400,
+plus_quota = plusBytes,
+price = plan and plan.price or cloud.price(),
+every_days = plan and plan.every_days or cloud.every(),
+since_day = plan and plan.since_day or nil,
+next_charge_day = plan and not plan.cancelled and plan.next_charge_day or nil,
+ends_day = plan and plan.cancelled and plan.next_charge_day or nil,
+cash_fee_rate = cloud.cashRate(account),
+perks = { util.sizeText(plusBytes) .. " of cloud storage",
+"0% fee on Foxy Cash",
+"Early tickets for events that offer them" },
+}
+end
+
+
+
+function cloud.subscription(account)
+local plan = cloud.plus(account) and account.foxycloud
+if not plan then return nil end
+return {
+subscription_id = cloud.PLUS_ID, description = "FoxyCloud+",
+amount = plan.price, every_days = plan.every_days,
+next_charge_day = plan.next_charge_day, active = not plan.cancelled,
+created_day = plan.since_day, foxycloud = true,
+}
+end
+
+
+function cloud.fromApp(payload)
+need(payload.app_id == nil or payload.app_id == cloud.APP_ID
+or payload.app_id == "FOXY", "WRONG_APP", "Only FoxyCloud can do that")
+end
+
+function cloud.bill(account, amount)
+account.balance = util.roundMoney(account.balance - amount)
+state.foxycloud_revenue = util.roundMoney((state.foxycloud_revenue or 0) + amount)
+transaction(account, "foxycloud", -amount, "Foxy", "FoxyCloud+")
+end
+
+
+
+
+function cloud.renew(account, today)
+local plan = cloud.plus(account) and account.foxycloud
+if not plan or (plan.next_charge_day or today) > today then return false end
+local free = util.sizeText(tonumber(config.cloud_free_bytes) or 102400)
+if plan.cancelled then
+account.foxycloud = nil
+notification(account, "FoxyCloud+ ended", "You have " .. free
+.. " again. Your files are all kept.", "subscription")
+return true
+end
+local price = plan.price or cloud.price()
+if account.balance >= price and not account.frozen and not account.banned
+and not account.bank_closed then
+cloud.bill(account, price)
+plan.next_charge_day = today + (plan.every_days or cloud.every())
+notification(account, "FoxyCloud+ renewed", util.money(price,
+config.currency) .. " " .. util.everyText(plan.every_days),
+"subscription")
+else
+account.foxycloud = nil
+notification(account, "FoxyCloud+ stopped", "It could not be charged."
+.. " Your files are kept; you have " .. free .. " again.", "warning")
+end
+return true
+end
+
+function actions.CLOUD_PLAN(payload)
+return cloud.summary(requireSession(payload))
+end
+
+function actions.CLOUD_PLUS_JOIN(payload)
+cloud.fromApp(payload)
+local account = requireSpender(payload)
+need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+local plan = cloud.plus(account) and account.foxycloud
+if plan then
+need(plan.cancelled, "ALREADY_PLUS", "You already have FoxyCloud+")
+
+
+plan.cancelled, plan.cancelled_day = nil, nil
+save()
+return cloud.summary(account)
+end
+local price, every, today = cloud.price(), cloud.every(), util.ingameDay()
+need(account.balance >= price, "INSUFFICIENT_FUNDS", "FoxyCloud+ is "
+.. util.money(price, config.currency) .. " " .. util.everyText(every))
+cloud.bill(account, price)
+account.foxycloud = { plan = "plus", price = price, every_days = every,
+since_day = today, next_charge_day = today + every }
+notification(account, "Welcome to FoxyCloud+", util.sizeText(
+tonumber(config.cloud_plus_bytes) or 512000) .. " and no Foxy Cash fee."
+.. " Next charge day " .. (today + every), "subscription")
+save()
+logActivity(account.name .. " joined FoxyCloud+", colors.cyan)
+return cloud.summary(account)
+end
+
+function actions.CLOUD_PLUS_CANCEL(payload)
+cloud.fromApp(payload)
+local account = requireSession(payload)
+local plan = cloud.plus(account) and account.foxycloud
+need(plan and not plan.cancelled, "NOT_PLUS", "You do not have FoxyCloud+")
+plan.cancelled, plan.cancelled_day = true, util.ingameDay()
+save()
+return cloud.summary(account)
+end
 
 
 
@@ -1575,15 +1741,24 @@ end
 
 function actions.LIST_SUBSCRIPTIONS(payload)
 local account = requireSession(payload)
-local output = util.sortedValues(account.subscriptions, nil, function(a, b)
+local output = {}
+for _, subscription in pairs(account.subscriptions) do
+output[#output + 1] = subscription
+end
+output[#output + 1] = cloud.subscription(account)
+table.sort(output, function(a, b)
 if a.active ~= b.active then return a.active end
-return a.next_charge_day < b.next_charge_day
+return (a.next_charge_day or 0) < (b.next_charge_day or 0)
 end)
 return { subscriptions = util.copy(output) }
 end
 
 function actions.CANCEL_SUBSCRIPTION(payload)
 local account = requireSession(payload)
+if payload.subscription_id == cloud.PLUS_ID then
+actions.CLOUD_PLUS_CANCEL({ session_token = payload.session_token })
+return { subscription = cloud.subscription(account) }
+end
 local subscription = account.subscriptions[payload.subscription_id]
 need(subscription and subscription.active, "NOT_FOUND", "Subscription not found")
 subscription.active = false
@@ -1905,6 +2080,21 @@ last_seen = util.nowMs(),
 save()
 logActivity("CCG Server registered", colors.magenta)
 return { server_token = token, games = CCG_GAMES }
+end
+
+
+
+
+function actions.CLOUD_SERVER_REGISTER(payload, sender)
+need(tostring(payload.code or "") == DEPLOY.code, "BAD_CODE",
+"That is not the operator code")
+local added = pair.forward("VAULT_CLOUD_SERVER_ADD", {
+name = payload.name,
+computer_id = sender or tonumber(payload.computer_id),
+}, { kind = "operator" })
+logActivity("Cloud Server " .. tostring(added.server_id) .. " registered",
+colors.cyan)
+return added
 end
 
 
@@ -2809,7 +2999,7 @@ balance = account.balance,
 saved = foxy.saved(account),
 pots = foxy.potList(account),
 max_pots = tonumber(config.max_pots_per_account) or 8,
-fee_rate = tonumber(config.foxy_cash_fee_rate) or 0.02,
+fee_rate = cloud.cashRate(account),
 tax_demand = account.tax_demand
 and util.copy(account.tax_demand) or nil,
 }
@@ -2871,7 +3061,7 @@ function actions.FOXY_CASH_QUOTE(payload)
 local account = requireSpender(payload)
 local friend = requireVaultFriend(account, payload.account_id)
 local amount = validateAmount(payload.amount)
-local rate = tonumber(config.foxy_cash_fee_rate) or 0.02
+local rate = cloud.cashRate(account)
 local fee = util.roundMoney(amount * rate)
 return {
 recipient = friend.name,
@@ -2888,7 +3078,7 @@ local account = requireSpender(payload)
 local friend = requireVaultFriend(account, payload.account_id)
 need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
 local amount = validateAmount(payload.amount)
-local rate = tonumber(config.foxy_cash_fee_rate) or 0.02
+local rate = cloud.cashRate(account)
 local fee = util.roundMoney(amount * rate)
 local total = util.roundMoney(amount + fee)
 need(account.balance >= total, "INSUFFICIENT_FUNDS",
@@ -3265,6 +3455,7 @@ amount = entry.amount,
 bought_day = entry.bought_day,
 subscription = entry.period ~= nil,
 period = entry.period,
+every_days = entry.every_days or (entry.period and 1 or nil),
 active = entry.active ~= false,
 next_charge_day = entry.next_charge_day,
 
@@ -3279,6 +3470,20 @@ function appstore.splitPurchase(amount)
 local rate = tonumber(config.app_purchase_tax_rate) or 0.30
 local tax = util.roundMoney(amount * rate)
 return util.roundMoney(amount - tax), tax
+end
+
+
+
+function appstore.every(payload)
+if payload.every_days ~= nil then return billingDays(payload.every_days) end
+if payload.period == "day" then return 1 end
+return nil
+end
+
+
+function appstore.period(every)
+if not every then return nil end
+return every == 1 and "day" or "days"
 end
 
 function appstore.priceOf(payload)
@@ -3302,7 +3507,8 @@ amount = amount,
 tax = tax,
 to_seller = toSeller,
 seller = owner and owner.name or "the developer",
-period = payload.period == "day" and "day" or nil,
+period = appstore.period(appstore.every(payload)),
+every_days = appstore.every(payload),
 balance = account.balance,
 }
 end
@@ -3320,7 +3526,8 @@ need(#productId >= 1, "NO_PRODUCT", "That purchase has no id")
 local amount = appstore.priceOf(payload)
 need(account.balance >= amount, "INSUFFICIENT_FUNDS",
 "Not enough money for that")
-local period = payload.period == "day" and "day" or nil
+local every = appstore.every(payload)
+local period = appstore.period(every)
 local owned = appstore.purchases(account, appId)
 if period then
 local existing = owned[productId]
@@ -3354,9 +3561,10 @@ product_id = productId,
 name = util.safeText(util.trim(payload.name or productId), 24),
 amount = amount,
 period = period,
+every_days = every,
 active = true,
 bought_day = util.ingameDay(),
-next_charge_day = period and (util.ingameDay() + 1) or nil,
+next_charge_day = every and (util.ingameDay() + every) or nil,
 target = payload.target
 and util.safeText(util.trim(tostring(payload.target)), 24) or nil,
 }
@@ -3428,7 +3636,8 @@ end
 transaction(account, "app_subscription",
 -entry.amount, owner and owner.name or "App",
 entry.name)
-entry.next_charge_day = today + 1
+entry.next_charge_day = today
++ (entry.every_days or 1)
 else
 entry.active = false
 entry.next_charge_day = nil
@@ -4285,6 +4494,8 @@ amount = payment.amount,
 merchant = terminal.name,
 items = util.copy(payment.items or {}),
 description = payment.description,
+every_days = payment.kind == "subscription"
+and (payment.every_days or 1) or nil,
 pin_required = pinRequired,
 expires_in_ms = payment.expires_at - util.nowMs(),
 }
@@ -4334,6 +4545,7 @@ company_id = terminal.company_id,
 terminal_id = terminal.terminal_id,
 })
 subscriptionId = nextId("subscription")
+local every = payment.every_days or 1
 account.subscriptions[subscriptionId] = {
 subscription_id = subscriptionId,
 amount = payment.amount,
@@ -4341,7 +4553,8 @@ description = util.safeText(
 payment.description or "Kiosk subscription", 60),
 kiosk_id = terminal.terminal_id,
 company_id = terminal.company_id,
-next_charge_day = util.ingameDay() + 1,
+every_days = every,
+next_charge_day = util.ingameDay() + every,
 active = true,
 created_day = util.ingameDay(),
 source_code = payment.code,
@@ -4349,7 +4562,7 @@ source_code = payment.code,
 notification(account, "Subscription started",
 util.safeText(payment.description or terminal.name, 40)
 .. " - " .. util.money(payment.amount, config.currency)
-.. "/day", "subscription")
+.. " " .. util.everyText(every), "subscription")
 else
 local pinRequired = payment.amount > config.pin_free_limit
 or account.daily_spent + payment.amount > config.daily_spend_limit
@@ -4716,11 +4929,14 @@ local price = validateAmount(payload.price, 1000000)
 local kind = string.lower(util.trim(payload.kind))
 need(kind == "one_time" or kind == "subscription",
 "INVALID_PRODUCT_KIND", "Choose One Time or Subscription")
+local every = kind == "subscription"
+and billingDays(payload.every_days) or nil
 local item = {
 item_id = util.token("ITEM"):sub(1, 13),
 name = name,
 price = price,
 kind = kind,
+every_days = every,
 favorite = payload.favorite == true,
 }
 items[#items + 1] = item
@@ -4950,6 +5166,13 @@ item.price = validateAmount(payload.price, 1000000)
 end
 if payload.favorite ~= nil then
 item.favorite = payload.favorite == true
+end
+
+
+if payload.every_days ~= nil then
+need(item.kind == "subscription", "NOT_A_SUBSCRIPTION",
+"Only a subscription is charged every few days")
+item.every_days = billingDays(payload.every_days)
 end
 if payload.online ~= nil then item.online = payload.online == true end
 if payload.blurb ~= nil then
@@ -5840,6 +6063,8 @@ local purchaseType = string.lower(util.trim(
 payload.purchase_type or "one_time"))
 need(purchaseType == "one_time" or purchaseType == "subscription",
 "INVALID_PURCHASE_TYPE", "Choose One Time or Subscription")
+local every = purchaseType == "subscription"
+and billingDays(payload.every_days) or nil
 local code = uniqueCode(6)
 local items = {}
 for index, item in ipairs(payload.items or {}) do
@@ -5854,6 +6079,7 @@ state.active_pay_codes[code] = {
 code = code,
 kind = purchaseType == "subscription" and "subscription" or "sale",
 amount = amount,
+every_days = every,
 items = items,
 description = util.safeText(payload.description or "Purchase", 80),
 terminal_id = terminal.terminal_id,
@@ -5867,6 +6093,7 @@ return {
 code = code,
 amount = amount,
 kind = state.active_pay_codes[code].kind,
+every_days = every,
 expires_at = state.active_pay_codes[code].expires_at,
 }
 end
@@ -6117,6 +6344,7 @@ local changed = false
 
 pcall(appstore.chargeSubscriptions, today)
 for _, account in pairs(state.accounts) do
+if cloud.renew(account, today) then changed = true end
 for _, subscription in pairs(account.subscriptions or {}) do
 if subscription.active and subscription.next_charge_day <= today then
 local terminal = state.terminals[subscription.kiosk_id]
@@ -6139,7 +6367,8 @@ notification(account, "Subscription failed",
 subscription.description .. " - insufficient funds",
 "warning")
 end
-subscription.next_charge_day = today + 1
+subscription.next_charge_day = today
++ (subscription.every_days or 1)
 changed = true
 end
 end
@@ -6362,8 +6591,10 @@ BORDER_CHECK = { auth = "device" },
 VISA_SCAN = { auth = "device" },
 VISA_SCAN_STATUS = { auth = "device" },
 VISA_SCAN_CANCEL = { auth = "device" },
-LIST_EVENTS = { auth = "session" },
-EVENT_DETAILS = { auth = "session" },
+
+
+LIST_EVENTS = { auth = "session", plus = true },
+EVENT_DETAILS = { auth = "session", plus = true },
 BUY_TICKETS = { auth = "spender", pin = true },
 MY_TICKETS = { auth = "session" },
 EVENT_DASHBOARD = { auth = "session", account = true },
@@ -6376,7 +6607,7 @@ TICKET_SCAN = { auth = "session" },
 TICKET_SCAN_STATUS = { auth = "session" },
 TICKET_SCAN_CANCEL = { auth = "session" },
 
-QUEUE_JOIN = { auth = "session" },
+QUEUE_JOIN = { auth = "session", plus = true },
 QUEUE_STATUS = { auth = "session" },
 QUEUE_LEAVE = { auth = "session" },
 EVENT_SALE = { auth = "session" },
@@ -6465,10 +6696,26 @@ KIOSK_MAIL_LIST = { auth = "terminal" },
 KIOSK_MAIL_READ = { auth = "terminal" },
 KIOSK_MAIL_SEND = { auth = "terminal" },
 KIOSK_MAIL_DELETE = { auth = "terminal" },
+
+
+
+CLOUD_FILES = { auth = "session", cloud = true, from = "CLOUD" },
+CLOUD_PUT = { auth = "session", cloud = true, from = "CLOUD" },
+CLOUD_PUT_DONE = { auth = "session", cloud = true, from = "CLOUD" },
+CLOUD_GET = { auth = "session", from = "CLOUD" },
+CLOUD_RENAME = { auth = "session", from = "CLOUD" },
+CLOUD_DELETE = { auth = "session", cloud = true, from = "CLOUD" },
+CLOUD_SHARE = { auth = "session", from = "CLOUD" },
+
+CLOUD_SHARED = { auth = "public" },
+
+CLOUD_BEAT = { auth = "cloud" },
+CLOUD_TICKET = { auth = "cloud" },
+CLOUD_KEEP = { auth = "cloud" },
 }
 
 
-local function routeToVault(action, spec, payload)
+local function routeToVault(action, spec, payload, sender)
 
 
 
@@ -6522,6 +6769,12 @@ if spec.auth == "device" then
 
 return pair.forward(action, payload, { kind = "device" })
 end
+if spec.auth == "cloud" then
+
+
+return pair.forward(action, payload, { kind = "cloud",
+computer_id = sender })
+end
 local account = spec.auth == "spender" and requireSpender(payload)
 or requireSession(payload)
 if spec.pin then
@@ -6535,6 +6788,11 @@ local extra = {}
 
 
 if spec.companies then extra.companies = ownedCompanies(account) end
+if spec.cloud then
+extra.cloud_quota = cloud.quota(account)
+extra.cloud_plan = cloud.plus(account) and "plus" or "free"
+end
+if spec.plus then extra.plus = cloud.plus(account) end
 if spec.app == "required" then
 local appId = appstore.appId(payload)
 local grant = appstore.requireGrant(account, appId)
@@ -6578,7 +6836,7 @@ end
 local ok, result
 if spec then
 ok, result = pcall(routeToVault, message.action, spec,
-message.payload or {})
+message.payload or {}, sender)
 else
 ok, result = pcall(handler, message.payload or {}, sender)
 end
@@ -7625,6 +7883,8 @@ vault_caller = vaultCaller,
 shop = shop,
 records = records,
 read_records = readRecords,
+process_subscriptions = processSubscriptions,
+cloud = cloud,
 }
 end
 

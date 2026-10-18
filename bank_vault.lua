@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- computers answer parts of the same request, so the cable is not a network
 -- detail -- it is the reason the split is not felt.
 
-local PROGRAM_VERSION = "16.2.0"
+local PROGRAM_VERSION = "16.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2248,14 +2248,22 @@ function sale.reached(day, time)
     return remaining ~= nil and remaining <= 0
 end
 
--- "soon", "presale" or "general".
+-- "soon", "plus", "presale" or "general". FoxyOS 16.3: an event can open to
+-- FoxyCloud+ members before its presale -- the pre-presale -- and they stay
+-- in for the presale too.
 function sale.phase(event)
     if sale.reached(event.release_day, event.release_time) then return "general" end
     if event.presale_day and sale.reached(event.presale_day, event.presale_time) then
         return "presale"
     end
+    if event.plus_day and sale.reached(event.plus_day, event.plus_time) then
+        return "plus"
+    end
     return "soon"
 end
+
+-- Which waiting rooms come first: FoxyCloud+, then the invited, then everyone.
+sale.RANK = { plus = 1, presale = 2, general = 3 }
 
 -- Tickets left across every type, and whether it has any types at all.
 function sale.left(event)
@@ -2289,7 +2297,11 @@ end
 
 -- Whether the sale an entry is waiting for has opened.
 function sale.open(entry, phase)
-    return phase == "general" or (phase == "presale" and entry.phase == "presale")
+    if phase == "general" then return true end
+    if phase == "presale" then
+        return entry.phase == "presale" or entry.phase == "plus"
+    end
+    return phase == "plus" and entry.phase == "plus"
 end
 
 -- Everybody still waiting, in the order they will be let in: the presale
@@ -2302,7 +2314,9 @@ function sale.line(event)
         if entry.status == "waiting" then line[#line + 1] = entry end
     end
     table.sort(line, function(a, b)
-        if a.phase ~= b.phase then return a.phase == "presale" end
+        if a.phase ~= b.phase then
+            return (sale.RANK[a.phase] or 3) < (sale.RANK[b.phase] or 3)
+        end
         if a.early ~= b.early then return a.early == true end
         if a.early and a.lottery ~= b.lottery then return a.lottery < b.lottery end
         return a.seq < b.seq
@@ -2351,6 +2365,7 @@ function sale.status(event, accountId)
         sold_out = left <= 0,
         bought = (event.bought or {})[accountId] or 0,
         invited = sale.invited(event, accountId),
+        plus_early = event.plus_day ~= nil,
         turn_ms = sale.turn_ms, status = "none",
     }
     local entry = sale.queue(event).entries[accountId]
@@ -2409,6 +2424,7 @@ function sale.public(event, accountId)
         phase = sale.phase(event), limit = sale.limit(event),
         release_day = event.release_day, release_time = event.release_time,
         presale_day = event.presale_day, presale_time = event.presale_time,
+        plus_day = event.plus_day, plus_time = event.plus_time,
         invited = accountId and sale.invited(event, accountId) or false,
         queue_status = entry and entry.status or nil,
     }
@@ -2446,6 +2462,26 @@ function sale.configure(event, payload)
             "1 to 10 tickets per person")
         event.limit = limit
     end
+    -- FoxyOS 16.3: the FoxyCloud+ pre-presale. Before the presale, or before
+    -- the general sale when there is no presale.
+    if payload.plus == false then
+        event.plus_day, event.plus_time = nil, nil
+    elseif payload.plus_day ~= nil then
+        need(event.release_day, "PRESALE_NEEDS_RELEASE",
+            "Set when the general sale opens first")
+        local day = math.floor(tonumber(payload.plus_day) or -1)
+        local at = day >= 0 and sale.moment(day, payload.plus_time)
+        need(at, "INVALID_PLUS", "Give the FoxyCloud+ sale a day and a time")
+        event.plus_day, event.plus_time = day, payload.plus_time
+    end
+    if event.plus_day then
+        local opens = event.presale_day
+            and sale.moment(event.presale_day, event.presale_time)
+            or sale.moment(event.release_day, event.release_time)
+        need(opens and sale.moment(event.plus_day, event.plus_time) < opens,
+            "PLUS_AFTER_PRESALE", "The FoxyCloud+ sale has to open before the "
+                .. (event.presale_day and "presale" or "general sale"))
+    end
 end
 
 function sale.event(eventId)
@@ -2468,7 +2504,7 @@ function actions.LIST_EVENTS(payload, caller)
     for _, event in ipairs(events) do
         output[#output + 1] = sale.public(event, account.account_id)
     end
-    return { events = output }
+    return { events = output, plus_member = caller.plus == true }
 end
 
 function actions.EVENT_DETAILS(payload, caller)
@@ -2486,7 +2522,8 @@ function actions.EVENT_DETAILS(payload, caller)
     local _, changed = sale.advance(event)
     if changed then save() end
     return { event = sale.public(event, account.account_id), ticket_types = types,
-        mine = sale.status(event, account.account_id) }
+        mine = sale.status(event, account.account_id),
+        plus_member = caller.plus == true }
 end
 
 -- The queue ------------------------------------------------------------------------
@@ -2509,10 +2546,14 @@ function actions.QUEUE_JOIN(payload, caller)
     else
         local presale = event.presale_day ~= nil and phase ~= "general"
             and sale.invited(event, account.account_id)
+        -- The Core says whether this person has FoxyCloud+ ("plus" on the
+        -- route); nothing they send can say it for them.
+        local plus = event.plus_day ~= nil and phase ~= "general"
+            and caller.plus == true
         queue.seq = queue.seq + 1
         entry = {
             account_id = account.account_id,
-            phase = presale and "presale" or "general",
+            phase = plus and "plus" or presale and "presale" or "general",
             lottery = math.random(), seq = queue.seq,
             joined_at = util.nowMs(), seen_at = util.nowMs(),
             status = "waiting",
@@ -5344,6 +5385,542 @@ local function unpackRecord(kind, row)
     return item
 end
 
+-- FoxyCloud, FoxyOS 16.3 ---------------------------------------------------------
+-- Every Foxy Account has cloud storage, and this is its directory: which files
+-- a person has, and where each piece of each one is. The pieces are on Cloud
+-- Servers -- as many as the world runs, each registered with the operator's
+-- code -- and never on this Vault. A file is cut into pieces and each piece
+-- goes to whichever server has the most room left, so five servers hold five
+-- servers' worth, and a file can be bigger than any one of them has free.
+--
+-- Nothing is put on a Cloud Server or read off one without a ticket from
+-- here. A Pocket is given one with the plan of where the pieces go; the server
+-- asks here what the ticket allows, and a ticket names exactly which pieces
+-- it is for and how big each may be. So the plan's room is checked here, and
+-- the server, which takes no piece bigger than its ticket says, enforces it.
+local cloud = {
+    file = fs.combine(ROOT, "vault_cloud_v1.dat"),
+    chunk = math.max(512, math.floor(tonumber(config.cloud_chunk_size) or 6000)),
+    copies = math.max(1, math.floor(tonumber(config.cloud_copies) or 1)),
+    seen_ms = tonumber(config.cloud_server_seen_ms) or 60000,
+    reserve = tonumber(config.cloud_server_reserve_bytes) or 20000,
+    ticket_ms = tonumber(config.cloud_ticket_ms) or 120000,
+    max_files = tonumber(config.cloud_max_files) or 100,
+    -- What a Cloud Server's disk charges for a file, however small.
+    min_file = 500,
+    -- Never written down: a ticket outlives nothing, and a Vault that
+    -- restarts mid-upload costs that upload a retry, not a leak.
+    tickets = {},
+}
+-- Its own file, beside the Vault's: a beat from every Cloud Server every few
+-- seconds should not mean writing out everybody's conversations.
+cloud.data = util.loadTable(cloud.file, {})
+
+function cloud.save() pcall(util.saveTable, cloud.file, cloud.data) end
+
+function cloud.store()
+    local data = cloud.data
+    data.servers = data.servers or {}
+    data.tokens = data.tokens or {}
+    data.files = data.files or {}
+    data.owners = data.owners or {}
+    data.shares = data.shares or {}
+    data.seq = data.seq or 0
+    data.server_seq = data.server_seq or 0
+    return data
+end
+
+-- The Cloud Servers ----------------------------------------------------------------
+
+function cloud.server(caller, payload)
+    need(type(caller) == "table" and caller.kind == "cloud", "CLOUD_AUTH",
+        "Only a Cloud Server asks that")
+    local data = cloud.store()
+    local id = data.tokens[tostring(payload.server_token or "")]
+    local server = id and data.servers[id]
+    need(server, "CLOUD_AUTH", "This Cloud Server is not registered with the Bank")
+    if tonumber(caller.computer_id) then server.computer_id = tonumber(caller.computer_id) end
+    server.last_seen = util.nowMs()
+    server.drop = server.drop or {}
+    server.pending = server.pending or {}
+    return server
+end
+
+function cloud.online(server, now)
+    return server.computer_id ~= nil and server.last_seen ~= nil
+        and (now or util.nowMs()) - server.last_seen <= cloud.seen_ms
+end
+
+-- Room on a server: what it last said it had free, less what it keeps for
+-- itself and what has been promised to uploads it has not counted yet.
+function cloud.room(server)
+    local promised = 0
+    for _, entry in pairs(server.pending or {}) do promised = promised + entry.size end
+    return (server.free or 0) - cloud.reserve - promised
+end
+
+function cloud.capacity()
+    local live, room = 0, 0
+    for _, server in pairs(cloud.store().servers) do
+        if cloud.online(server) then
+            live = live + 1
+            room = room + math.max(0, cloud.room(server))
+        end
+    end
+    return live, room
+end
+
+function actions.VAULT_CLOUD_SERVER_ADD(payload, caller)
+    need(type(caller) == "table" and caller.kind == "operator", "CLOUD_AUTH",
+        "Only the Bank registers a Cloud Server")
+    local data = cloud.store()
+    data.server_seq = data.server_seq + 1
+    local id = "CS" .. data.server_seq
+    local token = util.token("CLOUD")
+    data.tokens[token] = id
+    data.servers[id] = {
+        server_id = id,
+        name = util.safeText(util.trim(tostring(payload.name or "")), 24),
+        computer_id = tonumber(payload.computer_id),
+        registered_day = util.ingameDay(),
+        free = 0, used = 0, chunks = 0, drop = {}, pending = {},
+    }
+    if data.servers[id].name == "" then data.servers[id].name = "Cloud " .. id end
+    cloud.save()
+    logActivity("Cloud Server " .. id .. " registered", colors.cyan)
+    return { server_id = id, server_token = token }
+end
+
+-- Every few seconds from each Cloud Server: what its disk has room for now,
+-- and in the answer, the pieces of deleted and replaced files to throw away.
+function actions.CLOUD_BEAT(payload, caller)
+    local server = cloud.server(caller, payload)
+    server.free = math.max(0, math.floor(tonumber(payload.free) or 0))
+    server.used = math.max(0, math.floor(tonumber(payload.used) or 0))
+    server.chunks = math.max(0, math.floor(tonumber(payload.chunks) or 0))
+    -- Room promised to uploads that finished, or never will, is on the
+    -- server's own count now.
+    local now = util.nowMs()
+    for chunkId, entry in pairs(server.pending) do
+        if entry.until_ms <= now then server.pending[chunkId] = nil end
+    end
+    local drop = {}
+    while #server.drop > 0 and #drop < 40 do
+        drop[#drop + 1] = table.remove(server.drop, 1)
+    end
+    if #drop > 0 then cloud.save() end
+    return { server_id = server.server_id, name = server.name, drop = drop }
+end
+
+-- What a ticket lets this server do: the pieces, and the most each may weigh.
+function actions.CLOUD_TICKET(payload, caller)
+    local server = cloud.server(caller, payload)
+    local ticket = cloud.tickets[tostring(payload.ticket or "")]
+    local now = util.nowMs()
+    need(ticket and ticket.expires_at > now, "BAD_TICKET",
+        "That ticket has expired")
+    local mine = ticket.servers[server.server_id]
+    need(mine, "BAD_TICKET", "That ticket is for another Cloud Server")
+    return { mode = ticket.mode, chunks = util.copy(mine),
+        ttl_ms = ticket.expires_at - now }
+end
+
+-- A piece is wanted while its file has it, on this server, in the version it
+-- holds or the one being uploaded.
+function cloud.wanted(serverId, chunkId)
+    local fileId, index = tostring(chunkId):match("^(F%d+)%.%d+%.(%d+)$")
+    local record = fileId and cloud.store().files[fileId]
+    if not record then return false end
+    index = tonumber(index)
+    for _, list in ipairs({ record.chunks or {},
+        record.next and record.next.chunks or {} }) do
+        local chunk = list[index]
+        if chunk and chunk.id == chunkId then
+            for _, id in ipairs(chunk.servers) do
+                if id == serverId then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- A Cloud Server checks what it holds every so often, a page at a time, and
+-- throws away what nobody's file has: an upload that never finished, or a
+-- delete it missed while it was off.
+function actions.CLOUD_KEEP(payload, caller)
+    local server = cloud.server(caller, payload)
+    local drop = {}
+    for index, chunkId in ipairs(type(payload.chunks) == "table"
+        and payload.chunks or {}) do
+        if index > 200 then break end
+        if not cloud.wanted(server.server_id, tostring(chunkId)) then
+            drop[#drop + 1] = tostring(chunkId)
+        end
+    end
+    return { drop = drop }
+end
+
+-- Tickets --------------------------------------------------------------------------
+
+function cloud.ticket(mode, record, chunks)
+    local token = util.token("CT")
+    local servers = {}
+    for _, chunk in ipairs(chunks) do
+        for _, serverId in ipairs(chunk.servers) do
+            servers[serverId] = servers[serverId] or {}
+            servers[serverId][chunk.id] = chunk.size
+        end
+    end
+    cloud.tickets[token] = { mode = mode, file_id = record.file_id,
+        expires_at = util.nowMs() + cloud.ticket_ms, servers = servers }
+    return token
+end
+
+-- Which computer each server named in a plan is, for the Pocket to send to.
+function cloud.hosts(chunks)
+    local hosts, data = {}, cloud.store()
+    for _, chunk in ipairs(chunks) do
+        for _, serverId in ipairs(chunk.servers) do
+            local server = data.servers[serverId]
+            hosts[serverId] = server and server.computer_id or nil
+        end
+    end
+    return hosts
+end
+
+-- Placing ----------------------------------------------------------------------------
+-- Each piece on the servers with the most room, a different server for each
+-- copy. Room is taken as it is handed out, so one big file spreads across
+-- servers rather than filling the first; and none of it is promised until
+-- all of it fits.
+function cloud.place(fileId, version, size, untilMs)
+    local data, now = cloud.store(), util.nowMs()
+    local live = {}
+    for _, server in pairs(data.servers) do
+        if cloud.online(server, now) then
+            live[#live + 1] = { server = server, room = cloud.room(server) }
+        end
+    end
+    need(#live > 0, "CLOUD_OFFLINE", "No Cloud Server is running right now")
+    local copies = math.min(cloud.copies, #live)
+    local chunks, left = {}, size
+    while left > 0 do
+        local piece = math.min(cloud.chunk, left)
+        local cost = math.max(piece, cloud.min_file)
+        left = left - piece
+        table.sort(live, function(a, b)
+            if a.room ~= b.room then return a.room > b.room end
+            return a.server.server_id < b.server.server_id
+        end)
+        local servers = {}
+        for copy = 1, copies do
+            need(live[copy].room >= cost, "CLOUD_FULL",
+                "The Cloud Servers are full. More can be set up with Easy Deployment")
+            live[copy].room = live[copy].room - cost
+            servers[copy] = live[copy].server.server_id
+        end
+        chunks[#chunks + 1] = { id = fileId .. "." .. version .. "." .. (#chunks + 1),
+            size = piece, servers = servers }
+    end
+    for _, chunk in ipairs(chunks) do
+        for _, serverId in ipairs(chunk.servers) do
+            local server = data.servers[serverId]
+            server.pending = server.pending or {}
+            server.pending[chunk.id] = { size = math.max(chunk.size, cloud.min_file),
+                until_ms = untilMs }
+        end
+    end
+    return chunks
+end
+
+-- Pieces nobody needs any more, for their servers to throw away on their next
+-- beat. Room promised to them is let go now.
+function cloud.retire(chunks)
+    local data = cloud.store()
+    for _, chunk in ipairs(chunks or {}) do
+        for _, serverId in ipairs(chunk.servers) do
+            local server = data.servers[serverId]
+            if server then
+                server.drop = server.drop or {}
+                server.drop[#server.drop + 1] = chunk.id
+                if server.pending then server.pending[chunk.id] = nil end
+            end
+        end
+    end
+end
+
+-- Files ------------------------------------------------------------------------------
+
+function cloud.owned(accountId)
+    local owners = cloud.store().owners
+    owners[accountId] = owners[accountId] or {}
+    return owners[accountId]
+end
+
+-- An upload that stopped. A file that never finished once is not a file.
+function cloud.abandon(record)
+    if not record.next then return end
+    cloud.retire(record.next.chunks)
+    record.next = nil
+    if record.status ~= "ready" then
+        local data = cloud.store()
+        data.files[record.file_id] = nil
+        cloud.owned(record.owner)[record.file_id] = nil
+    end
+end
+
+function cloud.expire()
+    local now, changed = util.nowMs(), false
+    for token, ticket in pairs(cloud.tickets) do
+        if ticket.expires_at <= now then cloud.tickets[token] = nil end
+    end
+    for _, record in pairs(cloud.store().files) do
+        -- A little longer than the ticket, for a Pocket finishing its last piece.
+        if record.next and record.next.expires_at + 30000 <= now then
+            cloud.abandon(record)
+            changed = true
+        end
+    end
+    if changed then cloud.save() end
+end
+
+-- Room a file takes against its owner's plan. While a new version uploads the
+-- old one is still there, so it counts whichever is bigger.
+function cloud.weight(record)
+    return math.max(record.status == "ready" and record.size or 0,
+        record.next and record.next.size or 0)
+end
+
+function cloud.used(accountId, except)
+    local data, used = cloud.store(), 0
+    for fileId in pairs(cloud.owned(accountId)) do
+        local record = data.files[fileId]
+        if record and fileId ~= except then used = used + cloud.weight(record) end
+    end
+    return used
+end
+
+-- What the file is, from its name: FoxyCloud opens text and plays MIDI.
+function cloud.kindOf(name)
+    local ending = string.lower(tostring(name):match("%.(%w+)$") or "")
+    if ending == "txt" or ending == "md" or ending == "" then return "text" end
+    if ending == "mid" or ending == "midi" then return "midi" end
+    if ending == "lua" then return "lua" end
+    if ending == "nfp" then return "image" end
+    return "file"
+end
+
+function cloud.name(value)
+    local name = util.safeText(util.trim(tostring(value or "")), 24)
+    need(#name >= 1 and name:match("^[%w][%w _%.%-]*$") ~= nil, "BAD_NAME",
+        "Names are letters, numbers, spaces, dots, dashes and _")
+    return name
+end
+
+function cloud.public(record)
+    return {
+        file_id = record.file_id, name = record.name, kind = record.kind,
+        size = record.size, version = record.version,
+        updated_day = record.updated_day, created_day = record.created_day,
+        share = record.share, uploading = record.next ~= nil,
+    }
+end
+
+function cloud.mine(account, fileId)
+    local record = cloud.store().files[tostring(fileId or "")]
+    need(record and record.owner == account.account_id
+        and (record.status == "ready" or record.next), "NOT_FOUND",
+        "That file is not in your FoxyCloud")
+    return record
+end
+
+function cloud.byName(accountId, name)
+    local data, wanted = cloud.store(), string.lower(name)
+    for fileId in pairs(cloud.owned(accountId)) do
+        local record = data.files[fileId]
+        if record and string.lower(record.name) == wanted then return record end
+    end
+    return nil
+end
+
+function cloud.open(record)
+    need(record.status == "ready", "UPLOADING", "That file is still uploading")
+    return {
+        file = cloud.public(record),
+        ticket = cloud.ticket("get", record, record.chunks),
+        chunks = util.copy(record.chunks), hosts = cloud.hosts(record.chunks),
+        expires_in_ms = cloud.ticket_ms,
+    }
+end
+
+function actions.CLOUD_FILES(payload, caller)
+    local account = whoIsAsking(caller)
+    cloud.expire()
+    local data, list = cloud.store(), {}
+    for fileId in pairs(cloud.owned(account.account_id)) do
+        local record = data.files[fileId]
+        if record and record.status == "ready" then list[#list + 1] = cloud.public(record) end
+    end
+    table.sort(list, function(a, b)
+        local left, right = string.lower(a.name), string.lower(b.name)
+        if left ~= right then return left < right end
+        return a.file_id < b.file_id
+    end)
+    local servers, room = cloud.capacity()
+    return { files = list, used = cloud.used(account.account_id),
+        quota = math.floor(tonumber(caller.cloud_quota) or 0),
+        plan = caller.cloud_plan, servers = servers, room = room }
+end
+
+-- Starting an upload: a new file by its name, or a new version of one the
+-- person has. The answer is where every piece goes and the ticket for it;
+-- the file is not there until CLOUD_PUT_DONE.
+function actions.CLOUD_PUT(payload, caller)
+    local account = whoIsAsking(caller)
+    cloud.expire()
+    local data = cloud.store()
+    local size = math.floor(tonumber(payload.size) or -1)
+    need(size >= 0, "BAD_SIZE", "That file has no size")
+    local record, name
+    if payload.file_id then
+        record = cloud.mine(account, payload.file_id)
+    else
+        name = cloud.name(payload.name)
+        need(not cloud.byName(account.account_id, name), "NAME_TAKEN",
+            "You already have a file called " .. name)
+        local count = 0
+        for _ in pairs(cloud.owned(account.account_id)) do count = count + 1 end
+        need(count < cloud.max_files, "TOO_MANY_FILES",
+            "FoxyCloud holds up to " .. cloud.max_files .. " files")
+    end
+    local quota = math.floor(tonumber(caller.cloud_quota) or 0)
+    local others = cloud.used(account.account_id, record and record.file_id)
+    need(others + size <= quota, "CLOUD_QUOTA", "That needs "
+        .. util.sizeText(size) .. " and you have "
+        .. util.sizeText(math.max(0, quota - others)) .. " free"
+        .. (caller.cloud_plan == "plus" and "" or ". FoxyCloud+ has more room"))
+    local fileId = record and record.file_id
+    if not fileId then
+        data.seq = data.seq + 1
+        fileId = "F" .. data.seq
+    end
+    local version = record and ((record.next and record.next.version
+        or record.version or 0) + 1) or 1
+    local untilMs = util.nowMs() + cloud.ticket_ms
+    local chunks = cloud.place(fileId, version, size, untilMs)
+    if record then
+        -- A version already on its way is overtaken by this one.
+        if record.next then cloud.retire(record.next.chunks) end
+    else
+        record = { file_id = fileId, owner = account.account_id, name = name,
+            kind = cloud.kindOf(name), size = 0, version = 0, chunks = {},
+            status = "new", created_day = util.ingameDay() }
+        data.files[fileId] = record
+        cloud.owned(account.account_id)[fileId] = true
+    end
+    record.next = { version = version, size = size, chunks = chunks,
+        expires_at = untilMs }
+    cloud.save()
+    return { file_id = fileId, version = version,
+        ticket = cloud.ticket("put", record, chunks),
+        chunks = util.copy(chunks), hosts = cloud.hosts(chunks),
+        chunk_size = cloud.chunk, expires_in_ms = cloud.ticket_ms }
+end
+
+-- Every piece is on its server: this version is the file now, and the last
+-- one's pieces go.
+function actions.CLOUD_PUT_DONE(payload, caller)
+    local account = whoIsAsking(caller)
+    local record = cloud.mine(account, payload.file_id)
+    local upload = record.next
+    need(upload and upload.version == math.floor(tonumber(payload.version) or -1),
+        "NOT_UPLOADING", "That upload is over. Try it again")
+    cloud.retire(record.chunks)
+    record.chunks, record.size, record.version = upload.chunks, upload.size,
+        upload.version
+    record.next, record.status = nil, "ready"
+    record.updated_day, record.updated_at = util.ingameDay(), util.nowMs()
+    -- The room these pieces were promised is on their servers' own disks now,
+    -- and each server's next beat counts it.
+    local data, now = cloud.store(), util.nowMs()
+    for _, chunk in ipairs(record.chunks) do
+        for _, serverId in ipairs(chunk.servers) do
+            local server = data.servers[serverId]
+            local promised = server and server.pending and server.pending[chunk.id]
+            if promised then promised.until_ms = now end
+        end
+    end
+    for token, ticket in pairs(cloud.tickets) do
+        if ticket.file_id == record.file_id and ticket.mode == "put" then
+            cloud.tickets[token] = nil
+        end
+    end
+    cloud.save()
+    return { file = cloud.public(record), used = cloud.used(account.account_id),
+        quota = math.floor(tonumber(caller.cloud_quota) or 0) }
+end
+
+function actions.CLOUD_GET(payload, caller)
+    local account = whoIsAsking(caller)
+    return cloud.open(cloud.mine(account, payload.file_id))
+end
+
+function actions.CLOUD_RENAME(payload, caller)
+    local account = whoIsAsking(caller)
+    local record = cloud.mine(account, payload.file_id)
+    local name = cloud.name(payload.name)
+    local taken = cloud.byName(account.account_id, name)
+    need(not taken or taken == record, "NAME_TAKEN",
+        "You already have a file called " .. name)
+    record.name, record.kind = name, cloud.kindOf(name)
+    cloud.save()
+    return { file = cloud.public(record) }
+end
+
+function actions.CLOUD_DELETE(payload, caller)
+    local account = whoIsAsking(caller)
+    local record = cloud.mine(account, payload.file_id)
+    local data = cloud.store()
+    cloud.retire(record.chunks)
+    if record.next then cloud.retire(record.next.chunks) end
+    if record.share then data.shares[record.share] = nil end
+    data.files[record.file_id] = nil
+    cloud.owned(account.account_id)[record.file_id] = nil
+    cloud.save()
+    return { deleted = record.file_id, used = cloud.used(account.account_id),
+        quota = math.floor(tonumber(caller.cloud_quota) or 0) }
+end
+
+-- Sharing: a code that opens one file, read-only, for whoever has it -- like
+-- a website's address. Taking the share away makes the code stop working.
+function actions.CLOUD_SHARE(payload, caller)
+    local account = whoIsAsking(caller)
+    local record = cloud.mine(account, payload.file_id)
+    local data = cloud.store()
+    if payload.share == false then
+        if record.share then data.shares[record.share] = nil end
+        record.share = nil
+    elseif not record.share then
+        local code
+        repeat code = util.randomString(6) until not data.shares[code]
+        data.shares[code] = record.file_id
+        record.share = code
+    end
+    cloud.save()
+    return { file = cloud.public(record) }
+end
+
+function actions.CLOUD_SHARED(payload, caller)
+    local code = string.upper(util.trim(tostring(payload.code or "")))
+    local data = cloud.store()
+    local record = data.files[data.shares[code] or ""]
+    need(record and record.share == code, "NOT_FOUND",
+        "No shared file has that code")
+    local opened = cloud.open(record)
+    opened.owner_name = nameOf(record.owner)
+    return opened
+end
+
 local vault = {}
 
 -- Every client request its Core forwarded. The Core has already decided who
@@ -5599,6 +6176,7 @@ if TEST_MODE then
         cleanup_calls = cleanupUrgentCalls,
         sweep_orders = sweepOrders,
         mail = mail,
+        cloud = cloud,
         wire = wire,
         updates_itself = updatesItself,
         free_leftovers = freeLeftovers,
@@ -5652,6 +6230,7 @@ local function sweepLoop()
             everyMinute = util.nowMs() + 60000
             pcall(sweepTravel)
             pcall(sweepOrders)
+            pcall(cloud.expire)
             save()
         end
         sleep(1)
@@ -5680,8 +6259,13 @@ local function dashboardLoop()
                 { "COUNTRIES", mapCount(state.territories), colors.lime } }
         end,
         lines = function()
+            -- FoxyOS 16.3: the Cloud Servers this Vault keeps the directory for.
+            local servers, room = cloud.capacity()
             return { { "CORE  " .. dash.core, dash.core_color },
-                { "INTERNET  " .. dash.update_status, dash.update_color } }
+                { "INTERNET  " .. dash.update_status, dash.update_color },
+                { "CLOUD  " .. servers .. " server" .. (servers == 1 and "" or "s")
+                    .. " online, " .. util.sizeText(room) .. " free",
+                    servers > 0 and colors.cyan or colors.lightGray } }
         end,
         tick = function()
             if core.id then
