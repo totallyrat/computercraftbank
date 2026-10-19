@@ -194,6 +194,9 @@ function ui.networkError(_, err) error("unexpected network error: " .. tostring(
 local polls = {}
 actions = {
     "login",
+    -- FoxyOS 18: all set, and the guide's last step (a stub scene has
+    -- nothing for the others to point at).
+    "start", "tour:done",
     -- A ticket check while the home screen is open.
     "__wake:ticket", "yes",
     -- A border check, which warns to stand close before the gate opens.

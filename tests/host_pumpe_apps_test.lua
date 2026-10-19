@@ -291,12 +291,17 @@ ui.tabBar, ui.runTabs = realUi.tabBar, realUi.runTabs
 
 actions = {
     "login",
+    -- FoxyOS 18: all set, and the guide (only its last step: a stub scene
+    -- has nothing for it to point at).
+    "start", "tour:done",
     -- FoxyOS 17: FoxyCloud came with Yap!, so the App Browser and Settings
     -- are on the second page now.
     "next",
     "open:browser",                      -- the App Browser
     "explore",                           -- FoxyOS 15: every app, in a list
-    "open:NOTES", "get",                 -- install one; that closes it
+    "open:NOTES", "get",                 -- install one: FoxyOS 18, straight
+                                         -- to the Home Screen, where it pops up
+    "open:browser", "explore",
     "next",                              -- FoxyOS 17: FoxyCloud is listed too
     "open:ROTTEN", "get", "back",        -- one that arrives damaged
     "back",                              -- back to the front page
@@ -531,7 +536,7 @@ local function cards(text)
     return found
 end
 index, actions = 0, {
-    "login",
+    "login", "start", "tour:done",
     function() mark = #drawnText return "open:browser" end,
     function(live)
         local text = since()

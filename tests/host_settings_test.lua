@@ -399,6 +399,7 @@ end
 actions = {
     "cancel",                          -- the update question, before anything
     "login",
+    "start", "tour:done",              -- FoxyOS 18: all set, and the guide
     -- 9.4: the Bank app left the Home Screen, so the built-in apps fit on
     -- one page and Settings no longer needs a page turn to reach.
     "open:settings",
@@ -755,7 +756,8 @@ assert(welcomeOk or tostring(welcomeErr):find("more actions", 1, true),
     tostring(welcomeErr))
 local welcomed = false
 for at = drawsBeforeWelcome + 1, #drawnText do
-    if drawnText[at]:find("Let us get you started", 1, true) then welcomed = true end
+    -- FoxyOS 18: hello, over the Pocket's name.
+    if drawnText[at]:find("Money, friends, tickets", 1, true) then welcomed = true end
 end
 assert(welcomed, "a phone with no account is asked who it belongs to")
 

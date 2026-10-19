@@ -5,8 +5,9 @@
 -- page, with every screen bounds-checked at 26x20.
 local actions = {
     "create",                                        -- new account
-    -- 12.0 Final: three guide steps and Welcome to Foxy, with no Skip.
-    "next", "next", "next", "next",
+    -- FoxyOS 18: a phone number, all set, and the guide on the Home Screen
+    -- (a stub scene has nothing to point at, so only its last step shows).
+    "get", "start", "tour:done",
     "edit", "pick:tickets", "pick:friends", "back",  -- fill the dock
     "open:tickets", "home",                          -- an app from the dock
     -- 9.4: there is no Bank tab. Payments, the bet wallet and activity all
@@ -63,7 +64,8 @@ local actions = {
     "prev",                                          -- back to the apps
     -- 12.0: Settings has tabs. The guide is on Account, the dock on Apps,
     -- and (12.0 Final, no More) Close PUMPE is on Account too.
-    "open:settings", "tab:account", "guide", "next", "next", "next", "next",
+    -- FoxyOS 18: How Pocket Works is the guide on the Home Screen again.
+    "open:settings", "tab:account", "guide", "tour:skip", "open:settings",
     "tab:apps", "dock", "back", "tab:account", "close",
 }
 local buttonLabels, drawnText, requests = {}, {}, {}
@@ -257,6 +259,8 @@ local client = {
             return { account = account, session_token = "SESSION" }
         elseif action == "MUSIC_WHERE" then
             return { computer_id = 30 }
+        elseif action == "PHONE_GET" then
+            return { number = "555-0100" }
         elseif action == "CLOUD_FILES" then
             assert(payload.app_id == nil, "the CCG app is the Pocket's own")
             return { files = { { file_id = "F7", name = "Notes.txt", kind = "text", size = 9 },
@@ -927,14 +931,18 @@ assert(ticketsBought == 2 and queueLeft,
     "two bought, and the turn handed back for the next person")
 assert(find(buttonLabels, "Buy 2  $50"), "the total, on the button")
 assert(find(drawnText, "Setting up your"))
-assert(find(drawnText, "Welcome to Foxy"), "the guide ends with Welcome to Foxy")
-assert(find(buttonLabels, "Start") and not find(buttonLabels, "Skip"),
-    "and has no way to skip it")
+-- FoxyOS 18: setting up ends with all set, and the guide that follows on the
+-- Home Screen can be skipped (Settings shows it again).
+assert(find(buttonLabels, "Show me round") and find(buttonLabels, "Skip"),
+    "all set, then a guide that can be skipped")
 assert(find(drawnText, "Foxy Account"))
 assert(find(drawnText, "Preparing your Pocket"))
 -- Sign-up ends in the guide, and Settings can re-open the same screens.
 assert(find(drawnText, "How Pocket Works"))
-assert(find(drawnText, "Step 1 of 3"), "three steps now, where there were six")
+assert(find(drawnText, "Your number") and find(drawnText, "555-0100"),
+    "FoxyOS 18: a phone number while setting up")
+assert(find(drawnText, "You're all set") and find(drawnText, "Locking 6/6"),
+    "all set, then the guide on the Home Screen")
 -- 12.0: a Settings row is a label drawn on its button, as in the Foxy app.
 assert(find(drawnText, "How Pocket Works"))
 assert(find(drawnText, "Edit Your Dock"))
