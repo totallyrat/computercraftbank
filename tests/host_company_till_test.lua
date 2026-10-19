@@ -186,16 +186,34 @@ run(script, { width = 51, height = 19, screens = { screen } })
 
 -- Till mode, FoxyOS 14: full screen, awake, and the PIN to leave -------------------------------
 
-local pins = {}
-local function runTill(script, wanted)
+-- FoxyOS 18: only on the Pocket Desktop, which gives the till the whole
+-- screen (api.desktop.kiosk) for as long as it is open.
+local pins, kiosk = {}, {}
+local function runTill(script, wanted, noDesktop)
     return phone.run({ bank = bank, who = ana, file = "../company.lua",
         script = script, wanted = wanted, app_id = "COMPANY",
         position = at(0, 0), kept = kept,
+        api = { desktop = not noDesktop and function()
+            return { kiosk = function(on) kiosk[#kiosk + 1] = on return true end }
+        end or nil },
         pin = function(reason)
             pins[#pins + 1] = reason
             return table.remove(script.pins, 1)
         end })
 end
+
+-- Without the desktop: Till mode says where it is, and does not start.
+script = phone.script()
+phone.push(script.actions, function(seen)
+    assert(phone.said(seen, "Till mode").body:find("Pocket Desktop", 1, true),
+        "it needs the Pocket Desktop")
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Pocket Desktop") and not phone.has(frame, "TILL MODE"),
+        "the Till mode tab says so too")
+    return "home"
+end)
+runTill(script, "till", true)
+assert(#kiosk == 0 and #pins == 0)
 script = phone.script()
 phone.push(script.actions, function(seen)
     local frame = phone.last(seen)
@@ -217,6 +235,9 @@ phone.push(script.pins, false, false, true, true)
 seen = runTill(script, "till")
 assert(#pins == 4 and pins[1] == "Leave till mode", "leaving always asks for the PIN")
 assert((seen.awake or 0) >= 4, "and the till keeps the Pocket awake")
+assert(table.concat({ tostring(kiosk[1]), tostring(kiosk[2]), tostring(kiosk[3]),
+    tostring(kiosk[4]) }, " ") == "true false true false",
+    "the whole screen while it is open, given back after: twice")
 
 -- From a company's Sell tab, More has Till mode first.
 script = phone.script()

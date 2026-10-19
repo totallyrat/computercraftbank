@@ -938,6 +938,9 @@ assert(find(drawnText, "Step 1 of 3"), "three steps now, where there were six")
 -- 12.0: a Settings row is a label drawn on its button, as in the Foxy app.
 assert(find(drawnText, "How Pocket Works"))
 assert(find(drawnText, "Edit Your Dock"))
+-- FoxyOS 18: a pocket computer has no Pocket Desktop to switch on.
+assert(find(drawnText, "Main colour") and not find(drawnText, "Pocket Desktop"),
+    "Settings offers the Pocket Desktop only where it can run")
 
 -- 9.4: the PUMPE itself offers no way to pay. Foxy Cash and Foxy Pay are
 -- the Foxy app's, and a kiosk code belongs to a third-party bank app, so

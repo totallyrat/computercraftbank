@@ -123,6 +123,10 @@ local appSettingsScreen
 -- Reminders and QuickActions. Declared here because the Home Screen builds
 -- its icon grid from them, and that happens further up the file than they do.
 local agenda
+-- FoxyOS 18: the Pocket Desktop (lib/desktop), on a standing computer's
+-- screen. Declared here because Settings switches it and apps open into it,
+-- further up the file than it is built. `screen` is the computer's own.
+local desk = { screen = target }
 
 local function request(action, payload, silent)
     payload = payload or {}
@@ -2767,13 +2771,7 @@ do
             offline, function()
                 local where = request("MUSIC_WHERE", {}, true)
                 return where and where.computer_id or nil
-            end, function(id)
-                if id and id ~= device.music_server then
-                    device.music_server = id
-                    saveDevice()
-                end
-                return device.music_server
-            end)
+            end, desk.musicServer)
         if not music then return end
         local items, listed, err = {}, nil, nil
         if kind == "radio" then
@@ -5559,6 +5557,9 @@ local developerScreen
 -- searches it, and a QuickAction can name one -- off one table rather than
 -- three that drift apart.
 local SETTINGS_ACTIONS = {
+    -- FoxyOS 18: only where it can be, on a standing computer's screen.
+    { id = "desktop", label = "Pocket Desktop", hint = "Apps in windows",
+      tab = "phone", only = function() return desk.fits() end },
     { id = "color", label = "Main colour", hint = "How your Pocket looks",
       tab = "phone" },
     { id = "network", label = "Network", hint = "Modem on or off", tab = "phone" },
@@ -5594,6 +5595,8 @@ local function settingsScreen(wanted)
                 device.modem_on == false
         elseif id == "updates" then
             return device.update_mode == "auto" and "Auto" or "Ask", false
+        elseif id == "desktop" then
+            return device.desktop and "On" or "Off", false
         elseif id == "color" then
             for _, entry in ipairs(ui.MAIN_COLORS) do
                 if entry.id == ui.mainColor then return entry.label, false end
@@ -5609,6 +5612,7 @@ local function settingsScreen(wanted)
             networkScreen()
             if not sessionToken and not offline() then return "exit" end
         elseif id == "color" then ui.pickMainColor(target, ROOT)
+        elseif id == "desktop" then return desk.toggle()
         elseif id == "storage" then storageScreen()
         elseif id == "updates" then updatesScreen()
         elseif id == "apps" then appSettingsScreen()
@@ -5671,8 +5675,16 @@ local function settingsScreen(wanted)
                         or "Offline", width - 6), ui.theme.muted, ui.theme.panel)
                     y = y + 4
                 end
+                -- FoxyOS 18: a tab with more than fits packs its rows closer.
+                local shown = {}
                 for _, item in ipairs(SETTINGS_ACTIONS) do
-                    if item.tab == tabId and y + 1 <= ui.contentBottom(target) then
+                    if item.tab == tabId and (not item.only or item.only()) then
+                        shown[#shown + 1] = item
+                    end
+                end
+                local step = #shown * 3 - 1 <= ui.contentBottom(target) - y + 1 and 3 or 2
+                for _, item in ipairs(shown) do
+                    if y + 1 <= ui.contentBottom(target) then
                         local danger = item.id == "logout"
                         local background = danger and ui.theme.danger or ui.theme.panel
                         scene:button(item.id, 2, y, width - 2, 2, "", {
@@ -5686,7 +5698,7 @@ local function settingsScreen(wanted)
                                 warn and ui.theme.warning or ui.theme.accent,
                                 background)
                         end
-                        y = y + 3
+                        y = y + step
                     end
                 end
                 ui.tabBar(scene, target, spec.list, spec.active)
@@ -7007,15 +7019,7 @@ local function runInstalledApp(entry, wantedAction)
             function() return sessionToken end, offline, function()
                 local where = request("MUSIC_WHERE", {}, true)
                 return where and where.computer_id or nil
-            end, function(id)
-                -- FoxyOS 18: the Music Server's computer, for while the Bank
-                -- is not answering. Only ever one the Bank named.
-                if id and id ~= device.music_server then
-                    device.music_server = id
-                    saveDevice()
-                end
-                return device.music_server
-            end) or nil,
+            end, desk.musicServer) or nil,
         cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC") and net.cloud
             and net.cloud.api
             and net.cloud.api(function(action, payload)
@@ -7030,6 +7034,9 @@ local function runInstalledApp(entry, wantedAction)
         -- its own, and the address itself.
         shop_store = entry.shop_store,
         domain = entry.domain,
+        -- FoxyOS 18: on the Pocket Desktop. kiosk(true) gives this app's
+        -- window the whole screen until kiosk(false): Till Mode.
+        desktop = desk.d and { kiosk = function(on) return desk.d.kiosk(on) end } or nil,
     })
     if not ok then
         ui.message(target, "error", entry.name .. " stopped",
@@ -8390,6 +8397,8 @@ end
 local function openApp(id, action)
     local app = APPS[id]
     if not app or not app.open then return false end
+    -- FoxyOS 18: on the Pocket Desktop, in a window of its own.
+    if desk.d then return desk.open(id, action) end
     opening.play(id, app)
     app.open(action)
     refreshInstalledApps()
@@ -8417,8 +8426,10 @@ function finder.everything()
         end
     end
     for _, item in ipairs(SETTINGS_ACTIONS) do
-        found[#found + 1] = { label = item.label, hint = item.hint,
-            kind = "Settings", app = "settings", action = item.id }
+        if not item.only or item.only() then
+            found[#found + 1] = { label = item.label, hint = item.hint,
+                kind = "Settings", app = "settings", action = item.id }
+        end
     end
     return found
 end
@@ -8890,8 +8901,10 @@ function agenda.quick(wanted)
     end
 end
 
-local function mainMenu()
-    -- The apps that are not hubs are wired here, where their screens exist.
+-- Both home screens, the phone's and (FoxyOS 18) the desktop's, start the
+-- same way: the apps that are not hubs wired to their screens, which exist
+-- by here, and the apps that should be on this Pocket brought in.
+function desk.startApps()
     APPS.ccg.open = ccgApp
     APPS.subs.open = subscriptionsScreen
     APPS.settings.open = settingsScreen
@@ -8913,6 +8926,10 @@ local function mainMenu()
         showBanner({ title = several and "New apps are here" or (included .. " is here"),
             body = several and included or "New on your Pocket, by Foxy" })
     end
+end
+
+local function mainMenu()
+    desk.startApps()
 
     local blink, tick, page, alertOffset = true, 0, 1, 0
     local poll = request("PUMPE_POLL", {}, true) or {}
@@ -8921,7 +8938,8 @@ local function mainMenu()
     refreshSummary(offline())
     enableDeviceLock()
 
-    while running and (sessionToken or offline()) do
+    -- FoxyOS 18: and for the Pocket Desktop, once Settings switches it on.
+    while running and (sessionToken or offline()) and not desk.wanted() do
         if not account then account = cachedProfile() end
         local width, height = target.getSize()
         local layout = homeLayout(width, height)
@@ -9056,6 +9074,331 @@ local function mainMenu()
     end
 end
 
+-- The Pocket Desktop, FoxyOS 18 -----------------------------------------------------
+-- The Pocket on a standing computer's screen: the apps on a desktop, each in a
+-- window of its own with its tabs down a sidebar, and the music on the taskbar
+-- (lib/desktop). Offered once on a screen that can have it, switched in
+-- Settings, and the only place Till Mode runs.
+
+function desk.lib()
+    local ok, loaded = pcall(require, "lib.desktop")
+    return ok and type(loaded) == "table" and loaded or nil
+end
+
+function desk.fits()
+    local lib = desk.lib()
+    return lib ~= nil and lib.fits(desk.screen)
+end
+
+function desk.wanted()
+    return device.desktop == true and desk.fits()
+end
+
+-- Once, on a screen bigger than a Pocket's.
+function desk.offer()
+    if device.desktop ~= nil or not desk.fits() then return end
+    device.desktop = ui.confirm(target, "Pocket Desktop", "This screen is bigger than a"
+        .. " Pocket's. Use it as a desktop, with every app in a window? Settings"
+        .. " can change it later.", "Desktop", "Phone")
+    saveDevice()
+end
+
+-- Settings' switch. Off leaves the desktop there and then; on starts it as
+-- soon as Settings closes.
+function desk.toggle()
+    device.desktop = not device.desktop
+    saveDevice()
+    if not device.desktop and desk.d then desk.d.leave("phone") end
+    if device.desktop and not desk.d then return "exit" end
+end
+
+-- The Music Server's computer, kept from what the Bank last said for while it
+-- is not answering (net.musicApi's `remember`).
+function desk.musicServer(id)
+    if id and id ~= device.music_server then
+        device.music_server = id
+        saveDevice()
+    end
+    return device.music_server
+end
+
+function desk.open(id, action)
+    local app = APPS[id]
+    if not app or not app.open or not desk.d then return false end
+    desk.d.open(function()
+        app.open(action)
+        refreshInstalledApps()
+        refreshSummary(true)
+    end, { id = id, title = app.name })
+    return true
+end
+
+-- The desktop itself: who you are, and every app, a column at a time from
+-- the left so the windows on the right leave them in sight.
+function desk.home(d)
+    desk.d = d
+    desk.startApps()
+    local page, tick = 1, 0
+    local poll = request("PUMPE_POLL", {}, true) or {}
+    while running and (sessionToken or offline()) and desk.d == d do
+        if not account then account = cachedProfile() end
+        local width, height = target.getSize()
+        desk.unread = poll.unread_notifications or 0
+        ui.clear(target)
+        ui.text(target, 2, 1, ui.truncate(account.name .. "  " .. (offline() and "Offline"
+            or money(account.balance)), width - 9), ui.theme.muted, ui.theme.background)
+        local scene = ui.scene(target)
+        local rows = math.max(1, math.floor((height - 2) / 3))
+        local per = rows * math.max(1, math.floor((width - 2) / 10))
+        local pages = math.max(1, math.ceil(#APP_ORDER / per))
+        page = math.max(1, math.min(page, pages))
+        for slot = 1, per do
+            local id = APP_ORDER[(page - 1) * per + slot]
+            if id and APPS[id] then
+                drawIcon(scene, "open:" .. id, APPS[id], 2 + math.floor((slot - 1) / rows) * 10,
+                    3 + ((slot - 1) % rows) * 3, { iconWidth = 8, cell = 10 },
+                    appBadge(id, poll))
+            end
+        end
+        if pages > 1 then
+            scene:button("page", width - 6, 1, 6, 1, page .. "/" .. pages,
+                { background = ui.theme.panel })
+        end
+        local action = scene:wait({ tickRate = 5 })
+        local id = action and action:match("^open:(.+)$")
+        if id then
+            desk.open(id)
+        elseif action == "page" then
+            page = page % pages + 1
+        elseif action == "__tick" or action == "__wake" then
+            tick = tick + 1
+            agenda.tick()
+            checkForUpdate(false)
+            local back = prioritize.restore()
+            local updated = updateApps(false)
+            if #back > 0 or #updated > 0 then refreshInstalledApps() end
+            poll = request("PUMPE_POLL", {}, true) or poll
+            if poll.balance and account then account.balance = poll.balance end
+            if not sessionToken and not offline() then return end
+        end
+    end
+end
+
+-- The notification centre, in a window.
+function desk.alerts()
+    local offset = 0
+    while running and (sessionToken or offline()) do
+        local loaded = request("NOTIFICATIONS", {}, true)
+        local items = loaded and loaded.notifications or {}
+        local unread = 0
+        for _, item in ipairs(items) do
+            if not item.read then unread = unread + 1 end
+        end
+        local width, height = target.getSize()
+        ui.clear(target)
+        ui.header(target, "Notifications", unread > 0 and (unread .. " unread")
+            or "All caught up", util.formatClock())
+        local scene = ui.scene(target)
+        local perView = drawAlertsPage(scene, items, offset, width, { dividerY = height - 1 })
+        local action = scene:wait({ tickRate = 15 })
+        local note = tonumber(action and action:match("^note:(%d+)$"))
+        if note and items[note] then
+            notificationDetail(items[note])
+        elseif action == "markread" then
+            request("MARK_NOTIFICATIONS_READ", {}, true)
+        elseif action == "scrollup" then
+            offset = math.max(0, offset - perView)
+        elseif action == "scrolldown" then
+            offset = offset + perView
+        end
+    end
+end
+
+function desk.menu()
+    local unread = desk.unread or 0
+    return {
+        { id = "search", label = "Search" },
+        { id = "alerts", label = unread > 0 and ("Notifications (" .. unread .. ")")
+            or "Notifications" },
+        { id = "settings", label = "Settings" },
+        { id = "lock", label = "Lock" },
+        { id = "phone", label = "Phone layout" },
+        { id = "close", label = "Close Pocket" },
+    }
+end
+
+function desk.choose(id, d)
+    if id == "search" then
+        d.open(function() finder.screen() end, { id = "search", title = "Search" })
+    elseif id == "alerts" then
+        d.open(desk.alerts, { id = "alerts", title = "Notifications" })
+    elseif id == "settings" then
+        desk.open("settings")
+    elseif id == "lock" then
+        d.modal(function() lockScreen(true) end)
+    elseif id == "phone" then
+        device.desktop = false
+        saveDevice()
+        d.leave("phone")
+    elseif id == "close" then
+        d.open(function()
+            if ui.confirm(target, "Close Pocket", "Shut down the Pocket app?", "CLOSE", "BACK") then
+                running = false
+                d.leave("close")
+            end
+        end, { id = "close", title = "Close Pocket" })
+    end
+end
+
+-- The music on the taskbar. With a speaker beside this computer, the desktop
+-- is a Music Player of its own -- "<name>'s Desktop" in the Music app -- and
+-- plays right here (lib/music's engine); without one, it shows and controls
+-- whichever of your Music Players is playing.
+function desk.musicSetup()
+    if desk.music ~= nil then return desk.music end
+    local ok, lib = pcall(require, "lib.music")
+    if not ok or type(lib) ~= "table" or not lib.engine or not net.musicApi then
+        desk.music = false
+        return false
+    end
+    local function where()
+        local found = request("MUSIC_WHERE", {}, true)
+        return desk.musicServer(found and found.computer_id or nil)
+    end
+    local client = lib.client(config, where)
+    desk.music = { lib = lib,
+        api = net.musicApi(config, function() return sessionToken end, offline, where,
+            desk.musicServer) }
+    desk.music.engine = lib.engine({
+        request = function(action, payload, timeout)
+            if offline() then return nil, "Modem is off", "MODEM_OFF" end
+            return client:request(action, payload, timeout)
+        end,
+        token = function()
+            local mine = device.desktop_player
+            return type(mine) == "table" and account and mine.account_id == account.account_id
+                and mine.token or nil
+        end,
+        keep = function(token)
+            device.desktop_player = token and account
+                and { token = token, account_id = account.account_id } or nil
+            saveDevice()
+        end,
+        speakers = lib.speakers, protocol = config.cloud_protocol,
+    })
+    return desk.music
+end
+
+function desk.musicPoll()
+    local m = desk.musicSetup()
+    if not m or offline() or not sessionToken or not account then
+        desk.now = nil
+        return
+    end
+    if #m.lib.speakers() > 0 then
+        if not m.engine.token() then
+            m.engine.signIn(sessionToken, account.name .. "'s Desktop")
+        end
+        m.engine.tick(PROGRAM_VERSION)
+        local player = m.engine.player
+        desk.now = player and player.now and { title = player.now.title,
+            paused = player.paused, own = true } or nil
+    else
+        local listed = m.api.ask("MUSIC_PLAYERS")
+        local pick
+        for _, player in ipairs(listed and listed.players or {}) do
+            if player.online and player.now and not pick then pick = player end
+        end
+        desk.now = pick and { title = pick.now.title, paused = pick.paused,
+            player_id = pick.player_id } or nil
+    end
+end
+
+function desk.musicTap(part)
+    if part == "open" then
+        if not desk.open("ext:MUSIC") then
+            ui.message(target, "warning", "Music", "Get the Music app first", 1.4)
+        end
+        return
+    end
+    local m = desk.musicSetup()
+    if not m or not desk.now then return end
+    local command = part == "next" and "next" or (desk.now.paused and "resume" or "pause")
+    if desk.now.own then
+        m.engine.control(command)
+    else
+        m.api.ask("MUSIC_CONTROL", { player_id = desk.now.player_id, command = command })
+    end
+    desk.musicPoll()
+end
+
+-- Waiting, in the background, for a timer of its own.
+function desk.pause(seconds)
+    local timer = os.startTimer(seconds)
+    repeat
+        local _, id = os.pullEvent("timer")
+    until id == timer
+end
+
+-- A second a tick while it plays here (a Music Player says where it is in
+-- the song every second); every three seconds otherwise.
+function desk.musicLoop()
+    while desk.d do
+        pcall(desk.musicPoll)
+        desk.pause(desk.now and desk.now.own and 1 or 3)
+    end
+end
+
+function desk.audioLoop()
+    while desk.d do
+        local m = desk.musicSetup()
+        if m and m.engine.token() and #m.lib.speakers() > 0 then
+            if not pcall(m.engine.step) then desk.pause(2) end
+        else
+            desk.pause(3)
+        end
+    end
+end
+
+-- Runs the desktop until it is left: "phone" for the phone layout, "close".
+-- The desktop locks itself, over every window, so the Pocket's own idle lock
+-- is off while it runs; banners and calls still arrive, in the window in
+-- front.
+function desk.run()
+    local lib = desk.lib()
+    if not lib or not lib.fits(desk.screen) then return "phone" end
+    ui.setIdleLock(nil)
+    local why = lib.run({
+        screen = desk.screen, ui = ui,
+        setTarget = function(t) target = t end,
+        home = desk.home,
+        menu = desk.menu,
+        choose = desk.choose,
+        music = { status = function() return desk.now end,
+            tap = function(part) desk.musicTap(part) end },
+        services = { desk.musicLoop, desk.audioLoop },
+        lock = { seconds = tonumber(config.pumpe_lock_seconds) or 60,
+            run = function() lockScreen(false) end },
+        clock = function() return util.formatClock() end,
+        running = function() return running and (sessionToken ~= nil or offline()) end,
+    })
+    desk.d, desk.now = nil, nil
+    target = desk.screen
+    local m = desk.music
+    if m and m.lib then m.lib.stop(m.lib.speakers()) end
+    if sessionToken then enableDeviceLock() end
+    return why
+end
+
+-- host_pocket_desktop_test: the Pocket Desktop's half of the Pocket, signed in.
+if rawget(_G, "PUMPE_DESK_TEST") == true then
+    return { desk = desk, device = device, signIn = function(name, pin)
+        local result = client:request("LOGIN", { name = name, pin = pin })
+        sessionToken, account = result and result.session_token, result and result.account
+        return result
+    end }
+end
+
 -- The start-up. Nothing is being downloaded here, so nothing here should
 -- look like it is: the long screen belongs to an update and only to an
 -- update. A device still carrying an older shared library keeps an older
@@ -9104,7 +9447,11 @@ while running do
             if not ui.hasMainColor(ROOT) then ui.saveMainColor(ROOT, ui.mainColor) end
         end
     end
-    if sessionToken or offline() then mainMenu() end
+    if sessionToken or offline() then
+        -- FoxyOS 18: a screen bigger than a Pocket's is offered the desktop.
+        desk.offer()
+        if desk.wanted() then desk.run() else mainMenu() end
+    end
 end
 
 ui.clear(target)

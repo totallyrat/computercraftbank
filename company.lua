@@ -1330,7 +1330,10 @@ return function(api)
     -- the Pocket from locking while it is open, and asks for the PIN to
     -- leave. Without it, Sell is a tab like the others and the Pocket locks
     -- as it always does.
-    local function sellPage(company, tillMode)
+    -- FoxyOS 18: Till mode runs on the Pocket Desktop only, which gives the
+    -- till the whole screen and keeps it there (api.desktop.kiosk).
+    local sellPage
+    local function sellLoop(company, tillMode)
         local desk, err = till.start(company)
         while running() and not desk do
             local width = target.getSize()
@@ -1839,6 +1842,21 @@ return function(api)
         return "home"
     end
 
+    sellPage = function(company, tillMode)
+        if not tillMode then return sellLoop(company, false) end
+        local desktop = api.desktop
+        if not (desktop and desktop.kiosk) then
+            ui.message(target, "warning", "Till mode", "It needs the Pocket Desktop:"
+                .. " on a computer, turn it on in Settings", 2.6)
+            return "home"
+        end
+        desktop.kiosk(true)
+        local ok, result = pcall(sellLoop, company, true)
+        desktop.kiosk(false)
+        if not ok then error(result, 0) end
+        return result
+    end
+
     -- Till mode, FoxyOS 14 --------------------------------------------------------------
 
     -- The till this device last sold at, or the only company there is.
@@ -1862,9 +1880,11 @@ return function(api)
                 or "Your till, full screen", util.formatClock())
             local scene = ui.scene(target)
             ui.card(target, 2, 5, width - 2, 6, ACCENT)
-            ui.wrappedText(target, 4, 5, "The till fills the screen and this"
-                .. " Pocket stays awake. Leaving asks for your PIN. On a computer,"
-                .. " every colour monitor faces the customer.", width - 6, 6,
+            -- FoxyOS 18: on the Pocket Desktop, and nowhere else.
+            ui.wrappedText(target, 4, 5, api.desktop and ("The till fills the screen and"
+                .. " stays awake. Leaving asks for your PIN. Every colour monitor faces"
+                .. " the customer.") or ("Till mode runs on the Pocket Desktop: on a"
+                .. " computer, turn it on in Settings."), width - 6, 6,
                 ui.theme.ink, ui.theme.panel)
             if #companies == 0 then
                 ui.wrappedText(target, 2, 12, listed and "Start a company first,"
