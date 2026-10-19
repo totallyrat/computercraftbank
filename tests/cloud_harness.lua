@@ -56,12 +56,30 @@ function cloud.start(harness, bank)
             return disk.capacity - used
         end,
         delete = function(path) diskFor(path).files[clean(path)] = nil end,
+        move = function(from, to)
+            local disk = diskFor(from)
+            assert(disk.files[clean(from)] and not disk.files[clean(to)], "fs.move")
+            diskFor(to).files[clean(to)], disk.files[clean(from)] = disk.files[clean(from)], nil
+        end,
         open = function(path, mode)
             local disk, key = diskFor(path), clean(path)
             if mode:sub(1, 1) == "r" then
                 local data = disk.files[key]
                 if not data then return nil end
-                return { readAll = function() return data end, close = function() end }
+                -- A binary handle reads a count of bytes from where it was
+                -- sought to, as CC:Tweaked's does.
+                local at = 0
+                return { readAll = function() return data end, close = function() end,
+                    read = function(count)
+                        local part = data:sub(at + 1, at + (count or 1))
+                        at = at + #part
+                        return part ~= "" and part or nil
+                    end,
+                    seek = function(whence, offset)
+                        local base = whence == "cur" and at or whence == "end" and #data or 0
+                        at = math.max(0, base + (offset or 0))
+                        return at
+                    end }
             end
             local parts = {}
             return { write = function(text) parts[#parts + 1] = text end,
@@ -119,6 +137,15 @@ function cloud.start(harness, bank)
         host = function() end, unhost = function() end,
         lookup = function(protocol)
             if protocol == config.protocol then return BANK_ID end
+            -- FoxyOS 18: every Cloud Server that is up, as rednet.lookup
+            -- answers a protocol with no name.
+            if protocol == config.cloud_protocol then
+                local up = {}
+                for _, id in ipairs({ 11, 12, 13, 14, 15 }) do
+                    if servers[id] and servers[id].up then up[#up + 1] = id end
+                end
+                return table.unpack(up)
+            end
             for id, other in pairs(others) do
                 if other.protocol == protocol and other.up ~= false then return id end
             end

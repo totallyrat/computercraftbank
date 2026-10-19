@@ -713,7 +713,7 @@ return function(api)
             elseif action == "cancel" then
                 if ui.confirm(target, "Cancel?", "FoxyCloud+ stays until day "
                     .. tostring(plan.next_charge_day) .. ". Your files are kept.",
-                    "Cancel it", "Keep it") then
+                    "Cancel", "Keep") then
                     local cancelled, err = ask("CLOUD_PLUS_CANCEL")
                     if cancelled then state.plan = cancelled
                     else said("error", "Not cancelled", err) end

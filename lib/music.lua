@@ -4,7 +4,8 @@
 -- and the radios; the pieces are on the Cloud Servers like any FoxyCloud
 -- file, and whatever plays a song fetches them itself, one piece ahead.
 --
--- Shared by the Music Player, the CCG Casino and the Music Server.
+-- Shared by the Music Player, the CCG Casino, the Music Server and, FoxyOS 18,
+-- the Pocket Desktop.
 
 local util = require("lib.util")
 local net = require("lib.net")
@@ -70,10 +71,38 @@ function music.stop(speakers)
     end
 end
 
+-- A song kept on this computer, FoxyOS 18 (Offline Listening), as a plan
+-- music.play takes: the same pieces, read from the file one at a time.
+function music.keptPlan(path, size, each)
+    each = math.max(1, tonumber(each) or 16 * 1024)
+    local plan = { path = path, chunks = {} }
+    for first = 1, math.max(0, tonumber(size) or 0), each do
+        plan.chunks[#plan.chunks + 1] = { at = first - 1,
+            size = math.min(each, size - first + 1) }
+    end
+    return plan
+end
+
+local function keptPiece(plan, chunk)
+    local handle = fs.open(plan.path, "rb")
+    if not handle then return nil, "That song is not on this computer any more", "MISSING" end
+    local ok, data = pcall(function()
+        if handle.seek and handle.read then
+            handle.seek("set", chunk.at)
+            return handle.read(chunk.size)
+        end
+        return (handle.readAll() or ""):sub(chunk.at + 1, chunk.at + chunk.size)
+    end)
+    pcall(handle.close)
+    if ok and type(data) == "string" and #data == chunk.size then return data end
+    return nil, "The song kept here is damaged", "DAMAGED"
+end
+
 -- One piece of a song, from whichever of its copies answers whole.
 function music.piece(plan, index, protocol)
     local chunk = plan.chunks and plan.chunks[index]
     if not chunk then return nil, "There is no such piece", "MISSING" end
+    if plan.path then return keptPiece(plan, chunk) end
     local err, code
     for _, serverId in ipairs(chunk.servers or {}) do
         local got

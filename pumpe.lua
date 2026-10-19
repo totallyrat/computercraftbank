@@ -2767,6 +2767,12 @@ do
             offline, function()
                 local where = request("MUSIC_WHERE", {}, true)
                 return where and where.computer_id or nil
+            end, function(id)
+                if id and id ~= device.music_server then
+                    device.music_server = id
+                    saveDevice()
+                end
+                return device.music_server
             end)
         if not music then return end
         local items, listed, err = {}, nil, nil
@@ -7001,6 +7007,14 @@ local function runInstalledApp(entry, wantedAction)
             function() return sessionToken end, offline, function()
                 local where = request("MUSIC_WHERE", {}, true)
                 return where and where.computer_id or nil
+            end, function(id)
+                -- FoxyOS 18: the Music Server's computer, for while the Bank
+                -- is not answering. Only ever one the Bank named.
+                if id and id ~= device.music_server then
+                    device.music_server = id
+                    saveDevice()
+                end
+                return device.music_server
             end) or nil,
         cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC") and net.cloud
             and net.cloud.api

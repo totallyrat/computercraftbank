@@ -614,7 +614,10 @@ end
 -- the Music Server as whoever is signed in, and sending a song's pieces to
 -- the Cloud Servers for an upload. `where()` asks the Bank which computer is
 -- the registered Music Server: a session goes there and nowhere else.
-function net.musicApi(config, session, offline, where)
+-- FoxyOS 18: `remember`, if given, keeps the computer `where` last named
+-- (remember(id)) and says it again (remember()) while the Bank does not
+-- answer -- the Music Server goes on without the Bank, and so does this.
+function net.musicApi(config, session, offline, where, remember)
     local client
     local api = {}
     local function off()
@@ -628,7 +631,10 @@ function net.musicApi(config, session, offline, where)
             client = net.client({ protocol = config.music_protocol or "PUMPE_MUSIC_V1",
                 hostname = config.music_hostname or "MUSIC_SERVER" })
             function client:discover()
-                self.serverId = where()
+                local id = where()
+                if remember and id then remember(id) end
+                if remember and not id then id = remember() end
+                self.serverId = id
                 return self.serverId
             end
         end

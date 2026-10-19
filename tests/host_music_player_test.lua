@@ -123,6 +123,8 @@ local server = world.attach(MUSIC_ID, "music_server.lua", config.music_protocol,
 local registered = bank.request("MUSIC_SERVER_REGISTER", { code = "4040" })
 server.state.server_token, server.state.server_id = registered.server_token,
     registered.server_id
+as(MUSIC_ID, server.background.step)
+world.beatAll()
 local function import(title, kind, size)
     return as(MUSIC_ID, server.library.import, { title = title, artist = "Foxy",
         kind = kind, uploader_name = "Foxy Records" }, string.rep(title:sub(1, 1), size or 9000))
@@ -205,7 +207,7 @@ assert(player.shared.player.mode == "library")
 -- Its speaker plays it, fetched from the Cloud Servers, and then it is over.
 as(PLAYER_ID, player.audioStep)
 assert(box.samples == 9000 * 8, "the whole song through the speaker: " .. box.samples)
-assert(bank.state.accounts[kit.id].music_usage.plays == 1, "one of Kit's ten today")
+assert(server.state.usage[kit.id].plays == 1, "one of Kit's ten today, counted on the Music Server")
 assert(player.shared.player.mode == "idle", "nothing queued after it")
 
 -- The Radio tab: tune in. A giveaway is on, and Now Playing says the number.
@@ -232,7 +234,7 @@ screenState.timers = {}
 screen.push(steps, { tick = true })
 as(PLAYER_ID, player.audioStep)
 assert(box.samples > before, "the radio plays")
-assert(bank.state.accounts[kit.id].music_usage.plays == 1, "radios are free")
+assert(server.state.usage[kit.id].plays == 1, "radios are free")
 
 -- Signing out from the Upload tab.
 runScreen(function() return "tab:upload" end, function(state)

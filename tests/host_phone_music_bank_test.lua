@@ -1,7 +1,8 @@
 -- FoxyOS 17 at the Bank: FoxyCloud+ tiers, phone numbers and what a plan
 -- allows a day, calling a number, and the Music Server's side of it --
 -- songs played and uploaded, songs kept on the Cloud Servers, and radio
--- giveaways. A real Core and Vault, through the routes a client uses.
+-- giveaways; and FoxyMusic+, FoxyOS 18. A real Core and Vault, through the
+-- routes a client uses.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 local harness = require("bank_pair_harness")
@@ -256,5 +257,81 @@ assert(nobody.status == "drawn" and nobody.winner_name == nil and state.giveaway
 bank.advanceMs(25 * 60 * 60 * 1000)
 bank.music.sweepGiveaways()
 rejected(musicAsk, "NOT_FOUND", "MUSIC_GIVEAWAY_STATE", { giveaway_id = quiet.giveaway_id })
+
+-- FoxyMusic+, FoxyOS 18 ---------------------------------------------------------------------
+-- Music on its own, for less than FoxyCloud+: unlimited songs and uploads, and
+-- Offline Listening. Billed and listed like any other subscription.
+
+-- A day has gone by in this test: everyone signs in again.
+local function signIn(...)
+    for _, who in ipairs({ ... }) do
+        who.token = bank.request("LOGIN", { name = who.name, pin = who.pin }).session_token
+    end
+end
+signIn(ana, kit, noa)
+local plan = bank.request("MUSIC_PLUS_PLAN", bank.as(kit))
+assert(plan.plan == "free" and plan.price == 100 and plan.every_days == 5)
+assert(plan.price < free.tiers[1].price, "cheaper than FoxyCloud+")
+rejected(bank.request, "WRONG_APP", "MUSIC_PLUS_JOIN", bank.as(kit, { pin = "5678", app_id = "YAP" }))
+rejected(bank.request, "BAD_PIN", "MUSIC_PLUS_JOIN", bank.as(kit, { pin = "0000" }))
+bank.state.accounts[noa.id].balance = 99
+rejected(bank.request, "INSUFFICIENT_FUNDS", "MUSIC_PLUS_JOIN", bank.as(noa, { pin = "4321" }))
+
+bank.advanceDays(1)
+signIn(kit)
+balance = bank.balanceOf(kit)
+local joined = bank.request("MUSIC_PLUS_JOIN", bank.as(kit, { pin = "5678", app_id = "MUSIC" }))
+assert(joined.plan == "plus" and joined.next_charge_day == util.ingameDay() + 5)
+assert(bank.balanceOf(kit) == balance - 100)
+rejected(bank.request, "ALREADY_PLUS", "MUSIC_PLUS_JOIN", bank.as(kit, { pin = "5678" }))
+local plus = musicAsk("MUSIC_WHO", { session_token = kit.token })
+assert(plus.music_plus and plus.offline and not plus.plus, "FoxyMusic+, not FoxyCloud+")
+assert(plus.plays_limit == nil and plus.uploads_limit == nil)
+for _ = 1, 12 do musicAsk("MUSIC_PLAY", { account_id = kit.id }) end
+for _ = 1, 3 do musicAsk("MUSIC_UPLOAD_CHECK", { account_id = kit.id }) end
+assert(musicAsk("MUSIC_WHO", { session_token = ana.token }).offline == false,
+    "Offline Listening is FoxyMusic+'s")
+
+local listed
+for _, item in ipairs(bank.request("LIST_SUBSCRIPTIONS", bank.as(kit)).subscriptions) do
+    if item.subscription_id == "FOXYMUSIC_PLUS" then listed = item end
+end
+assert(listed and listed.amount == 100 and listed.active and listed.description == "FoxyMusic+")
+
+-- Renewed on its day.
+bank.advanceDays(5)
+signIn(kit)
+balance = bank.balanceOf(kit)
+bank.process_subscriptions()
+assert(bank.balanceOf(kit) == balance - 100)
+assert(bank.notifications(kit)[1].title == "FoxyMusic+ renewed")
+
+-- Cancelled from the subscriptions list: it lasts what was paid for, and
+-- joining again before then is free.
+local cancelled = bank.request("CANCEL_SUBSCRIPTION", bank.as(kit,
+    { subscription_id = "FOXYMUSIC_PLUS" })).subscription
+assert(cancelled and not cancelled.active)
+local ending = bank.request("MUSIC_PLUS_PLAN", bank.as(kit))
+assert(ending.plan == "plus" and ending.ends_day and not ending.next_charge_day)
+balance = bank.balanceOf(kit)
+assert(bank.request("MUSIC_PLUS_JOIN", bank.as(kit, { pin = "5678" })).next_charge_day)
+assert(bank.balanceOf(kit) == balance, "nothing charged to take it back")
+bank.request("MUSIC_PLUS_CANCEL", bank.as(kit))
+rejected(bank.request, "NOT_PLUS", "MUSIC_PLUS_CANCEL", bank.as(kit))
+bank.advanceDays(5)
+signIn(kit)
+bank.process_subscriptions()
+assert(bank.notifications(kit)[1].title == "FoxyMusic+ ended")
+local back = musicAsk("MUSIC_WHO", { session_token = kit.token })
+assert(not back.music_plus and not back.offline and back.plays_limit == 10)
+
+-- Not enough to renew: it stops.
+bank.request("MUSIC_PLUS_JOIN", bank.as(kit, { pin = "5678" }))
+bank.state.accounts[kit.id].balance = 50
+bank.advanceDays(5)
+signIn(kit)
+bank.process_subscriptions()
+assert(bank.notifications(kit)[1].title == "FoxyMusic+ stopped")
+assert(bank.balanceOf(kit) == 50 and bank.request("MUSIC_PLUS_PLAN", bank.as(kit)).plan == "free")
 
 io.write("host_phone_music_bank_test: OK\n")

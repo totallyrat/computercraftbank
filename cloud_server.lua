@@ -64,9 +64,26 @@ local function need(condition, code, message)
 end
 
 -- A piece is named <file>.<version>.<piece>, the way the Vault names it, and
--- nothing else is ever written here.
+-- nothing else is ever written here. FoxyOS 18: or M<server>T<track>.<version>.
+-- <piece>, a piece of a song the Music Server put here itself.
+local function musicId(chunkId)
+    return type(chunkId) == "string" and chunkId:match("^M%d+T%d+%.%d+%.%d+$") ~= nil
+end
+
 local function validId(chunkId)
-    return type(chunkId) == "string" and chunkId:match("^F%d+%.%d+%.%d+$") ~= nil
+    return type(chunkId) == "string"
+        and (chunkId:match("^F%d+%.%d+%.%d+$") ~= nil or musicId(chunkId))
+end
+
+-- FoxyOS 18: which computer each Music Server is, as the Bank last said.
+-- Kept on disk, so songs keep playing while the Bank is away: the Music
+-- Server vouches for its own tickets, and only the computer the Bank named
+-- is believed.
+state.music_servers = type(state.music_servers) == "table" and state.music_servers or {}
+
+local function musicServerFor(chunkId)
+    local number = tostring(chunkId):match("^M(%d+)T")
+    return number and tonumber(state.music_servers["MS" .. number])
 end
 
 local function chunkPath(chunkId)
@@ -125,10 +142,31 @@ local function allowed(ticket, chunkId, mode)
     local known = tickets[ticket]
     if not known or known.expires_at <= now then
         tickets[ticket] = nil
-        local answer, err, code = bank:request("CLOUD_TICKET", {
-            server_token = state.server_token, ticket = ticket }, 4)
-        need(answer, code or "BANK_OFFLINE", err or "The Bank did not answer")
-        known = { mode = answer.mode, chunks = answer.chunks or {},
+        local answer, err, code
+        if musicId(chunkId) then
+            -- A song's piece: its Music Server says what the ticket allows.
+            local host = musicServerFor(chunkId)
+            need(host, "BAD_TICKET", "This Cloud Server does not know that Music Server yet")
+            answer, err, code = net.ask(host, config.music_protocol or "PUMPE_MUSIC_V1",
+                "MUSIC_TICKET", { ticket = ticket }, 3)
+            need(answer, code or "MUSIC_OFFLINE", err or "The Music Server did not answer")
+        else
+            answer, err, code = bank:request("CLOUD_TICKET", {
+                server_token = state.server_token, ticket = ticket }, 4)
+            need(answer, code or "BANK_OFFLINE", err or "The Bank did not answer")
+        end
+        local chunks = type(answer.chunks) == "table" and answer.chunks or {}
+        if musicId(chunkId) then
+            -- A Music Server answers for its own songs' pieces and nothing else.
+            local own = {}
+            for id, size in pairs(chunks) do
+                if musicId(id) and musicServerFor(id) == musicServerFor(chunkId) then
+                    own[id] = size
+                end
+            end
+            chunks = own
+        end
+        known = { mode = answer.mode, chunks = chunks,
             expires_at = now + math.max(1000, tonumber(answer.ttl_ms) or 60000) }
         tickets[ticket] = known
     end
@@ -174,6 +212,13 @@ function actions.CHUNK_GET(payload)
     need(data, "MISSING", "That piece could not be read")
     status.served = status.served + 1
     return { chunk_id = payload.chunk_id, data = data }
+end
+
+-- FoxyOS 18: a Music Server taking back a piece of a song it deleted.
+function actions.CHUNK_DROP(payload)
+    allowed(payload.ticket, payload.chunk_id, "drop")
+    need(musicId(payload.chunk_id), "BAD_CHUNK", "Only a song's pieces are dropped this way")
+    return { dropped = dropChunk(payload.chunk_id) }
 end
 
 -- Anyone may ask whether this server is up and how full it is.
@@ -227,6 +272,23 @@ local function beat()
         save()
     end
     state.name = answer.name or state.name
+    -- FoxyOS 18: the Music Servers, by computer, kept for when the Bank is not.
+    if type(answer.music_servers) == "table" then
+        local known, changed = {}, false
+        for serverId, computerId in pairs(answer.music_servers) do
+            if type(serverId) == "string" and tonumber(computerId) then
+                known[serverId] = tonumber(computerId)
+                if state.music_servers[serverId] ~= known[serverId] then changed = true end
+            end
+        end
+        for serverId in pairs(state.music_servers) do
+            if not known[serverId] then changed = true end
+        end
+        if changed then
+            state.music_servers = known
+            save()
+        end
+    end
     local dropped = 0
     for _, chunkId in ipairs(answer.drop or {}) do
         if dropChunk(chunkId) then dropped = dropped + 1 end
@@ -244,18 +306,41 @@ end
 -- delete missed while this was off -- goes.
 local function sweep()
     if not fs.exists(chunkDir) then return 0 end
-    local names, dropped = fs.list(chunkDir), 0
-    for first = 1, #names, 100 do
-        local page = {}
-        for index = first, math.min(#names, first + 99) do
-            page[#page + 1] = names[index]
+    local files, songs, dropped = {}, {}, 0
+    -- FoxyOS 18: FoxyCloud's pieces are the Bank's to judge, a song's its
+    -- Music Server's.
+    for _, name in ipairs(fs.list(chunkDir)) do
+        if musicId(name) then
+            local host = musicServerFor(name)
+            if host then
+                songs[host] = songs[host] or {}
+                table.insert(songs[host], name)
+            end
+        else
+            files[#files + 1] = name
         end
-        local answer = bank:request("CLOUD_KEEP", {
-            server_token = state.server_token, chunks = page }, 6)
-        if not answer then return dropped end
-        for _, chunkId in ipairs(answer.drop or {}) do
-            if dropChunk(chunkId) then dropped = dropped + 1 end
+    end
+    local function ask(names, send)
+        for first = 1, #names, 100 do
+            local page = {}
+            for index = first, math.min(#names, first + 99) do
+                page[#page + 1] = names[index]
+            end
+            local answer = send(page)
+            if not answer then return end
+            for _, chunkId in ipairs(answer.drop or {}) do
+                if dropChunk(chunkId) then dropped = dropped + 1 end
+            end
         end
+    end
+    ask(files, function(page)
+        return bank:request("CLOUD_KEEP", { server_token = state.server_token, chunks = page }, 6)
+    end)
+    for host, names in pairs(songs) do
+        ask(names, function(page)
+            return net.ask(host, config.music_protocol or "PUMPE_MUSIC_V1", "MUSIC_KEEP",
+                { chunks = page }, 4)
+        end)
     end
     countHeld()
     if dropped > 0 then

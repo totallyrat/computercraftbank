@@ -28,6 +28,8 @@ local server = world.attach(MUSIC_ID, "music_server.lua", config.music_protocol,
 local registered = bank.request("MUSIC_SERVER_REGISTER", { code = "4040" })
 server.state.server_token, server.state.server_id = registered.server_token,
     registered.server_id
+as(MUSIC_ID, server.background.step)
+world.beatAll()
 
 -- Files dragged onto the screen, the way ComputerCraft hands them over.
 local function drop(name, body)

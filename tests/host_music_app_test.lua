@@ -7,7 +7,8 @@
 -- her browse the library and upload a song dropped on her Pocket. Then a
 -- Music Player is hers: she tunes it to a radio in the middle of a giveaway,
 -- Now Playing shows the number, and she calls in from there. Last, a song
--- kept in her FoxyCloud goes into the library.
+-- kept in her FoxyCloud goes into the library, and she joins FoxyMusic+ from
+-- the Upload tab and cancels it again.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 sleep = function() end
@@ -29,6 +30,8 @@ local server = world.attach(MUSIC_ID, "music_server.lua", config.music_protocol,
 local registered = bank.core.actions.MUSIC_SERVER_REGISTER({ code = "4040" }, MUSIC_ID)
 server.state.server_token, server.state.server_id = registered.server_token,
     registered.server_id
+as(MUSIC_ID, server.background.step)
+world.beatAll()
 local trot = as(MUSIC_ID, server.library.import, { title = "Fox Trot", artist = "Ana",
     kind = "song", uploader_name = "Foxy Records" }, string.rep("t", 9000))
 local clip = as(MUSIC_ID, server.library.import, { title = "Win", artist = "DJ",
@@ -155,5 +158,54 @@ assert(fromCloud and fromCloud.size == 5000)
 local _, _, limit = as(world.pocket, net.ask, MUSIC_ID, config.music_protocol,
     "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Three", size = 10 }, 3)
 assert(limit == "UPLOAD_LIMIT")
+
+-- 4. FoxyMusic+, FoxyOS 18 ------------------------------------------------------------------------
+-- Joined from the Upload tab, with her PIN: no more limits.
+
+script = phone.script()
+phone.push(script.actions, "tab:upload", function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Today: 2 of 2 uploads") and phone.has(frame, "FoxyMusic+: no limits"),
+        "the way past the limit, under it")
+    return "plus"
+end, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "every 5 days") and phone.has(frame, "Offline Listening")
+        and phone.has(frame, "Join for"), "what it costs and gives")
+    assert(phone.has(frame, "Free: 10 songs a day"), "and what free is")
+    return "join"
+end, function(seen)
+    assert(phone.said(seen, "FoxyMusic+"))
+    assert(phone.has(phone.last(seen), "Next charge day"), "hers now")
+    return "back"
+end, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Upload all you like") and phone.has(frame, "FoxyMusic+: yours"),
+        "the Music Server heard at once")
+    return "home"
+end)
+phone.push(script.confirms, true)
+phone.push(script.pins, "1234")
+balance = bank.balanceOf(ana)
+run(script)
+assert(bank.balanceOf(ana) == balance - 100, "a hundred")
+assert(as(world.pocket, net.ask, MUSIC_ID, config.music_protocol,
+    "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Three", size = 10 }, 3),
+    "a third upload today")
+
+-- Cancelled from the app's FoxyMusic+ action: it stays until the day paid for.
+script = phone.script()
+phone.push(script.actions, "cancel", function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Cancelled. Ends day") and phone.has(frame, "Keep FoxyMusic+"),
+        "\n" .. table.concat(frame, "\n"))
+    return "back"
+end, function(seen)
+    assert(phone.has(phone.last(seen), "Upload a song"), "then the app, on Upload")
+    return "home"
+end)
+phone.push(script.confirms, true)
+run(script, "plus")
+assert(bank.state.accounts[ana.id].foxymusic.cancelled)
 
 io.write("host_music_app_test: OK\n")

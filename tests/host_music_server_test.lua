@@ -32,6 +32,15 @@ local server = world.attach(MUSIC_ID, "music_server.lua", config.music_protocol,
 local registered = bank.request("MUSIC_SERVER_REGISTER", { code = "4040" })
 server.state.server_token, server.state.server_id = registered.server_token,
     registered.server_id
+-- FoxyOS 18: its first beat tells the Bank which computer it is, and finds the
+-- Cloud Servers; theirs tell them, and they keep it.
+as(MUSIC_ID, server.background.step)
+assert(#server.store.servers == 5, "five Cloud Servers found on the network")
+beatAll()
+for _, id in ipairs(world.ids) do
+    assert(world.servers[id].program.state.music_servers.MS1 == MUSIC_ID,
+        "every Cloud Server knows which computer the Music Server is")
+end
 
 -- What a Pocket or a Music Player says to it, over the network.
 local function ask(action, payload, from)
@@ -63,15 +72,35 @@ local imported = as(MUSIC_ID, server.library.import, { title = "Fox Trot", artis
     kind = "song", uploader_name = "Foxy Records" }, song)
 assert(imported and imported.track_id == "T1" and imported.uploader_name == "Foxy Records")
 assert(heldTotal() == heldBefore + 3, "three pieces of 6000 on the Cloud Servers")
+-- FoxyOS 18: the Music Server's own pieces, placed by it, with no file at the Bank.
+assert(imported.pieces[1].id == "M1T1.1.1" and not imported.file_id)
+local onServers = {}
+for _, piece in ipairs(imported.pieces) do onServers[piece.hosts[1]] = true end
+local spread = 0
+for _ in pairs(onServers) do spread = spread + 1 end
+assert(spread == 3, "each piece on the server with the most room")
 local plan = as(MUSIC_ID, server.library.plan, "T1")
 assert(as(POCKET, net.cloud.get, plan, config.cloud_protocol) == song, "byte for byte")
 assert(plan.expires_in_ms >= 15000 / 6 + 5 * 60 * 1000, "a ticket lasts the song and more")
--- The library is the Music Server's: nobody else stores there, or opens it.
-rejected(bank.request, "MUSIC_AUTH", "CLOUD_MUSIC_GET", bank.as(ana, { file_id = imported.file_id }))
--- And the Vault itself refuses anybody the Core did not say is a Music Server.
-rejected(bank.vault.actions.CLOUD_MUSIC_GET, "MUSIC_AUTH", { file_id = imported.file_id },
+-- Only a ticket the Music Server issued opens a song: one nobody issued is
+-- refused when the Cloud Server asks it.
+local forged = { ticket = "MT_made_up", chunks = plan.chunks, hosts = plan.hosts }
+local _, _, forgedCode = as(POCKET, net.cloud.get, forged, config.cloud_protocol)
+assert(forgedCode == "BAD_TICKET", tostring(forgedCode))
+-- And a Cloud Server believes only the computer the Bank named: one that has
+-- not been told yet believes nobody.
+local firstHost = plan.hosts[plan.chunks[1].servers[1]]
+local keptTrust = world.servers[firstHost].program.state.music_servers
+world.servers[firstHost].program.state.music_servers = {}
+world.servers[firstHost].program.tickets[plan.ticket] = nil
+local _, _, untrusted = as(POCKET, net.ask, firstHost, config.cloud_protocol, "CHUNK_GET",
+    { ticket = plan.ticket, chunk_id = plan.chunks[1].id }, 3)
+assert(untrusted == "BAD_TICKET")
+world.servers[firstHost].program.state.music_servers = keptTrust
+-- The Bank's own music storage (FoxyOS 17) still answers only a Music Server.
+rejected(bank.request, "MUSIC_AUTH", "CLOUD_MUSIC_GET", bank.as(ana, { file_id = "F1" }))
+rejected(bank.vault.actions.CLOUD_MUSIC_GET, "MUSIC_AUTH", { file_id = "F1" },
     { kind = "session", account_id = ana.id })
-rejected(bank.request, "NOT_FOUND", "CLOUD_GET", bank.as(ana, { file_id = imported.file_id }))
 
 local function import(title, artist, kind, size)
     local track = as(MUSIC_ID, server.library.import, { title = title, artist = artist,
@@ -109,7 +138,7 @@ local mine = upload(kit, "Kit Song", audio(7000, 5))
 assert(mine.uploader_name == "Kit Wolf" and mine.kind == "song")
 assert(upload(kit, "Kit Song 2", audio(100, 6)))
 local _, limitText, limitCode = upload(kit, "Kit Song 3", audio(100, 7))
-assert(limitCode == "UPLOAD_LIMIT" and limitText:find("FoxyCloud%+"), "two a day for free")
+assert(limitCode == "UPLOAD_LIMIT" and limitText:find("FoxyMusic%+"), "two a day for free")
 refused("TOO_BIG", "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Huge",
     size = config.music_max_bytes + 1 })
 refused("SIGN_IN", "MUSIC_UPLOAD_BEGIN", { title = "Nobody", size = 10 })
@@ -144,8 +173,11 @@ local playing = must("MUSIC_CONTROL", { session_token = kit.token,
     queue = queue }).player
 assert(playing.mode == "library" and playing.now.track_id == s2.track_id and playing.index == 2)
 
-local function plays(who) return bank.request("PHONE_ME", bank.as(who)) and
-    bank.state.accounts[who.id].music_usage.plays end
+-- FoxyOS 18: counted on the Music Server, which needs no Bank to do it.
+local function plays(who)
+    local usage = server.state.usage[who.id]
+    return usage and usage.plays or 0
+end
 local stream = assert(player("MUSIC_STREAM"))
 assert(stream.item.track_id == s2.track_id and stream.offset_ms == 0)
 assert(as(PLAYER_ID, net.cloud.get, stream.plan, config.cloud_protocol) == audio(6000,
@@ -168,7 +200,7 @@ assert(player("MUSIC_NEXT", { play_no = stream.play_no }).player.now.track_id ==
 assert(player("MUSIC_STREAM") and plays(kit) == 2)
 
 -- Ten a day free; then the player stops and says why.
-bank.state.accounts[kit.id].music_usage.plays = 10
+server.state.usage[kit.id].plays = 10
 must("MUSIC_CONTROL", { player_token = token, command = "next" }, PLAYER_ID)
 assert(must("MUSIC_CONTROL", { player_token = token, command = "play",
     track_id = s4.track_id }, PLAYER_ID))
@@ -241,6 +273,9 @@ local function untilKind(kind)
     end
     error("never a " .. kind)
 end
+-- (A giveaway is the Bank's: the Music Server plays its clip only while the
+-- Bank has answered in the last two minutes. Its beat is that answer.)
+as(MUSIC_ID, server.background.step)
 untilKind("giveaway")
 as(MUSIC_ID, server.radio.tick)
 assert(live.giveaway and live.giveaway.number == r.number, "open at the Bank")
@@ -294,8 +329,12 @@ refused("NEEDS_PLUS", "MUSIC_STREAM", { grant = songGrant.grant }, CASINO_ID)
 local piecesBefore = heldTotal()
 assert(as(MUSIC_ID, server.library.remove, "T1"))
 for _, id in ipairs(r.songs) do assert(id ~= "T1", "gone from the radio") end
-beatAll()
-assert(heldTotal() == piecesBefore - 3, "and its pieces from the Cloud Servers")
+-- FoxyOS 18: the Music Server takes its pieces back itself, from the
+-- background.
+assert(#server.state.drops == 3)
+as(MUSIC_ID, server.background.step)
+assert(#server.state.drops == 0 and heldTotal() == piecesBefore - 3,
+    "and its pieces from the Cloud Servers")
 assert(must("MUSIC_LIBRARY", {}).total == 5)
 
 -- Signing a player out ---------------------------------------------------------------------------

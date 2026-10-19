@@ -5534,6 +5534,9 @@ end
 -- A piece is wanted while its file has it, on this server, in the version it
 -- holds or the one being uploaded.
 function cloud.wanted(serverId, chunkId)
+    -- FoxyOS 18: a song the Music Server stored itself is its to judge, never
+    -- the Vault's. A Cloud Server from before 18 could still ask.
+    if tostring(chunkId):match("^M%d+T") then return true end
     local fileId, index = tostring(chunkId):match("^(F%d+)%.%d+%.(%d+)$")
     local record = fileId and cloud.store().files[fileId]
     if not record then return false end

@@ -1598,6 +1598,13 @@ function music.server(payload, sender)
     return server
 end
 
+-- FoxyOS 18: a Music Server saying it is up, every half minute, even when it
+-- needs nothing else from the Bank -- or Pockets could not find it.
+function actions.MUSIC_BEAT(payload, sender)
+    local server = music.server(payload, sender)
+    return { server_id = server.server_id, day = util.ingameDay() }
+end
+
 function actions.MUSIC_WHERE()
     local best
     for _, server in pairs(state.music_servers or {}) do
@@ -1618,12 +1625,141 @@ function music.usage(account)
     return account.music_usage
 end
 
+-- FoxyMusic+, FoxyOS 18: music on its own, for less than FoxyCloud+.
+-- Unlimited streaming, unlimited uploads, and Offline Listening -- songs
+-- downloaded onto a Music Player that play while the Music Server is off.
+-- Billed like FoxyCloud+, listed and cancelled with the rest.
+music.PLUS_ID = "FOXYMUSIC_PLUS"
+
+function music.plus(account)
+    local plan = account and account.foxymusic
+    return type(plan) == "table" and plan.plan == "plus"
+end
+
+function music.price()
+    return math.max(1, util.roundMoney(tonumber(config.foxymusic_plus_price) or 100))
+end
+
+function music.every()
+    return util.billingDays(config.foxymusic_plus_days or config.foxycloud_plus_days,
+        config.subscription_periods) or 5
+end
+
+-- Songs played and uploaded a day: none counted with FoxyMusic+, else the
+-- FoxyCloud plan's.
+function music.limit(account, what)
+    if music.plus(account) then return nil end
+    return cloud.limit(account, what)
+end
+
 function music.who(account)
     local usage = music.usage(account)
     return { account_id = account.account_id, name = account.name,
         tier = cloud.tier(account), plus = cloud.plus(account),
-        plays = usage.plays, plays_limit = cloud.limit(account, "plays"),
-        uploads = usage.uploads, uploads_limit = cloud.limit(account, "uploads") }
+        music_plus = music.plus(account), offline = music.plus(account),
+        plays = usage.plays, plays_limit = music.limit(account, "plays"),
+        uploads = usage.uploads, uploads_limit = music.limit(account, "uploads"),
+        day = util.ingameDay() }
+end
+
+function music.summary(account)
+    local plan = music.plus(account) and account.foxymusic or nil
+    local free = type(config.foxycloud_free) == "table" and config.foxycloud_free or {}
+    return {
+        plan = plan and "plus" or "free",
+        price = plan and plan.price or music.price(),
+        every_days = plan and plan.every_days or music.every(),
+        since_day = plan and plan.since_day or nil,
+        next_charge_day = plan and not plan.cancelled and plan.next_charge_day or nil,
+        ends_day = plan and plan.cancelled and plan.next_charge_day or nil,
+        perks = { "Unlimited songs", "Unlimited uploads",
+            "Offline Listening: songs on your Music Player when the Music Server is off" },
+        free_perks = { tostring(free.plays or 10) .. " songs a day, radios free",
+            tostring(free.uploads or 2) .. " uploads a day" },
+        cloud_plus = cloud.plus(account),
+    }
+end
+
+function music.subscription(account)
+    local plan = music.plus(account) and account.foxymusic
+    if not plan then return nil end
+    return {
+        subscription_id = music.PLUS_ID, description = "FoxyMusic+",
+        amount = plan.price, every_days = plan.every_days,
+        next_charge_day = plan.next_charge_day, active = not plan.cancelled,
+        created_day = plan.since_day, foxymusic = true,
+    }
+end
+
+function music.renew(account, today)
+    local plan = music.plus(account) and account.foxymusic
+    if not plan or (plan.next_charge_day or today) > today then return false end
+    if plan.cancelled then
+        account.foxymusic = nil
+        notification(account, "FoxyMusic+ ended", "Songs you downloaded for"
+            .. " Offline Listening go from your Music Players.", "subscription")
+        return true
+    end
+    local price = plan.price or music.price()
+    if account.balance >= price and not account.frozen and not account.banned
+        and not account.bank_closed then
+        account.balance = util.roundMoney(account.balance - price)
+        state.foxymusic_revenue = util.roundMoney((state.foxymusic_revenue or 0) + price)
+        transaction(account, "foxymusic", -price, "Foxy", "FoxyMusic+")
+        plan.next_charge_day = today + (plan.every_days or music.every())
+        notification(account, "FoxyMusic+ renewed", util.money(price, config.currency)
+            .. " " .. util.everyText(plan.every_days), "subscription")
+    else
+        account.foxymusic = nil
+        notification(account, "FoxyMusic+ stopped", "It could not be charged.", "warning")
+    end
+    return true
+end
+
+-- Only the Pocket itself, Foxy and the Music app change the plan.
+function music.fromApp(payload)
+    need(payload.app_id == nil or payload.app_id == "MUSIC" or payload.app_id == "FOXY",
+        "WRONG_APP", "Only the Music app can do that")
+end
+
+function actions.MUSIC_PLUS_PLAN(payload)
+    return music.summary(requireSession(payload))
+end
+
+function actions.MUSIC_PLUS_JOIN(payload)
+    music.fromApp(payload)
+    local account = requireSpender(payload)
+    need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+    local plan = music.plus(account) and account.foxymusic
+    if plan then
+        need(plan.cancelled, "ALREADY_PLUS", "You already have FoxyMusic+")
+        plan.cancelled, plan.cancelled_day = nil, nil
+        save()
+        return music.summary(account)
+    end
+    local price, every, today = music.price(), music.every(), util.ingameDay()
+    need(account.balance >= price, "INSUFFICIENT_FUNDS", "FoxyMusic+ is "
+        .. util.money(price, config.currency) .. " " .. util.everyText(every))
+    account.balance = util.roundMoney(account.balance - price)
+    state.foxymusic_revenue = util.roundMoney((state.foxymusic_revenue or 0) + price)
+    transaction(account, "foxymusic", -price, "Foxy", "FoxyMusic+")
+    account.foxymusic = { plan = "plus", price = price, every_days = every,
+        since_day = today, next_charge_day = today + every }
+    notification(account, "Welcome to FoxyMusic+", "Unlimited songs and uploads, and"
+        .. " Offline Listening. Next charge day " .. (today + every), "subscription")
+    logActivity(account.name .. " joined FoxyMusic+", colors.pink)
+    save()
+    return music.summary(account)
+end
+
+function actions.MUSIC_PLUS_CANCEL(payload)
+    music.fromApp(payload)
+    local account = requireSession(payload)
+    local plan = music.plus(account) and account.foxymusic
+    need(plan and not plan.cancelled, "NOT_PLUS", "You do not have FoxyMusic+")
+    plan.cancelled, plan.cancelled_day = true, util.ingameDay()
+    save()
+    return music.summary(account)
 end
 
 function music.account(payload)
@@ -1663,9 +1799,9 @@ end
 function actions.MUSIC_PLAY(payload, sender)
     music.server(payload, sender)
     local account = music.account(payload)
-    local usage, limit = music.usage(account), cloud.limit(account, "plays")
+    local usage, limit = music.usage(account), music.limit(account, "plays")
     need(not limit or usage.plays < limit, "MUSIC_LIMIT", tostring(limit)
-        .. " songs a day without FoxyCloud+. Radios are free")
+        .. " songs a day without FoxyMusic+. Radios are free")
     usage.plays = usage.plays + 1
     save()
     return music.who(account)
@@ -1674,9 +1810,9 @@ end
 function actions.MUSIC_UPLOAD_CHECK(payload, sender)
     music.server(payload, sender)
     local account = music.account(payload)
-    local usage, limit = music.usage(account), cloud.limit(account, "uploads")
+    local usage, limit = music.usage(account), music.limit(account, "uploads")
     need(not limit or usage.uploads < limit, "UPLOAD_LIMIT", tostring(limit)
-        .. " uploads a day without FoxyCloud+")
+        .. " uploads a day without FoxyMusic+")
     return music.who(account)
 end
 
@@ -2265,6 +2401,7 @@ function actions.LIST_SUBSCRIPTIONS(payload)
         output[#output + 1] = subscription
     end
     output[#output + 1] = cloud.subscription(account)
+    output[#output + 1] = music.subscription(account)
     table.sort(output, function(a, b)
         if a.active ~= b.active then return a.active end
         return (a.next_charge_day or 0) < (b.next_charge_day or 0)
@@ -2277,6 +2414,10 @@ function actions.CANCEL_SUBSCRIPTION(payload)
     if payload.subscription_id == cloud.PLUS_ID then
         actions.CLOUD_PLUS_CANCEL({ session_token = payload.session_token })
         return { subscription = cloud.subscription(account) }
+    end
+    if payload.subscription_id == music.PLUS_ID then
+        actions.MUSIC_PLUS_CANCEL({ session_token = payload.session_token })
+        return { subscription = music.subscription(account) }
     end
     local subscription = account.subscriptions[payload.subscription_id]
     need(subscription and subscription.active, "NOT_FOUND", "Subscription not found")
@@ -6877,6 +7018,7 @@ local function processSubscriptions()
     pcall(appstore.chargeSubscriptions, today)
     for _, account in pairs(state.accounts) do
         if cloud.renew(account, today) then changed = true end
+        if music.renew(account, today) then changed = true end
         for _, subscription in pairs(account.subscriptions or {}) do
             if subscription.active and subscription.next_charge_day <= today then
                 local terminal = state.terminals[subscription.kiosk_id]
@@ -7312,8 +7454,20 @@ local function routeToVault(action, spec, payload, sender)
     if spec.auth == "cloud" then
         -- A Cloud Server, the same way. Which computer asked is what tells
         -- Pockets where to find it.
-        return pair.forward(action, payload, { kind = "cloud",
+        local result = pair.forward(action, payload, { kind = "cloud",
             computer_id = sender })
+        -- FoxyOS 18: and which computer each Music Server is, which the Cloud
+        -- Server keeps: it believes a song's ticket only from that computer,
+        -- even while the Bank is away.
+        if action == "CLOUD_BEAT" and type(result) == "table" then
+            result.music_servers = {}
+            for _, server in pairs(state.music_servers or {}) do
+                if server.computer_id then
+                    result.music_servers[server.server_id] = server.computer_id
+                end
+            end
+        end
+        return result
     end
     if spec.auth == "music" then
         -- FoxyOS 17: a Music Server keeping songs on the Cloud Servers, under

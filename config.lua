@@ -171,9 +171,15 @@ return {
     -- Music, FoxyOS 17. Songs are DFPWM1a, 48 kHz: 6000 bytes a second,
     -- kept on the Cloud Servers. The Music Server holds the library and the
     -- radios; Music Players and the CCG Casino play them through speakers.
+    -- FoxyOS 18: FoxyMusic+, every `foxymusic_plus_days`: unlimited songs and
+    -- uploads, and Offline Listening on Music Players.
+    foxymusic_plus_price = 100,
+    foxymusic_plus_days = 5,
     music_protocol = "PUMPE_MUSIC_V1",
     music_hostname = "MUSIC_SERVER",
     music_max_bytes = 12 * 1024 * 1024,
+    -- How much a Music Player keeps for Offline Listening (a computer has 50 MB).
+    music_offline_bytes = 16 * 1024 * 1024,
 
     -- The App Server. Optional apps are downloaded from here rather than
     -- from the Bank, so a busy download never slows banking down. Publishing
