@@ -422,7 +422,7 @@ checkIn(event)
 elseif action == "cancel" then
 if ui.confirm(target, "Cancel it?", (event.price or 0) > 0
 and "Everybody who paid gets it back from you" or "Everybody is told",
-"Cancel it", "Keep it") then
+"Cancel", "Keep") then
 local done, cancelError = ask("INVT_CANCEL", { invt_id = event.invt_id })
 if done then
 ui.message(target, "success", "Cancelled", done.refunded > 0

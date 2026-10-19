@@ -4,6 +4,10 @@
 -- PUMPE APP ACTION: library | Music Library | Every song, play one
 -- PUMPE APP ACTION: radio | Radio | Live stations, always free
 -- PUMPE APP ACTION: upload | Upload a song | From this Pocket or FoxyCloud
+-- PUMPE APP ACTION: plus | FoxyMusic+ | Unlimited songs, Offline Listening
+
+
+
 
 
 
@@ -481,6 +485,79 @@ local body, loadError = cloud.load(songs[index].file_id)
 if body then upload(songs[index].name, body) else said("error", "Cannot open it", loadError) end
 end
 
+
+
+local function plusPage()
+local plan, err = api.request("MUSIC_PLUS_PLAN", {}, true)
+while running() do
+local width, height = target.getSize()
+local plus = plan and plan.plan == "plus"
+ui.clear(target)
+ui.header(target, "FoxyMusic+", plus and (plan.ends_day and "Until day "
+.. plan.ends_day or "Yours") or "Music, unlimited", util.formatClock())
+local scene = ui.scene(target)
+if not plan then
+ui.wrappedText(target, 2, 5, tostring(err or "The Bank is not answering."),
+width - 2, 3, ui.theme.warning)
+else
+ui.fill(target, 2, 4, width - 2, 1, PINK)
+ui.text(target, 3, 4, ui.truncate(money(plan.price) .. " "
+.. util.everyText(plan.every_days), width - 4), colors.black, PINK)
+ui.text(target, 2, 5, ui.truncate(plus and (plan.ends_day
+and ("Cancelled. Ends day " .. plan.ends_day)
+or ("Next charge day " .. tostring(plan.next_charge_day)))
+or "Cancel any time", width - 2), ui.theme.muted)
+local y, last = 7, height - 5
+for _, perk in ipairs(plan.perks or {}) do
+if y > last then break end
+ui.text(target, 2, y, "+", PINK)
+y = y + ui.wrappedText(target, 4, y, perk, width - 4, last - y + 1,
+ui.theme.ink)
+end
+if plan.cloud_plus and y <= last then
+ui.wrappedText(target, 2, y + 1, "FoxyCloud+ already makes songs and uploads"
+.. " unlimited. This adds Offline Listening.", width - 2, last - y,
+ui.theme.muted)
+elseif not plus and y <= last then
+ui.wrappedText(target, 2, y + 1, "Free: " .. table.concat(plan.free_perks
+or {}, ", "), width - 2, last - y, ui.theme.muted)
+end
+local id = not plus and "join" or plan.ends_day and "keep" or "cancel"
+scene:button(id, 2, height - 3, width - 2, 2, id == "join" and ("Join for "
+.. money(plan.price)) or id == "keep" and "Keep FoxyMusic+"
+or "Cancel FoxyMusic+", { background = id == "cancel" and ui.theme.panel
+or PINK, foreground = id == "cancel" and ui.theme.ink or colors.black })
+end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+if action == "join" or action == "keep" then
+local pin = (action == "keep" or ui.confirm(target, "FoxyMusic+", money(plan.price)
+.. " now, then " .. util.everyText(plan.every_days) .. " until you cancel.",
+"OK", "Not now")) and ui.pin(target, "Confirm with PIN", true)
+if pin then
+local joined, joinError = api.request("MUSIC_PLUS_JOIN", { pin = pin }, true)
+if joined then
+plan = joined
+api.refresh()
+said("success", "FoxyMusic+", action == "keep" and "Keeping it"
+or "Unlimited songs are yours", 1.6)
+else
+said("error", "Not joined", joinError, 2)
+end
+end
+elseif action == "cancel" then
+if ui.confirm(target, "Cancel?", "FoxyMusic+ stays until day "
+.. tostring(plan.next_charge_day) .. ". Songs kept for Offline Listening"
+.. " go then.", "Cancel", "Keep") then
+local cancelled, cancelError = api.request("MUSIC_PLUS_CANCEL", {}, true)
+if cancelled then plan = cancelled
+else said("error", "Not cancelled", cancelError) end
+end
+end
+end
+end
+
 local function uploadPage(tabs)
 local me
 while running() do
@@ -499,16 +576,19 @@ if me then
 ui.text(target, 2, 14, ui.truncate(me.uploads_limit and ("Today: " .. me.uploads
 .. " of " .. me.uploads_limit .. " uploads") or "Upload all you like",
 width - 2), ui.theme.muted)
-ui.text(target, 2, 15, ui.truncate(me.uploads_limit and "FoxyCloud+: no limit"
-or "Thanks to FoxyCloud+", width - 2), ui.theme.muted)
 end
+scene:button("plus", 2, 16, width - 2, 2, me and me.music_plus and "FoxyMusic+: yours"
+or "FoxyMusic+: no limits", { background = ui.theme.panel, foreground = PINK })
 ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
 local action = scene:wait({ files = true })
 if action == "home" or action == "__terminate"
 or (action or ""):match("^tab:") then
 return action
 end
-if action == "pocket" then
+if action == "plus" then
+plusPage()
+me = nil
+elseif action == "pocket" then
 fromPocket()
 me = nil
 elseif action == "cloud" then
@@ -535,6 +615,10 @@ said("error", "Music", "This Pocket needs the FoxyOS 17 update", 2)
 return
 end
 local wanted = type(api.action) == "function" and api.action() or nil
+if wanted == "plus" then
+plusPage()
+wanted = "upload"
+end
 ui.runTabs({
 target = target,
 list = { { id = "now", label = "Now" }, { id = "library", label = "Library",

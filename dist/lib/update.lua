@@ -380,6 +380,8 @@ update.PUBLISHED_OPTIONAL = {
 "music_player.lua",
 "music.lua",
 "lib/music.lua",
+
+"lib/desktop.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -439,6 +441,8 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 "foxycloud.lua", "music.lua" },
 
 music = { "lib/music.lua" },
+
+pumpe = { "lib/desktop.lua", "lib/music.lua" },
 musicplayer = { "lib/music.lua" },
 ccgcasino = { "lib/music.lua" },
 }

@@ -137,6 +137,28 @@ backgroundHandler = handler
 lastBackgroundMs = util.nowMs()
 end
 
+
+
+
+
+local foreground
+function ui.setForeground(target)
+foreground = target
+end
+
+local function inFront(target)
+return foreground == nil or foreground == target
+end
+
+
+
+
+
+local sidebars = setmetatable({}, { __mode = "k" })
+function ui.setSidebar(target, spec)
+if target then sidebars[target] = type(spec) == "table" and spec or nil end
+end
+
 local function keyBindings(entries)
 local bindings = {}
 if type(keys) ~= "table" then return bindings end
@@ -416,7 +438,7 @@ local backgroundTimer
 
 local function backgroundDue()
 if not backgroundIntervalMs or not backgroundHandler
-or backgroundRunning then return nil end
+or backgroundRunning or not inFront(self.target) then return nil end
 return math.max(0, backgroundIntervalMs
 - (util.nowMs() - lastBackgroundMs))
 end
@@ -440,7 +462,8 @@ return tookOver == true
 end
 
 local function scheduleIdleTimer()
-if not idleTimeoutMs or not idleHandler or idleHandling then return nil end
+if not idleTimeoutMs or not idleHandler or idleHandling
+or not inFront(self.target) then return nil end
 local remaining = math.max(50, idleTimeoutMs - ui.idleForMs())
 return os.startTimer(remaining / 1000)
 end
@@ -461,7 +484,7 @@ end
 
 local function handleIdle()
 if idleHandling or not idleTimeoutMs or not idleHandler
-or ui.idleForMs() < idleTimeoutMs then return false end
+or ui.idleForMs() < idleTimeoutMs or not inFront(self.target) then return false end
 idleHandling = true
 local ok, err = pcall(idleHandler, ui.idleForMs())
 idleHandling = false
@@ -551,6 +574,9 @@ elseif event[1] == "file_transfer" and options.files then
 recordActivity()
 self.dropped = event[2]
 return finish("__files")
+elseif event[1] == "term_resize" then
+
+return finish("__wake")
 elseif event[1] == "terminate" then
 return finish("__terminate")
 end
@@ -766,6 +792,8 @@ end
 
 function ui.tabRow(target)
 local _, height = surface(target).getSize()
+
+if sidebars[surface(target)] then return height + 1 end
 return height - 1
 end
 
@@ -787,8 +815,37 @@ if #label > room and tab.short then label = tostring(tab.short) end
 return label:sub(1, math.max(1, room))
 end
 
+
+
+
+
+local function sideBar(scene, target, tabs, active, side)
+local onto, left, top = side.open()
+if not onto then return false end
+local width, height = side.width or 10, select(2, target.getSize())
+local shown = {}
+for index, tab in ipairs(tabs) do shown[index] = tab end
+if #tabs > ui.TAB_COUNT then shown[#shown + 1] = { id = "more", label = "More" } end
+local x0 = left - width
+ui.fill(onto, x0, top, width, height, ui.theme.panel)
+local step = #shown * 2 <= height - 1 and 2 or 1
+local shade, ink = ui.theme.accent, ui.theme.accentInk or ui.inkOn(ui.theme.accent)
+for index, tab in ipairs(shown) do
+local row = 1 + (index - 1) * step + (step == 2 and 1 or 0)
+if row > height then break end
+local on = tab.id == active
+if on then ui.fill(onto, x0 + 1, top + row - 1, width - 2, 1, shade) end
+ui.text(onto, x0 + 2, top + row - 1, fitLabel(tab, width - 3),
+on and ink or ui.theme.ink, on and shade or ui.theme.panel)
+scene:hotspot("tab:" .. tab.id, 1 - width, row, width, 1)
+end
+return true
+end
+
 function ui.tabBar(scene, target, tabs, active, accent, options)
 target = surface(target)
+local side = sidebars[target]
+if side and sideBar(scene, target, tabs, active, side) then return end
 local width, height = target.getSize()
 local y = height - 1
 local shown = {}

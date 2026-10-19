@@ -96,6 +96,8 @@ const forwardOptionalFiles = [
   "music_player.lua",
   "music.lua",
   "lib/music.lua",
+  // FoxyOS 18: the Pocket Desktop.
+  "lib/desktop.lua",
 ];
 
 function checksum(buffer) {

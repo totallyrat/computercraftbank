@@ -2,11 +2,11 @@
 
 
 return {
-version = "17.0.0",
+version = "18.0.0",
 
 
 
-release_name = "FoxyOS 17",
+release_name = "FoxyOS 18",
 protocol = "PUMPE_BANK_V5",
 
 
@@ -171,9 +171,15 @@ giveaway_seconds = 180,
 
 
 
+
+
+foxymusic_plus_price = 100,
+foxymusic_plus_days = 5,
 music_protocol = "PUMPE_MUSIC_V1",
 music_hostname = "MUSIC_SERVER",
 music_max_bytes = 12 * 1024 * 1024,
+
+music_offline_bytes = 16 * 1024 * 1024,
 
 
 

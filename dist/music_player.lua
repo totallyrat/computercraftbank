@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "17.0.0"
+local PROGRAM_VERSION = "18.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -22,17 +22,31 @@ local music = require("lib.music")
 -- fetches the song's pieces from the Cloud Servers one ahead of the speaker.
 -- A monitor beside it, if there is one, shows what is on -- and during a
 -- radio giveaway, the number to call.
+--
+-- FoxyOS 18, Offline Listening: with FoxyMusic+, songs from the library can
+-- be kept on this computer. They play from here -- the Cloud Servers are not
+-- asked -- and while the Music Server is off they are what the Library shows,
+-- chosen and controlled on this screen.
 local target = term.current()
 local bank = net.client(config)
--- The Music Server is found through the Bank: a name anybody could take.
-local server = music.client(config, function()
-    local where = bank:request("MUSIC_WHERE", {}, 4)
-    return where and where.computer_id or nil
-end)
 local running = true
 local CLOUD = config.cloud_protocol or "PUMPE_CLOUD_V1"
 local dataFile = fs.combine(ROOT, "music_player_v1.dat")
 local state = util.loadTable(dataFile, {})
+-- The Music Server is found through the Bank: a name anybody could take.
+-- FoxyOS 18: the computer the Bank last named, while the Bank is not
+-- answering -- the Music Server goes on without it.
+local server = music.client(config, function()
+    local where = bank:request("MUSIC_WHERE", {}, 4)
+    if where and where.computer_id then
+        if state.music_server ~= where.computer_id then
+            state.music_server = where.computer_id
+            util.saveTable(dataFile, state)
+        end
+        return where.computer_id
+    end
+    return state.music_server
+end)
 -- What the Music Server last said, and what is coming out of the speakers.
 local shared = { player = nil, playing = nil, error = nil, seq = nil }
 local view = { page = 1, sort = "new", query = "", radios = nil }
@@ -96,6 +110,158 @@ local function changed()
     os.queueEvent("music_change")
 end
 
+-- Offline Listening, FoxyOS 18 -------------------------------------------------------------
+-- Songs kept on this computer, by track id. They stay playable while the
+-- Music Server is off for OFFLINE_DAYS in-game days after it last said the
+-- owner has FoxyMusic+, and go the moment it says they do not.
+local OFFLINE_DAYS = 10
+local kept = { dir = fs.combine(ROOT, "offline") }
+state.offline = type(state.offline) == "table" and state.offline or {}
+
+function kept.path(trackId) return fs.combine(kept.dir, tostring(trackId) .. ".dfpwm") end
+
+function kept.get(trackId)
+    local entry = state.offline[tostring(trackId or "")]
+    if entry and fs.exists(kept.path(entry.track_id)) then return entry end
+    return nil
+end
+
+function kept.list()
+    local list = {}
+    for id in pairs(state.offline) do list[#list + 1] = kept.get(id) end
+    table.sort(list, function(a, b) return a.title:lower() < b.title:lower() end)
+    return list
+end
+
+function kept.bytes()
+    local total = 0
+    for _, entry in pairs(state.offline) do total = total + (tonumber(entry.size) or 0) end
+    return total
+end
+
+function kept.allowed()
+    return state.offline_day ~= nil and util.ingameDay() - state.offline_day <= OFFLINE_DAYS
+end
+
+function kept.remove(trackId)
+    local entry = state.offline[tostring(trackId or "")]
+    if not entry then return end
+    pcall(fs.delete, kept.path(entry.track_id))
+    state.offline[entry.track_id] = nil
+    save()
+end
+
+function kept.clear()
+    for id in pairs(state.offline) do pcall(fs.delete, kept.path(id)) end
+    state.offline, state.offline_day = {}, nil
+    save()
+end
+
+-- What the Music Server says of the owner's plan, every tick. Only a plain no
+-- takes the songs away: a Music Server from before FoxyOS 18 says nothing.
+function kept.heard(player)
+    if type(player) ~= "table" then return end
+    if player.offline == true and state.offline_day ~= util.ingameDay() then
+        state.offline_day = util.ingameDay()
+        save()
+    elseif player.offline == false and (state.offline_day or next(state.offline)) then
+        kept.clear()
+    end
+end
+
+-- Keeps a song from the library, piece by piece -- a ticket that runs out
+-- part way is asked for again -- with `progress(done, total)` as it goes.
+function kept.download(trackId, progress)
+    local got, err, code = ask("MUSIC_DOWNLOAD", { track_id = trackId }, 8)
+    if not got then return nil, err, code end
+    local track = got.track
+    local most = tonumber(config.music_offline_bytes) or 16 * 1024 * 1024
+    local before = state.offline[track.track_id]
+    if kept.bytes() - (before and before.size or 0) + track.size > most then
+        return nil, "Offline songs are full (" .. util.sizeText(most) .. "). Remove some first",
+            "FULL"
+    end
+    if fs.getFreeSpace(ROOT) < track.size + 100 * 1024 then
+        return nil, "This computer's disk is full", "FULL"
+    end
+    fs.makeDir(kept.dir)
+    local path = kept.path(track.track_id)
+    local part = path .. ".part"
+    if fs.exists(part) then fs.delete(part) end
+    local handle = fs.open(part, "wb")
+    if not handle then return nil, "Cannot write to this computer", "DISK" end
+    local index, plan, again = 1, got.plan, false
+    while index <= #plan.chunks do
+        local data, pieceError, pieceCode = music.piece(plan, index, CLOUD)
+        if not data and pieceCode == "BAD_TICKET" and not again then
+            again = true
+            local renewed = ask("MUSIC_DOWNLOAD", { track_id = trackId }, 8)
+            plan = renewed and renewed.plan or plan
+        elseif not data then
+            handle.close()
+            fs.delete(part)
+            return nil, pieceError, pieceCode
+        else
+            handle.write(data)
+            if progress then progress(index, #plan.chunks) end
+            index, again = index + 1, false
+        end
+    end
+    handle.close()
+    if fs.exists(path) then fs.delete(path) end
+    fs.move(part, path)
+    state.offline[track.track_id] = { track_id = track.track_id, title = track.title,
+        artist = track.artist, uploader_name = track.uploader_name, size = track.size,
+        length_ms = track.length_ms or music.lengthMs(track.size), kept_day = util.ingameDay() }
+    save()
+    return state.offline[track.track_id]
+end
+
+-- Playing what is kept from this screen alone, while the Music Server is off:
+-- a queue, where in it, and a seq of its own, so the speakers stop at once
+-- when it changes.
+function kept.play(trackId, queue)
+    local list, at = {}, 1
+    for _, id in ipairs(queue or { trackId }) do
+        if kept.get(id) then
+            list[#list + 1] = id
+            if id == trackId then at = #list end
+        end
+    end
+    shared.here = { queue = list, index = at, offset_ms = 0, paused = false,
+        seq = ((shared.here and shared.here.seq) or 0) + 1 }
+    changed()
+end
+
+function kept.control(command)
+    local here = shared.here
+    if not here then return end
+    if command == "stop" then
+        shared.here = nil
+    elseif command == "pause" then
+        here.paused = true
+        here.offset_ms = shared.playing and util.nowMs() - shared.playing.started
+            or here.offset_ms
+    elseif command == "resume" then
+        here.paused = false
+    elseif command == "next" or command == "previous" then
+        here.index, here.offset_ms = math.max(1, here.index + (command == "next" and 1 or -1)), 0
+        if here.index > #here.queue then shared.here = nil end
+    end
+    here.seq = here.seq + 1
+    changed()
+end
+
+-- What is playing here, the way the Music Server describes a player.
+function kept.view()
+    local here = shared.here or {}
+    local entry = kept.get((here.queue or {})[here.index or 1])
+    return { mode = "offline", label = "Offline", paused = here.paused == true,
+        volume = state.volume or 2, now = entry and { title = entry.title,
+            artist = entry.artist, uploader_name = entry.uploader_name,
+            length_ms = entry.length_ms, label = "OFFLINE" } }
+end
+
 -- Asks the Music Server what this player should be doing, and says where it
 -- is in the song.
 local function tickOnce()
@@ -104,8 +270,24 @@ local function tickOnce()
     local answer, _, code = ask("MUSIC_TICK", { position_ms = position,
         play_no = shared.playing and shared.playing.play_no, version = PROGRAM_VERSION }, 3)
     if answer then
-        shared.player = answer.player
-        if shared.player.seq ~= shared.seq then changed() end
+        -- Told to play something else from the Music app: that takes over
+        -- from songs playing here while it was off.
+        if shared.here and shared.server_seq and answer.player.seq ~= shared.server_seq then
+            shared.here = nil
+        end
+        shared.player, shared.server_seq = answer.player, answer.player.seq
+        shared.misses, shared.server_down = 0, false
+        kept.heard(answer.player)
+        if (shared.here and "H" .. shared.here.seq or shared.player.seq) ~= shared.seq then
+            changed()
+        end
+    elseif not code then
+        -- Three ticks unanswered: the Music Server is off.
+        shared.misses = (shared.misses or 0) + 1
+        if shared.misses >= 3 and not shared.server_down then
+            shared.server_down = true
+            changed()
+        end
     elseif code == "NOT_A_PLAYER" then
         -- Signed out from somewhere else.
         state.player_token = nil
@@ -134,8 +316,54 @@ local function waitFor(seconds, stop)
     until (event == "timer" and id == timer) or (event == "music_change" and stop())
 end
 
+-- What the speakers should be following: songs played here, or the Music
+-- Server's player.
+local function seqNow()
+    if shared.here then return "H" .. shared.here.seq end
+    return shared.player and shared.player.seq
+end
+
 local function moved()
-    return not shared.player or shared.player.seq ~= shared.seq
+    return seqNow() == nil or seqNow() ~= shared.seq
+end
+
+-- A song kept here, played from here.
+local function playKept()
+    local here = shared.here
+    local entry = kept.get(here.queue[here.index])
+    shared.seq = seqNow()
+    if not entry or not kept.allowed() then
+        shared.here, shared.playing = nil, nil
+        shared.error = entry and ("FoxyMusic+ was last confirmed over " .. OFFLINE_DAYS
+            .. " days ago") or nil
+        return
+    end
+    if here.paused or #speakers == 0 then
+        shared.playing = nil
+        waitFor(2, function() return true end)
+        return
+    end
+    shared.error = nil
+    shared.playing = { item = entry, mode = "offline", started = util.nowMs()
+        - (here.offset_ms or 0) }
+    local finished, playError
+    parallel.waitForAny(function()
+        finished, playError = music.play(music.keptPlan(kept.path(entry.track_id), entry.size),
+            speakers, { offset_ms = here.offset_ms,
+                volume = function() return state.volume or 2 end })
+    end, function()
+        repeat os.pullEvent("music_change") until moved()
+    end)
+    if finished then
+        here.index, here.offset_ms = here.index + 1, 0
+        if here.index > #here.queue then shared.here, shared.playing = nil, nil end
+    else
+        music.stop(speakers)
+        if playError then
+            shared.error = playError
+            kept.control("next")
+        end
+    end
 end
 
 -- One song, or one radio item, from asking what to play to its end -- or to
@@ -143,7 +371,8 @@ end
 local function audioStep()
     local player = shared.player
     speakers = music.speakers()
-    if idle(player) or #speakers == 0 then
+    if shared.here then return playKept() end
+    if idle(player) or #speakers == 0 or shared.server_down then
         shared.playing = nil
         shared.seq = player and player.seq
         waitFor(2, function() return true end)
@@ -165,9 +394,15 @@ local function audioStep()
     local streamAt = util.nowMs()
     shared.playing = { item = stream.item, mode = stream.mode, play_no = stream.play_no,
         radio = stream.radio, started = streamAt - (stream.offset_ms or 0) }
+    -- A song kept here plays from here, counted all the same.
+    local plan = stream.plan
+    local entry = stream.mode == "library" and stream.item and kept.get(stream.item.track_id)
+    if entry and entry.size == stream.item.size then
+        plan = music.keptPlan(kept.path(entry.track_id), entry.size)
+    end
     local finished, playError
     parallel.waitForAny(function()
-        finished, playError = music.play(stream.plan, speakers, {
+        finished, playError = music.play(plan, speakers, {
             offset_ms = stream.offset_ms, protocol = CLOUD,
             volume = function() return shared.player and shared.player.volume or 2 end })
     end, function()
@@ -213,7 +448,7 @@ local function drawMonitor()
     if not screen then return end
     pcall(screen.setTextScale, 1)
     local width, height = screen.getSize()
-    local player = shared.player
+    local player = shared.here and kept.view() or shared.player
     local now = player and player.now
     local band = player and player.radio and music.color(player.radio.color)
         or ui.theme.accent
@@ -276,7 +511,8 @@ end
 
 local function nowPage(spec)
     while running do
-        local player = shared.player or {}
+        local here = shared.here ~= nil
+        local player = here and kept.view() or shared.player or {}
         local now = player.now
         local width = target.getSize()
         header((state.owner_name or "") .. (player.label and ("  " .. player.label) or ""))
@@ -303,6 +539,10 @@ local function nowPage(spec)
                 ui.theme.panel)
             ui.text(target, 2, y + 4, music.clock(position), ui.theme.muted)
             ui.text(target, width - 5, y + 4, music.clock(now.length_ms), ui.theme.muted)
+        elseif shared.server_down then
+            ui.center(target, y + 1, "The Music Server is off", ui.theme.warning)
+            ui.center(target, y + 2, next(state.offline) and "Your downloaded songs are in Library"
+                or "Songs you download with FoxyMusic+ play even then", ui.theme.muted)
         else
             ui.center(target, y + 1, player.notice or "Nothing playing", player.notice
                 and ui.theme.warning or ui.theme.muted)
@@ -348,13 +588,40 @@ local function nowPage(spec)
         local action = scene:wait({ tickRate = 1 })
         if action and action:match("^tab:") then return action end
         if action == "__terminate" then return "stop" end
-        if action == "quieter" or action == "louder" then
-            local step = action == "louder" and 0.5 or -0.5
+        local step = (action == "louder" and 0.5) or (action == "quieter" and -0.5) or nil
+        if step and here then
+            state.volume = math.max(0, math.min(3, volume + step))
+            save()
+        elseif step then
             control("volume", { volume = math.max(0, math.min(3, volume + step)) })
+        elseif here and action and not action:match("^__") then
+            kept.control(action)
         elseif action and action ~= "__tick" and action ~= "__idle" and action ~= "__wake" then
             control(action)
         end
     end
+end
+
+-- Keeping a song here, with how far along it is.
+local function download(trackId)
+    local width = target.getSize()
+    header("Downloading")
+    ui.center(target, 7, "Keeping it on this Music Player", ui.theme.muted)
+    local entry, err = kept.download(trackId, function(done, total)
+        ui.progress(target, 4, 9, width - 6, done, total, ui.theme.accent, ui.theme.panel)
+        ui.center(target, 11, done .. " of " .. total .. " pieces", ui.theme.muted)
+    end)
+    if entry then
+        say("success", "DOWNLOADED", entry.title .. " plays even when the Music Server is off")
+    else
+        say("error", "NOT DOWNLOADED", err)
+    end
+end
+
+-- FoxyOS 18: the songs kept here, the way the Music Server lists its own.
+local function keptPage(page, per)
+    local items, actual, pages = util.page(kept.list(), page, per)
+    return { tracks = items, total = #kept.list(), page = actual, pages = pages, kept = true }
 end
 
 local function libraryPage(spec)
@@ -363,40 +630,67 @@ local function libraryPage(spec)
         local width = target.getSize()
         local bottom = ui.contentBottom(target)
         local per = bottom - 6
-        if not listed then
+        local offline = shared.server_down or view.sort == "kept"
+        local canKeep = not shared.server_down and shared.player and shared.player.offline
+        if offline then
+            listed = keptPage(view.page, per)
+            view.page = listed.page
+        elseif not listed or listed.kept then
             listed = ask("MUSIC_LIBRARY", { query = view.query, sort = view.sort,
                 page = view.page, per_page = per })
         end
-        header("Music Library" .. (listed and ("  " .. listed.total .. " songs") or ""))
+        header((offline and "Downloaded" or "Music Library")
+            .. (listed and ("  " .. listed.total .. " songs") or ""))
         local scene = ui.scene(target)
-        local x = 2
-        for _, sort in ipairs({ { "new", "Newest" }, { "title", "A-Z" },
-            { "popular", "Popular" } }) do
-            local on = view.sort == sort[1]
-            scene:button("sort:" .. sort[1], x, 4, #sort[2] + 2, 1, sort[2],
-                { background = on and ui.theme.accent or ui.theme.panel,
-                    foreground = on and ui.inkOn(ui.theme.accent) or ui.theme.ink })
-            x = x + #sort[2] + 3
+        if shared.server_down then
+            ui.fill(target, 2, 4, width - 2, 1, ui.theme.warning)
+            ui.text(target, 3, 4, ui.truncate("The Music Server is off: songs kept here",
+                width - 4), ui.inkOn(ui.theme.warning), ui.theme.warning)
+        else
+            local x = 2
+            local sorts = { { "new", "Newest" }, { "title", "A-Z" }, { "popular", "Popular" } }
+            if canKeep or next(state.offline) then sorts[4] = { "kept", "Downloaded" } end
+            for _, sort in ipairs(sorts) do
+                local on = view.sort == sort[1]
+                scene:button("sort:" .. sort[1], x, 4, #sort[2] + 2, 1, sort[2],
+                    { background = on and ui.theme.accent or ui.theme.panel,
+                        foreground = on and ui.inkOn(ui.theme.accent) or ui.theme.ink })
+                x = x + #sort[2] + 3
+            end
+            if not offline then
+                scene:button("search", width - 11, 4, 11, 1, view.query ~= "" and ("'" ..
+                    ui.truncate(view.query, 7) .. "'") or "SEARCH",
+                    { background = ui.theme.panel })
+            end
         end
-        scene:button("search", width - 11, 4, 11, 1, view.query ~= "" and ("'" ..
-            ui.truncate(view.query, 7) .. "'") or "SEARCH", { background = ui.theme.panel })
         if not listed then
             ui.center(target, 8, "The Music Server is not answering", ui.theme.warning)
         else
             for index, track in ipairs(listed.tracks) do
                 local y = 5 + index
-                local right = music.clock(track.length_ms)
+                local here = kept.get(track.track_id)
                 ui.text(target, 2, y, ui.truncate(track.title .. "  " .. track.artist,
-                    width - 27), ui.theme.ink)
-                ui.text(target, width - 24, y, ui.truncate("by " .. tostring(track.uploader_name),
+                    width - 29), ui.theme.ink)
+                ui.text(target, width - 26, y, ui.truncate("by " .. tostring(track.uploader_name),
                     17), ui.theme.muted)
-                ui.text(target, width - 6, y, right, ui.theme.muted)
-                scene:hotspot("play:" .. track.track_id, 1, y, width - 2, 1)
-                scene:button("add:" .. track.track_id, width, y, 1, 1, "+",
-                    { background = ui.theme.panel })
+                ui.text(target, width - 8, y, music.clock(track.length_ms), ui.theme.muted)
+                scene:hotspot("play:" .. track.track_id, 1, y, width - 4, 1)
+                if canKeep or here then
+                    scene:button("keep:" .. track.track_id, width - 2, y, 1, 1,
+                        here and "*" or "v", { background = here and ui.theme.accent
+                            or ui.theme.panel, foreground = here and ui.inkOn(ui.theme.accent)
+                            or ui.theme.ink })
+                end
+                if not shared.server_down then
+                    scene:button("add:" .. track.track_id, width, y, 1, 1, "+",
+                        { background = ui.theme.panel })
+                end
             end
             if #listed.tracks == 0 then
-                ui.wrappedText(target, 2, 7, view.query ~= "" and "No songs match that."
+                ui.wrappedText(target, 2, 7, offline and (canKeep
+                    and "Nothing downloaded yet. Tap v beside a song to keep it here."
+                    or "Nothing downloaded. Offline Listening comes with FoxyMusic+.")
+                    or view.query ~= "" and "No songs match that."
                     or "The library is empty. Upload the first song!", width - 2, 2,
                     ui.theme.muted)
             end
@@ -413,6 +707,7 @@ local function libraryPage(spec)
         local sort = action and action:match("^sort:(.+)$")
         local playId = action and action:match("^play:(.+)$")
         local addId = action and action:match("^add:(.+)$")
+        local keepId = action and action:match("^keep:(.+)$")
         if sort then
             view.sort, view.page, listed = sort, 1, nil
         elseif action == "search" then
@@ -422,6 +717,24 @@ local function libraryPage(spec)
         elseif action == "prev" or action == "next" then
             view.page = view.page + (action == "next" and 1 or -1)
             listed = nil
+        elseif keepId and kept.get(keepId) then
+            if ui.confirm(target, "REMOVE DOWNLOAD", kept.get(keepId).title .. " stays in the"
+                .. " library. It just won't play here while the Music Server is off.",
+                "REMOVE", "KEEP") then
+                kept.remove(keepId)
+            end
+        elseif keepId then
+            download(keepId)
+        elseif playId and shared.server_down then
+            local queue = {}
+            for _, track in ipairs(listed.tracks) do queue[#queue + 1] = track.track_id end
+            if not kept.allowed() then
+                say("error", "NOT CONFIRMED", "FoxyMusic+ has to be confirmed by the Music"
+                    .. " Server at least every " .. OFFLINE_DAYS .. " days")
+            else
+                kept.play(playId, queue)
+                return "tab:now"
+            end
         elseif playId then
             local queue = {}
             for _, track in ipairs(listed.tracks) do queue[#queue + 1] = track.track_id end
@@ -430,7 +743,7 @@ local function libraryPage(spec)
             if control("add", { track_id = addId }) then
                 say("success", "QUEUED", "Up next after this one")
             end
-        elseif action == "__tick" then
+        elseif action == "__tick" and not offline then
             listed = nil
         end
     end
@@ -528,17 +841,23 @@ local function uploadPage(spec)
             .. " Music Library, with your name on it. Songs are DFPWM1a.", width - 2, 3,
             ui.theme.ink)
         if me then
-            ui.text(target, 2, 9, me.uploads_limit and ("Today: " .. me.uploads .. " of "
-                .. me.uploads_limit .. " uploads. FoxyCloud+ has no limit.")
-                or "FoxyCloud+: upload as many as you like", ui.theme.muted)
-            ui.text(target, 2, 10, me.plays_limit and ("Today: " .. me.plays .. " of "
-                .. me.plays_limit .. " songs played. Radios are free.")
-                or "FoxyCloud+: listen to as much as you like", ui.theme.muted)
+            local plan = me.music_plus and "FoxyMusic+" or "FoxyCloud+"
+            ui.text(target, 2, 9, ui.truncate(me.uploads_limit and ("Today: " .. me.uploads
+                .. " of " .. me.uploads_limit .. " uploads. FoxyMusic+ has no limit.")
+                or (plan .. ": upload as many as you like"), width - 2), ui.theme.muted)
+            ui.text(target, 2, 10, ui.truncate(me.plays_limit and ("Today: " .. me.plays
+                .. " of " .. me.plays_limit .. " songs played. Radios are free.")
+                or (plan .. ": listen to as much as you like"), width - 2), ui.theme.muted)
+        end
+        if next(state.offline) then
+            ui.text(target, 2, 11, ui.truncate("Offline Listening: " .. #kept.list()
+                .. " songs, " .. util.sizeText(kept.bytes()) .. " on this computer", width - 2),
+                ui.theme.muted)
         end
         local songs = diskSongs()
         for index, path in ipairs(songs) do
-            if 11 + index > ui.contentBottom(target) - 2 then break end
-            scene:button("disk:" .. index, 2, 11 + index, width - 2, 1, path,
+            if 12 + index > ui.contentBottom(target) - 2 then break end
+            scene:button("disk:" .. index, 2, 12 + index, width - 2, 1, path,
                 { background = ui.theme.panel })
         end
         local bottom = ui.contentBottom(target)
@@ -570,8 +889,10 @@ local function uploadPage(spec)
             me = nil
         elseif action == "signout" then
             if ui.confirm(target, "SIGN OUT", "This Music Player stops being yours and goes"
-                .. " quiet.", "SIGN OUT", "STAY") then
+                .. " quiet. Songs downloaded on it go too.", "SIGN OUT", "STAY") then
                 ask("MUSIC_BYE", {})
+                kept.clear()
+                shared.here = nil
                 state.player_token, state.owner_name = nil, nil
                 save()
                 running = false
@@ -606,7 +927,7 @@ local function updateLoop()
 end
 
 if rawget(_G, "PUMPE_TEST_MODE") == "music_player" then
-    return { state = state, shared = shared, signIn = signIn, tickOnce = tickOnce,
+    return { state = state, shared = shared, kept = kept, signIn = signIn, tickOnce = tickOnce,
         audioStep = audioStep, screenLoop = screenLoop, drawMonitor = drawMonitor,
         stop = function() running = false end, running = function() return running end }
 end

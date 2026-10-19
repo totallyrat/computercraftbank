@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "17.0.0"
+local PROGRAM_VERSION = "18.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -86,6 +86,7 @@ RELEASE.depot_files = {
     "music_player.lua",
     "music.lua",
     "lib/music.lua",
+    "lib/desktop.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -142,6 +143,7 @@ RELEASE.optional = {
     "music_player.lua",
     "music.lua",
     "lib/music.lua",
+    "lib/desktop.lua",
 }
 
 RELEASE.programs = {
@@ -210,6 +212,11 @@ local function deploymentFilesForRole(role)
     end
     -- FoxyOS 17: whatever plays music streams it with lib/music.
     if role == "music" or role == "musicplayer" or role == "ccgcasino" then
+        files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
+    end
+    -- FoxyOS 18: a Pocket brings its desktop, which plays music too.
+    if role == "pumpe" then
+        files[#files + 1] = { path = "lib/desktop.lua", source = "lib/desktop.lua" }
         files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
     end
     files[#files + 1] = { path = mainFile, source = mainFile }

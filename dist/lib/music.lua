@@ -4,7 +4,8 @@
 -- and the radios; the pieces are on the Cloud Servers like any FoxyCloud
 -- file, and whatever plays a song fetches them itself, one piece ahead.
 --
--- Shared by the Music Player, the CCG Casino and the Music Server.
+-- Shared by the Music Player, the CCG Casino, the Music Server and, FoxyOS 18,
+-- the Pocket Desktop.
 
 local util = require("lib.util")
 local net = require("lib.net")
@@ -70,10 +71,38 @@ function music.stop(speakers)
     end
 end
 
+-- A song kept on this computer, FoxyOS 18 (Offline Listening), as a plan
+-- music.play takes: the same pieces, read from the file one at a time.
+function music.keptPlan(path, size, each)
+    each = math.max(1, tonumber(each) or 16 * 1024)
+    local plan = { path = path, chunks = {} }
+    for first = 1, math.max(0, tonumber(size) or 0), each do
+        plan.chunks[#plan.chunks + 1] = { at = first - 1,
+            size = math.min(each, size - first + 1) }
+    end
+    return plan
+end
+
+local function keptPiece(plan, chunk)
+    local handle = fs.open(plan.path, "rb")
+    if not handle then return nil, "That song is not on this computer any more", "MISSING" end
+    local ok, data = pcall(function()
+        if handle.seek and handle.read then
+            handle.seek("set", chunk.at)
+            return handle.read(chunk.size)
+        end
+        return (handle.readAll() or ""):sub(chunk.at + 1, chunk.at + chunk.size)
+    end)
+    pcall(handle.close)
+    if ok and type(data) == "string" and #data == chunk.size then return data end
+    return nil, "The song kept here is damaged", "DAMAGED"
+end
+
 -- One piece of a song, from whichever of its copies answers whole.
 function music.piece(plan, index, protocol)
     local chunk = plan.chunks and plan.chunks[index]
     if not chunk then return nil, "There is no such piece", "MISSING" end
+    if plan.path then return keptPiece(plan, chunk) end
     local err, code
     for _, serverId in ipairs(chunk.servers or {}) do
         local got
@@ -159,6 +188,119 @@ function music.play(plan, speakers, options)
         if not data then return nil, err, code end
     end
     return true
+end
+
+-- A Music Player inside something else, FoxyOS 18: the Pocket Desktop on a
+-- computer with a speaker. Signed in once with a Pocket's session
+-- (MUSIC_HELLO), it is one of its owner's Music Players: the Music app picks
+-- what it plays, like any other. spec:
+--   request(action, payload, timeout)  the Music Server
+--   token(), keep(token)               the player's token, kept by the caller
+--   speakers()                         what to play on
+--   protocol                           the Cloud Servers'
+-- tick() once a second and step() in a loop of its own, side by side.
+function music.engine(spec)
+    local engine = { player = nil, playing = nil, error = nil, seq = nil, token = spec.token }
+    local function ask(action, payload, timeout)
+        payload = payload or {}
+        payload.player_token = spec.token()
+        return spec.request(action, payload, timeout)
+    end
+    local function changed() os.queueEvent("music_change") end
+    local function moved() return not engine.player or engine.player.seq ~= engine.seq end
+    local function wait(seconds, stop)
+        local timer = os.startTimer(seconds)
+        repeat
+            local event, id = os.pullEvent()
+        until (event == "timer" and id == timer) or (event == "music_change" and stop())
+    end
+
+    function engine.signIn(sessionToken, label)
+        local hello, err, code = spec.request("MUSIC_HELLO",
+            { session_token = sessionToken, label = label }, 6)
+        if hello then
+            spec.keep(hello.player_token)
+            engine.player = hello.player
+        end
+        return hello, err, code
+    end
+
+    -- What the Music Server wants played, and where this is in the song.
+    function engine.tick(version)
+        if not spec.token() then return nil end
+        local playing = engine.playing
+        local answer, err, code = ask("MUSIC_TICK", { version = version,
+            position_ms = playing and util.nowMs() - playing.started,
+            play_no = playing and playing.play_no }, 3)
+        if answer then
+            engine.player = answer.player
+            if answer.player.seq ~= engine.seq then changed() end
+        elseif code == "NOT_A_PLAYER" then
+            spec.keep(nil)
+            engine.player = nil
+            changed()
+        end
+        return answer, err, code
+    end
+
+    function engine.control(command, extra)
+        local payload = extra or {}
+        payload.command = command
+        local answer, err, code = ask("MUSIC_CONTROL", payload, 5)
+        if answer then
+            engine.player = answer.player
+            changed()
+        end
+        return answer, err, code
+    end
+
+    -- One song or radio item, from asking for it to its end -- or to being
+    -- told something else, which stops the speakers at once.
+    function engine.step()
+        local player, speakers = engine.player, spec.speakers()
+        if not spec.token() or not player or player.mode == "idle" or player.paused
+            or #speakers == 0 then
+            engine.playing, engine.seq = nil, player and player.seq
+            wait(2, function() return true end)
+            return
+        end
+        local stream, err, code = ask("MUSIC_STREAM", {}, 8)
+        if not stream then
+            engine.playing, engine.error, engine.seq = nil, err, player.seq
+            wait(code and 30 or 2, function() return true end)
+            return
+        end
+        engine.error, engine.seq = nil, stream.seq
+        local at = util.nowMs()
+        engine.playing = { item = stream.item, mode = stream.mode, play_no = stream.play_no,
+            started = at - (stream.offset_ms or 0) }
+        local finished, playError
+        parallel.waitForAny(function()
+            finished, playError = music.play(stream.plan, speakers, {
+                offset_ms = stream.offset_ms, protocol = spec.protocol,
+                volume = function() return engine.player and engine.player.volume or 2 end })
+        end, function()
+            repeat os.pullEvent("music_change") until moved()
+        end)
+        if finished and stream.mode == "radio" then
+            local left = (at + stream.item.length_ms - (stream.offset_ms or 0) - util.nowMs())
+                / 1000
+            if left > 0 then wait(left, moved) end
+        elseif finished then
+            local nextUp = ask("MUSIC_NEXT", { play_no = stream.play_no })
+            if nextUp then
+                engine.player, engine.seq = nextUp.player, nextUp.player.seq
+            end
+        else
+            music.stop(speakers)
+            if playError then
+                engine.error = playError
+                wait(2, function() return false end)
+            end
+        end
+        engine.playing = nil
+    end
+    return engine
 end
 
 -- Sends a song's bytes where an upload's plan says (net.cloud.put), for a

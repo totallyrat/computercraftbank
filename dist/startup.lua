@@ -14,7 +14,7 @@
 
 
 
-local INSTALLER_VERSION = "17.0.0"
+local INSTALLER_VERSION = "18.0.0"
 local MANIFEST_URL =
 "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -57,8 +57,10 @@ detail = "The phone: money, friends, apps",
 about = "Money, friends, tickets and travel papers, all in one pocket computer.",
 
 
+
 words = "phone pocket foxy money wallet apps shop store till pos checkout"
-.. " sell pay kiosk" },
+.. " sell pay kiosk desktop",
+extra = { "lib/desktop.lua", "lib/music.lua" } },
 
 
 { id = "service", name = "Service Kiosk", file = "service_kiosk.lua",

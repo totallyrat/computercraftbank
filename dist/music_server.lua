@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "17.0.0"
+local PROGRAM_VERSION = "18.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -14,8 +14,14 @@ local music = require("lib.music")
 
 -- The Music Server, FoxyOS 17. It keeps the Music Library -- every song,
 -- with who uploaded it -- and runs the radios. The songs themselves are on
--- the Cloud Servers, kept for the library by the Bank's Vault, so a library
--- is as big as the world's Cloud Servers make it, not one computer's disk.
+-- the Cloud Servers, so a library is as big as the world's Cloud Servers make
+-- it, not one computer's disk.
+--
+-- FoxyOS 18: it works without the Bank. It puts songs on the Cloud Servers
+-- itself and hands out the tickets to read them, counts each listener's day
+-- itself, and keeps what the Bank last said about their plan. The Bank is
+-- needed to register once, to sign a Music Player in, and for what is the
+-- Bank's: phone numbers and giveaways.
 --
 -- A radio is live: a timeline of songs, hosts talking between them, ads and
 -- now and then a giveaway, worked out here as it goes, and every listener
@@ -25,8 +31,8 @@ local music = require("lib.music")
 --
 -- Music Players sign in once and are then told what to play; the Music app on
 -- a Pocket tells this server what each of its owner's players should play.
--- How many songs a day somebody plays from the library, and uploads, is the
--- Bank's to count -- radios are free.
+-- How many songs a day somebody plays from the library, and uploads, is
+-- counted here against their plan -- radios are free.
 local target = term.current()
 local bank = net.client(config)
 local running = true
@@ -40,12 +46,17 @@ state.radios = state.radios or {}
 state.players = state.players or {}
 state.grants = state.grants or {}
 state.seq = state.seq or { track = 0, radio = 0, player = 0, upload = 0 }
+-- FoxyOS 18: listeners' plans as the Bank last said, and their day here.
+state.entitled = state.entitled or {}
+state.usage = state.usage or {}
+state.drops = state.drops or {}
 
 -- Never written down: what a radio is playing is worked out again on start,
 -- and a session, a plan or an upload outlives nothing.
 local live = {}
-local cache = { sessions = {}, accounts = {}, plans = {}, uploads = {} }
-local status = { bank = "Not yet", bank_color = colors.lightGray, streams = 0 }
+local cache = { sessions = {}, plans = {}, uploads = {} }
+local status = { bank = "Not yet", bank_color = colors.lightGray, streams = 0,
+    bank_seen = 0, bank_quiet_until = 0 }
 
 -- How often, out of a hundred breaks, a radio starts a special on its own.
 local SPECIAL_CHANCE = 8
@@ -76,22 +87,170 @@ local function need(condition, code, message)
     if not condition then reject(code, message) end
 end
 
--- The Bank, as this server: every errand carries its registration.
+-- The Bank, as this server: every errand carries its registration. FoxyOS
+-- 18: a Bank that did not answer is not asked again for half a minute, so a
+-- request here never waits on it over and over -- what was kept is used.
 local function bankAsk(action, payload, timeout)
     payload = payload or {}
     payload.server_token = state.server_token
+    if util.nowMs() < status.bank_quiet_until then
+        return nil, "The Bank is not answering", nil
+    end
     local answer, err, code = bank:request(action, payload, timeout or 5)
-    if answer then
+    if answer or code then
+        status.bank_seen, status.bank_down = util.nowMs(), false
         status.bank, status.bank_color = "OK at " .. util.formatClock(), colors.lime
-    elseif not code then
+    else
+        status.bank_down = true
+        status.bank_quiet_until = util.nowMs() + 30 * 1000
         status.bank, status.bank_color = tostring(err or "No answer"), colors.red
     end
     return answer, err, code
 end
 
+-- Whether the Bank answered lately, and not since stopped: giveaways need it.
+local function bankUp()
+    return not status.bank_down and util.nowMs() - status.bank_seen < 2 * 60 * 1000
+end
+
 local function nextId(kind, prefix)
     state.seq[kind] = (state.seq[kind] or 0) + 1
     return prefix .. state.seq[kind]
+end
+
+-- The Cloud Servers, FoxyOS 18 -------------------------------------------------------
+-- The Music Server finds the Cloud Servers on the network, puts each piece of
+-- a song on whichever has the most room, and hands out the tickets to read
+-- them. A Cloud Server checks a song's ticket with this server -- believing
+-- only the computer the Bank named as the Music Server -- so nothing here
+-- waits on the Bank. Songs from FoxyOS 17, which the Bank's Vault keeps,
+-- still play through the Bank, and move here one at a time while it answers.
+
+local store = { tickets = {}, servers = {}, checked_at = 0,
+    chunk = math.max(512, math.floor(tonumber(config.cloud_chunk_size) or 16384)),
+    copies = math.max(1, math.floor(tonumber(config.cloud_copies) or 1)),
+    reserve = tonumber(config.cloud_server_reserve_bytes) or 20000 }
+
+-- This server's number, as its songs' pieces are named: M<number>T<track>...
+function store.number()
+    return tonumber(tostring(state.server_id or ""):match("%d+")) or 0
+end
+
+function store.pieceId(trackId, version, index)
+    return "M" .. store.number() .. "T" .. tostring(trackId):gsub("%D", "") .. "."
+        .. version .. "." .. index
+end
+
+-- Which Cloud Servers answer, and how much room each has. Asked from the
+-- background, never while a request waits.
+function store.refresh()
+    local found = {}
+    for _, id in ipairs({ rednet.lookup(CLOUD) }) do
+        local ping = net.ask(id, CLOUD, "CLOUD_PING", {}, 2)
+        if ping and tonumber(ping.free) then
+            found[#found + 1] = { computer_id = id, free = tonumber(ping.free),
+                name = ping.name, server_id = ping.server_id }
+        end
+    end
+    store.servers, store.checked_at = found, util.nowMs()
+    return found
+end
+
+-- Where each piece goes: on the servers with the most room, a different one
+-- for each copy, the room counted down as it is handed out.
+function store.place(trackId, version, size)
+    local servers = {}
+    for _, server in ipairs(store.servers) do
+        servers[#servers + 1] = server
+    end
+    need(#servers > 0, "CLOUD_OFFLINE", "No Cloud Server is answering")
+    local copies = math.min(#servers, store.copies)
+    local pieces, left, index = {}, size, 0
+    while left > 0 do
+        index = index + 1
+        local pieceSize = math.min(store.chunk, left)
+        table.sort(servers, function(a, b) return a.free > b.free end)
+        local hosts = {}
+        for copy = 1, copies do
+            local server = servers[copy]
+            need(server.free - store.reserve >= math.max(pieceSize, 500), "CLOUD_FULL",
+                "The Cloud Servers are full")
+            server.free = server.free - math.max(pieceSize, 500)
+            hosts[copy] = server.computer_id
+        end
+        pieces[index] = { id = store.pieceId(trackId, version, index), size = pieceSize,
+            hosts = hosts }
+        left = left - pieceSize
+    end
+    return pieces
+end
+
+-- A ticket for pieces, and the plan a Pocket, a player or this server uses
+-- to move them (the shape net.cloud.put and net.cloud.get take).
+function store.plan(mode, pieces, ttl)
+    local token = util.token("MT")
+    local chunks, hosts, allowed = {}, {}, {}
+    for index, piece in ipairs(pieces) do
+        local servers = {}
+        for _, id in ipairs(piece.hosts) do
+            servers[#servers + 1] = "C" .. id
+            hosts["C" .. id] = id
+        end
+        chunks[index] = { id = piece.id, size = piece.size, servers = servers }
+        allowed[piece.id] = { size = piece.size, hosts = piece.hosts }
+    end
+    store.tickets[token] = { mode = mode, chunks = allowed,
+        expires_at = util.nowMs() + ttl }
+    return { ticket = token, chunks = chunks, hosts = hosts, expires_in_ms = ttl,
+        chunk_size = store.chunk }
+end
+
+function store.size(pieces)
+    local total = 0
+    for _, piece in ipairs(pieces or {}) do total = total + piece.size end
+    return total
+end
+
+-- Pieces nobody wants any more, taken back from their Cloud Servers from the
+-- background. A server that is off is asked by its own sweep instead.
+function store.forget(pieces)
+    for _, piece in ipairs(pieces or {}) do
+        for _, host in ipairs(piece.hosts) do
+            state.drops[#state.drops + 1] = { id = piece.id, host = host, size = piece.size }
+        end
+    end
+end
+
+function store.dropPending()
+    if #state.drops == 0 then return 0 end
+    local batch = {}
+    while #state.drops > 0 and #batch < 40 do batch[#batch + 1] = table.remove(state.drops, 1) end
+    local pieces = {}
+    for _, drop in ipairs(batch) do
+        pieces[#pieces + 1] = { id = drop.id, size = drop.size or 1, hosts = { drop.host } }
+    end
+    local plan = store.plan("drop", pieces, 60 * 1000)
+    local dropped = 0
+    for _, drop in ipairs(batch) do
+        if net.ask(drop.host, CLOUD, "CHUNK_DROP", { ticket = plan.ticket, chunk_id = drop.id }, 2) then
+            dropped = dropped + 1
+        end
+    end
+    store.tickets[plan.ticket] = nil
+    save()
+    return dropped
+end
+
+-- Every piece this server wants kept: its songs', and uploads under way.
+function store.wanted()
+    local wanted = {}
+    for _, track in pairs(state.tracks) do
+        for _, piece in ipairs(track.pieces or {}) do wanted[piece.id] = true end
+    end
+    for _, upload in pairs(cache.uploads) do
+        for _, piece in ipairs(upload.pieces or {}) do wanted[piece.id] = true end
+    end
+    return wanted
 end
 
 -- The library ------------------------------------------------------------------------
@@ -141,9 +300,10 @@ end
 
 -- A finished upload becomes a track: credited to whoever sent it.
 function library.add(fields)
-    local id = nextId("track", "T")
+    local id = fields.track_id or nextId("track", "T")
     state.tracks[id] = {
         track_id = id, file_id = fields.file_id, size = fields.size,
+        pieces = fields.pieces, version = fields.pieces and 1 or nil,
         title = library.clean(fields.title, 28, "Untitled"),
         artist = library.clean(fields.artist, 20, "Unknown"),
         kind = music.KIND_NAMES[fields.kind or ""] and fields.kind or "song",
@@ -161,8 +321,13 @@ end
 function library.remove(trackId)
     local track = state.tracks[trackId]
     if not track then return false end
-    local _, err, code = bankAsk("CLOUD_MUSIC_DELETE", { file_id = track.file_id })
-    if err and code ~= "NOT_FOUND" then return false, err end
+    if track.pieces then
+        store.forget(track.pieces)
+    else
+        -- A FoxyOS 17 song, still the Vault's.
+        local _, err, code = bankAsk("CLOUD_MUSIC_DELETE", { file_id = track.file_id })
+        if err and code ~= "NOT_FOUND" then return false, err end
+    end
     state.tracks[trackId] = nil
     cache.plans[trackId] = nil
     for _, station in pairs(state.radios) do
@@ -196,8 +361,14 @@ function library.plan(trackId)
     if known and known.expires_at - now > music.lengthMs(track.size) + 60000 then
         return known.plan
     end
-    local plan, err, code = bankAsk("CLOUD_MUSIC_GET", { file_id = track.file_id }, 6)
-    need(plan, code or "BANK_OFFLINE", err or "The Bank did not answer")
+    local plan
+    if track.pieces then
+        plan = store.plan("get", track.pieces, 7 * 60 * 1000 + music.lengthMs(track.size))
+    else
+        local err, code
+        plan, err, code = bankAsk("CLOUD_MUSIC_GET", { file_id = track.file_id }, 6)
+        need(plan, code or "BANK_OFFLINE", err or "The Bank did not answer")
+    end
     cache.plans[trackId] = { plan = plan, expires_at = now + (plan.expires_in_ms or 0) }
     return plan
 end
@@ -209,15 +380,55 @@ function library.import(fields, body, progress)
     local most = tonumber(config.music_max_bytes) or 12 * 1024 * 1024
     if #body == 0 then return nil, "That file is empty" end
     if #body > most then return nil, "A song is at most " .. util.sizeText(most) end
-    local plan, err = bankAsk("CLOUD_MUSIC_PUT", { size = #body, name = "song.dfpwm" }, 6)
-    if not plan then return nil, err end
+    if #store.servers == 0 then store.refresh() end
+    local trackId = nextId("track", "T")
+    local placed, pieces = pcall(store.place, trackId, 1, #body)
+    if not placed then return nil, type(pieces) == "table" and pieces.message or tostring(pieces) end
+    local plan = store.plan("put", pieces, 60 * 1000 + #pieces * 3000)
     local ok, putError = music.upload(plan, body, CLOUD, progress)
-    if not ok then return nil, putError end
-    local done, doneError = bankAsk("CLOUD_MUSIC_PUT_DONE", { file_id = plan.file_id,
-        version = plan.version }, 6)
-    if not done then return nil, doneError end
-    fields.file_id, fields.size = plan.file_id, #body
+    store.tickets[plan.ticket] = nil
+    if not ok then
+        store.forget(pieces)
+        return nil, putError
+    end
+    fields.track_id, fields.pieces, fields.size = trackId, pieces, #body
     return library.add(fields)
+end
+
+-- FoxyOS 18: a FoxyOS 17 song -- kept for the library by the Bank's Vault --
+-- moved onto pieces of this server's own, one at a time while the Bank
+-- answers. Until then it plays as it always did, through the Bank.
+function library.migrate()
+    if not bankUp() or #store.servers == 0 then return nil end
+    local track
+    for _, id in ipairs(library.list("all")) do
+        local candidate = state.tracks[id]
+        if candidate.file_id and not candidate.pieces then
+            track = candidate
+            break
+        end
+    end
+    if not track then return nil end
+    local plan = bankAsk("CLOUD_MUSIC_GET", { file_id = track.file_id }, 6)
+    local body = plan and net.cloud.get(plan, CLOUD)
+    if not body then return false end
+    local version = (track.version or 0) + 1
+    local placed, pieces = pcall(store.place, track.track_id, version, #body)
+    if not placed then return false end
+    local put = store.plan("put", pieces, 60 * 1000 + #pieces * 3000)
+    local ok = music.upload(put, body, CLOUD)
+    store.tickets[put.ticket] = nil
+    if not ok or not state.tracks[track.track_id] then
+        store.forget(pieces)
+        return false
+    end
+    local old = track.file_id
+    track.pieces, track.version, track.file_id = pieces, version, nil
+    cache.plans[track.track_id] = nil
+    save()
+    bankAsk("CLOUD_MUSIC_DELETE", { file_id = old })
+    logActivity("Moved " .. track.title .. " to the Music Server's own pieces", colors.cyan)
+    return true
 end
 
 -- Radios -----------------------------------------------------------------------------
@@ -314,7 +525,8 @@ function radio.nextItem(r, l, now)
     local last = l.item
     if last and last.kind == "song" and not (special and special.kind == "nonstop") then
         l.since_ad = (l.since_ad or 0) + 1
-        local give = radio.pick(r, l, "giveaway")
+        -- A giveaway is the Bank's: without it, the clip is not played.
+        local give = bankUp() and r.number and radio.pick(r, l, "giveaway")
         if give and not l.giveaway and (l.force_giveaway
             or math.random(1, 100) <= (tonumber(r.giveaway_chance) or 4)) then
             l.force_giveaway = nil
@@ -472,7 +684,9 @@ end
 
 local people = {}
 
--- A Pocket's session, asked of the Bank once a minute.
+-- A Pocket's session, asked of the Bank once a minute. FoxyOS 18: while the
+-- Bank does not answer, a session it has vouched for in the last twelve hours
+-- -- as long as a session lasts there -- is still believed.
 function people.session(payload)
     local token = payload.session_token
     need(type(token) == "string" and #token > 0, "SIGN_IN", "Sign in first")
@@ -480,10 +694,15 @@ function people.session(payload)
     local known = cache.sessions[token]
     if not known or known.until_ms <= now then
         local who, err, code = bankAsk("MUSIC_WHO", { session_token = token })
-        need(who, code or "BANK_OFFLINE", err or "The Bank did not answer")
-        known = { account_id = who.account_id, name = who.name, until_ms = now + 60000 }
-        cache.sessions[token] = known
-        cache.accounts[who.account_id] = { who = who, until_ms = now + 60000 }
+        if who then
+            known = { account_id = who.account_id, name = who.name, until_ms = now + 60000,
+                vouched_at = now }
+            cache.sessions[token] = known
+            people.remember(who)
+        elseif code or not (known and now - known.vouched_at < 12 * 60 * 60 * 1000) then
+            cache.sessions[token] = nil
+            reject(code or "BANK_OFFLINE", err or "The Bank did not answer")
+        end
     end
     return known
 end
@@ -509,18 +728,78 @@ function people.caller(payload)
     return people.session(payload)
 end
 
--- What an account may do today, as the Bank last said. FoxyCloud+ matters
--- to a CCG Casino, which is checked again every minute it plays.
+-- An account's plan, as the Bank said it (MUSIC_WHO and MUSIC_ACCOUNT answer
+-- the same), kept on disk for when it is not answering.
+function people.remember(who)
+    if type(who) ~= "table" or not who.account_id then return end
+    state.entitled[who.account_id] = { name = who.name, plus = who.plus == true,
+        music_plus = who.music_plus == true, offline = who.offline == true,
+        tier = who.tier, unlimited_plays = who.plays_limit == nil,
+        unlimited_uploads = who.uploads_limit == nil, plays_limit = who.plays_limit,
+        uploads_limit = who.uploads_limit, checked_at = util.nowMs() }
+    save()
+end
+
+-- What an account may do: its plan as last heard -- asked again once a few
+-- minutes have passed, or sooner when `fresh` says (true: now; a number: that
+-- many milliseconds) -- or the free plan if the Bank has never said.
 function people.allowance(accountId, fresh)
-    local now = util.nowMs()
-    local known = cache.accounts[accountId]
-    if fresh or not known or known.until_ms <= now then
-        local who, err, code = bankAsk("MUSIC_ACCOUNT", { account_id = accountId })
-        need(who, code or "BANK_OFFLINE", err or "The Bank did not answer")
-        known = { who = who, until_ms = now + 60000 }
-        cache.accounts[accountId] = known
+    local known = state.entitled[accountId]
+    local most = fresh == true and 0 or tonumber(fresh) or 5 * 60 * 1000
+    local stale = not known or fresh == true or util.nowMs() - (known.checked_at or 0) > most
+    if stale then
+        local who = bankAsk("MUSIC_ACCOUNT", { account_id = accountId })
+        if who then people.remember(who) end
+        known = state.entitled[accountId]
     end
-    return known.who
+    return known or {}
+end
+
+-- Today's songs and uploads, counted here, by in-game day.
+function people.usage(accountId)
+    local today = util.ingameDay()
+    local usage = state.usage[accountId]
+    if type(usage) ~= "table" or usage.day ~= today then
+        usage = { day = today, plays = 0, uploads = 0 }
+        state.usage[accountId] = usage
+    end
+    return usage
+end
+
+-- A day's songs or uploads ("plays", "uploads"), or nil for no limit.
+function people.limit(accountId, what)
+    local allowed = people.allowance(accountId)
+    if allowed["unlimited_" .. what] then return nil end
+    local free = type(config.foxycloud_free) == "table" and config.foxycloud_free or {}
+    return tonumber(allowed[what .. "_limit"]) or tonumber(free[what])
+        or (what == "plays" and 10 or 2)
+end
+
+-- Refuses what today does not allow, and counts it if `count`.
+function people.spend(accountId, what, count)
+    local usage, limit = people.usage(accountId), people.limit(accountId, what)
+    if what == "plays" then
+        need(not limit or usage.plays < limit, "MUSIC_LIMIT", tostring(limit)
+            .. " songs a day without FoxyMusic+. Radios are free")
+    else
+        need(not limit or usage.uploads < limit, "UPLOAD_LIMIT", tostring(limit)
+            .. " uploads a day without FoxyMusic+")
+    end
+    if count then
+        usage[what] = usage[what] + 1
+        save()
+    end
+    return usage
+end
+
+-- What somebody may do today, as the Music app and a player show it.
+function people.me(accountId, name)
+    local allowed, usage = people.allowance(accountId), people.usage(accountId)
+    return { account_id = accountId, name = allowed.name or name, tier = allowed.tier,
+        plus = allowed.plus == true, music_plus = allowed.music_plus == true,
+        offline = allowed.offline == true, plays = usage.plays,
+        plays_limit = people.limit(accountId, "plays"), uploads = usage.uploads,
+        uploads_limit = people.limit(accountId, "uploads") }
 end
 
 function people.publicPlayer(player, now)
@@ -542,10 +821,12 @@ function people.publicPlayer(player, now)
         local track = state.tracks[(player.queue or {})[player.index or 1] or ""]
         out.now = library.public(track)
         if out.now then out.now.position_ms = player.position_ms or 0 end
-        local allowed = cache.accounts[player.account_id]
-        out.plays_left = allowed and allowed.who.plays_limit
-            and math.max(0, allowed.who.plays_limit - (allowed.who.plays or 0)) or nil
+        local limit = people.limit(player.account_id, "plays")
+        out.plays_left = limit and math.max(0, limit - people.usage(player.account_id).plays)
+            or nil
     end
+    -- FoxyOS 18: whether its owner may keep songs on it for Offline Listening.
+    out.offline = people.allowance(player.account_id).offline == true
     return out
 end
 
@@ -560,8 +841,8 @@ function people.ownPlayer(payload)
     return player, who
 end
 
--- A different song (or a radio) is a new play_no: counted once by the Bank,
--- however often it is paused and resumed.
+-- A different song (or a radio) is a new play_no: counted once, however often
+-- it is paused and resumed.
 function people.changed(player, newTrack)
     player.seq = (player.seq or 0) + 1
     if newTrack then
@@ -608,10 +889,46 @@ end
 -- What somebody may play and upload today.
 function actions.MUSIC_ME(payload)
     local who = people.caller(payload)
-    local allowed = people.allowance(who.account_id, true)
-    return { account_id = who.account_id, name = who.name, tier = allowed.tier,
-        plus = allowed.plus, plays = allowed.plays, plays_limit = allowed.plays_limit,
-        uploads = allowed.uploads, uploads_limit = allowed.uploads_limit }
+    people.allowance(who.account_id, true)
+    return people.me(who.account_id, who.name)
+end
+
+-- A Cloud Server asking what one of this server's tickets allows -- on that
+-- Cloud Server only, so it never learns where the rest of a song is.
+function actions.MUSIC_TICKET(payload, sender)
+    local ticket = store.tickets[tostring(payload.ticket or "")]
+    local now = util.nowMs()
+    need(ticket and ticket.expires_at > now, "BAD_TICKET", "That ticket has expired")
+    local mine = {}
+    for id, entry in pairs(ticket.chunks) do
+        for _, host in ipairs(entry.hosts) do
+            if host == sender then mine[id] = entry.size end
+        end
+    end
+    return { mode = ticket.mode, chunks = mine, ttl_ms = ticket.expires_at - now }
+end
+
+-- A Cloud Server's sweep: which of this server's pieces it holds that no
+-- song wants any more -- an upload that never finished, a song deleted while
+-- that Cloud Server was off.
+function actions.MUSIC_KEEP(payload)
+    local wanted, drop = store.wanted(), {}
+    for index, id in ipairs(type(payload.chunks) == "table" and payload.chunks or {}) do
+        if index > 200 then break end
+        if not wanted[tostring(id)] then drop[#drop + 1] = tostring(id) end
+    end
+    return { drop = drop }
+end
+
+-- Offline Listening, FoxyOS 18: a song kept on a Music Player, for while this
+-- server is off. FoxyMusic+ only, asked of the Bank now if it answers.
+function actions.MUSIC_DOWNLOAD(payload)
+    local player = people.player(payload)
+    local allowed = people.allowance(player.account_id, true)
+    need(allowed.offline, "NEEDS_MUSIC_PLUS", "Offline Listening comes with FoxyMusic+")
+    local track = state.tracks[tostring(payload.track_id or "")]
+    need(track and track.kind == "song", "NOT_FOUND", "That song is not in the library")
+    return { track = library.public(track), plan = library.plan(track.track_id) }
 end
 
 -- A Music Player signing in, once. Signing in again on the same computer
@@ -741,15 +1058,16 @@ function actions.MUSIC_CONTROL(payload)
 end
 
 -- What a Music Player, or a CCG Casino, should play right now and where to
--- fetch it. A song from the library is counted by the Bank once, when it
--- starts; a radio is free and always where everybody else is in it.
+-- fetch it. A song from the library is counted once, when it starts; a radio
+-- is free and always where everybody else is in it.
 function actions.MUSIC_STREAM(payload)
     local now = util.nowMs()
     local mode, radioId, trackId, player, grant
     if payload.grant then
         grant = state.grants[tostring(payload.grant)]
         need(grant, "NO_GRANT", "That music is not set up any more")
-        local owner = people.allowance(grant.account_id)
+        -- Asked again every minute a casino plays, while the Bank answers.
+        local owner = people.allowance(grant.account_id, 60 * 1000)
         need(owner.plus, "NEEDS_PLUS", "Music on a CCG Casino needs FoxyCloud+")
         mode = grant.kind == "radio" and "radio" or "library"
         radioId, trackId = grant.id, grant.id
@@ -773,16 +1091,15 @@ function actions.MUSIC_STREAM(payload)
     local track = state.tracks[tostring(trackId or "")]
     need(track, "NOT_FOUND", "That song is not in the library any more")
     if player and player.counted ~= player.play_no then
-        local who, err, code = bankAsk("MUSIC_PLAY", { account_id = player.account_id })
-        if not who then
-            if code == "MUSIC_LIMIT" then
+        local ok, err = pcall(people.spend, player.account_id, "plays", true)
+        if not ok then
+            if type(err) == "table" and err.code == "MUSIC_LIMIT" then
                 people.changed(player, true)
-                player.mode, player.notice = "idle", err
+                player.mode, player.notice = "idle", err.message
                 save()
             end
-            reject(code or "BANK_OFFLINE", err or "The Bank did not answer")
+            error(err, 0)
         end
-        cache.accounts[player.account_id] = { who = who, until_ms = now + 60000 }
         player.counted = player.play_no
         track.plays = (track.plays or 0) + 1
         save()
@@ -836,25 +1153,24 @@ function actions.MUSIC_GRANT(payload)
     return { grant = token, kind = kind, id = id, label = label }
 end
 
--- Uploading a song: the Bank says whether today allows another, and where on
--- the Cloud Servers its pieces go. The bytes go there from the uploader, not
--- through here.
+-- Uploading a song: whether today allows another, and where on the Cloud
+-- Servers its pieces go. The bytes go there from the uploader, not through
+-- here.
 function actions.MUSIC_UPLOAD_BEGIN(payload)
     local who = people.caller(payload)
     local size = math.floor(tonumber(payload.size) or 0)
     local most = tonumber(config.music_max_bytes) or 12 * 1024 * 1024
     need(size > 0, "BAD_SIZE", "That song is empty")
     need(size <= most, "TOO_BIG", "A song is at most " .. util.sizeText(most))
-    local check, err, code = bankAsk("MUSIC_UPLOAD_CHECK", { account_id = who.account_id })
-    need(check, code or "BANK_OFFLINE", err or "The Bank did not answer")
-    local plan, putError, putCode = bankAsk("CLOUD_MUSIC_PUT", { size = size,
-        name = "song.dfpwm" }, 6)
-    need(plan, putCode or "BANK_OFFLINE", putError or "The Bank did not answer")
+    people.spend(who.account_id, "uploads", false)
+    local trackId = nextId("track", "T")
+    local pieces = store.place(trackId, 1, size)
+    local plan = store.plan("put", pieces, 60 * 1000 + #pieces * 3000)
     local id = nextId("upload", "U")
     cache.uploads[id] = { upload_id = id, account_id = who.account_id, name = who.name,
-        file_id = plan.file_id, version = plan.version, size = size,
+        track_id = trackId, pieces = pieces, ticket = plan.ticket, size = size,
         title = payload.title, artist = payload.artist,
-        expires_at = util.nowMs() + (plan.expires_in_ms or 0) }
+        expires_at = util.nowMs() + plan.expires_in_ms }
     return { upload_id = id, plan = plan }
 end
 
@@ -863,14 +1179,11 @@ function actions.MUSIC_UPLOAD_DONE(payload)
     local upload = cache.uploads[tostring(payload.upload_id or "")]
     need(upload and upload.account_id == who.account_id, "NOT_UPLOADING",
         "That upload is over. Try it again")
-    local done, err, code = bankAsk("CLOUD_MUSIC_PUT_DONE", { file_id = upload.file_id,
-        version = upload.version }, 6)
-    need(done, code or "BANK_OFFLINE", err or "The Bank did not answer")
     cache.uploads[upload.upload_id] = nil
-    bankAsk("MUSIC_UPLOADED", { account_id = upload.account_id })
-    cache.accounts[upload.account_id] = nil
-    local track = library.add({ file_id = upload.file_id, size = upload.size,
-        title = upload.title, artist = upload.artist, kind = "song",
+    store.tickets[upload.ticket] = nil
+    people.spend(upload.account_id, "uploads", true)
+    local track = library.add({ track_id = upload.track_id, pieces = upload.pieces,
+        size = upload.size, title = upload.title, artist = upload.artist, kind = "song",
         uploader_id = upload.account_id, uploader_name = upload.name })
     return { track = library.public(track) }
 end
@@ -1466,13 +1779,43 @@ local function serverLoop()
     end
 end
 
+-- Everything this server does in the background, a step at a time, so the
+-- radio keeps moving whatever else is slow.
+local background = { beat_at = 0, cloud_at = 0, migrate_at = 0 }
+
+function background.step()
+    local now = util.nowMs()
+    if state.server_token then pcall(radio.tick) end
+    for id, upload in pairs(cache.uploads) do
+        if upload.expires_at + 30000 <= now then
+            cache.uploads[id] = nil
+            store.tickets[upload.ticket or ""] = nil
+            store.forget(upload.pieces)
+        end
+    end
+    -- FoxyOS 18: telling the Bank it is up -- which is how Pockets and Cloud
+    -- Servers learn which computer it is -- and finding the Cloud Servers.
+    if state.server_token and now >= background.beat_at then
+        background.beat_at = now + 30 * 1000
+        local beat, _, code = bankAsk("MUSIC_BEAT", { version = PROGRAM_VERSION })
+        if not beat and code == "MUSIC_AUTH" then
+            logActivity("The Bank no longer knows this Music Server", colors.red)
+        end
+    end
+    if now >= background.cloud_at then
+        background.cloud_at = now + 60 * 1000
+        pcall(store.refresh)
+    end
+    pcall(store.dropPending)
+    if now >= background.migrate_at then
+        background.migrate_at = now + 30 * 1000
+        pcall(library.migrate)
+    end
+end
+
 local function radioLoop()
     while running do
-        if state.server_token then pcall(radio.tick) end
-        local now = util.nowMs()
-        for id, upload in pairs(cache.uploads) do
-            if upload.expires_at + 30000 <= now then cache.uploads[id] = nil end
-        end
+        background.step()
         sleep(2)
     end
 end
@@ -1502,9 +1845,17 @@ local function dashboardLoop()
                 { "PLAYERS", online .. " on", ui.theme.success } }
         end,
         lines = function()
+            local banked = 0
+            for _, track in pairs(state.tracks) do
+                if not track.pieces then banked = banked + 1 end
+            end
             local lines = {
                 { "SERVER  " .. tostring(state.server_id or "Not registered") },
-                { "BANK  " .. status.bank, status.bank_color },
+                { "BANK  " .. status.bank .. (bankUp() and "" or "  (playing without it)"),
+                    status.bank_color },
+                { "CLOUD SERVERS  " .. #store.servers .. (banked > 0 and ("  MOVING "
+                    .. banked .. " SONG" .. (banked == 1 and "" or "S")) or ""),
+                    #store.servers > 0 and ui.theme.ink or ui.theme.warning },
                 { "LIBRARY  " .. util.sizeText(library.bytes()) .. " on the Cloud Servers  "
                     .. status.streams .. " streams", ui.theme.muted },
             }
@@ -1565,6 +1916,7 @@ if rawget(_G, "PUMPE_TEST_MODE") == "music_server" then
     admin.libraryPage, admin.radiosPage = libraryPage, radiosPage
     return { actions = actions, state = state, live = live, cache = cache,
         library = library, radio = radio, people = people, admin = admin,
+        store = store, background = background, status = status,
         register = register, route = route, stop = function() running = false end }
 end
 

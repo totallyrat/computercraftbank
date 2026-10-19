@@ -614,7 +614,10 @@ end
 
 
 
-function net.musicApi(config, session, offline, where)
+
+
+
+function net.musicApi(config, session, offline, where, remember)
 local client
 local api = {}
 local function off()
@@ -628,7 +631,10 @@ if not client then
 client = net.client({ protocol = config.music_protocol or "PUMPE_MUSIC_V1",
 hostname = config.music_hostname or "MUSIC_SERVER" })
 function client:discover()
-self.serverId = where()
+local id = where()
+if remember and id then remember(id) end
+if remember and not id then id = remember() end
+self.serverId = id
 return self.serverId
 end
 end

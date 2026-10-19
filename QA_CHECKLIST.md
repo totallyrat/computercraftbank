@@ -7,6 +7,65 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 18 (18.0.0)
+
+Update the Bank (Core and Vault) first, then every Cloud Server, then the Music Server, the App Server, Music Players and Pockets. Nothing in 18.0 was tried in a world before release: every line below is a first run.
+
+### FoxyMusic+
+
+- [ ] Music app → **Upload**: *FoxyMusic+: no limits* under the two buttons. Tap it: **$100 every 5 days**, the three perks, *Free: 10 songs a day, radios free, 2 uploads a day*, **Join for $100**.
+- [ ] Join (OK, then the PIN): 100 charged, *Next charge day N*. Back on Upload: *Upload all you like*, *FoxyMusic+: yours*. An 11th song today plays.
+- [ ] Subscriptions on the Pocket lists **FoxyMusic+** at 100. Cancel there: it still says FoxyMusic+ until its day, then it ends with a notification.
+- [ ] With FoxyCloud+ already: the FoxyMusic+ page says FoxyCloud+ makes songs unlimited and this adds Offline Listening.
+- [ ] Without 100 in the account: *FoxyMusic+ is $100 every 5 days*, nothing charged.
+
+### The Music Server without the Bank
+
+- [ ] Update the Cloud Servers, then the Music Server. On its screen the Bank line is OK, and existing FoxyOS 17 songs still play while they move over (watch the Library: they keep playing all the way through).
+- [ ] Import a new song on the Music Server: it plays on a Music Player.
+- [ ] Turn the **Bank Core** off. Within a minute the Music Server's Bank line goes red. A radio keeps playing on a Music Player; a library song plays and counts; the Music app on a Pocket that was signed in still lists the library and controls the player; an upload from the Music app goes in.
+- [ ] Ask for a giveaway on a radio while the Bank is off: no giveaway clip plays. Turn the Bank back on: the giveaway comes at the next break and opens at the Bank.
+- [ ] Restart a Music Player while the Bank is off: it still finds the Music Server.
+
+### Offline Listening
+
+- [ ] On a Music Player whose owner has FoxyMusic+, the Library has a **v** beside each song and a **Downloaded** button. Tap **v**: a progress bar, then *DOWNLOADED*. The song shows **\*** and is listed under Downloaded.
+- [ ] Without FoxyMusic+ there is no **v**, and Downloaded is not offered.
+- [ ] Turn the **Music Server** off. After a few seconds the Library says *The Music Server is off: songs kept here*. Tap a kept song: it plays, Now Playing says OFFLINE, and pause, next and the volume work from the player's screen.
+- [ ] Turn the Music Server back on and play something from the Music app: the player switches to it.
+- [ ] Cancel FoxyMusic+ and wait for its day: the player's kept songs are deleted (the Upload tab's *Offline Listening* line goes).
+- [ ] Sign the player out: its kept songs go too.
+
+### The Pocket Desktop
+
+- [ ] Install the Pocket on an **Advanced Computer**. After the PIN it asks *Pocket Desktop*: choose **Desktop**. On a pocket computer it never asks, and Settings has no Pocket Desktop row.
+- [ ] The desktop: name and balance at the top left, the app icons in columns from the left, the taskbar along the bottom with **Start**, the music and the clock.
+- [ ] Open Settings: a window with **Phone, Apps, Account** down a sidebar. Open Friends too: two windows, two taskbar buttons. Tap the one behind: it comes forward. Drag a window by its title.
+- [ ] A window's **_** minimises it (gone from the screen, its taskbar button dimmed); its taskbar button brings it back. **o** fills the screen and the app redraws to fit; **o** again puts it back. **x** closes it. Ctrl+T closes the window in front, and does nothing on the bare desktop.
+- [ ] With Messages open behind another window, a message arriving still shows its badge or banner (windows behind keep running).
+- [ ] Leave it alone for a minute: the lock screen covers everything, taskbar included. The PIN opens it, with the windows as they were.
+- [ ] A call or a VerCode while a window is open: the banner is in that window, with Accept and Decline (or Paste).
+- [ ] Start → **Search**, **Notifications** (a window with the notification centre), **Lock**, **Close Pocket** (asks first), **Phone layout** (the phone's Home Screen; Settings → Pocket Desktop brings the desktop back).
+- [ ] Put a **speaker** beside the computer. The Music app lists *Your Name's Desktop* as a player. Play a song on it: it plays from that computer, the taskbar shows its title, **||** pauses and **>|** skips. Without a speaker, the taskbar shows what your Music Player is playing and controls it.
+
+### Till Mode on the desktop
+
+- [ ] On a **pocket computer**, Company → **Till mode** says it runs on the Pocket Desktop; Sell still sells.
+- [ ] On the desktop, Company → Till mode → **Start till mode**: the till fills the whole screen, no taskbar. It never locks. Ctrl+T does nothing. **Exit** asks for the PIN, then the Company window is back as it was.
+- [ ] Customer screens (colour monitors) still show the order and PAID.
+
+### Setting up a Pocket, and the guide
+
+- [ ] A new Pocket: **POCKET** on the hello screen, *Hello* changing language every second or so, dots along the bottom. **Get started**: a username, a PIN twice, then the colour, **Your number** (Get my number shows it; Later skips), **You're all set**, **Show me round**.
+- [ ] The guide: a yellow bubble *Pages 1/6* pointing at **>**. Tapping an app does nothing; **>** goes on. Then **<**, Search (cancel it), Foxy (if it is on this page), **+** in the dock, and *Locking* with **Done**.
+- [ ] **Skip** ends it at any step. Settings → Account → **How Pocket Works** starts it again on the Home Screen.
+- [ ] Signing in with an existing account on a new Pocket: the colour, You're all set, and the guide (no number step).
+
+### Downloads pop up
+
+- [ ] App Browser → an app you do not have → **Get**: after the tick, the Home Screen, on the page where it landed, and its icon pops up (a dot, a bar, a little too big, then the icon). Updating an app you have does not.
+- [ ] On the Pocket Desktop the same happens on the desktop, after the App Browser window closes.
+
 ## FoxyOS 17 (17.0.0)
 
 Update the Bank (Core and Vault) first, then the App Server, the CCG Server, the Cloud Servers (five or more) and every CCG. Then set up one Music Server and a Music Player with Easy Deployment. Run the Beta 2 and Beta 3 sections below too: on 17.0 they are no longer a beta.

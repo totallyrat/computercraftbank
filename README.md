@@ -8,7 +8,7 @@ A working, touch-first digital economy and gaming network for ComputerCraft: Twe
 | --- | --- | --- |
 | `bank_server.lua` | Advanced Computer + wireless/Ender modem + wired modem to its Vault | The Bank Core: balances, sessions, PINs, the inter-bank ledger, tax, CCG escrow, pay codes, companies, Easy Deployment. Everything else goes to its Vault |
 | `bank_vault.lua` | Advanced Computer + wired modem to its Core | The Bank Vault: friends and chat, travel, events and tickets, app records, the Shop's orders, FoxMail, and since 11.2 every account's history and notifications |
-| `pumpe.lua` | Advanced Pocket Computer + wireless modem | The Pocket: personal phone, payments, Messages and phone numbers, the CCG app (casino tables, My Casino and Home Mode), MyID (Digital ID, visas, countries, tax), events, tickets, subscriptions |
+| `pumpe.lua` | Advanced Pocket Computer + wireless modem, or an Advanced Computer for the Pocket Desktop (FoxyOS 18) | The Pocket: personal phone, payments, Messages and phone numbers, the CCG app (casino tables, My Casino and Home Mode), MyID (Digital ID, visas, countries, tax), events, tickets, subscriptions |
 | `ccg_casino.lua` | Advanced Computer + Ender modem + Advanced Monitor + speakers | A CCG Casino table, run by a company: Roulette, Blackjack, Heads or Tails and Poker, with MIDI or DFPWM music (FoxyOS 17) |
 | `ccg_home.lua` | Advanced Computer + Ender modem + Advanced Monitor | CCG Home: Home Mode, free games for one player with a Pocket as the controller, and the Game Browser's |
 | `ccg.lua` | (until FoxyOS 17) | The CCG before it was two. An old CCG that updates asks once whether it is CCG Home or a CCG Casino |
@@ -47,7 +47,9 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - **Notices are banners** (FoxyOS 15). Something that worked, or did not, is a banner across the middle of the screen over whatever was there, opening from a line drawn out from the centre: its border and its words are **green** when something went right and **red** otherwise — errors, warnings and plain information alike. It is the same on every device.
 - **Calls and codes are banners at the top** (FoxyOS 16): Interactive Notifications. A call comes in as a banner at the top of the screen, in the same look, with **Accept** and **Decline** on it — and whatever was open stays open and usable under it. A verification code from an app arrives the same way, with **Paste**, which puts the code in the box the app has open.
 - **Every app opens its own way** (FoxyOS 13). A motion in the app's colour grows out of the icon that was tapped and paints over the Home Screen, then holds a beat on the app's icon and name — about half a second. Friends ripples like a call coming in, Tickets closes in on a perforation, MyID scans a card, CCG boots like an arcade cabinet, Subs rises like a wave, Reminders shakes like a bell, Quick strikes like lightning, the App Browser lands in tiles and Settings closes like a shutter. Foxy has none since FoxyOS 15 (it opens straight onto the Bank, whose card drops in), FoxMail folds like an envelope, Shop rolls up an awning, Company opens its blinds, Internet sweeps like radar, Website Crafter types, BuckApp turns like a coin, Revolution spins and INVT unfolds like a card. Any other app gets one of five shapes, chosen from its id, so it always opens the same way.
-- Onboarding asks one question first — a new account, or one you already have — then username, then PIN, and ends in a short guide to the phone: three steps (the home screen, your money in Foxy, your apps) with no Skip, ending on **Welcome to Foxy** (12.0 Final). **How Pocket Works** in Settings → Account re-opens the same guide at any time.
+- **Setting up a Pocket (FoxyOS 18)** is a step at a time, with dots along the bottom: **hello** in a few languages over the Pocket's name, then **Get started** (a new Foxy Account: a username and a PIN) or **I have an account**, then your **colour**, a free **phone number** (or later, in Messages), and **You're all set**.
+- **The guide is the Home Screen itself (FoxyOS 18).** After setting up, the Home Screen shows you round: a yellow bubble lights up one thing at a time — turning a page, the notification centre, search, Foxy, the dock, locking — points at it, and waits for you to tap exactly that. Anything else is left alone until you do. **Skip** ends it; **How Pocket Works** in Settings → Account starts it again. On the Pocket Desktop it is the three cards from before.
+- **Downloads pop up (FoxyOS 18).** An app you get in the App Browser takes you straight back to the Home Screen, turned to the page it landed on, and its icon pops up in its spot: a dot, a bar, a little too big, then itself.
 - Account setup performs the real device save, account refresh, and Bank Server discovery while showing **Setting up your Foxy Account** and **Preparing your Pocket**.
 - The Home Screen lays out small icons in a grid with the app name underneath, the way a phone does, with phone-style status, app transitions, navigation and touch feedback. Every app fits on one page, with room to grow.
 - **Every app has an icon** (FoxyOS 17): 8 by 6 pixels in the 16 colours, always on a coloured background, in a light grey frame — half a cell down each side, so a tile reads five cells wide. Publishing an app in Dev Mode opens **Icon Creator** to paint one. A cell of the screen shows two colours, so an icon is drawn so that every 2×3 block of it uses two at most.
@@ -63,6 +65,18 @@ The Pocket (the PUMPE until FoxyOS 12) behaves like a small phone rather than a 
 - **CCG** (the Bet app until 12.0) has three tabs: **Home** plays Home Mode on your own console, **Bet** joins a lobby and needs the Foxy Account PIN every time, and **Scores** keeps your best at home. The Bet Wallet is in Foxy. Since FoxyOS 16 you stay in a lobby from game to game: see **Lobbies stay open**.
 - After one minute without touch or keyboard activity, the Pocket opens its Lock Screen with the current in-game time and day. Opening it before two minutes needs no PIN; after two minutes, the Foxy Account PIN is verified by the Bank Server.
 - **Turning the modem off leaves you signed in.** Settings → Network takes the phone off the network; since 9.5 that is all it does. The Home Screen, Settings and everything already downloaded keep working, the header reads **Offline** where the balance goes, and anything needing a server says so instead of hanging. A phone that starts up with the modem off opens the same way, under the name it last signed in as — a label, not a session, and the first thing it can do back on the network is sign in properly. Off the network the Lock Screen opens on a tap, because the PIN is checked by the Bank and there is no Bank to check it.
+
+## The Pocket Desktop (FoxyOS 18)
+
+The Pocket on a standing computer's screen, built in: nothing else to download. It runs on an Advanced Computer (never a pocket computer) with a screen at least 39 columns wide. A Pocket on a screen that big asks once when it starts; **Settings → Phone → Pocket Desktop** switches it on and off, and **Start → Phone layout** goes back to the phone's Home Screen.
+
+- **The desktop** shows who is signed in and their balance, and every app as an icon, a column at a time from the left.
+- **Every app opens in a window of its own**, a Pocket wide, and keeps running when another is in front: a window behind still ticks, polls and plays. Tap a window to bring it forward. Drag a window by its title; **_** minimises it, **o** fills the screen with it and **x** closes it (so does **Ctrl+T**, on the window in front).
+- **Tabs down a sidebar.** An app with tabs has them down the left of its window instead of the bar along the bottom, all of them at once, and its page gets the rows the bar used. The window widens to make room the first time.
+- **The taskbar**: **Start** (Search, Notifications, Settings, Lock, Phone layout, Close Pocket), a button for each window (tap the one in front to minimise it), the music and the clock.
+- **Music, right there.** With a speaker beside the computer, the desktop is one of your Music Players — *Your Name's Desktop* in the Music app — and plays through it. Without one, the taskbar shows what your Music Player is playing. Either way, the taskbar pauses and skips, and a tap on the title opens the Music app.
+- **It locks over everything**, after the same minute, and banners, calls and codes arrive in the window in front.
+- **Till Mode** runs only here: see *The till*.
 
 ## MyID and the Digital ID (FoxyOS 12)
 
@@ -288,6 +302,18 @@ One controller at a time. Five wrong codes and the console shows a new one. **Un
 
 Songs are **DFPWM1a** (`.dfpwm`, 48 kHz): 6000 bytes a second, kept on the Cloud Servers like FoxyCloud files and fetched a piece ahead of the speaker. MIDI is now only for a CCG Casino.
 
+### FoxyMusic+ (FoxyOS 18)
+
+Music on its own, for less than FoxyCloud+: `foxymusic_plus_price` (100) every `foxymusic_plus_days` (5). **Unlimited songs**, **unlimited uploads** and **Offline Listening**. Join it in the Music app — **Upload → FoxyMusic+** — with your PIN; it is listed, renewed and cancelled with your other subscriptions, and a cancelled one lasts until the day you paid for. FoxyCloud+ also has unlimited songs and uploads, but not Offline Listening.
+
+### Offline Listening (FoxyOS 18)
+
+With FoxyMusic+, **v** beside a song in a Music Player's Library keeps it on that player (`music_offline_bytes`, 16 MB a player; **\*** removes it), and **Downloaded** lists what is kept. A kept song always plays from the player's own disk. While the Music Server is off, the Library shows only what is kept and plays it from the player's own screen, with pause, next and volume; once it is back, whatever you choose in the Music app takes over. Kept songs play for 10 in-game days after the Music Server last confirmed your FoxyMusic+, and are deleted when it says the plan has ended or the player signs out.
+
+### Without the Bank (FoxyOS 18)
+
+The Music Server puts its songs straight on the Cloud Servers and hands out its own tickets to read them; a Cloud Server checks a ticket with the Music Server the Bank named in its last beat, and that Music Server only answers for its own pieces. It keeps who signed in, what their plan allows and today's counts on its own disk. So while the Bank is down: radios play on, songs from the library play and are counted, a Pocket that signed in within 12 hours is still believed, and uploads go in. A giveaway pays out at the Bank, so giveaway clips are left out of a radio's breaks until it is back. Music Players and Pockets remember which computer the Bank last named as the Music Server, so they find it without the Bank. Songs from FoxyOS 17, kept through the Bank's Vault, move onto the Music Server's own pieces in the background. The Bank is still needed to register the Music Server once, for a Music Player's first sign-in, for phone numbers and for giveaways.
+
 ### The Music Server
 
 One per world, set up with Easy Deployment and registered with the operator code. Its own screen has:
@@ -308,11 +334,11 @@ A giveaway clip playing opens a giveaway at the Bank, for `giveaway_seconds` (18
 
 Easy Deployment → **Music Player**, on a computer with speakers. Sign in once with your Foxy name and PIN and it is yours until you sign it out. Its screen has **Now Playing**, **Library** (play a song, `+` to queue it), **Radio** and **Upload**: drop a `.dfpwm` file on its screen, or pick one from a disk, and it goes into the Music Library with your name on it. A monitor beside it shows what is on, in the radio's colour, big enough to read across a room.
 
-A song from the library counts against your day when it starts — 10 a day without FoxyCloud+ — and pausing and resuming it does not count again. Uploads are 2 a day without FoxyCloud+. Radios never count.
+A song from the library counts against your day when it starts — 10 a day without FoxyMusic+ or FoxyCloud+ — and pausing and resuming it does not count again. Uploads are 2 a day without either. Radios never count. Since FoxyOS 18 the Music Server counts them itself.
 
 ### The Music app
 
-**Music**, by Foxy, comes with the update on every Pocket, once. It is the remote for your Music Players — choose which at the top of **Now** — with **Library**, **Radio** and **Upload**: from the Pocket's Downloads, dropped on its screen, or from your FoxyCloud.
+**Music**, by Foxy, comes with the update on every Pocket, once. It is the remote for your Music Players — choose which at the top of **Now** — with **Library**, **Radio** and **Upload**: from the Pocket's Downloads, dropped on its screen, or from your FoxyCloud. **Upload → FoxyMusic+** joins or cancels FoxyMusic+ (FoxyOS 18).
 
 ## Foxy Pay
 
@@ -503,7 +529,7 @@ It is handed that `api` table and nothing else. It can draw, and it can make req
 
 The Service Kiosk has merged with the Company app in the Pocket. A company's till is its **Sell** tab, the first of four (Sell, Products, Store, Deals), and **Point of Sale** in search opens it straight away — on a standing computer, onto the till it last sold at.
 
-**Till mode (FoxyOS 14)** is the till on its own, for a counter. It has a tab of its own on the Company app's front page (**Companies, Till mode, Delivery**), an App Action (**Till mode** in search), and the first entry under a Sell tab's **More**. The till fills the screen with no tabs, the Pocket **never locks** while it is open, and leaving — **Exit**, or a terminate from the keyboard — asks for the owner's PIN, so a customer at a standing till cannot walk off with the Pocket behind it.
+**Till mode (FoxyOS 14)** is the till on its own, for a counter. It has a tab of its own on the Company app's front page (**Companies, Till mode, Delivery**), an App Action (**Till mode** in search), and the first entry under a Sell tab's **More**. The till fills the screen with no tabs, the Pocket **never locks** while it is open, and leaving — **Exit**, or a terminate from the keyboard — asks for the owner's PIN, so a customer at a standing till cannot walk off with the Pocket behind it. **Since FoxyOS 18 Till mode runs on the Pocket Desktop only**: there it takes the whole screen — no title, no taskbar, no other window — and Ctrl+T does not close it. On a handheld Pocket the Sell tab still sells, and Till mode says to use a computer.
 
 - **It works on the Pocket itself**, for selling on the spot: products as tiles under **Favs**, **Items** and **Daily**, a bag along the bottom with the total on **Charge**, and **Find** to find the customer first. **More** has **Verify a MyID**, **Custom amount** (once or daily) and the customer screens.
 - **It is made for a standing computer.** Install the Pocket on an Advanced Computer with a wireless modem, sign in as the owner, open Company → Sell, and the till spreads out: the receipt down the left, the products on the right.
@@ -836,11 +862,12 @@ Running `/pumpe/installer.lua` with nothing after it opens the menu.
 
 - One **Music Server**, an Advanced Computer: it registers with the Bank once, with the operator code. Its songs live on the Cloud Servers, so it needs them running.
 - A **Music Player** is any Advanced Computer with a modem and one or more speakers beside it. A monitor shows what is on and, in a giveaway, the number to call.
-- Music Players and Pockets ask the Bank which computer the registered Music Server is before they hand it a session, so a computer that takes the name cannot collect anybody's.
+- Music Players and Pockets ask the Bank which computer the registered Music Server is before they hand it a session, so a computer that takes the name cannot collect anybody's. Since FoxyOS 18 they remember the answer, for when the Bank is down.
+- Since FoxyOS 18 the Music Server stores songs on the Cloud Servers itself. Update every Cloud Server before the Music Server: an older Cloud Server refuses the Music Server's pieces.
 
 ### A till (the Pocket on a standing computer)
 
-- Use an Advanced Computer with a wireless modem, and install **Pocket** on it. Sign in as the company's owner, then Company → **Sell**.
+- Use an Advanced Computer with a wireless modem, and install **Pocket** on it. Sign in as the company's owner, say yes to the **Pocket Desktop** (FoxyOS 18: Till mode needs it), then Company → **Sell** or **Till mode**.
 - Attach Advanced Monitors directly or through a wired peripheral network; every colour one is a customer screen.
 - Foxy Pay needs GPS anchors, like everything that finds a person.
 - The Pocket locks after a minute without a tap, like any Pocket; the customer screens keep showing the welcome.

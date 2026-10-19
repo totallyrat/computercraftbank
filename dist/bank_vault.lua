@@ -32,7 +32,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "17.0.0"
+local PROGRAM_VERSION = "18.0.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -5534,6 +5534,9 @@ end
 
 
 function cloud.wanted(serverId, chunkId)
+
+
+if tostring(chunkId):match("^M%d+T") then return true end
 local fileId, index = tostring(chunkId):match("^(F%d+)%.%d+%.(%d+)$")
 local record = fileId and cloud.store().files[fileId]
 if not record then return false end

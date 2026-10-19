@@ -1,5 +1,76 @@
 # Changelog
 
+## 18.0.0
+
+FoxyOS 18: FoxyMusic+, a Music Server that does not need the Bank, Offline
+Listening, the Pocket Desktop and a new way to set up a Pocket. Update the
+Bank (Core and Vault) first, then every Cloud Server, then the Music Server,
+the App Server, Music Players and Pockets. A Music Server updated before the
+Cloud Servers cannot store new songs until they catch up.
+
+**FoxyMusic+.** Music on its own: 100 every 5 days, less than FoxyCloud+.
+Unlimited songs, unlimited uploads and Offline Listening. Join it in the
+Music app (Upload tab, FoxyMusic+) with your PIN. It is listed, renewed and
+cancelled with your other subscriptions, and a cancelled one lasts until the
+day you paid for. FoxyCloud+ still has unlimited songs and uploads, but
+Offline Listening is FoxyMusic+ only.
+
+**Offline Listening.** With FoxyMusic+, tap v beside a song in a Music
+Player's Library to keep it on that player (16 MB a player). A kept song
+plays from the player's own disk. While the Music Server is off, the Library
+shows what is kept and plays it from the player's screen, with pause and
+next. Kept songs play for 10 days after the Music Server last confirmed your
+FoxyMusic+, and they are deleted when it says the plan has ended or when the
+player signs out.
+
+**The Music Server works without the Bank.** It puts songs straight on the
+Cloud Servers and hands out its own tickets. A Cloud Server checks them with
+the Music Server the Bank named. It remembers who signed in and what their
+plan allows, and counts songs and uploads itself. With the Bank down, radios
+play on, library songs play and are counted, a Pocket that signed in within
+12 hours is still believed, and uploads still go in. Songs from FoxyOS 17
+move onto the Music Server's own pieces in the background. Music Players and
+Pockets remember which computer the Music Server is, so they find it when
+the Bank cannot tell them. The Bank is still needed to register the Music
+Server once, for a Music Player's first sign-in, for phone numbers and for
+giveaways.
+
+**Radios without the Bank.** A radio keeps playing when the Bank is down.
+Giveaway clips are left out of the breaks until it is back, instead of
+opening a giveaway nobody could be paid for. A giveaway asked for in the
+meantime comes at the first break after.
+
+**The Pocket Desktop.** On a standing computer, not a pocket computer, the
+Pocket can be a desktop, with nothing extra to download. Every app opens in
+a window of its own and keeps running behind the others. Windows move by
+their title, minimise, maximise and close. An app with tabs has them down a
+sidebar instead of the bar along the bottom. The taskbar has Start (Search,
+Notifications, Settings, Lock, Phone layout, Close Pocket), a button for each
+window, the music and the clock. With a speaker beside the computer, the
+desktop is a Music Player of its own, "Your Name's Desktop" in the Music
+app, and plays right there. Without one, the taskbar shows and controls your
+Music Player. A bigger screen than a Pocket's is asked once at start, and
+Settings has a Pocket Desktop switch. The desktop locks over every window.
+
+**Till Mode needs the Pocket Desktop.** Till Mode starts only on the Pocket
+Desktop, where it takes the whole screen (no title, taskbar or other
+windows) and never locks. Leaving still asks for the PIN, and Ctrl+T does
+not close it. On a handheld Pocket the Sell tab still works, and Till Mode
+says to use a computer.
+
+**Setting up a Pocket.** A step at a time: hello, your Foxy Account, your
+colour, a free phone number, then you're all set. Then the interactive
+guide: the Home Screen lights up one thing at a time, points at it and waits
+for you to tap it. Skip ends it, and Settings, How Pocket Works, starts it
+again.
+
+**Downloads pop up.** An app you get from the App Browser takes you straight
+to the Home Screen, turned to its page, and its icon pops up in its spot.
+
+**Fixes.** Cancel buttons in FoxyCloud and INVT were cut off on a Pocket
+("Cancel i"). A new FoxyMusic+ shows in the Music app straight away: the
+Music Server asks the Bank again whenever the app asks who you are.
+
 ## 17.0.0
 
 FoxyOS 17. Everything from the three betas, finished, and music, radios,

@@ -380,6 +380,8 @@ update.PUBLISHED_OPTIONAL = {
     "music_player.lua",
     "music.lua",
     "lib/music.lua",
+    -- FoxyOS 18: the Pocket Desktop.
+    "lib/desktop.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -439,6 +441,8 @@ local ROLE_EXTRA_FILES = {
         "foxycloud.lua", "music.lua" },
     -- FoxyOS 17: streaming DFPWM from the Cloud Servers to speakers.
     music = { "lib/music.lua" },
+    -- FoxyOS 18: the Pocket Desktop, and the music it plays on a speaker.
+    pumpe = { "lib/desktop.lua", "lib/music.lua" },
     musicplayer = { "lib/music.lua" },
     ccgcasino = { "lib/music.lua" },
 }
