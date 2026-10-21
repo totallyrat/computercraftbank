@@ -4,7 +4,7 @@
 
 Every computer in it runs FoxyOS. The phone is the **Pocket**; on a standing computer it becomes the **Pocket Desktop**. Everything is touch-first, and a keyboard works too.
 
-> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. See [`CHANGELOG.md`](CHANGELOG.md).
+> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contents
 
@@ -300,10 +300,11 @@ Organisers use the **Event Kiosk**: create events and ticket types, set the sale
 
 ## CCG: casinos and Home Mode
 
-**CCG Casino.** A table run by one of your companies, set up on the computer's own screen. It plays **Roulette**, **Blackjack**, **Heads or Tails** and **Poker** (Hold'em against the dealer), dealt by the **CCG Server**.
+**CCG Casino.** A table run by one of your companies, set up on the computer's own screen. It plays **Roulette**, **Blackjack**, **Heads or Tails**, **Poker** (Hold'em against the dealer) and **Trivia**, dealt by the **CCG Server**.
 
 - **Playing.** Players sit down from the CCG app's **Bet** tab with the table's code, using their PIN.
-- **Running it.** **My Casino** lets the owner run the table on **Auto** or deal it themselves, and move casino money in and out.
+- **Running it.** **My Casino** lets the owner run the table on **Auto** or deal it themselves, and move casino money in and out. The table's own computer has the same controls (not the money) behind the owner's PIN, and locks after a minute untouched.
+- **Trivia** is all or nothing. Your first answer is your stake; each right answer makes the pot 1.5x and a wrong one loses it. **TAKE** it between questions. Ten in a row is paid out for you. **Trivia mode** skips the wheel and asks question after question, on one topic or all of them. Questions come from [Open Trivia DB](https://opentdb.com) when the CCG Server has HTTP, from 108 built-in ones when it does not, and from your company's own: write them in **My Casino → TRIVIA → Our questions**, or drop a `.txt` on the table's computer with one per line, `Question | right | wrong | wrong | wrong`, and `# Topic` lines between.
 - **Music.** **MIDI** files, or **DFPWM** from the Music Library (a song on repeat or a live radio, with FoxyCloud+).
 - **The money stays at the Bank.** Wagers are held there, and winnings sit in **Holding** for a day before reaching the **Bet Wallet**.
 - **Losses.** A table that pays out more than it has borrows from the Bank, up to a limit, and pays the Bank back before it shows profit.
@@ -404,6 +405,10 @@ Computers in this world have 50 MB each. A Pocket's update peaks under 1 MB and 
 | `send_money_fee_rate`, `send_money_daily_limit` | 10%, 2000 | Transfers inside chats and calls |
 | `foxy_cash_fee_rate` | 2% | Foxy Cash |
 | `pumpe_lock_seconds`, `pumpe_pin_seconds` | 60, 120 | When a Pocket locks, and when it wants the PIN |
+| `ccg_casino_credit` | 10,000 | How far an owner's casinos may borrow, together |
+| `ccg_trivia_multiplier`, `ccg_trivia_max_streak` | 1.5, 10 | Trivia's pot per right answer, and the streak that pays out |
+| `ccg_trivia_online` | true | Questions from Open Trivia DB when the CCG Server has HTTP |
+| `ccg_console_lock_seconds` | 60 | When a CCG Casino's own screen locks |
 | `session_ttl_ms` | 12 hours | How long a sign-in lasts |
 | `foxymusic_plus_price`, `foxymusic_plus_days` | 100, 5 | FoxyMusic+ |
 | `music_offline_bytes` | 16 MB | Offline Listening room per Music Player |
@@ -499,4 +504,4 @@ QA_CHECKLIST.md            what to try in a real world after a release
 
 ---
 
-**FoxyOS 18**, release `18.0.0`.
+**FoxyOS 18.1**, release `18.1.0`.

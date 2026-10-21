@@ -1,5 +1,48 @@
 # Changelog
 
+## 18.1.0
+
+FoxyOS 18.1: Trivia at the CCG Casino, and controls on the CCG Casino's own
+computer. Update the Bank (Core) first, then the CCG Server, then every CCG
+Casino, then Pockets. A CCG Server updated before the Bank cannot take a
+Trivia stake: the Bank answers that it does not know the action.
+
+**Trivia.** A sixth game at the CCG Casino: a question, four answers, A to
+D. All or nothing: the first answer you lock in is your stake, every right
+answer makes your pot 1.5x, and one wrong answer loses all of it. Take the
+pot whenever you like between questions (TAKE in the CCG app); it is held
+for a day like any CCG win. Ten right in a row is paid out for you (about
+57x the stake), which is also the most a casino can lose to one player.
+Leaving the table takes your pot, and so does the table moving on to another
+game. Sitting a question out leaves the pot where it is. Nobody else sees
+your answer until bets close.
+
+**Trivia mode.** Turned on in My Casino (or on the table's own computer),
+the table skips the wheel and asks question after question for as long as
+it runs. It asks about one topic or goes round all of them: general
+knowledge, science, geography, history, sports, music, film and TV, video
+games, animals, computers, Minecraft, or your company's own questions.
+
+**Where the questions come from.** Open Trivia DB, while the CCG Server's
+HTTP can reach opentdb.com (set ccg_trivia_online = false to stop). With no
+internet, 108 built-in questions across the same topics. And your own: write
+them one at a time in My Casino > a table > TRIVIA > Our questions, or drop a
+.txt file on the table's computer, one question a line:
+`Question | right answer | wrong | wrong | wrong`, with `# Topic` lines
+between. Lines that are not questions are listed back with why. Up to 300
+per company, shared by all its tables.
+
+**The CCG Casino's own computer.** Everything My Casino has, except the
+money: Auto, be the dealer and NEXT, the game, Trivia mode and its topic, and
+the music (stop, volume, next song). Behind the owner's PIN, and locked again
+after a minute untouched (ccg_console_lock_seconds), handing the dealer back.
+Locked, it shows the time, the table and its code, and takes no files. A
+table set up before 18.1 asks once whose it is.
+
+**Casino limits.** A Trivia pot counts against the casino's credit limit at
+its worst case, so a casino with no money in it takes about 175 in Trivia
+stakes at once on the default 10,000 credit. Putting money in raises that.
+
 ## 18.0.0
 
 FoxyOS 18: FoxyMusic+, a Music Server that does not need the Bank, Offline

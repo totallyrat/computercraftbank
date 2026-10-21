@@ -382,6 +382,8 @@ update.PUBLISHED_OPTIONAL = {
 "lib/music.lua",
 
 "lib/desktop.lua",
+
+"lib/trivia.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -445,6 +447,8 @@ music = { "lib/music.lua" },
 pumpe = { "lib/desktop.lua", "lib/music.lua" },
 musicplayer = { "lib/music.lua" },
 ccgcasino = { "lib/music.lua" },
+
+ccgserver = { "lib/trivia.lua" },
 }
 
 

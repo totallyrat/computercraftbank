@@ -2,11 +2,11 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "18.0.0",
+    version = "18.1.0",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
-    release_name = "FoxyOS 18",
+    release_name = "FoxyOS 18.1",
     protocol = "PUMPE_BANK_V5",
     -- Shop, 11.0. In in-game time, like the rest of the Shop: a Minecraft
     -- day is twenty real minutes, so two hours is about a minute and forty
@@ -77,6 +77,18 @@ return {
     -- paying wins with loans from the Bank. Bets that could go past it are
     -- refused.
     ccg_casino_credit = 10000,
+    -- FoxyOS 18.1: Trivia at a CCG Casino, all or nothing. Each right answer
+    -- makes a player's pot this many times bigger and a wrong one loses it;
+    -- at this many right in a row the pot is paid out for them (1.5 ^ 10 is
+    -- about 57x the stake), which is also the most a casino can lose to one.
+    -- Questions come from Open Trivia DB while the CCG Server's HTTP can
+    -- reach it (false: only the built-in ones and your own).
+    ccg_trivia_multiplier = 1.5,
+    ccg_trivia_max_streak = 10,
+    ccg_trivia_online = true,
+    ccg_trivia_url = "https://opentdb.com",
+    -- And a CCG Casino's own screen locks after this long untouched.
+    ccg_console_lock_seconds = 60,
     ccg_lobby_ttl_ms = 5 * 60 * 1000,
     ccg_result_delay_ms = 6 * 1000,
     ccg_survivor_max_seconds = 75,

@@ -382,6 +382,8 @@ update.PUBLISHED_OPTIONAL = {
     "lib/music.lua",
     -- FoxyOS 18: the Pocket Desktop.
     "lib/desktop.lua",
+    -- FoxyOS 18.1: Trivia's questions.
+    "lib/trivia.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -445,6 +447,8 @@ local ROLE_EXTRA_FILES = {
     pumpe = { "lib/desktop.lua", "lib/music.lua" },
     musicplayer = { "lib/music.lua" },
     ccgcasino = { "lib/music.lua" },
+    -- FoxyOS 18.1: Trivia, and the questions it asks with no internet.
+    ccgserver = { "lib/trivia.lua" },
 }
 
 -- Every path a role installs, including its own copy of Easy Deployment.

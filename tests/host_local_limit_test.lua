@@ -45,7 +45,7 @@ local PROGRAMS = {
     "lib/util.lua", "bank_app_server.lua", "ccg_server.lua",
     "bank_vault.lua", "delivery_terminal.lua", "app_server.lua",
     "internet_server.lua", "cloud_server.lua", "music_server.lua", "music_player.lua",
-    "ccg_casino.lua", "ccg_home.lua", "lib/music.lua", "lib/desktop.lua",
+    "ccg_casino.lua", "ccg_home.lua", "lib/music.lua", "lib/desktop.lua", "lib/trivia.lua",
 }
 
 local worst, worstFile = 0, nil

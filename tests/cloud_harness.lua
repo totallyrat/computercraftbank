@@ -235,13 +235,15 @@ function cloud.start(harness, bank)
         return count
     end
     -- A program of another kind on computer `computerId`, loaded in its test
-    -- mode with a disk of its own, answering `protocol`.
-    local function attach(computerId, program, protocol, mode)
+    -- mode with a disk of its own, answering `protocol`. A program whose test
+    -- mode is not its name (the CCG Server's is `true`) says so in testMode.
+    local function attach(computerId, program, protocol, mode, testMode)
         shell = { getRunningProgram = function()
             return "/" .. mode .. computerId .. "/" .. program
         end }
         disks[mode .. computerId] = { files = {}, dirs = {}, capacity = 50 * 1000 * 1000 }
-        PUMPE_TEST_MODE = mode
+        if testMode == nil then testMode = mode end
+        PUMPE_TEST_MODE = testMode
         local before = current
         current = computerId
         local loaded = assert(loadfile("../" .. program))()

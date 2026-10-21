@@ -17,7 +17,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 -- The Bank is still authoritative for money. This server is authoritative
 -- for outcomes, which is what a modified PUMPE or console must not be.
 
-local PROGRAM_VERSION = "18.0.0"
+local PROGRAM_VERSION = "18.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -918,9 +918,10 @@ end
 -- that pays is the Bank's own table.
 
 local casino = {
-    GAMES = { "roulette", "blackjack", "heads_tails", "poker" },
+    -- FoxyOS 18.1: Trivia.
+    GAMES = { "roulette", "blackjack", "heads_tails", "poker", "trivia" },
     NAMES = { roulette = "Roulette", blackjack = "Blackjack",
-        heads_tails = "Heads or Tails", poker = "Poker" },
+        heads_tails = "Heads or Tails", poker = "Poker", trivia = "Trivia" },
     SEATS = 8,
     WHEEL_MS = 5000,       -- Auto: the games spin this long, then stop on one
     PICKED_MS = 1800,      -- a game picked from the app: the wheel lands on it
@@ -932,6 +933,8 @@ local casino = {
     CARD_MS = 550,         -- one card dealt
     REVEAL_MS = 2600,      -- Poker: the next cards on the board, in Auto
     RESULT_MS = 9000,
+    ANSWER_MS = 5000,      -- Trivia: the right answer lights up
+    TRIVIA_RESULT_MS = 6000,
     LEASE_MS = 60000,      -- control lapses when the controller goes quiet
     OWNER_MS = 20000,      -- who owns what, remembered this long
     ONLINE_MS = 10000,
@@ -1066,6 +1069,11 @@ function casino.readBet(game, bet)
         end
     elseif game == "heads_tails" then
         if kind == "pick" and (pick == "heads" or pick == "tails") then return kind, pick end
+    elseif game == "trivia" then
+        pick = tonumber(pick)
+        if kind == "answer" and (pick == 1 or pick == 2 or pick == 3 or pick == 4) then
+            return kind, pick
+        end
     elseif kind == "hand" then
         return kind, nil
     end
@@ -1084,6 +1092,179 @@ function casino.rouletteWins(bet, number)
     if pick == "even" then return number % 2 == 0 end
     if pick == "low" then return number <= 18 end
     return number >= 19
+end
+
+-- Trivia, FoxyOS 18.1 ----------------------------------------------------------------------------
+-- A question when bets open, and an answer, A to D. All or nothing: the
+-- first answer a player locks in stakes a pot at the Bank, every right one
+-- makes it 1.5x, a wrong one loses it, and they take it between questions
+-- (the Bank works out every amount, from the stake it holds). The answer
+-- lights up whether anybody answered or not, and in Trivia mode the next
+-- question follows, for as long as the table runs. Questions come from Open Trivia DB while this computer's
+-- HTTP can reach it, from lib/trivia's own when it cannot, and from the
+-- company's own (written in My Casino, or a text file dropped on the table's
+-- computer). A table asks a topic, or goes round all of them.
+
+do
+    local ok, lib = pcall(require, "lib.trivia")
+    casino.trivia = { lib = ok and type(lib) == "table" and lib or nil, pool = {},
+        next_fetch = 0, status = "Not asked yet" }
+end
+state.trivia_custom = state.trivia_custom or {}
+casino.TRIVIA_MAX = 300
+casino.TRIVIA_RECENT = 40
+
+-- A company's own questions.
+function casino.custom(companyId)
+    local mine = state.trivia_custom[tostring(companyId or "")]
+    if not mine then
+        mine = { seq = 0, questions = {} }
+        state.trivia_custom[tostring(companyId or "")] = mine
+    end
+    return mine
+end
+
+-- What a table can ask: everything in turn, each topic, and its company's own.
+function casino.triviaTopics(t)
+    local list = { { id = "all", name = "Every topic" } }
+    for _, topic in ipairs(casino.trivia.lib and casino.trivia.lib.TOPICS or {}) do
+        list[#list + 1] = { id = topic.id, name = topic.name }
+    end
+    local ours = state.trivia_custom[tostring(t.company_id or "")]
+    if ours and #ours.questions > 0 then
+        list[#list + 1] = { id = "ours", name = "Our questions (" .. #ours.questions .. ")" }
+    end
+    return list
+end
+
+function casino.triviaTopicName(t, id)
+    for _, topic in ipairs(casino.triviaTopics(t)) do
+        if topic.id == id then return topic.name end
+    end
+    return "Every topic"
+end
+
+-- One not asked at this table lately, from a list.
+function casino.fresh(t, list)
+    local recent = {}
+    for _, id in ipairs(t.trivia.recent or {}) do recent[id] = true end
+    local unseen = {}
+    for _, question in ipairs(list) do
+        if not recent[question.id] then unseen[#unseen + 1] = question end
+    end
+    if #unseen == 0 then unseen = list end
+    return unseen[math.random(1, #unseen)]
+end
+
+-- The next question for a table, dealt (its answers shuffled), or nil.
+function casino.triviaNext(t)
+    local lib = casino.trivia.lib
+    if not lib then return nil end
+    t.trivia = t.trivia or {}
+    local topic = t.trivia.topic or "all"
+    local ours = state.trivia_custom[tostring(t.company_id or "")]
+    if topic == "ours" and not (ours and #ours.questions > 0) then topic = "all" end
+    if topic == "all" then
+        local turns = {}
+        for _, entry in ipairs(lib.TOPICS) do turns[#turns + 1] = entry.id end
+        if ours and #ours.questions > 0 then turns[#turns + 1] = "ours" end
+        t.trivia.turn = (t.trivia.turn or 0) % #turns + 1
+        topic = turns[t.trivia.turn]
+    end
+    local question
+    if topic == "ours" then
+        question = casino.fresh(t, ours.questions)
+        if question then question.source = "ours" end
+    else
+        local pool = casino.trivia.pool[topic]
+        if pool and #pool > 0 then question = table.remove(pool, 1) end
+        if not question then
+            local built = lib.builtIn().byTopic[topic] or lib.builtIn().all
+            question = #built > 0 and casino.fresh(t, built) or nil
+        end
+    end
+    if not question then return nil end
+    local recent = t.trivia.recent or {}
+    recent[#recent + 1] = question.id
+    while #recent > casino.TRIVIA_RECENT do table.remove(recent, 1) end
+    t.trivia.recent = recent
+    t.trivia.asked = (t.trivia.asked or 0) + 1
+    return lib.deal(question)
+end
+
+-- The topics tables are asking now, for fetching ahead.
+function casino.triviaWanted()
+    local wanted, lib = {}, casino.trivia.lib
+    for _, t in pairs(state.casinos) do
+        if t.game == "trivia" or (t.trivia and t.trivia.mode) then
+            local topic = t.trivia and t.trivia.topic or "all"
+            if topic == "all" then
+                for _, entry in ipairs(lib.TOPICS) do wanted[entry.id] = true end
+            else
+                wanted[topic] = true
+            end
+        end
+    end
+    return wanted
+end
+
+local function httpJson(url)
+    if type(http) ~= "table" or type(http.get) ~= "function" then return nil, "No HTTP" end
+    local handle = http.get(url)
+    if not handle then return nil, "No answer from " .. url:match("^https?://([^/]+)") end
+    local body = handle.readAll()
+    handle.close()
+    local decode = textutils and (textutils.unserializeJSON or textutils.unserialiseJSON)
+    local ok, data = pcall(decode, body)
+    if not ok or type(data) ~= "table" then return nil, "Not a trivia answer" end
+    return data
+end
+
+-- Topping up one topic from Open Trivia DB: ten questions at a time, at most
+-- one request every six seconds (the site's own limit is one in five), and a
+-- minute's rest after it does not answer. Off with ccg_trivia_online = false.
+function casino.triviaFetch(now)
+    local fetch, lib = casino.trivia, casino.trivia.lib
+    if not lib or config.ccg_trivia_online == false or now < fetch.next_fetch then return false end
+    local topic
+    for _, entry in ipairs(lib.TOPICS) do
+        if entry.opentdb and casino.triviaWanted()[entry.id]
+            and #(fetch.pool[entry.id] or {}) < 5 then
+            topic = entry
+            break
+        end
+    end
+    if not topic then return false end
+    fetch.next_fetch = now + 6000
+    local base = tostring(config.ccg_trivia_url or "https://opentdb.com")
+    if not fetch.token then
+        local got = httpJson(base .. "/api_token.php?command=request")
+        fetch.token = got and got.token or nil
+    end
+    local url = base .. "/api.php?amount=10&type=multiple&encode=url3986&category="
+        .. topic.opentdb .. (fetch.token and ("&token=" .. fetch.token) or "")
+    local data, err = httpJson(url)
+    if not data then
+        fetch.status, fetch.next_fetch = "Offline: " .. tostring(err), now + 60000
+        return false
+    end
+    local code = tonumber(data.response_code)
+    if code == 3 or code == 4 then
+        -- The token ran out (every question seen) or was forgotten: a new one.
+        fetch.token = nil
+        return false
+    elseif code ~= 0 then
+        fetch.status, fetch.next_fetch = "Open Trivia DB said " .. tostring(code), now + 30000
+        return false
+    end
+    local pool = fetch.pool[topic.id] or {}
+    for _, result in ipairs(data.results or {}) do
+        local question = lib.fromOpenTdb(result, topic.id)
+        if question and #pool < 30 then pool[#pool + 1] = question end
+    end
+    fetch.pool[topic.id] = pool
+    fetch.status = "Online: " .. topic.name
+    return true
 end
 
 -- Tables ---------------------------------------------------------------------------------------
@@ -1207,8 +1388,11 @@ function casino.newRound(t, now)
         player.result, player.done, player.decision = nil, nil, nil
     end
     t.dealer, t.board, t.outcome, t.deck, t.deal_order = nil, nil, nil, nil, nil
-    t.results, t.payouts = nil, nil
-    if casino.controlled(t, now) then
+    t.results, t.payouts, t.question = nil, nil, nil
+    if t.trivia and t.trivia.mode and casino.trivia.lib then
+        -- FoxyOS 18.1: Trivia mode asks question after question.
+        casino.openBets(t, "trivia", now)
+    elseif casino.controlled(t, now) then
         t.wheel_target = nil
         casino.phase(t, "wheel", nil, now)
         casino.event(t, "wheel")
@@ -1223,6 +1407,11 @@ function casino.newRound(t, now)
 end
 
 function casino.openBets(t, game, now)
+    if game == "trivia" then
+        t.question = casino.triviaNext(t)
+        if not t.question then game = "roulette" end
+    end
+    if game ~= "trivia" then casino.endRuns(t) end
     t.game = game
     t.round = (t.round or 0) + 1
     casino.phase(t, "betting", (not casino.controlled(t, now)) and casino.BETTING_MS or nil, now)
@@ -1249,6 +1438,10 @@ function casino.deal(t, now)
         t.outcome = math.random(1, 2) == 1 and "heads" or "tails"
         casino.step(t, "flip", casino.FLIP_MS, now)
         casino.event(t, "flip")
+    elseif t.game == "trivia" then
+        t.outcome = t.question.answer
+        casino.step(t, "answer", casino.ANSWER_MS, now)
+        casino.event(t, "reveal")
     else
         -- Two cards each, the dealer last, one round of the table at a time.
         t.dealer = { cards = {} }
@@ -1310,6 +1503,10 @@ function casino.outcomes(t)
         for _, player in ipairs(casino.bettors(t)) do
             results[player.account_id] = player.bets[1].pick == t.outcome and "win" or "lose"
         end
+    elseif t.game == "trivia" then
+        for _, player in ipairs(casino.bettors(t)) do
+            results[player.account_id] = player.bets[1].pick == t.outcome and "right" or "wrong"
+        end
     elseif t.game == "blackjack" then
         local dealer = casino.total(t.dealer.cards)
         local dealerNatural = casino.natural(t.dealer.cards)
@@ -1360,7 +1557,8 @@ function casino.settle(t, now)
     end
     if t.settle_tried_at and now - t.settle_tried_at < 2000 then return false end
     t.settle_tried_at = now
-    local paid = askBank("CCG_ESCROW_SETTLE", { lobby_code = t.code, results = t.results }, 8)
+    local paid = askBank(t.game == "trivia" and "CCG_TRIVIA_SETTLE" or "CCG_ESCROW_SETTLE",
+        { lobby_code = t.code, results = t.results }, 8)
     if not paid then
         logActivity("Bank did not settle " .. t.name .. ", will retry", colors.orange)
         return false
@@ -1372,14 +1570,29 @@ end
 function casino.finish(t, settled, now)
     t.settle_tried_at = nil
     local winners = {}
+    if t.game == "trivia" then
+        -- A run the Bank did not settle is not a run any more.
+        for _, player in ipairs(casino.bettors(t)) do player.run = nil end
+    end
     for _, entry in ipairs(settled) do
         local player = t.players[entry.account_id]
         if player then
-            player.result = { won = entry.won, payout = entry.payout or 0,
-                pushed = entry.pushed or 0, results = entry.results,
-                said = t.results[entry.account_id] }
-            if entry.won then
-                winners[#winners + 1] = { name = player.name, payout = entry.payout }
+            local said = t.results[entry.account_id]
+            local won = entry.won
+            if t.game == "trivia" then
+                -- Right: the run goes on, worth more. Wrong, or the longest
+                -- streak there is: it has ended.
+                won = said == "right"
+                player.run = entry.run
+                if entry.ended then player.taken = entry end
+            end
+            player.result = { won = won, payout = entry.payout or 0,
+                pushed = entry.pushed or 0, results = entry.results, said = said,
+                streak = entry.streak, pot = entry.run and entry.run.pot or nil,
+                ended = entry.ended }
+            if won then
+                winners[#winners + 1] = { name = player.name, streak = entry.streak,
+                    payout = entry.payout or entry.run and entry.run.pot or 0 }
             end
         end
     end
@@ -1392,9 +1605,11 @@ function casino.finish(t, settled, now)
     end
     t.last = { round = t.round, game = t.game, outcome = t.outcome, results = kept,
         dealer_total = t.dealer and casino.total(t.dealer.cards) or nil,
-        dealer_hand = t.dealer and t.dealer.hand_name or nil }
+        dealer_hand = t.dealer and t.dealer.hand_name or nil,
+        answer = t.question and t.question.choices[t.question.answer] or nil }
     t.results = nil
-    casino.phase(t, "result", (not casino.controlled(t, now)) and casino.RESULT_MS or nil, now)
+    casino.phase(t, "result", (not casino.controlled(t, now)) and (t.game == "trivia"
+        and casino.TRIVIA_RESULT_MS or casino.RESULT_MS) or nil, now)
     casino.event(t, #winners > 0 and "win" or "lose")
     logActivity(t.name .. ": " .. casino.NAMES[t.game] .. " round " .. t.round
         .. ", " .. #winners .. " won", colors.magenta)
@@ -1436,7 +1651,8 @@ function casino.advance(t, now)
             t.dirty = true
         end
         if t.phase_until and now >= t.phase_until then
-            if #bettors > 0 then
+            -- Trivia shows its answer whether anybody bet or not.
+            if #bettors > 0 or t.game == "trivia" then
                 casino.deal(t, now)
             elseif t.auto then
                 casino.newRound(t, now)
@@ -1455,7 +1671,7 @@ end
 
 function casino.play(t, now)
     local step, due = t.step, t.step_until and now >= t.step_until
-    if (step == "spin" or step == "flip") and due then
+    if (step == "spin" or step == "flip" or step == "answer") and due then
         casino.settle(t, now)
     elseif step == "deal" and due then
         if t.game == "blackjack" then
@@ -1515,7 +1731,8 @@ end
 function casino.nextLabel(t)
     if t.phase == "wheel" then return nil end
     if t.phase == "betting" then
-        return t.game == "roulette" and "SPIN" or t.game == "heads_tails" and "FLIP" or "DEAL"
+        return t.game == "roulette" and "SPIN" or t.game == "heads_tails" and "FLIP"
+            or t.game == "trivia" and "REVEAL" or "DEAL"
     end
     if t.phase == "result" then return "NEXT GAME" end
     local labels = { turns = "DEALER'S TURN", decide = "FLOP", flop = "TURN",
@@ -1553,8 +1770,11 @@ function casino.view(t, how)
         local entry = { seat = player.seat, name = player.name,
             total = player.total or 0, playing = (player.total or 0) > 0,
             status = player.status, result = player.result, me = mine or nil,
-            hand_name = (showdown or mine) and player.hand_name or nil }
-        if how.display or how.owner or mine or t.phase ~= "betting" then
+            hand_name = (showdown or mine) and player.hand_name or nil,
+            streak = player.run and player.run.streak or nil,
+            pot = player.run and player.run.pot or nil }
+        -- Trivia: an answer is nobody else's to copy while bets are open.
+        if mine or t.phase ~= "betting" or ((how.display or how.owner) and t.game ~= "trivia") then
             entry.bets = player.bets
         end
         entry.cards = cardsOf(player.account_id, player.hand, hidden)
@@ -1602,6 +1822,27 @@ function casino.view(t, how)
         view.board = { cards = shown }
     end
     if t.outcome ~= nil and (how.display or showdown) then view.outcome = t.outcome end
+    -- FoxyOS 18.1: the question, and its answer only once it is shown. Which
+    -- answers were chosen, once bets are closed.
+    if t.game == "trivia" and t.question then
+        local q = t.question
+        view.question = { text = q.text, choices = q.choices, topic = q.topic,
+            source = q.source, number = t.trivia and t.trivia.asked or nil }
+        if showdown or (t.phase == "playing" and t.step == "answer") then
+            view.question.answer = q.answer
+        end
+        if t.phase ~= "betting" then
+            local counts = { 0, 0, 0, 0 }
+            for _, player in ipairs(casino.bettors(t)) do
+                local pick = player.bets[1] and player.bets[1].pick
+                if counts[pick] then counts[pick] = counts[pick] + 1 end
+            end
+            view.question.counts = counts
+        end
+    end
+    view.trivia = { mode = t.trivia and t.trivia.mode == true or false,
+        topic = t.trivia and t.trivia.topic or "all" }
+    view.trivia.topic_name = casino.triviaTopicName(t, view.trivia.topic)
     if how.display then view.events = t.events end
     if how.display or how.owner then
         view.music, view.library = t.music, t.library or {}
@@ -1613,7 +1854,12 @@ function casino.view(t, how)
         view.features, view.version = t.features or {}, t.version
         view.music_status = t.music_status
     end
-    if how.owner then view.next_label = casino.nextLabel(t) end
+    if how.owner then
+        view.next_label = casino.nextLabel(t)
+        view.company_id = t.company_id
+        view.trivia_topics = casino.triviaTopics(t)
+        view.trivia_status = casino.trivia.lib and casino.trivia.status or "Needs lib/trivia.lua"
+    end
     return view
 end
 
@@ -1643,7 +1889,8 @@ function casino.mine(t, accountId)
     end
     return { seat = player.seat, name = player.name, bets = player.bets,
         total = player.total or 0, status = player.status, options = options,
-        result = player.result, hand_name = handName }
+        result = player.result, hand_name = handName,
+        run = player.run, taken = player.taken }
 end
 
 -- Actions: the console ---------------------------------------------------------------------------
@@ -1712,9 +1959,10 @@ function actions.CASINO_UNLINK(payload)
     local t = casino.console(payload)
     need(t.phase ~= "playing" and t.phase ~= "settling", "GAME_STARTED",
         "Finish this round first")
-    if #casino.bettors(t) > 0 then
+    if #casino.bettors(t) > 0 and t.game ~= "trivia" then
         bankOrFail("CCG_ESCROW_REFUND", { lobby_code = t.code, reason = "Table closed" })
     end
+    need(casino.endRuns(t), "BANK_OFFLINE", "The Bank did not answer: try again")
     if t.bank_linked then bankOrFail("CCG_CASINO_UNLINK", { code = t.code }) end
     state.casino_codes[t.code] = nil
     state.casinos[t.console_id] = nil
@@ -1803,7 +2051,10 @@ function actions.CASINO_CONTROL(payload)
         t.dirty = true
     elseif op == "game" then
         local game = tostring(payload.game or "")
-        need(casino.NAMES[game], "INVALID_GAME", "Choose Roulette, Blackjack, Heads or Tails or Poker")
+        need(casino.NAMES[game], "INVALID_GAME", "Choose Roulette, Blackjack, Heads or Tails,"
+            .. " Poker or Trivia")
+        need(game ~= "trivia" or casino.trivia.lib, "NO_TRIVIA",
+            "This CCG Server needs updating for Trivia")
         if t.phase == "wheel" then
             t.wheel_target, t.phase_until = game, now + casino.PICKED_MS
         elseif t.phase == "betting" and #casino.bettors(t) == 0 then
@@ -1815,7 +2066,7 @@ function actions.CASINO_CONTROL(payload)
     elseif op == "next" then
         need(mine, "NOT_CONTROLLING", "Take the dealer first")
         if t.phase == "betting" then
-            need(#casino.bettors(t) > 0, "NO_BETS", "Nobody has bet yet")
+            need(#casino.bettors(t) > 0 or t.game == "trivia", "NO_BETS", "Nobody has bet yet")
             casino.deal(t, now)
         elseif t.phase == "result" then
             casino.newRound(t, now)
@@ -1868,6 +2119,26 @@ function actions.CASINO_CONTROL(payload)
         end
         music.seq = (music.seq or 0) + 1
         t.dirty = true
+    elseif op == "trivia" then
+        -- FoxyOS 18.1: Trivia mode on or off, and what it asks about.
+        need(casino.trivia.lib, "NO_TRIVIA", "This CCG Server needs updating for Trivia")
+        t.trivia = t.trivia or {}
+        if payload.topic ~= nil then
+            local topic, known = tostring(payload.topic), false
+            for _, entry in ipairs(casino.triviaTopics(t)) do
+                if entry.id == topic then known = true end
+            end
+            need(known, "INVALID_TOPIC", "There is no such topic")
+            t.trivia.topic, t.trivia.turn = topic, 0
+        end
+        if payload.mode ~= nil then t.trivia.mode = payload.mode == true end
+        -- On, between rounds: the first question now.
+        if t.trivia.mode and (t.phase == "wheel" or (t.phase == "betting"
+            and t.game ~= "trivia" and #casino.bettors(t) == 0)) then
+            t.question = nil
+            casino.openBets(t, "trivia", now)
+        end
+        t.dirty = true
     elseif op == "rename" then
         local name = util.safeText(util.trim(payload.name), 16)
         need(#name >= 2, "INVALID_NAME", "Give it a name")
@@ -1883,6 +2154,96 @@ function actions.CASINO_CONTROL(payload)
     save()
     return { table = casino.view(t, { owner = true }),
         you_control = casino.controlled(t, now) and t.controller.account_id == who.account_id }
+end
+
+-- Actions: a company's own trivia questions, FoxyOS 18.1 -----------------------------------------
+-- From My Casino, or the table's own computer (after its owner unlocked it):
+-- either names the company, or a table of it.
+
+function casino.ownCompany(payload)
+    local who = casino.owner(payload)
+    local companyId = payload.company_id
+    if not companyId and payload.console_id then
+        companyId = (state.casinos[tostring(payload.console_id)] or {}).company_id
+    end
+    for _, company in ipairs(who.companies or {}) do
+        if company.company_id == companyId then return company end
+    end
+    reject("NOT_YOURS", "That is not one of your companies")
+end
+
+function casino.triviaList(company)
+    local mine = casino.custom(company.company_id)
+    return { company_id = company.company_id, company_name = company.name,
+        questions = util.copy(mine.questions), max = casino.TRIVIA_MAX }
+end
+
+function actions.TRIVIA_QUESTIONS(payload)
+    return casino.triviaList(casino.ownCompany(payload))
+end
+
+-- A new question, or a change to one: `answers` has the right one first.
+function actions.TRIVIA_SAVE(payload)
+    need(casino.trivia.lib, "NO_TRIVIA", "This CCG Server needs updating for Trivia")
+    local company = casino.ownCompany(payload)
+    local mine = casino.custom(company.company_id)
+    local made, why = casino.trivia.lib.make(payload.topic, payload.text, payload.answers)
+    need(made, "INVALID_QUESTION", why)
+    if payload.id then
+        local found
+        for index, question in ipairs(mine.questions) do
+            if question.id == payload.id then found = index end
+        end
+        need(found, "NOT_FOUND", "That question is gone")
+        made.id = payload.id
+        mine.questions[found] = made
+    else
+        need(#mine.questions < casino.TRIVIA_MAX, "TOO_MANY", "That is "
+            .. casino.TRIVIA_MAX .. " questions already: delete some first")
+        mine.seq = mine.seq + 1
+        made.id = "C" .. mine.seq
+        mine.questions[#mine.questions + 1] = made
+    end
+    save()
+    return casino.triviaList(company)
+end
+
+function actions.TRIVIA_DELETE(payload)
+    local company = casino.ownCompany(payload)
+    local mine = casino.custom(company.company_id)
+    for index, question in ipairs(mine.questions) do
+        if question.id == payload.id then
+            table.remove(mine.questions, index)
+            save()
+            return casino.triviaList(company)
+        end
+    end
+    reject("NOT_FOUND", "That question is gone")
+end
+
+-- A text file of them, one a line (lib/trivia's trivia.parse).
+function actions.TRIVIA_IMPORT(payload)
+    need(casino.trivia.lib, "NO_TRIVIA", "This CCG Server needs updating for Trivia")
+    local company = casino.ownCompany(payload)
+    need(type(payload.text) == "string" and #payload.text <= 64000, "INVALID_FILE",
+        "That file is too big")
+    local mine = casino.custom(company.company_id)
+    local questions, problems = casino.trivia.lib.parse(payload.text)
+    local added = 0
+    for _, question in ipairs(questions) do
+        if #mine.questions >= casino.TRIVIA_MAX then
+            problems[#problems + 1] = "Full at " .. casino.TRIVIA_MAX .. " questions"
+            break
+        end
+        mine.seq = mine.seq + 1
+        question.id = "C" .. mine.seq
+        mine.questions[#mine.questions + 1] = question
+        added = added + 1
+    end
+    save()
+    local list = casino.triviaList(company)
+    list.added, list.problems = added, problems
+    return list
 end
 
 -- Actions: players, from the CCG app's Bet tab ---------------------------------------------------
@@ -1950,6 +2311,7 @@ function actions.TABLE_BET(payload)
     local who = requirePlayer(payload)
     local player = casino.seat(t, who)
     local list = type(payload.bets) == "table" and payload.bets or {}
+    if t.game == "trivia" then return casino.answer(t, who, player, payload, list[1]) end
     need(#list >= 1 and #list <= (t.game == "roulette" and 8 or 1), "INVALID_BETS",
         t.game == "roulette" and "Place one to eight bets" or "Place one bet")
     local bets, staked = {}, {}
@@ -2031,6 +2393,77 @@ function actions.TABLE_ACT(payload)
     return casino.status(t, who)
 end
 
+-- Trivia, FoxyOS 18.1: all or nothing. The first answer a player locks in
+-- stakes their pot at the Bank; after that every answer rides on it, 1.5x
+-- for a right one and all of it for a wrong one. Changing your mind while
+-- bets are open is free.
+function casino.answer(t, who, player, payload, entry)
+    local kind, pick = casino.readBet("trivia", entry)
+    need(kind, "INVALID_BET", "Choose answer A, B, C or D")
+    local wallet
+    if not player.run then
+        local amount = tonumber(entry.amount)
+        need(amount and amount > 0, "INVALID_AMOUNT", "Say how much to play for")
+        local done = bankOrFail("CCG_TRIVIA_BUYIN", { bet_token = payload.bet_token,
+            session_token = payload.session_token, lobby_code = t.code, amount = amount })
+        player.run, player.taken, wallet = done.run, nil, done.wallet
+        save()
+        -- In for the next question, if this one closed meanwhile.
+        need(t.phase == "betting", "BETS_CLOSED", "Bets closed while that went through:"
+            .. " your pot plays from the next question")
+    end
+    player.bets = { { kind = kind, pick = pick, amount = player.run.pot } }
+    player.total = player.run.pot
+    casino.event(t, "chip")
+    save()
+    local status = casino.status(t, who)
+    status.wallet = wallet or status.wallet
+    return status
+end
+
+-- Taking the pot: any time but while an answer is waiting to be shown.
+function casino.takeRun(t, player)
+    need(not ((player.total or 0) > 0 and (t.phase == "playing" or t.phase == "settling")),
+        "GAME_STARTED", "Wait for the answer first")
+    local done = bankOrFail("CCG_TRIVIA_CASHOUT", { lobby_code = t.code,
+        account_id = player.account_id })
+    if t.game == "trivia" and t.phase == "betting" then player.bets, player.total = nil, 0 end
+    casino.paidOut(t, done.ended)
+end
+
+function casino.paidOut(t, ended)
+    for _, entry in ipairs(ended or {}) do
+        local player = t.players[entry.account_id]
+        if player then player.run, player.taken = nil, entry end
+    end
+    t.dirty = true
+end
+
+-- Every run at the table, paid what it has: the table has stopped asking.
+function casino.endRuns(t)
+    local any = false
+    for _, player in pairs(t.players) do if player.run then any = true end end
+    if not any then return true end
+    local done = askBank("CCG_TRIVIA_CASHOUT", { lobby_code = t.code }, 8)
+    if not done then
+        logActivity("Bank did not pay " .. t.name .. "'s Trivia pots, will retry", colors.orange)
+        return false
+    end
+    casino.paidOut(t, done.ended)
+    return true
+end
+
+function actions.TABLE_CASHOUT(payload)
+    local who = requirePlayer(payload)
+    local t = casino.byCode(payload.code)
+    need(t, "TABLE_NOT_FOUND", "That table has closed")
+    local player = casino.seat(t, who)
+    need(player.run, "NO_RUN", "You have no pot to take")
+    casino.takeRun(t, player)
+    save()
+    return casino.status(t, who)
+end
+
 function actions.TABLE_LEAVE(payload)
     local who = requirePlayer(payload)
     local t = casino.byCode(payload.code)
@@ -2040,7 +2473,8 @@ function actions.TABLE_LEAVE(payload)
     local staked = (player.total or 0) > 0
     need(not staked or t.phase == "betting" or t.phase == "result" or t.phase == "wheel",
         "GAME_STARTED", "Finish this round first")
-    if staked and t.phase == "betting" then
+    if player.run then casino.takeRun(t, player) end
+    if staked and t.phase == "betting" and t.game ~= "trivia" then
         bankOrFail("CCG_ESCROW_RELEASE", { lobby_code = t.code, account_id = who.account_id })
     end
     t.players[who.account_id] = nil
@@ -2063,7 +2497,8 @@ function casino.tick(now)
             for index = #t.order, 1, -1 do
                 local player = t.players[t.order[index]]
                 if player and (player.total or 0) <= 0
-                    and now - (player.seen_at or player.joined_at or now) > PRESENCE_MS then
+                    and now - (player.seen_at or player.joined_at or now) > PRESENCE_MS
+                    and (not player.run or pcall(casino.takeRun, t, player)) then
                     t.players[t.order[index]] = nil
                     table.remove(t.order, index)
                     t.dirty = true
@@ -2119,6 +2554,20 @@ local function gameLoop()
     end
 end
 
+-- FoxyOS 18.1: Trivia questions from the internet, a topic at a time.
+local function triviaLoop()
+    while running do
+        -- An updater from before 18.1 brings lib/trivia a check after this
+        -- program: Trivia starts once it is here, without a restart.
+        if not casino.trivia.lib then
+            local ok, lib = pcall(require, "lib.trivia")
+            if ok and type(lib) == "table" then casino.trivia.lib = lib end
+        end
+        pcall(casino.triviaFetch, util.nowMs())
+        sleep(2)
+    end
+end
+
 local function updateLoop()
     while running do
         net.autoUpdate(config, "ccgserver", ROOT, nil,
@@ -2152,7 +2601,9 @@ local function dashboardLoop()
         end,
         lines = function()
             return { { "BANK  " .. (bank:isOnline() and "CONNECTED" or "SEARCHING"),
-                bank:isOnline() and colors.lime or colors.orange } }
+                bank:isOnline() and colors.lime or colors.orange },
+                { "TRIVIA  " .. string.upper(casino.trivia.lib and casino.trivia.status
+                    or "needs lib/trivia.lua"), colors.lightGray } }
         end,
         activity = activity, root = ROOT, colorTitle = "Server colour",
         actions = { { id = "stop", label = "STOP", hint = "Open lobbies are refunded",
@@ -2219,7 +2670,7 @@ net.host(config.ccg_protocol or "PUMPE_CCG_V1",
 logActivity("CCG Server online on computer #" .. os.getComputerID(),
     colors.lime)
 
-parallel.waitForAny(serverLoop, gameLoop, updateLoop, dashboardLoop)
+parallel.waitForAny(serverLoop, gameLoop, updateLoop, dashboardLoop, triviaLoop)
 pcall(rednet.unhost, config.ccg_protocol or "PUMPE_CCG_V1")
 save()
 ui.clear(target)

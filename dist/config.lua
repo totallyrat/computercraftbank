@@ -2,11 +2,11 @@
 
 
 return {
-version = "18.0.0",
+version = "18.1.0",
 
 
 
-release_name = "FoxyOS 18",
+release_name = "FoxyOS 18.1",
 protocol = "PUMPE_BANK_V5",
 
 
@@ -77,6 +77,18 @@ bet_maximum = 10000,
 
 
 ccg_casino_credit = 10000,
+
+
+
+
+
+
+ccg_trivia_multiplier = 1.5,
+ccg_trivia_max_streak = 10,
+ccg_trivia_online = true,
+ccg_trivia_url = "https://opentdb.com",
+
+ccg_console_lock_seconds = 60,
 ccg_lobby_ttl_ms = 5 * 60 * 1000,
 ccg_result_delay_ms = 6 * 1000,
 ccg_survivor_max_seconds = 75,

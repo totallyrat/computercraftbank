@@ -98,6 +98,8 @@ const forwardOptionalFiles = [
   "lib/music.lua",
   // FoxyOS 18: the Pocket Desktop.
   "lib/desktop.lua",
+  // FoxyOS 18.1: Trivia's questions, for the CCG Server.
+  "lib/trivia.lua",
 ];
 
 function checksum(buffer) {

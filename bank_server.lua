@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.0.0"
+local PROGRAM_VERSION = "18.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -87,6 +87,7 @@ RELEASE.depot_files = {
     "music.lua",
     "lib/music.lua",
     "lib/desktop.lua",
+    "lib/trivia.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -144,6 +145,7 @@ RELEASE.optional = {
     "music.lua",
     "lib/music.lua",
     "lib/desktop.lua",
+    "lib/trivia.lua",
 }
 
 RELEASE.programs = {
@@ -218,6 +220,10 @@ local function deploymentFilesForRole(role)
     if role == "pumpe" then
         files[#files + 1] = { path = "lib/desktop.lua", source = "lib/desktop.lua" }
         files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
+    end
+    -- FoxyOS 18.1: a CCG Server asks Trivia's built-in questions.
+    if role == "ccgserver" then
+        files[#files + 1] = { path = "lib/trivia.lua", source = "lib/trivia.lua" }
     end
     files[#files + 1] = { path = mainFile, source = mainFile }
     return files
@@ -2455,6 +2461,9 @@ local CCG_GAMES = {
     roulette = { name = "Roulette", multiplier = 0 },
     blackjack = { name = "Blackjack", multiplier = 0 },
     poker = { name = "Poker", multiplier = 0 },
+    -- FoxyOS 18.1: all or nothing, for a pot that grows with every right
+    -- answer. Its money is a run of its own (casinoMoney.runs), not escrow.
+    trivia = { name = "Trivia", multiplier = 0 },
 }
 
 -- What a casino bet pays, by the kind of bet and how it ended. The CCG
@@ -2860,6 +2869,11 @@ function casinoMoney.atStake(company, swapEscrow, swap)
         if escrow then
             worst = worst + casinoMoney.exposure(escrow, escrow == swapEscrow and swap or nil)
         end
+        -- FoxyOS 18.1: and every Trivia run at its tables.
+        for _, run in pairs(companyId == company.company_id
+            and (state.trivia_runs or {})[code] or {}) do
+            worst = worst + casinoMoney.runWorst(run)
+        end
     end
     return worst
 end
@@ -2912,6 +2926,186 @@ function casinoMoney.book(company, stakes, payouts, gameName)
         notification(owner, "Casino loan repaid", company.name
             .. " has paid back its loan and is earning again.", "gaming")
     end
+end
+
+-- Trivia runs, FoxyOS 18.1 ----------------------------------------------------------------------
+-- Trivia is all or nothing. A player stakes once; every right answer makes
+-- what they have 1.5 times as much (ccg_trivia_multiplier), and one wrong
+-- answer loses all of it. They take it whenever they like between
+-- questions, and at the longest streak a table allows (ccg_trivia_max_streak)
+-- it is paid for them -- which is also what makes a run's worst case a
+-- number the casino's credit limit can count.
+--
+-- So the money waits here across questions, a run per player per table,
+-- rather than in a round's escrow. The CCG Server says right, wrong, or
+-- "they are taking it"; what that comes to is worked out here from the stake
+-- held, as with every other game.
+
+function casinoMoney.runs(code)
+    code = string.upper(util.safeText(util.trim(tostring(code or "")), 12))
+    need(code:match("^[%w]+$"), "BAD_LOBBY", "That table has no code")
+    state.trivia_runs = state.trivia_runs or {}
+    state.trivia_runs[code] = state.trivia_runs[code] or {}
+    return state.trivia_runs[code], code
+end
+
+function casinoMoney.tidyRuns(code)
+    if state.trivia_runs and next(state.trivia_runs[code] or {}) == nil then
+        state.trivia_runs[code] = nil
+    end
+end
+
+function casinoMoney.runRate() return tonumber(config.ccg_trivia_multiplier) or 1.5 end
+
+function casinoMoney.runMost()
+    return math.max(1, math.floor(tonumber(config.ccg_trivia_max_streak) or 10))
+end
+
+function casinoMoney.runPot(run)
+    return util.roundMoney(run.stake * casinoMoney.runRate() ^ run.streak)
+end
+
+-- The most a run could still cost the casino: paid at the longest streak.
+function casinoMoney.runWorst(run)
+    return math.max(0, run.stake * casinoMoney.runRate() ^ casinoMoney.runMost() - run.stake)
+end
+
+function casinoMoney.runView(run)
+    return { stake = run.stake, streak = run.streak, pot = casinoMoney.runPot(run),
+        next_pot = util.roundMoney(run.stake * casinoMoney.runRate() ^ (run.streak + 1)),
+        most = casinoMoney.runMost() }
+end
+
+-- A run ends, won or lost, and is booked as one round: the stake in, the pot
+-- out. Taken before a single right answer, it is simply the stake back.
+function casinoMoney.endRun(code, accountId, won, why)
+    local runs = casinoMoney.runs(code)
+    local run = runs[accountId]
+    if not run then return nil end
+    runs[accountId] = nil
+    casinoMoney.tidyRuns(code)
+    local account = state.accounts[accountId]
+    local payout = (won and account) and casinoMoney.runPot(run) or 0
+    local where = { game = "trivia", lobby_code = code }
+    if account and won and run.streak == 0 then
+        local wallet = walletFor(account)
+        wallet.balance = util.roundMoney(wallet.balance + payout)
+        betActivity(account, "wager_refund", payout, "Trivia stake returned", where)
+        return { account_id = accountId, payout = 0, pushed = payout, streak = 0, ended = why }
+    end
+    if account and won then
+        local hold = addBetHold(account, "trivia", code, payout)
+        notification(account, "CCG win - funds holding", util.money(payout, config.currency)
+            .. " from Trivia (" .. run.streak .. " right) releases on day " .. hold.release_day
+            .. " at " .. hold.release_time, "gaming")
+    elseif account then
+        betActivity(account, "bet_lost", -run.stake, "Trivia: a wrong answer", where)
+    end
+    local company = casinoMoney.companyFor(code)
+    if company then
+        casinoMoney.book(company, run.stake, payout, "Trivia")
+    else
+        state.ccg_house_profit = util.roundMoney((state.ccg_house_profit or 0)
+            + run.stake - payout)
+    end
+    return { account_id = accountId, payout = payout, streak = run.streak, ended = why }
+end
+
+-- A run nobody has played for as long as an abandoned lobby is paid what it
+-- has: the player did nothing wrong if the table went away.
+function casinoMoney.sweepRuns()
+    local limit = (tonumber(config.ccg_escrow_hours) or 2) * 60 * 60 * 1000
+    local now, swept = util.nowMs(), false
+    for code, runs in pairs(state.trivia_runs or {}) do
+        for accountId, run in pairs(runs) do
+            if now - (run.touched_at or 0) > limit then
+                casinoMoney.endRun(code, accountId, true, "abandoned")
+                swept = true
+            end
+        end
+    end
+    if swept then save() end
+end
+
+-- A player stakes, with their own PIN-unlocked bet session, once a run.
+function actions.CCG_TRIVIA_BUYIN(payload)
+    requireCCGServer(payload)
+    local account = requireBetSession(payload)
+    local runs, code = casinoMoney.runs(payload.lobby_code)
+    need(not runs[account.account_id], "IN_A_RUN",
+        "You are already playing for a pot at this table")
+    local amount = validateAmount(payload.amount, tonumber(config.bet_maximum) or 10000)
+    need(amount >= (tonumber(config.bet_minimum) or 1), "INVALID_AMOUNT",
+        "That is below the minimum")
+    local wallet = walletFor(account)
+    need(wallet.balance >= amount, "INSUFFICIENT_BET_FUNDS",
+        "Not enough available in your Bet Wallet")
+    local now = util.nowMs()
+    local run = { stake = amount, streak = 0, started_at = now, touched_at = now }
+    local company = casinoMoney.companyFor(code)
+    if company then
+        need(company.owner_account_id ~= account.account_id, "OWN_CASINO",
+            "You cannot bet at your own casino")
+        casinoMoney.ledger(company)
+        runs[account.account_id] = run
+        local over = casinoMoney.worstDebt(company.owner_account_id) > casinoMoney.credit()
+        if over then
+            runs[account.account_id] = nil
+            casinoMoney.tidyRuns(code)
+        end
+        need(not over, "TABLE_LIMIT", "This table cannot cover a pot that size right now")
+    end
+    runs[account.account_id] = run
+    wallet.balance = util.roundMoney(wallet.balance - amount)
+    betActivity(account, "wager_reserved", -amount, "Trivia stake reserved",
+        { game = "trivia", lobby_code = code })
+    save()
+    return { account_id = account.account_id, staked = amount,
+        run = casinoMoney.runView(run), wallet = betWalletSnapshot(account) }
+end
+
+-- A question answered: { [account_id] = "right" | "wrong" } for whoever
+-- answered it. Anybody else's run waits for the next one.
+function actions.CCG_TRIVIA_SETTLE(payload)
+    requireCCGServer(payload)
+    local runs, code = casinoMoney.runs(payload.lobby_code)
+    local now, settled = util.nowMs(), {}
+    for _, run in pairs(runs) do run.touched_at = now end
+    for accountId, said in pairs(type(payload.results) == "table" and payload.results or {}) do
+        local run = runs[accountId]
+        if run and said == "wrong" then
+            settled[#settled + 1] = casinoMoney.endRun(code, accountId, false, "wrong")
+        elseif run and said == "right" then
+            run.streak = run.streak + 1
+            if run.streak >= casinoMoney.runMost() then
+                settled[#settled + 1] = casinoMoney.endRun(code, accountId, true, "top")
+            else
+                settled[#settled + 1] = { account_id = accountId, streak = run.streak,
+                    run = casinoMoney.runView(run) }
+            end
+        end
+    end
+    casinoMoney.tidyRuns(code)
+    save()
+    return { settled = settled }
+end
+
+-- Taking the pot: one player's, or everybody's at the table when it stops
+-- asking questions.
+function actions.CCG_TRIVIA_CASHOUT(payload)
+    requireCCGServer(payload)
+    local runs, code = casinoMoney.runs(payload.lobby_code)
+    local ended = {}
+    if payload.account_id ~= nil then
+        ended[1] = casinoMoney.endRun(code, tostring(payload.account_id), true, "taken")
+    else
+        for accountId in pairs(runs) do
+            ended[#ended + 1] = casinoMoney.endRun(code, accountId, true, "taken")
+        end
+    end
+    casinoMoney.tidyRuns(code)
+    save()
+    return { ended = ended }
 end
 
 -- The CCG Server links a table to its company, with the owner's own
@@ -3030,6 +3224,7 @@ end
 function actions.CCG_ESCROW_SET(payload)
     requireCCGServer(payload)
     local account = requireBetSession(payload)
+    need(payload.game ~= "trivia", "BAD_GAME", "Trivia is played for a pot")
     local escrow = escrowFor(payload.lobby_code, payload.game)
     need(CCG_GAMES[escrow.game], "BAD_GAME", "That is not a CCG game")
     local amount, bets
@@ -7757,6 +7952,7 @@ end
 local function ccgEscrowLoop()
     while running do
         pcall(sweepAbandonedEscrow)
+        pcall(casinoMoney.sweepRuns)
         sleep(30)
     end
 end
@@ -8590,6 +8786,7 @@ if TEST_MODE then
         cleanup = cleanupEphemeral,
         process_bet_holds = processBetHolds,
         sweep_ccg_escrow = sweepAbandonedEscrow,
+        sweep_trivia_runs = casinoMoney.sweepRuns,
         deployment_files = deploymentFilesForRole,
         deployment_body = deploymentBody,
         deployment_route = deploymentRoute,

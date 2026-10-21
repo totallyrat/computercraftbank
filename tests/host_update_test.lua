@@ -435,6 +435,10 @@ assert(wanted["pumpe.lua"] and wanted["lib/ui.lua"] and wanted["startup.lua"])
 assert(wanted["lib/desktop.lua"] and wanted["lib/music.lua"], "the Pocket Desktop's files")
 assert(not wanted["bank_server.lua"], "a PUMPE never downloads the Bank")
 assert(not wanted["ccg.lua"], "a PUMPE never downloads another role's program")
+assert(not wanted["lib/trivia.lua"], "nor Trivia's questions")
+local ccgPaths = {}
+for _, path in ipairs(update.rolePaths("ccgserver")) do ccgPaths[path] = true end
+assert(ccgPaths["ccg_server.lua"] and ccgPaths["lib/trivia.lua"], "a CCG Server brings Trivia")
 
 local fullManifest = { version = "9.9.9", files = {} }
 local bodies = {

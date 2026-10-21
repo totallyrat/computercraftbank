@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.0.0"
+local PROGRAM_VERSION = "18.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -2393,13 +2393,18 @@ do
     -- Casino: the tables your companies own, and their controls.
     local casino = {
         NAMES = { roulette = "Roulette", blackjack = "Blackjack",
-            heads_tails = "Heads or Tails", poker = "Poker" },
+            heads_tails = "Heads or Tails", poker = "Poker", trivia = "Trivia" },
         -- For buttons a third of a Pocket wide.
         SHORT = { roulette = "Roulette", blackjack = "Blackjack", heads_tails = "Coin flip",
-            poker = "Poker" },
-        GAMES = { "roulette", "blackjack", "heads_tails", "poker" },
+            poker = "Poker", trivia = "Trivia" },
+        GAMES = { "roulette", "blackjack", "heads_tails", "poker", "trivia" },
         COLORS = { roulette = colors.green, blackjack = colors.gray,
-            heads_tails = colors.yellow, poker = colors.purple },
+            heads_tails = colors.yellow, poker = colors.purple, trivia = colors.cyan },
+        -- FoxyOS 18.1: dark writing on the light ones.
+        DARK = { heads_tails = true, trivia = true },
+        -- Trivia's four answers, each in its own colour.
+        ANSWERS = { { "A", colors.red, colors.white }, { "B", colors.blue, colors.white },
+            { "C", colors.yellow, colors.black }, { "D", colors.green, colors.white } },
         SUITS = { string.char(3), string.char(4), string.char(5), string.char(6) },
         RANKS = { [11] = "J", [12] = "Q", [13] = "K", [14] = "A" },
         WHEEL = { 0, 32, 15, 19, 4, 21, 2, 25, 17, 34, 6, 27, 13, 36, 11, 30, 8, 23, 10, 5,
@@ -2459,6 +2464,7 @@ do
         if bet.kind == "dozen" then return ({ "1-12", "13-24", "25-36" })[bet.pick] or "Dozen" end
         if bet.kind == "column" then return "Column " .. tostring(bet.pick) end
         if bet.kind == "hand" then return "Hand" end
+        if bet.kind == "answer" then return "Answer " .. ((casino.ANSWERS[bet.pick] or {})[1] or "?") end
         local words = { red = "Red", black = "Black", odd = "Odd", even = "Even",
             low = "1-18", high = "19-36", heads = "Heads", tails = "Tails" }
         return words[tostring(bet.pick)] or tostring(bet.pick)
@@ -2594,6 +2600,72 @@ do
         if payout > 0 then ui.center(target, y + 3, "Held for a day", ui.theme.muted, ui.theme.panel) end
     end
 
+    -- Trivia, FoxyOS 18.1: the question and its four answers. All or
+    -- nothing: the first answer you choose is your stake, and after that each
+    -- one rides on the pot -- 1.5x when it is right, all of it gone when it is
+    -- wrong. TAKE IT pays the pot out between questions.
+    function casino.trivia(view, me, scene, remaining)
+        local width, height = target.getSize()
+        local q = view.question or { text = "", choices = {} }
+        ui.text(target, 2, 4, ui.truncate((q.topic or "Trivia") .. (q.number and ("  Q" .. q.number)
+            or ""), width - 7), ui.theme.muted)
+        if remaining and view.phase == "betting" then
+            ui.text(target, width - 3, 4, math.ceil(remaining / 1000) .. "s",
+                remaining < 5000 and ui.theme.danger or ui.theme.warning)
+        end
+        local lines = ui.wrap(q.text or "", width - 2)
+        for index = 1, math.min(#lines, 4) do
+            ui.text(target, 2, 4 + index, lines[index], ui.theme.ink)
+        end
+        local y = 6 + math.min(#lines, 4)
+        local step = height - 6 - y >= 8 and 2 or 1
+        local picked = me.bets and me.bets[1] and me.bets[1].pick
+        for index = 1, 4 do
+            local look = casino.ANSWERS[index]
+            local back, ink = look[2], look[3]
+            if q.answer and q.answer ~= index then back, ink = ui.theme.panel, ui.theme.muted end
+            scene:button("answer:" .. index, 2, y, width - 2, 1, ui.truncate((picked == index
+                and "> " or "") .. look[1] .. " " .. (q.choices[index] or ""), width - 2),
+                { background = back, foreground = ink, disabled = view.phase ~= "betting" })
+            y = y + step
+        end
+        local run, result = me.run, view.phase == "result" and me.result or nil
+        local said, colour
+        if result and result.ended == "top" then
+            said, colour = "The top streak! " .. money(result.payout) .. " paid", ui.theme.success
+        elseif result and result.said == "right" then
+            said, colour = "Right! Your pot is " .. money(result.pot or 0), ui.theme.success
+        elseif result and result.said == "wrong" then
+            said, colour = "Wrong. The pot is gone.", ui.theme.danger
+        elseif run then
+            said, colour = "Pot " .. money(run.pot) .. ", " .. run.streak .. " right. Next "
+                .. money(run.next_pot), ui.theme.ink
+        else
+            said, colour = view.phase == "betting" and "Pick an answer to play. 1.5x a right"
+                .. " answer, all or nothing." or "You are watching this one", ui.theme.muted
+        end
+        ui.wrappedText(target, 2, y, said, width - 2, 2, colour)
+        if run then
+            local waiting = picked and (view.phase == "playing" or view.phase == "settling")
+            scene:button("takeit", 2, height - 3, width - 2, 1, "TAKE " .. money(run.pot),
+                { background = ui.theme.success, foreground = colors.black, disabled = waiting })
+        end
+    end
+
+    -- Answering: your stake the first time, the pot every time after.
+    function casino.answer(code, me, pick, wallet)
+        local bet = { kind = "answer", pick = pick }
+        if not me.run then
+            bet.amount = tonumber(ui.input(target, "Play for how much?", {
+                hint = "Bet Wallet " .. money(wallet and wallet.available or 0),
+                mode = "number", maxLength = 10 }) or "")
+            if not bet.amount or bet.amount <= 0 then return nil end
+        end
+        local placed, err = casino.ask(code, "TABLE_BET", { bets = { bet } })
+        if not placed then ui.message(target, "error", "Not now", err, 1.6) end
+        return placed
+    end
+
     -- The table: whatever it is dealing, from the wheel to the result, until
     -- you leave. The table picks the game; you stay from round to round.
     function casino.sit(code, status)
@@ -2633,7 +2705,9 @@ do
             local scene = ui.scene(target)
             local phase = view.phase
             me = me or {}
-            if phase == "wheel" then
+            if phase ~= "wheel" and view.game == "trivia" and view.question then
+                casino.trivia(view, me, scene, left("left_ms"))
+            elseif phase == "wheel" then
                 local games = casino.GAMES
                 local target_
                 for index, game in ipairs(games) do
@@ -2651,7 +2725,7 @@ do
                 ui.center(target, 5, "The next game", ui.theme.muted)
                 ui.fill(target, 3, 7, width - 4, 5, casino.COLORS[game])
                 ui.center(target, 9, string.upper(casino.NAMES[game]),
-                    game == "heads_tails" and colors.black or colors.white, casino.COLORS[game])
+                    casino.DARK[game] and colors.black or colors.white, casino.COLORS[game])
                 ui.center(target, 13, view.controlled and "The dealer is choosing"
                     or "Stopping...", ui.theme.muted)
             elseif phase == "betting" then
@@ -2773,7 +2847,8 @@ do
                     or "The house won this round", width - 2, 3, ui.theme.muted)
             end
             -- A round you missed, when the next one has already started.
-            if status.last and phase ~= "result" and phase ~= "playing" then
+            if status.last and phase ~= "result" and phase ~= "playing"
+                and status.last.game ~= "trivia" then
                 local result = status.last.result or {}
                 local said = (result.payout or 0) > 0 and ("Last round: won " .. money(result.payout))
                     or (result.pushed or 0) > 0 and "Last round: a tie" or "Last round: lost"
@@ -2804,6 +2879,21 @@ do
                     end
                     polledAt = util.nowMs()
                 end
+            elseif action and action:match("^answer:") then
+                local placed = casino.answer(code, me, tonumber(action:sub(8)), status.wallet)
+                if placed then status, view, me = placed, placed.table, placed.me end
+                polledAt = util.nowMs()
+            elseif action == "takeit" then
+                local done, err = casino.ask(code, "TABLE_CASHOUT")
+                if done then
+                    status, view, me = done, done.table, done.me
+                    local taken = me.taken or {}
+                    ui.message(target, "success", "Taken", (taken.payout or 0) > 0
+                        and (money(taken.payout) .. ", held for a day") or "Your stake is back", 1.4)
+                else
+                    ui.message(target, "warning", "Not yet", err, 1.4)
+                end
+                polledAt = util.nowMs()
             elseif action and action:match("^act:") then
                 local done, err = casino.ask(code, "TABLE_ACT", { action = action:sub(5) })
                 if done then
@@ -3108,10 +3198,15 @@ do
                 local row = math.floor((index - 1) / 2)
                 scene:button("game:" .. game, 2 + column * (each + 1), y + 1 + row * 2, each, 1,
                     casino.SHORT[game], { background = casino.COLORS[game],
-                        foreground = game == "heads_tails" and colors.black or colors.white })
+                        foreground = casino.DARK[game] and colors.black or colors.white })
             end
-            scene:button("music", 2, height - 2, half, 1, "MUSIC", { background = ui.theme.panel })
-            scene:button("rename", 3 + half, height - 2, width - 3 - half, 1, "RENAME",
+            -- Side by side with no gap, Trivia in its own colour between: a
+            -- Pocket is too narrow for three gaps and three whole words.
+            local third = math.floor((width - 2) / 3)
+            scene:button("music", 2, height - 2, third, 1, "MUSIC", { background = ui.theme.panel })
+            scene:button("trivia", 2 + third, height - 2, width - 2 - third * 2, 1, "TRIVIA",
+                { background = colors.cyan, foreground = colors.black })
+            scene:button("rename", width - third, height - 2, third, 1, "RENAME",
                 { background = ui.theme.panel })
             scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
             local action = scene:wait({ tickRate = 0.35 })
@@ -3124,6 +3219,7 @@ do
             if action == "auto" then payload.op, payload.on = "auto", not view.auto
             elseif action == "take" or action == "release" or action == "next" then payload.op = action
             elseif action == "music" then casino.musicPage(consoleId)
+            elseif action == "trivia" then casino.triviaPage(consoleId)
             elseif action == "rename" then
                 local name = ui.input(target, "Name this table", { initial = view.name,
                     maxLength = 16, minLength = 2, allowSpace = true })
@@ -3136,6 +3232,132 @@ do
                 if done then data, polledAt = done, util.nowMs()
                 else ui.message(target, "warning", "Not now", err, 1.2) end
             end
+        end
+    end
+
+    -- A table's Trivia, FoxyOS 18.1: Trivia mode -- question after question,
+    -- no wheel -- what it asks about, and your company's own questions.
+    function casino.triviaPage(consoleId)
+        while running and sessionToken do
+            local seen, err = casino.ownerAsk("CASINO_VIEW", { console_id = consoleId })
+            if not seen then
+                ui.message(target, "error", "CCG Casino", err, 1.4)
+                return
+            end
+            local view = seen.table
+            if not view.trivia_topics then
+                ui.message(target, "error", "Update the CCG Server", "It needs FoxyOS 18.1"
+                    .. " for Trivia", 2)
+                return
+            end
+            local trivia = view.trivia or {}
+            local width, height = target.getSize()
+            ui.clear(target)
+            ui.header(target, "Trivia", ui.truncate(view.name, width - 3), util.formatClock())
+            ui.text(target, 2, 4, ui.truncate(tostring(view.trivia_status), width - 2), ui.theme.muted)
+            local scene = ui.scene(target)
+            scene:button("mode", 2, 6, width - 2, 2, "TRIVIA MODE: " .. (trivia.mode and "ON" or "OFF"),
+                { background = trivia.mode and colors.cyan or ui.theme.panel,
+                  foreground = trivia.mode and colors.black or nil })
+            ui.text(target, 2, 9, "Asks about", ui.theme.muted)
+            scene:button("topic", 2, 10, width - 2, 1, ui.truncate(trivia.topic_name or "All topics",
+                width - 4), { background = ui.theme.panel })
+            scene:button("ours", 2, 12, width - 2, 1, "Our questions", { background = ui.theme.panel })
+            ui.wrappedText(target, 2, 14, "All or nothing: a right answer makes a player's pot"
+                .. " 1.5x, a wrong one loses it. Off, Trivia is one of the wheel's games.",
+                width - 2, 4, ui.theme.muted)
+            scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+            local action = scene:wait({ tickRate = 3 })
+            if action == "back" or action == "__terminate" then return end
+            local payload = { console_id = consoleId, op = "trivia" }
+            if action == "mode" then
+                payload.mode = not trivia.mode
+            elseif action == "topic" then
+                local items = {}
+                for _, topic in ipairs(view.trivia_topics) do
+                    items[#items + 1] = { id = topic.id, label = topic.name }
+                end
+                local picked = casino.pick("Asks about", items, "")
+                payload.topic = picked and picked.id
+            elseif action == "ours" then
+                casino.questions(view.company_id)
+            end
+            if payload.mode ~= nil or payload.topic then
+                local done, doneError = casino.ownerAsk("CASINO_CONTROL", payload)
+                if not done then ui.message(target, "warning", "Not now", doneError, 1.4) end
+            end
+        end
+    end
+
+    -- Your company's own questions: up to 300, used by every table it owns.
+    -- A text file of them can be dropped on a table's computer instead.
+    function casino.questions(companyId)
+        while running and sessionToken do
+            local list, err = casino.ownerAsk("TRIVIA_QUESTIONS", { company_id = companyId })
+            if not list then
+                ui.message(target, "error", "Our questions", err, 1.4)
+                return
+            end
+            local items = { { id = "new", label = "+ New question" } }
+            for _, question in ipairs(list.questions) do
+                items[#items + 1] = { id = question.id, label = question.text, question = question }
+            end
+            local picked = casino.pick("Our questions", items, "")
+            if not picked then return end
+            if picked.id == "new" then
+                casino.editQuestion(companyId, nil)
+            else
+                local q = picked.question
+                local width, height = target.getSize()
+                ui.clear(target)
+                ui.header(target, ui.truncate(q.topic, width - 9), "Right answer first",
+                    util.formatClock())
+                local lines = ui.wrap(q.text, width - 2)
+                for index = 1, math.min(#lines, 5) do ui.text(target, 2, 3 + index, lines[index], ui.theme.ink) end
+                for index, choice in ipairs(q.choices) do
+                    ui.text(target, 2, 9 + index, ui.truncate((index == 1 and "+ " or "- ") .. choice,
+                        width - 2), index == 1 and ui.theme.success or ui.theme.muted)
+                end
+                local scene = ui.scene(target)
+                local half = math.floor((width - 3) / 2)
+                scene:button("edit", 2, height - 3, half, 2, "EDIT", { background = ui.theme.accent,
+                    foreground = colors.black })
+                scene:button("delete", 3 + half, height - 3, width - 3 - half, 2, "DELETE",
+                    { background = ui.theme.danger })
+                scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+                local action = scene:wait()
+                if action == "edit" then
+                    casino.editQuestion(companyId, q)
+                elseif action == "delete" then
+                    local gone, goneError = casino.ownerAsk("TRIVIA_DELETE", { company_id = companyId,
+                        id = q.id })
+                    if not gone then ui.message(target, "error", "Not deleted", goneError, 1.4) end
+                end
+            end
+        end
+    end
+
+    function casino.editQuestion(companyId, q)
+        local topic = ui.input(target, "Topic", { initial = q and q.topic or casino.lastTopic
+            or "Our questions", maxLength = 16, minLength = 1, allowSpace = true, mode = "text" })
+        if not topic then return end
+        local text = ui.input(target, "The question", { initial = q and q.text, maxLength = 150,
+            minLength = 3, allowSpace = true, mode = "text" })
+        if not text then return end
+        local answers = {}
+        for index, title in ipairs({ "The right answer", "A wrong answer", "Another wrong one",
+            "One more wrong one" }) do
+            answers[index] = ui.input(target, title, { initial = q and q.choices[index],
+                maxLength = 40, minLength = 1, allowSpace = true, mode = "text" })
+            if not answers[index] then return end
+        end
+        local saved, err = casino.ownerAsk("TRIVIA_SAVE", { company_id = companyId,
+            id = q and q.id, topic = topic, text = text, answers = answers })
+        if saved then
+            casino.lastTopic = topic
+            ui.message(target, "success", "Saved", #saved.questions .. " of your own", 1)
+        else
+            ui.message(target, "error", "Not saved", err, 1.8)
         end
     end
 
@@ -3610,9 +3832,9 @@ do
                 local width = target.getSize()
                 ui.clear(target)
                 ui.header(target, "Bet", "CCG Casino", util.formatClock())
-                ui.wrappedText(target, 2, 5, "Roulette, Blackjack, Heads or Tails and Poker"
-                    .. " at a CCG Casino. Type the code on its screen and stay from game to"
-                    .. " game. Winnings are held a day.", width - 2, 7, ui.theme.muted)
+                ui.wrappedText(target, 2, 5, "Roulette, Blackjack, Heads or Tails, Poker and"
+                    .. " Trivia at a CCG Casino. Type the code on its screen and stay from game"
+                    .. " to game. Winnings are held a day.", width - 2, 7, ui.theme.muted)
                 local scene = ui.scene(target)
                 scene:button("join", 2, 13, width - 2, 3, "Sit at a table",
                     { background = colors.red })
@@ -9604,7 +9826,7 @@ end
 -- with its desktop, its Home Screen, the guide and the openings.
 if rawget(_G, "PUMPE_DESK_TEST") == true then
     return { desk = desk, device = device, mainMenu = mainMenu, guide = GUIDE,
-        opening = opening, signIn = function(name, pin)
+        opening = opening, openApp = openApp, signIn = function(name, pin)
         local result = client:request("LOGIN", { name = name, pin = pin })
         sessionToken, account = result and result.session_token, result and result.account
         return result

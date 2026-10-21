@@ -14,7 +14,7 @@
 --   installer.lua --boot <program>   update if the release is newer, then start
 --   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local INSTALLER_VERSION = "18.0.0"
+local INSTALLER_VERSION = "18.1.0"
 local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -115,7 +115,7 @@ local PROGRAMS = {
     { id = "ccgserver", name = "CCG Server", file = "ccg_server.lua",
       detail = "Runs the games",
       about = "The server the CCG consoles play against.",
-      words = "casino bet game server" },
+      words = "casino bet game server trivia", extra = { "lib/trivia.lua" } },
     { id = "anchor", name = "GPS Anchor", file = "gps_anchor.lua",
       detail = "A positioning beacon",
       about = "One of the four beacons that tell a Pocket where it is.",

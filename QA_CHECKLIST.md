@@ -7,6 +7,39 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 18.1 (18.1.0)
+
+Update the Bank first, then the CCG Server, then every CCG Casino, then Pockets. Nothing in 18.1 was tried in a world before release, and the Open Trivia DB download was never run against the real site: every line below is a first run.
+
+### Trivia (Pocket: CCG → Bet, at a table in Trivia mode)
+
+- [ ] My Casino → a table → **TRIVIA** → **TRIVIA MODE: ON**. The monitor skips the wheel: a cyan TRIVIA band with the topic, the question, and four coloured answers A–D.
+- [ ] The CCG Server's screen shows a *TRIVIA* line: *Online: ...* when it reached opentdb.com, *Offline* (built-in questions) when it did not. If it never goes online with HTTP enabled, note the exact message.
+- [ ] On the Pocket: the question and four answer buttons. Tap one, type a stake: *Pot $50, 0 right. Next $75*. The monitor shows your name and *IN*, but nobody's answer until bets close.
+- [ ] Change your answer before bets close: no second stake is asked for.
+- [ ] Right: the answer lights up on both screens (the others go grey), then *Right! Your pot is $75*. Wrong: *Wrong. The pot is gone.*
+- [ ] Next question, **TAKE $75**: *Taken, held for a day*; the Bet Wallet shows it in Holding. **TAKE** is greyed out while your answer is waiting to be shown.
+- [ ] Sit a question out: the pot stays. **LEAVE** with a pot: it is paid.
+- [ ] With nobody answering, the answer still shows and the next question follows, for as long as the table runs.
+- [ ] Trivia mode off, then pick Roulette: anyone with a pot is paid it. Trivia also comes up on the wheel (one question, then the table moves on and pays the pots).
+- [ ] **Asks about**: pick Minecraft; every question is Minecraft. *All topics* goes round them.
+- [ ] Ten right in a row is paid without asking (set `ccg_trivia_max_streak = 2` on the Bank to try it quickly).
+- [ ] A casino with no money in it refuses a big stake: *This table cannot cover a pot that size right now*.
+
+### Your own questions
+
+- [ ] My Casino → TRIVIA → **Our questions** → **+ New question**: topic, question, the right answer, three wrong ones. It is listed; open it: the right one marked **+**. **EDIT** and **DELETE** work.
+- [ ] Write a .txt on your real computer: `# Our town` then `What is our river called? | Foxbrook | Wolfwater | Bearburn | Owlflow`, plus one broken line. Drag it onto the unlocked CCG Casino computer: *Added 1 questions. 1 lines were not: Line 3: ...*.
+- [ ] **Asks about → Our questions (n)**: only yours come up.
+
+### The CCG Casino's own computer
+
+- [ ] After updating, the computer's screen is locked: the time, the table and its code, *PIN to unlock*. A table set up before 18.1 asks once for the owner's Foxy Account.
+- [ ] Someone else's account and PIN: *Only the owner of this table can open it*.
+- [ ] Unlocked: **AUTO**, **BE THE DEALER** then **NEXT** (with the next step's name), the five games, **TRIVIA MODE**, **<** topic **>**, **STOP MUSIC**, **VOL -/+**, **NEXT SONG**, **SPEAKERS**, **BETA**, **LOCK**, **UNLINK**. Every label whole.
+- [ ] Leave it a minute: it locks by itself and, if you were the dealer, the table goes back to Auto.
+- [ ] Locked, drop a .mid or .txt on it: *Unlock this table to add files.*
+
 ## FoxyOS 18 (18.0.0)
 
 Update the Bank (Core and Vault) first, then every Cloud Server, then the Music Server, the App Server, Music Players and Pockets. Nothing in 18.0 was tried in a world before release: every line below is a first run.

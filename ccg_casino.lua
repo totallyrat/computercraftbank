@@ -23,7 +23,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.0.0"
+local PROGRAM_VERSION = "18.1.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -178,6 +178,15 @@ draw.GAME = {
     heads_tails = { color = colors.yellow, ink = colors.black, mark = "H/T", short = "HEADS OR TAILS" },
     poker = { color = colors.purple, ink = colors.white,
         mark = draw.SUITS[4] .. draw.SUITS[1] .. draw.SUITS[2] .. draw.SUITS[3], short = "POKER" },
+    trivia = { color = colors.cyan, ink = colors.black, mark = "A B C D", short = "TRIVIA" },
+}
+
+-- FoxyOS 18.1: Trivia's four answers, each in its own colour.
+draw.ANSWERS = {
+    { letter = "A", color = colors.red, ink = colors.white },
+    { letter = "B", color = colors.blue, ink = colors.white },
+    { letter = "C", color = colors.yellow, ink = colors.black },
+    { letter = "D", color = colors.green, ink = colors.white },
 }
 
 -- Roulette's wheel, in the order the pockets go round it (single zero).
@@ -603,6 +612,8 @@ function show.betWords(player)
         if bet.kind == "straight" then words[#words + 1] = tostring(bet.pick)
         elseif bet.kind == "dozen" then words[#words + 1] = ({ "1-12", "13-24", "25-36" })[bet.pick]
         elseif bet.kind == "column" then words[#words + 1] = "COL " .. tostring(bet.pick)
+        elseif bet.kind == "answer" then
+            words[#words + 1] = (draw.ANSWERS[bet.pick] or {}).letter or "?"
         elseif bet.pick then words[#words + 1] = string.upper(tostring(bet.pick)) end
     end
     return table.concat(words, " ")
@@ -768,23 +779,96 @@ function show.cards(t, view, settled)
     if #players == 0 then ui.center(t, top + 1, "NOBODY IS PLAYING", colors.gray, colors.black) end
 end
 
+-- Trivia, FoxyOS 18.1: the question, its four answers in their colours, and
+-- the right one lit when it is shown. Who is playing, for how much and on
+-- what streak -- but never who chose what until the answer is out.
+function show.trivia(t, view, settled)
+    local width, height = t.getSize()
+    local q = view.question or { text = "...", choices = {} }
+    local look = draw.GAME.trivia
+    ui.fill(t, 1, 2, width, 1, look.color)
+    ui.center(t, 2, ui.truncate("TRIVIA  " .. string.upper(q.topic or "")
+        .. (q.number and ("  Q" .. q.number) or ""), width - 2), look.ink, look.color)
+    local lines = ui.wrap(q.text or "", width - 4)
+    local y = 4
+    for index = 1, math.min(#lines, height >= 26 and 5 or 4) do
+        ui.center(t, y, lines[index], colors.white, colors.black)
+        y = y + 1
+    end
+    y = y + 1
+    -- The answers, two by two, as tall as there is room for.
+    local tileW = math.floor((width - 3) / 2)
+    local tileH = math.max(1, math.min(3, math.floor((height - 5 - y) / 2)))
+    local shown = q.answer
+    for index = 1, 4 do
+        local answer = draw.ANSWERS[index]
+        local x = index % 2 == 1 and 2 or 3 + tileW
+        local top = y + (index > 2 and tileH + 1 or 0)
+        local color, ink = answer.color, answer.ink
+        if shown and shown ~= index then color, ink = colors.gray, colors.lightGray end
+        ui.fill(t, x, top, tileW, tileH, color)
+        local count = q.counts and q.counts[index] and q.counts[index] > 0
+            and (" x" .. q.counts[index]) or ""
+        local label = answer.letter .. " " .. ui.truncate(q.choices[index] or "",
+            tileW - 3 - #count - (shown == index and 2 or 0))
+        if shown == index then label = "> " .. label end
+        local middle = top + math.floor((tileH - 1) / 2)
+        ui.text(t, x + 1, middle, label, ink, color)
+        if count ~= "" then ui.text(t, x + tileW - #count - 1, middle, count, ink, color) end
+    end
+    y = y + tileH * 2 + 2
+    if view.phase == "betting" then
+        local left = show.left(view, "left_ms")
+        if left and view.phase_ms and y < height then
+            local barW = width - 4
+            ui.fill(t, 3, y, barW, 1, colors.gray)
+            ui.fill(t, 3, y, math.floor(barW * left / view.phase_ms + 0.5), 1,
+                left < 5000 and colors.red or colors.lime)
+            y = y + 1
+        end
+        ui.center(t, y, ui.truncate("ANSWER IN THE CCG APP" .. (left and ("  "
+            .. math.ceil(left / 1000) .. "s") or ""), width - 2), colors.white, colors.black)
+        ui.center(t, y + 1, ui.truncate("CODE " .. tostring(view.code)
+            .. "  //  ALL OR NOTHING, 1.5X A RIGHT ANSWER", width - 2), colors.lightGray, colors.black)
+        y = y + 3
+        for _, player in ipairs(view.players or {}) do
+            if y >= height then break end
+            local streak = player.pot and (player.streak .. " RIGHT  " .. draw.money(player.pot))
+                or ""
+            ui.text(t, 3, y, ui.truncate(player.name, 14), player.playing and colors.lime
+                or colors.lightGray, colors.black)
+            local said = ui.truncate(streak .. (player.playing and "  IN" or ""), width - 20)
+            ui.text(t, width - #said - 1, y, said, colors.white, colors.black)
+            y = y + 1
+        end
+    elseif not settled and y < height - 1 then
+        ui.center(t, y, shown and ("THE ANSWER: " .. (draw.ANSWERS[shown] or {}).letter or "?")
+            or "THE ANSWER IS...", colors.yellow, colors.black)
+    end
+end
+
 -- Who won, under whichever game it was.
 function show.winners(t, view)
     local width, height = t.getSize()
     local y = height - 3
     ui.fill(t, 1, y, width, 2, colors.black)
     local winners = view.winners or {}
+    local trivia = view.game == "trivia"
     if #winners == 0 then
-        ui.center(t, y, "THE HOUSE WINS", colors.red, colors.black)
+        ui.center(t, y, trivia and "NOBODY GOT IT" or "THE HOUSE WINS", colors.red, colors.black)
     else
         local words = {}
         for _, winner in ipairs(winners) do
-            words[#words + 1] = string.upper(winner.name) .. " +" .. draw.money(winner.payout)
+            -- Trivia: a streak and what it is worth now, not a payout.
+            words[#words + 1] = string.upper(winner.name) .. (trivia
+                and (" " .. tostring(winner.streak or 1) .. "x " .. draw.money(winner.payout))
+                or (" +" .. draw.money(winner.payout)))
         end
         ui.center(t, y, ui.truncate(table.concat(words, "  "), width - 2), colors.lime, colors.black)
     end
     local left = show.left(view, "left_ms")
-    ui.center(t, y + 1, left and ("NEXT GAME IN " .. math.ceil(left / 1000) .. "s")
+    ui.center(t, y + 1, left and ((trivia and "NEXT QUESTION IN " or "NEXT GAME IN ")
+        .. math.ceil(left / 1000) .. "s")
         or (view.controlled and "THE DEALER STARTS THE NEXT GAME" or ""), colors.lightGray,
         colors.black)
 end
@@ -811,6 +895,8 @@ function show.render(t)
     local settled = phase == "settling" or phase == "result"
     if phase == "wheel" then
         show.wheel(t, view)
+    elseif view.game == "trivia" and view.question then
+        show.trivia(t, view, settled)
     elseif phase == "betting" then
         show.betting(t, view)
     elseif view.game == "roulette" then
@@ -829,9 +915,12 @@ end
 
 -- The computer's own screen -------------------------------------------------------------------
 -- Setting the table up: sign in with Foxy, choose one of your companies,
--- name it. Then it says how it is doing, and is where the music goes in.
+-- name it. FoxyOS 18.1: then it is the table's controls -- everything My
+-- Casino has but the money -- behind its owner's PIN. Like a Pocket it locks
+-- after a minute untouched (ccg_console_lock_seconds), hands the dealer back
+-- and signs out; locked, it shows the time and the code, and takes no files.
 
-local console = { dropped = nil }
+local console = { dropped = nil, session = nil, owner = nil, mine = false }
 
 function console.ask(action, payload, timeout)
     local result, err, code = ccg:request(action, payload or {}, timeout or 5)
@@ -891,65 +980,299 @@ function console.setup()
     if not tableName then return end
     local made, madeError = console.ask("CASINO_REGISTER", { session_token = session,
         company_id = company.company_id, name = tableName })
-    pcall(bank.request, bank, "LOGOUT", { session_token = session }, 2)
     if not made then
+        pcall(bank.request, bank, "LOGOUT", { session_token = session }, 2)
         ui.message(screen, "error", "NOT SET UP", madeError, 2.4)
         return
     end
+    -- Whose PIN unlocks it: the owner who set it up, already signed in.
     device = { console_id = made.console_id, console_token = made.console_token,
-        code = made.code, name = made.name, company_name = made.company_name }
+        code = made.code, name = made.name, company_name = made.company_name,
+        owner_name = owned.name or name }
     saveDevice()
-    ui.message(screen, "success", made.name, "Code " .. made.code .. ". Open My Casino.", 2.2)
+    console.opened(session)
+    ui.message(screen, "success", made.name, "Code " .. made.code .. ". It locks after a"
+        .. " minute; your PIN opens it.", 2.2)
 end
 
-function console.status()
+-- Unlocked: signed in as the owner, until a minute goes by untouched.
+function console.opened(session)
+    console.session = session
+    ui.setIdleLock(tonumber(config.ccg_console_lock_seconds) or 60, function() console.lock() end)
+end
+
+-- Locking: the dealer back to the table, and signed out.
+function console.lock()
+    ui.setIdleLock(nil)
+    local session = console.session
+    console.session = nil
+    if session then
+        if console.mine then
+            console.ask("CASINO_CONTROL", { console_id = device.console_id, session_token = session,
+                op = "release" }, 3)
+        end
+        pcall(bank.request, bank, "LOGOUT", { session_token = session }, 2)
+    end
+    console.owner, console.mine = nil, false
+end
+
+-- The table as its owner sees it, and whether they are the dealer. Looking
+-- keeps the dealer theirs, as it does in My Casino.
+function console.look()
+    local result, err, code = console.ask("CASINO_VIEW", { console_id = device.console_id,
+        session_token = console.session }, 3)
+    if result then console.owner, console.mine = result.table, result.you_control == true end
+    return result, err, code
+end
+
+function console.control(op, extra)
+    local payload = extra or {}
+    payload.op, payload.console_id, payload.session_token = op, device.console_id, console.session
+    local result, err, code = console.ask("CASINO_CONTROL", payload, 5)
+    if result then console.owner, console.mine = result.table, result.you_control == true end
+    return result, err, code
+end
+
+-- The PIN of the table's owner. A table set up before 18.1 does not know
+-- who that is: it asks once, and keeps the name the CCG Server agrees owns it.
+function console.unlock()
+    local name = device.owner_name
+    if not name then
+        name = ui.input(screen, "Foxy Account", { hint = "Who owns "
+            .. ui.truncate(device.company_name or "this table", 20), maxLength = 20,
+            allowSpace = true })
+        if not name then return false end
+    end
+    local pin = ui.pin(screen, "Unlock " .. ui.truncate(device.name or "table", 12), true)
+    if not pin then return false end
+    local signed, err = bank:request("LOGIN", { name = name, pin = pin }, 6)
+    if not signed then
+        ui.message(screen, "error", "STILL LOCKED", err or "Incorrect PIN", 1.2)
+        return false
+    end
+    console.session = signed.session_token
+    local seen, seenError, code = console.look()
+    -- Off the network the Bank's word on the PIN is enough -- for the owner
+    -- this table already knows. Anybody else waits for the CCG Server.
+    if not seen and (code or not device.owner_name) then
+        pcall(bank.request, bank, "LOGOUT", { session_token = console.session }, 2)
+        console.session = nil
+        ui.message(screen, "error", "STILL LOCKED", code == "NOT_YOURS"
+            and "Only the owner of this table can open it" or (seenError or "No CCG Server"), 1.6)
+        return false
+    end
+    if not device.owner_name then
+        device.owner_name = name
+        saveDevice()
+    end
+    console.opened(console.session)
+    return true
+end
+
+-- The lock screen: the time, the table and its code, and the PIN pill.
+function console.drawLock(blink)
     local width, height = screen.getSize()
     ui.clear(screen)
-    ui.header(screen, ui.truncate(device.name or "CCG CASINO", width - 9),
-        ui.truncate(device.company_name or "", width - 3), util.formatClock())
-    local view = show.table
-    local lines = {
-        { "Code", tostring(device.code or (view and view.code) or "-") },
-        { "CCG Server", show.online and "Connected" or "Looking..." },
-        { "Game", view and view.game_name and (view.game_name .. " / " .. tostring(view.phase))
-            or "-" },
-        { "Speakers", tostring(#sound.speakers) },
-        { "Music", #midi.library() .. " songs" },
-        { "Playing", console.musicStatus or "-" },
-        { "Version", PROGRAM_VERSION },
-    }
-    for index, line in ipairs(lines) do
-        ui.text(screen, 2, 3 + index, line[1], ui.theme.muted)
-        ui.text(screen, 14, 3 + index, ui.truncate(line[2], width - 14), ui.theme.ink)
+    ui.text(screen, 2, 1, ui.truncate(device.company_name or "CCG Casino", width - 12),
+        ui.theme.muted, ui.theme.background)
+    ui.text(screen, width - 9, 1, "CCG CASINO", ui.theme.muted, ui.theme.background)
+    local clock = util.formatClock(blink)
+    if not ui.wordmark(screen, 3, clock, nil, ui.theme.accent) then
+        ui.center(screen, 4, clock, ui.theme.ink)
     end
-    ui.wrappedText(screen, 2, 11, console.dropped or ("Drop .mid files on this screen to add"
-        .. " music. Play it from My Casino in the CCG app."), width - 2, 3,
-        console.dropped and ui.theme.success or ui.theme.muted)
+    ui.center(screen, 9, ui.truncate(device.name or "CCG CASINO", width - 4), ui.theme.ink)
+    local view = show.table
+    local now = not show.online and "Looking for the CCG Server"
+        or (view and view.game_name and (view.game_name .. ", round " .. tostring(view.round or 0)))
+        or "Connected"
+    ui.center(screen, 10, ui.truncate("Code " .. tostring(device.code or "-") .. "  -  " .. now,
+        width - 2), ui.theme.muted)
+    if console.dropped then
+        ui.center(screen, 12, ui.truncate(console.dropped, width - 2), ui.theme.muted)
+    end
+    local prompt = "PIN to unlock"
+    local pillWidth = math.min(width - 4, #prompt + 6)
+    local x = math.floor((width - pillWidth) / 2) + 1
+    ui.fill(screen, x, height - 2, pillWidth, 1, ui.theme.accent)
+    ui.center(screen, height - 2, prompt, ui.inkOn(ui.theme.accent), ui.theme.accent)
+end
+
+function console.lockScreen()
+    ui.setIdleLock(nil)
+    local blink = true
+    while running and device.console_id and not console.session do
+        console.drawLock(blink)
+        local timer = os.startTimer(0.5)
+        local event = { os.pullEvent() }
+        if event[1] == "timer" and event[2] == timer then
+            blink = not blink
+        elseif event[1] == "terminate" then
+            running = false
+        elseif event[1] == "mouse_click" or event[1] == "key" or event[1] == "char" then
+            console.unlock()
+        end
+    end
+end
+
+-- A row of buttons across the screen, each as wide as its words and the
+-- room left over shared between them.
+function console.row(scene, y, items)
+    local width = screen.getSize()
+    local room = width - 2 - (#items - 1)
+    local needed = 0
+    for _, item in ipairs(items) do needed = needed + #item.label + 2 end
+    local spare = math.max(0, room - needed)
+    local x = 2
+    for index, item in ipairs(items) do
+        local w = needed <= room and (#item.label + 2 + math.floor(spare / #items))
+            or math.floor(room / #items)
+        if index == #items then w = width - x end
+        scene:button(item.id, x, y, w, 1, item.label, {
+            background = item.on and ui.theme.accent or ui.theme.panel,
+            foreground = item.on and ui.inkOn(ui.theme.accent) or nil })
+        x = x + w + 1
+    end
+end
+
+-- What the table is doing, in a few words.
+function console.doing(view)
+    if not view then return show.online and "Waiting for the table" or "CCG Server offline" end
+    local words = { wheel = "the wheel", betting = "bets open", playing = "playing",
+        settling = "paying out", result = "result" }
+    local left = show.left(show.table, "left_ms")
+    return (view.game_name or "-") .. ", " .. (words[view.phase] or tostring(view.phase))
+        .. (left and view.phase == "betting" and (" " .. math.ceil(left / 1000) .. "s") or "")
+end
+
+function console.controls()
+    local width, height = screen.getSize()
+    local view = console.owner
+    local live = show.table or view
+    ui.clear(screen)
+    ui.header(screen, ui.truncate(device.name or "CCG CASINO", width - 9),
+        ui.truncate((device.company_name or "") .. "  -  Code " .. tostring(device.code or "-"),
+            width - 3), util.formatClock())
+    ui.text(screen, 2, 4, ui.truncate("Now     " .. console.doing(live), width - 2), ui.theme.ink)
+    local dealer = view and (console.mine and "you" or (view.controller_name or "nobody")) or "-"
+    ui.text(screen, 2, 5, ui.truncate("Dealer  " .. dealer .. "   Speakers " .. #sound.speakers
+        .. "   v" .. PROGRAM_VERSION, width - 2), ui.theme.muted)
     local scene = ui.scene(screen)
-    local third = math.floor((width - 4) / 3)
-    scene:button("speakers", 2, height - 2, third, 2, "SPEAKERS", { background = ui.theme.panel })
-    scene:button("beta", 3 + third, height - 2, third, 2, "BETA", { background = ui.theme.panel })
-    scene:button("unlink", 4 + third * 2, height - 2, width - 4 - third * 2, 2, "UNLINK",
+    if view then
+        console.row(scene, 7, {
+            { id = "auto", label = "AUTO " .. (view.auto and "ON" or "OFF"), on = view.auto },
+            { id = "dealer", label = console.mine and "RELEASE" or "BE THE DEALER",
+                on = console.mine },
+            { id = "next", label = console.mine and (view.next_label or "-") or "NEXT" },
+        })
+        local games = {}
+        for _, game in ipairs(view.games or {}) do
+            games[#games + 1] = { id = "game:" .. game, on = view.game == game,
+                label = game == "heads_tails" and "COIN" or (draw.GAME[game] or {}).short or game }
+        end
+        console.row(scene, 9, games)
+        local trivia = view.trivia or {}
+        console.row(scene, 11, {
+            { id = "trivia", label = "TRIVIA MODE " .. (trivia.mode and "ON" or "OFF"),
+                on = trivia.mode },
+            { id = "topic:-1", label = "<" },
+            { id = "topic:0", label = ui.truncate(trivia.topic_name or "All topics", 20) },
+            { id = "topic:1", label = ">" },
+        })
+        local music = view.music or {}
+        console.row(scene, 13, {
+            { id = "music:stop", label = "STOP MUSIC" },
+            { id = "music:down", label = "VOL -" },
+            { id = "music:up", label = "VOL +" },
+            { id = "music:next", label = "NEXT SONG" },
+        })
+        ui.text(screen, 2, 14, ui.truncate((music.playing and music.track and ("Playing "
+            .. music.track) or "Nothing playing") .. "  -  volume " .. tostring(music.volume or 5)
+            .. "  -  " .. #midi.library() .. " songs here", width - 2), ui.theme.muted)
+    else
+        ui.wrappedText(screen, 2, 7, "The CCG Server is not answering. The table's controls"
+            .. " come back when it does.", width - 2, 3, ui.theme.muted)
+    end
+    ui.wrappedText(screen, 2, 15, console.dropped or ("Drop .mid files here for music, or a"
+        .. " .txt of questions: Question | right | wrong | wrong | wrong"), width - 2, 2,
+        console.dropped and ui.theme.success or ui.theme.muted)
+    local quarter = math.floor((width - 5) / 4)
+    scene:button("speakers", 2, height - 1, quarter, 2, "SPEAKERS", { background = ui.theme.panel })
+    scene:button("beta", 3 + quarter, height - 1, quarter, 2, "BETA", { background = ui.theme.panel })
+    scene:button("lock", 4 + quarter * 2, height - 1, quarter, 2, "LOCK",
+        { background = ui.theme.panel })
+    scene:button("unlink", 5 + quarter * 3, height - 1, width - 4 - quarter * 3, 2, "UNLINK",
         { background = ui.theme.danger })
     local action = scene:wait({ tickRate = 1 })
+    console.act(action, view)
+end
+
+-- One press on the controls.
+function console.act(action, view)
+    local result, err = true, nil
     if action == "__terminate" then
         running = false
+    elseif action == "__tick" or action == "__wake" or action == "__idle" then
+        if console.session then console.look() end
+    elseif action == "lock" then
+        console.lock()
     elseif action == "speakers" then
         ui.message(screen, "success", sound.find() .. " speakers", "Found and in use", 1.2)
         sound.effect("win")
     elseif action == "beta" and type(ui.betaUpdates) == "function" then
         ui.betaUpdates(screen, ROOT, { kind = "CCG Casino", version = config.version })
-    elseif action == "unlink" and ui.confirm(screen, "UNLINK?", "This table leaves its company."
-        .. " Set it up again to use it.", "UNLINK", "BACK") then
-        local done, err = console.ask("CASINO_UNLINK", { console_id = device.console_id,
-            console_token = device.console_token })
-        if done or err == "This CCG Casino is not registered" then
-            device = {}
-            saveDevice()
-            show.table = nil
-        else
-            ui.message(screen, "error", "NOT UNLINKED", err, 2)
+    elseif action == "unlink" then
+        console.unlink()
+    elseif not view then
+        return
+    elseif action == "auto" then
+        result, err = console.control("auto", { on = not view.auto })
+    elseif action == "dealer" then
+        result, err = console.control(console.mine and "release" or "take")
+    elseif action == "next" then
+        if not console.mine then
+            result, err = nil, "Be the dealer first"
+        elseif view.next_label then
+            result, err = console.control("next")
         end
+    elseif action:match("^game:") then
+        result, err = console.control("game", { game = action:sub(6) })
+    elseif action == "trivia" then
+        result, err = console.control("trivia", { mode = not (view.trivia or {}).mode })
+    elseif action:match("^topic:") then
+        local step = tonumber(action:sub(7)) or 0
+        local topics, at = view.trivia_topics or {}, 1
+        for index, topic in ipairs(topics) do
+            if topic.id == (view.trivia or {}).topic then at = index end
+        end
+        if step ~= 0 and #topics > 0 then
+            result, err = console.control("trivia", { topic = topics[(at - 1 + step) % #topics + 1].id })
+        end
+    elseif action:match("^music:") then
+        local music, what = view.music or {}, action:sub(7)
+        if what == "stop" then
+            result, err = console.control("music", { action = "stop" })
+        elseif what == "next" then
+            result, err = console.control("music", { action = "next" })
+        else
+            result, err = console.control("music", { action = "volume",
+                volume = (music.volume or 5) + (what == "up" and 1 or -1) })
+        end
+    end
+    if not result then ui.message(screen, "error", "NOT DONE", err or "No answer", 1.4) end
+end
+
+function console.unlink()
+    if not ui.confirm(screen, "UNLINK?", "This table leaves its company."
+        .. " Set it up again to use it.", "UNLINK", "BACK") then return end
+    local done, err = console.ask("CASINO_UNLINK", { console_id = device.console_id,
+        console_token = device.console_token })
+    if done or err == "This CCG Casino is not registered" then
+        console.lock()
+        device = {}
+        saveDevice()
+        show.table = nil
+    else
+        ui.message(screen, "error", "NOT UNLINKED", err, 2)
     end
 end
 
@@ -959,7 +1282,13 @@ local loops = {}
 
 function loops.screen()
     while running do
-        if device.console_id then console.status() else console.setup() end
+        if not device.console_id then
+            console.setup()
+        elseif not console.session then
+            console.lockScreen()
+        else
+            console.controls()
+        end
     end
 end
 
@@ -1002,6 +1331,7 @@ function loops.poll()
             else
                 show.online = false
                 if err == "This CCG Casino is not registered" then
+                    console.lock()
                     device = {}
                     saveDevice()
                     show.table = nil
@@ -1056,29 +1386,44 @@ function loops.sound()
     end
 end
 
--- Files dropped onto this computer's screen: MIDI files go in the music
--- folder; anything else is left alone.
+-- Files dropped onto this computer's screen, while it is unlocked: MIDI
+-- files go in the music folder, and FoxyOS 18.1 a .txt is the company's own
+-- Trivia questions, one a line (Question | right | wrong | wrong | wrong, a
+-- "# Topic" line for the ones after it).
+function console.dropped_files(files)
+    if not console.session then return "Unlock this table to add files." end
+    local kept, questions = {}, nil
+    for _, file in ipairs(files) do
+        local name = fs.getName(tostring(file.getName and file.getName() or ""))
+        if name:lower():match("%.midi?$") then
+            local body = file.readAll()
+            if not fs.exists(musicDir) then fs.makeDir(musicDir) end
+            local out = fs.open(fs.combine(musicDir, name), "wb")
+            if out and body then
+                out.write(body)
+                out.close()
+                kept[#kept + 1] = name
+            end
+        elseif name:lower():match("%.txt$") then
+            local result, err = console.ask("TRIVIA_IMPORT", { console_id = device.console_id,
+                session_token = console.session, text = file.readAll() or "" }, 8)
+            questions = result and ("Added " .. result.added .. " questions"
+                .. (#(result.problems or {}) > 0 and (". " .. #result.problems .. " lines were not: "
+                    .. result.problems[1]) or ".")) or ("Questions not added: " .. tostring(err))
+        end
+    end
+    if questions then return questions end
+    return #kept > 0 and ("Added " .. table.concat(kept, ", ") .. ".")
+        or "Only .mid files (music) and .txt files (questions)."
+end
+
 function loops.drop()
     while running do
         local _, transfer = os.pullEvent("file_transfer")
-        local kept = {}
         local ok, files = pcall(function() return transfer.getFiles() end)
-        for _, file in ipairs(ok and files or {}) do
-            local name = fs.getName(tostring(file.getName and file.getName() or ""))
-            if name:lower():match("%.midi?$") then
-                local body = file.readAll()
-                if not fs.exists(musicDir) then fs.makeDir(musicDir) end
-                local out = fs.open(fs.combine(musicDir, name), "wb")
-                if out and body then
-                    out.write(body)
-                    out.close()
-                    kept[#kept + 1] = name
-                end
-            end
-            pcall(file.close)
-        end
-        console.dropped = #kept > 0 and ("Added " .. table.concat(kept, ", ") .. ".")
-            or "Only .mid files can be music."
+        local done, said = pcall(console.dropped_files, ok and files or {})
+        for _, file in ipairs(ok and files or {}) do pcall(file.close) end
+        console.dropped = done and said or ("Could not add that: " .. tostring(said))
         os.queueEvent("ccg_dropped")
     end
 end
