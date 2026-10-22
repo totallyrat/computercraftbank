@@ -406,7 +406,6 @@ actions = {
     "storage", "back",                 -- what the phone is holding
     "updates",
     "check", "install",                -- ask again, and take it this time
-    "mode",                            -- then switch updates to automatic
     "prioritize",                      -- 15.2: and Prioritize Updates off
     "back",
     "tab:apps",
@@ -551,26 +550,12 @@ assert(written["/apps/notes.lua"] == nil, "the file on this computer is left as 
 
 -- Updates ------------------------------------------------------------------------
 
--- 9.5: a phone asks before it replaces itself. Automatic is still a setting,
--- it is just no longer what a phone does without being told.
+-- 9.5: a phone asks before it replaces itself. FoxyOS 18.2: always -- there
+-- is no automatic any more, on a Pocket or anywhere.
 assert(drew("WHEN A RELEASE LANDS"))
-assert(drew("Ask me first"),
-    "asking is what a PUMPE does unless somebody chose otherwise")
-assert(pressed("Install automatically"),
-    "and automatic is still there for anybody who wants it")
--- Saved when the switch was flipped, not incidentally by a later save.
-local savedOnItsOwn = false
-for _, snapshot in ipairs(deviceSaves) do
-    if snapshot.update_mode == "auto" and snapshot.modem_on ~= false then
-        savedOnItsOwn = true
-    end
-end
-assert(savedOnItsOwn,
-    "the update setting is remembered on the device the moment it is"
-        .. " changed, and on the device rather than in config.lua, which"
-        .. " an update rewrites")
-assert(pressed("Ask me instead"),
-    "and the switch reads the other way once it is on")
+assert(drew("Always asks first"), "asking is what every device does")
+assert(not pressed("Install automatically") and not pressed("Ask me instead"),
+    "and there is no switch to turn it off")
 -- FoxyOS 15.2: Prioritize Updates, on until turned off, remembered on the
 -- device like the rest.
 assert(pressed("Prioritize Updates On"), "Prioritize Updates is on to start with")

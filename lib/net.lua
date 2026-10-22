@@ -295,6 +295,9 @@ local function autoUpdateOnce(config, role, root, client, options)
         if updater and type(updater.check) == "function" then
             found, why = updater.check({
                 config = config, role = role, root = root,
+                -- FoxyOS 18.2: a device that used to update unattended still
+                -- fetches the files its role lacks -- asking first now.
+                repair = options.asked_by_default or nil,
                 requiredPaths = options.requiredPaths,
                 optionalPaths = options.optionalPaths,
                 manifestUrl = elsewhere and options.manifestUrl or nil,
@@ -310,6 +313,17 @@ local function autoUpdateOnce(config, role, root, client, options)
         end
         if not found and elsewhere then
             net.lastUpdateError = why
+            return false
+        end
+        -- No manifest: the installer's own way round, which asks too.
+        if not found and options.asked_by_default then
+            net.lastUpdateError = why
+            return depotUpdate(config, role, root, client)
+        end
+        -- FoxyOS 18.2: a release somebody said no to (or nobody answered
+        -- about) is not downloaded again for half an hour, except at start-up.
+        local declinedUntil = found and net.declined[tostring(found.version)]
+        if declinedUntil and not options.force and util.nowMs() < declinedUntil then
             return false
         end
         if not found then
@@ -350,6 +364,7 @@ local function autoUpdateOnce(config, role, root, client, options)
         local askedOk, wanted = pcall(options.confirm, found)
         if not askedOk or not wanted then
             if stages then updater.discard(root) end
+            net.declined[tostring(found.version)] = util.nowMs() + 30 * 60 * 1000
             return false
         end
         if stages then
@@ -409,8 +424,33 @@ local function autoUpdateOnce(config, role, root, client, options)
     return depotUpdate(config, role, root, client)
 end
 
+-- FoxyOS 18.2: what a device asks when it was handed no question of its
+-- own -- which was every device but the Pocket. On its own screen, never a
+-- customer's monitor; a device with no lib/ui new enough to ask installs as
+-- it always did.
+net.declined = {}
+function net.askUpdate(found, options)
+    local okUi, ui = pcall(require, "lib.ui")
+    if not okUi or type(ui) ~= "table" or type(ui.askUpdate) ~= "function" then return true end
+    local target = options.target or (type(term) == "table" and type(term.current) == "function"
+        and term.current()) or nil
+    if not target then return true end
+    local size = tonumber(found.bytes)
+    return ui.askUpdate(target, { word = "FOXY", title = found.label or "FoxyOS",
+        version = found.version, what = size and (math.ceil(size / 1024) .. " KiB, downloaded")
+            or "Downloaded" },
+        { banner = not options.force, timeout = options.force and 60 or 600 })
+end
+
 function net.autoUpdate(config, role, root, client, options)
     options = options or {}
+    if options.confirm == nil then
+        local asked = {}
+        for key, value in pairs(options) do asked[key] = value end
+        asked.confirm = function(found) return net.askUpdate(found, asked) end
+        asked.asked_by_default = true
+        options = asked
+    end
     local done = autoUpdateOnce(config, role, root, client, options)
     if done then return done end
     -- FoxyOS 15.1: every device signed up to Beta Updates looks at the beta

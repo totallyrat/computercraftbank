@@ -1540,7 +1540,8 @@ end
 -- download screen, under FOXY: the release and its version, what it is, and
 -- two buttons, one over the other. `info` is { title, version, what }.
 -- True installs it; false throws the download away.
-function ui.updateReady(target, info)
+-- `timeout`, FoxyOS 18.2: seconds before nobody answering counts as Cancel.
+function ui.updateReady(target, info, timeout)
     target = surface(target)
     local width, height = target.getSize()
     local wordTop = updateWordTop(height)
@@ -1563,16 +1564,50 @@ function ui.updateReady(target, info)
     line(height - 8, info.title or "FoxyOS", ui.theme.ink)
     line(height - 7, "Version " .. tostring(info.version or "?"), ui.theme.muted)
     line(height - 6, info.what, ui.theme.muted)
+    local deadline = tonumber(timeout) and util.nowMs() + tonumber(timeout) * 1000
     while true do
         local scene = ui.scene(target)
         scene:button("install", 2, height - 4, width - 2, 2, "Install",
             { background = ui.theme.accent, foreground = ui.theme.accentInk })
         scene:button("cancel", 2, height - 1, width - 2, 2, "Cancel & Delete",
             { background = ui.theme.background, foreground = ui.theme.ink })
-        local action = scene:wait()
+        local action = scene:wait({ tickRate = deadline and 1 or nil })
         if action == "install" then return true end
         if action == "cancel" or action == "__terminate" then return false end
+        if deadline and util.nowMs() >= deadline then return false end
     end
+end
+
+-- FoxyOS 18.2: every update asks first, on every device. At start-up --
+-- nothing else on the screen yet -- it is ui.updateReady, the whole screen;
+-- a check while the device is running is a banner over whatever it shows,
+-- answered there, so neither takes the other's taps. Nobody answering by
+-- opts.timeout is a no for now: a server is not held up for somebody who is
+-- not there. True to install.
+function ui.askUpdate(target, info, opts)
+    target = surface(target)
+    opts = opts or {}
+    if not opts.banner then return ui.updateReady(target, info, opts.timeout) end
+    local answer
+    local function draw(where, drop)
+        return ui.topBanner(where, {
+            title = tostring(info.title or "FoxyOS") .. " " .. tostring(info.version or ""),
+            body = "Downloaded. Install it now?", color = ui.theme.accent,
+            buttons = { { id = "install", label = "Install", color = ui.theme.success },
+                { id = "cancel", label = "Cancel & Delete", color = ui.theme.panel } },
+        }, drop)
+    end
+    local layout = draw(target, 1)
+    ui.setOverlay({ target = target, top = layout.top, bottom = layout.bottom,
+        buttons = layout.buttons, draw = function(where) draw(where, 1) end,
+        tap = function(id)
+            answer = id == "install"
+            ui.setOverlay(nil)
+        end })
+    local deadline = util.nowMs() + (tonumber(opts.timeout) or 600) * 1000
+    while answer == nil and util.nowMs() < deadline do sleep(0.5) end
+    if answer == nil then ui.setOverlay(nil) end
+    return answer == true
 end
 
 -- The Pocket, FoxyOS 14 ---------------------------------------------------------------

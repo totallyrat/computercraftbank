@@ -320,6 +320,16 @@ local function fullRun(WIDTH, HEIGHT)
     outputs = {}
 
     local ana = bank.register("Ana Fox", "1234")
+    -- FoxyOS 18.2: a store is paid into its company's Company Money.
+    local function storeMoney()
+        local total = 0
+        for _, held in pairs(bank.state.companies) do
+            if held.owner_account_id == ana.id then
+                total = total + (held.money and held.money.balance or 0)
+            end
+        end
+        return total
+    end
     local kit = bank.register("Kit Wolf", "5678")
     bank.fund(kit, 1000)
     local till = bank.request("KIOSK_REGISTER", { name = "Fox Goods Till" })
@@ -504,7 +514,7 @@ local function fullRun(WIDTH, HEIGHT)
             company_id = company.company_id, point_id = point, open = true }))
         bank.request("REPORT_POSITION", bank.as(kit,
             { position = { x = 11, y = 64, z = -20 } }))
-        ownApples = bank.balanceOf(ana)
+        ownApples = storeMoney()
         return "__tick"
     end, "tab:store", "offer:1", "pick:1", function()
         local id = openOffer()
@@ -520,7 +530,7 @@ local function fullRun(WIDTH, HEIGHT)
     tap(function()
         assert(count(HATCH, "minecraft:apple") == 8, "eight apples came out")
         assert(count(JUNK, "minecraft:apple") == 12)
-        assert(bank.balanceOf(ana) == ownApples + 6, "and the owner was paid")
+        assert(storeMoney() == ownApples + 6, "and the owner was paid")
         chests[HATCH].slots = {}
         -- Somebody takes most of them out by hand while the next customer
         -- is still reading the list.
@@ -528,7 +538,7 @@ local function fullRun(WIDTH, HEIGHT)
         offersBefore = offerCount()
         return "offer:1"
     end, function()
-        assert(bank.balanceOf(ana) == ownApples + 6
+        assert(storeMoney() == ownApples + 6
             and offerCount() == offersBefore,
             "sold out before anybody was asked to pay")
         setApples(12)
@@ -576,7 +586,7 @@ local function fullRun(WIDTH, HEIGHT)
         bank.request("PICKUP_STOCK", { terminal_id = here.terminal_id,
             terminal_token = here.terminal_token, order_id = meWaiting,
             locker = LOCKER_A, code = orders[meWaiting].delivery_code })
-        halfPaid = bank.balanceOf(ana)
+        halfPaid = storeMoney()
         return "__tick"
     end, "tab:store", "offer:1", "pick:3")
     typed("half")
@@ -588,7 +598,7 @@ local function fullRun(WIDTH, HEIGHT)
         return "__tick"
     end, function()
         assert(count(HATCH, "minecraft:apple") == 8, "the apples came out")
-        assert(bank.balanceOf(ana) == halfPaid + 1.5, "and the store was paid what it said")
+        assert(storeMoney() == halfPaid + 1.5, "and the store was paid what it said")
         local codes = bank.request("COMPANY_STATE", bank.as(ana, { app_id = "COMPANY",
             company_id = company.company_id })).settings.codes
         assert(codes.HALF.uses == 1, "a code used at the counter counts")

@@ -18,6 +18,11 @@
 
 
 
+
+
+
+
+
 return function(api)
 local ui, util, target, colors = api.ui, api.util, api.target, api.colors
 local money = api.money
@@ -34,7 +39,10 @@ local TABS = { { id = "companies", label = "Companies" },
 local COMPANY_TABS = { { id = "sell", label = "Sell" },
 { id = "products", label = "Products", short = "Items" },
 { id = "store", label = "Store" },
-{ id = "discounts", label = "Discounts", short = "Deals", hint = "Sales and codes" } }
+
+
+
+{ id = "money", label = "Money" } }
 local STORE_COLORS = { "orange", "red", "lime", "green", "cyan",
 "lightBlue", "blue", "purple", "magenta", "pink", "yellow", "brown",
 "gray" }
@@ -508,6 +516,9 @@ end
 end
 end
 
+
+local discountsPage
+
 local function storePage(company)
 while running() do
 local state, err = ask("COMPANY_STATE",
@@ -534,6 +545,8 @@ or "Home delivery: off", ui.theme.panel },
 ui.theme.panel },
 { "points", (settings.pickup and "Pickup points: on"
 or "Pickup points: off") .. "  >", ui.theme.panel },
+
+{ "deals", "Sales and codes  >", ui.theme.panel },
 { "cancel", settings.cancel and "Cancelling: on"
 or "Cancelling: off", ui.theme.panel },
 { "returns", "Returns: " .. tostring(settings.return_days or 5)
@@ -589,6 +602,8 @@ maxLength = 4, initial = plain(settings.fee) })
 if typed then change = { fee = tonumber(typed) or 0 } end
 elseif action == "points" then
 pointsPage(company)
+elseif action == "deals" then
+if discountsPage(company) == "home" then return "home" end
 elseif action == "shopsite" then
 shopSitePage(company, state)
 elseif action == "phone" then
@@ -692,7 +707,7 @@ code = code.code, op = chosen.id })
 if not done then failed("Not changed", err) end
 end
 
-local function discountsPage(company)
+function discountsPage(company)
 local page = 1
 while running() do
 local state, err = ask("COMPANY_STATE",
@@ -755,10 +770,10 @@ and describeCode(code) or "off"), width - 4),
 or ui.theme.background, foreground = code.active
 and colors.white or ui.theme.muted })
 end
-ui.tabBar(scene, target, COMPANY_TABS, "discounts", ACCENT)
+scene:button("back", 1, height, 9, 1, "< Store", { background = ui.theme.panel })
 local action = scene:wait()
-if action == "home" or action == "__terminate" then return "home" end
-if action and action:match("^tab:") then return action end
+if action == "__terminate" then return "home" end
+if action == "back" then return nil end
 local change
 if action == "sale" then
 local typed = ui.input(target, "Sale", {
@@ -1580,6 +1595,90 @@ end
 return "home"
 end
 
+
+
+local KINDS = { sale = "Till", store = "Store", casino = "CCG Casino", ads = "Ad breaks",
+giveaway = "Giveaway", radio_plus = "Radio+", pay = "Paid", added = "Put in",
+refund = "Refund" }
+
+local function moneyPage(company)
+local page = 1
+while running() do
+local held, err = ask("COMPANY_MONEY", { company_id = company.company_id })
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Company Money", ui.truncate(company.name, width - 3),
+util.formatClock())
+local scene = ui.scene(target)
+if held then
+ui.text(target, 2, 5, ui.truncate(money(held.balance), width - 2),
+held.balance < 0 and ui.theme.danger or ui.theme.ink)
+local facts = money(held.free) .. " free"
+if held.reserved > 0 then facts = facts .. ", " .. money(held.reserved) .. " held for giveaways" end
+if held.loan > 0 then facts = "A loan of " .. money(held.loan) .. ", paid back from what comes in" end
+ui.wrappedText(target, 2, 6, facts, width - 2, 2, ui.theme.muted)
+ui.text(target, 2, 8, ui.truncate(held.radio_plus and ("Radio+ until day "
+.. tostring(held.radio_plus.next_charge_day) .. (held.radio_plus.cancelled
+and ", then ends" or "")) or "No Radio+", width - 2), ui.theme.muted)
+local bottom = ui.contentBottom(target) - 3
+local per = math.max(1, bottom - 9)
+local items, actual, pages = util.page(held.log, page, per)
+page = actual
+for index, entry in ipairs(items) do
+local amount = (entry.amount >= 0 and "+" or "") .. money(entry.amount)
+ui.text(target, 2, 9 + index, ui.truncate((KINDS[entry.kind] or entry.kind)
+.. " " .. (entry.label or ""), width - 3 - #amount), ui.theme.ink)
+ui.text(target, width - #amount, 9 + index, amount, entry.amount >= 0
+and ui.theme.success or ui.theme.danger)
+end
+if #held.log == 0 then
+ui.wrappedText(target, 2, 10, "Nothing yet. Sales, casino wins and losses,"
+.. " and ad breaks show here.", width - 2, 3, ui.theme.muted)
+end
+if pages > 1 then
+scene:button("more", width - 6, 9, 6, 1, page .. "/" .. pages,
+{ background = ui.theme.panel })
+end
+local half = math.floor((width - 3) / 2)
+scene:button("pay", 2, bottom + 1, half, 2, "PAY OUT", { background = ACCENT,
+foreground = colors.black })
+scene:button("add", 3 + half, bottom + 1, width - 3 - half, 2, "PUT IN",
+{ background = ui.theme.panel })
+else
+ui.wrappedText(target, 2, 5, tostring(err or "The Bank is not answering"),
+width - 2, 4, ui.theme.warning)
+end
+ui.tabBar(scene, target, COMPANY_TABS, "money", ACCENT)
+local action = scene:wait()
+if action == "more" then
+page = page + 1
+elseif action == "pay" or action == "add" then
+local to
+if action == "pay" then
+to = ui.input(target, "Pay who?", { hint = "Anybody's Foxy name",
+maxLength = 20, minLength = 2, allowSpace = true, mode = "text" })
+end
+local amount = (action == "add" or to) and tonumber(ui.input(target,
+"How much?", { hint = action == "pay" and (money(held and held.free or 0)
+.. " free") or "From your account", mode = "number", maxLength = 9 }) or "")
+local pin = amount and amount > 0 and ui.pin(target, "Your PIN", true)
+if pin then
+local done, doneError = ask(action == "pay" and "COMPANY_MONEY_PAY"
+or "COMPANY_MONEY_ADD", { company_id = company.company_id, to = to,
+amount = amount, pin = pin })
+if done then
+ui.message(target, "success", action == "pay" and ("Paid " .. done.to)
+or "Put in", money(amount), 1.2)
+else
+failed("Not done", doneError)
+end
+end
+else
+return action
+end
+end
+end
+
 local function companyScreen(company, first)
 local tab = first or "sell"
 while running() do
@@ -1590,6 +1689,8 @@ elseif tab == "store" then
 switched = storePage(company)
 elseif tab == "discounts" then
 switched = discountsPage(company)
+elseif tab == "money" then
+switched = moneyPage(company)
 else
 switched = productsPage(company)
 end

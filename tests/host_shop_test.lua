@@ -83,6 +83,18 @@ end
 -- A company with a store --------------------------------------------------------
 
 local ana = bank.register("Ana Fox", "1234")
+
+-- FoxyOS 18.2: a store's money is its company's Company Money, not its
+-- owner's account. What Ana's store has, wherever a test asks.
+local function storeMoney()
+    local total = 0
+    for _, company in pairs(bank.state.companies) do
+        if company.owner_account_id == ana.id then
+            total = total + (company.money and company.money.balance or 0)
+        end
+    end
+    return total
+end
 local kit = bank.register("Kit Wolf", "5678")
 bank.fund(kit, 1000)
 
@@ -159,7 +171,7 @@ assert(#store.points == 1 and store.points[1].name == "Spawn Lockers",
 
 -- Paying with Foxy, delivered home ---------------------------------------------------
 
-local kitBefore, anaBefore = bank.balanceOf(kit), bank.balanceOf(ana)
+local kitBefore, anaBefore = bank.balanceOf(kit), storeMoney()
 rejected(bank.request, "BAD_PIN", "SHOP_CHECKOUT", bank.as(kit, {
     company_id = company.company_id, pin = "0000",
     items = { { item_id = lamp.item_id, quantity = 2 } },
@@ -175,7 +187,7 @@ local home = bank.request("SHOP_CHECKOUT", bank.as(kit, {
 assert(home.total == 45, "two lamps at the store's price plus the delivery"
     .. " fee, whatever the basket claimed -- got " .. tostring(home.total))
 assert(bank.balanceOf(kit) == kitBefore - 45, "the buyer paid it")
-assert(bank.balanceOf(ana) == anaBefore + 45, "and the store's owner got it")
+assert(storeMoney() == anaBefore + 45, "and the store's owner got it")
 assert(home.order and home.order.stage == "Order received",
     "and the order is open at the Vault")
 
@@ -246,7 +258,7 @@ local robAtRevo = revo.actions.TPB_REGISTER({ name = "Rob Hare", pin = "4321" })
 local robAccount = revo.state.accounts[robAtRevo.account.account_id]
 robAccount.balance = 100
 local rob = bank.register("Rob Hare", "9999")
-local anaMid = bank.balanceOf(ana)
+local anaMid = storeMoney()
 
 rejected(bank.request, "BAD_PIN", "SHOP_CHECKOUT", bank.as(rob, {
     company_id = company.company_id,
@@ -254,7 +266,7 @@ rejected(bank.request, "BAD_PIN", "SHOP_CHECKOUT", bank.as(rob, {
     items = { { item_id = rug.item_id, quantity = 1 } },
     delivery = { kind = "pickup", point_id = depot.terminal_id } }))
 assert(robAccount.balance == 100, "their bank refused, so nothing moved")
-assert(bank.balanceOf(ana) == anaMid)
+assert(storeMoney() == anaMid)
 assert(#bank.request("SHOP_ORDERS", bank.as(rob)).orders == 0,
     "and there is no order to show for money that never moved")
 
@@ -265,7 +277,7 @@ local picked = bank.request("SHOP_CHECKOUT", bank.as(rob, {
     delivery = { kind = "pickup", point_id = depot.terminal_id } }))
 assert(picked.total == 35, "no delivery fee to a pickup point")
 assert(robAccount.balance == 65, "Revolution took it from Rob")
-assert(bank.balanceOf(ana) == anaMid + 35, "and Foxy paid it to the store")
+assert(storeMoney() == anaMid + 35, "and Foxy paid it to the store")
 assert(type(picked.code) == "string" and #picked.code == 6,
     "the buyer gets a six digit code to collect with")
 
@@ -393,7 +405,7 @@ rejected(bank.request, "TRY_LATER", "PICKUP_CODE",
 
 robAccount.balance = 100
 local robBefore = robAccount.balance
-local anaQuiet = bank.balanceOf(ana)
+local anaQuiet = storeMoney()
 local quietCharge
 local realCharge = revo.actions.LEDGER_CHARGE
 revo.actions.LEDGER_CHARGE = function(payload, sender)
@@ -417,7 +429,7 @@ rejected(bank.request, "PAYMENT_PENDING", "SHOP_CHECKOUT", bank.as(rob, {
     delivery = { kind = "pickup", point_id = depot.terminal_id } }))
 assert(quietCharge and robAccount.balance == robBefore - 35,
     "Revolution did take the money")
-assert(bank.balanceOf(ana) == anaQuiet,
+assert(storeMoney() == anaQuiet,
     "but the store was not paid for an order nobody could confirm")
 revo.actions.LEDGER_CHARGE = realCharge
 core.ledger.ask = sameAsk

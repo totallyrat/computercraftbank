@@ -95,7 +95,14 @@ end, "home")
 local seen = run(script)
 assert(#tills() == 1, "this Pocket became one till")
 assert(bank.balanceOf(kit) == 1000 - 42, "Kit paid 42")
-assert(bank.balanceOf(ana) == 500 + 42, "into the owner's account")
+-- FoxyOS 18.2: into the company's Company Money, not the owner's account.
+local function companyMoney()
+    for _, company in pairs(bank.state.companies) do
+        if company.owner_account_id == ana.id then return company.money and company.money.balance or 0 end
+    end
+    return 0
+end
+assert(bank.balanceOf(ana) == 500 and companyMoney() == 42, "into Company Money")
 assert(paidOffer.declined[ana.id], "the owner was never asked")
 
 -- Customer first: find them, ring them up, they pay on their own Pocket -------------------------

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.1.0"
+local PROGRAM_VERSION = "18.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -33,7 +33,9 @@ if device.modem_on == nil then device.modem_on = true end
 
 
 
-if device.update_mode ~= "auto" then device.update_mode = "ask" end
+
+
+device.update_mode = "ask"
 device.reminders = device.reminders or {}
 device.shortcuts = device.shortcuts or {}
 
@@ -5691,7 +5693,6 @@ end
 
 
 local function confirmUpdate(found)
-if device.update_mode == "auto" and not found.beta then return true end
 if updateDeferred == found.version then return false end
 local size = tonumber(found.bytes)
 local wanted = ui.updateReady(target, {
@@ -5714,14 +5715,13 @@ end
 
 local function checkForUpdate(force, betaOnly)
 if device.modem_on == false then return false end
-local asking = device.update_mode ~= "auto"
-if asking and updateDeferred and not force then return false end
+if updateDeferred and not force then return false end
 if force then updateDeferred = nil end
 local function look(url)
 return net.autoUpdate(config, "pumpe", ROOT, client, {
 force = force or nil,
 programVersion = force and not url and PROGRAM_VERSION or nil,
-confirm = (asking or url) and confirmUpdate or nil,
+confirm = confirmUpdate,
 target = target,
 
 updating = ui.pocketUpdating,
@@ -5740,17 +5740,14 @@ end
 local function updatesScreen()
 while running do
 local width, height = target.getSize()
-local auto = device.update_mode == "auto"
 local prioritized = device.prioritize_updates ~= false
 ui.clear(target)
 ui.header(target, "Updates", "v" .. tostring(config.version),
 util.formatClock())
-ui.card(target, 2, 5, width - 2, 4, auto and ui.theme.success
-or ui.theme.accent)
+ui.card(target, 2, 5, width - 2, 4, ui.theme.accent)
 ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
 ui.theme.panel)
-ui.text(target, 4, 6, auto and "Install it" or "Ask me first",
-ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 6, "Always asks first", ui.theme.ink, ui.theme.panel)
 ui.text(target, 4, 7, ui.truncate(device.modem_on == false
 and "Modem off: not looking" or (updateDeferred
 and ("v" .. updateDeferred .. " is waiting")
@@ -5768,9 +5765,6 @@ foreground = prioritized and colors.black or ui.theme.ink })
 ui.text(target, 2, 14, ui.truncate(#(device.prioritized or {}) > 0
 and (#device.prioritized .. " app(s) to put back") or
 "Apps make room for releases", width - 2), ui.theme.muted)
-scene:button("mode", 2, height - 4, width - 2, 1,
-auto and "Ask me instead" or "Install automatically",
-{ background = ui.theme.panel })
 scene:button("check", 2, height - 2, width - 2, 1, "Check now",
 { background = ui.theme.accentDark,
 disabled = device.modem_on == false })
@@ -5778,15 +5772,7 @@ scene:button("back", 1, height, 8, 1, "< Back",
 { background = ui.theme.panel })
 local action = scene:wait({ tickRate = 5 })
 if action == "back" or action == "__terminate" then return end
-if action == "mode" then
-device.update_mode = auto and "ask" or "auto"
-saveDevice()
-ui.message(target, "info",
-device.update_mode == "auto" and "Automatic" or "Ask first",
-device.update_mode == "auto"
-and "New releases install themselves"
-or "You choose, every time", 1.2)
-elseif action == "prioritize" then
+if action == "prioritize" then
 device.prioritize_updates = not prioritized
 saveDevice()
 ui.message(target, "success", device.prioritize_updates
@@ -5976,7 +5962,7 @@ if id == "network" then
 return device.modem_on == false and "Off" or "On",
 device.modem_on == false
 elseif id == "updates" then
-return device.update_mode == "auto" and "Auto" or "Ask", false
+return "Ask", false
 elseif id == "desktop" then
 return device.desktop and "On" or "Off", false
 elseif id == "color" then
@@ -7404,7 +7390,9 @@ app_id = entry.app_id,
 
 
 
-music = entry.app_id == "MUSIC" and net.musicApi and net.musicApi(config,
+
+music = (entry.app_id == "MUSIC" or entry.app_id == "RADIO") and net.musicApi
+and net.musicApi(config,
 function() return sessionToken end, offline, function()
 local where = request("MUSIC_WHERE", {}, true)
 return where and where.computer_id or nil
@@ -7945,7 +7933,7 @@ end
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
 SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
 BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua",
-CLOUD = "foxycloud.lua", MUSIC = "music.lua" }
+CLOUD = "foxycloud.lua", MUSIC = "music.lua", RADIO = "radio.lua" }
 
 
 
@@ -8713,7 +8701,7 @@ if not installedApp(appId) then missing[appId] = true end
 end
 device.included = type(device.included) == "table" and device.included or {}
 local wanted = {}
-for _, appId in ipairs({ "YAP", "CLOUD", "MUSIC" }) do
+for _, appId in ipairs({ "YAP", "CLOUD", "MUSIC", "RADIO" }) do
 if not device.included[appId] and installedApp(appId) then
 device.included[appId] = true
 saveDevice()

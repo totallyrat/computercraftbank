@@ -2,11 +2,11 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "18.1.0",
+    version = "18.2.0",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
-    release_name = "FoxyOS 18.1",
+    release_name = "FoxyOS 18.2",
     protocol = "PUMPE_BANK_V5",
     -- Shop, 11.0. In in-game time, like the rest of the Shop: a Minecraft
     -- day is twenty real minutes, so two hours is about a minute and forty
@@ -89,6 +89,13 @@ return {
     ccg_trivia_url = "https://opentdb.com",
     -- And a CCG Casino's own screen locks after this long untouched.
     ccg_console_lock_seconds = 60,
+    -- FoxyOS 18.2: Radio+, a company's subscription for its Radio
+    -- Broadcaster, out of Company Money; and what a station's ad break earns
+    -- a company per listener, at most once every radio_ad_minutes.
+    radio_plus_price = 100,
+    radio_plus_days = 15,
+    radio_ad_pay = 25,
+    radio_ad_minutes = 10,
     ccg_lobby_ttl_ms = 5 * 60 * 1000,
     ccg_result_delay_ms = 6 * 1000,
     ccg_survivor_max_seconds = 75,

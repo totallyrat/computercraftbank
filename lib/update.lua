@@ -384,6 +384,9 @@ update.PUBLISHED_OPTIONAL = {
     "lib/desktop.lua",
     -- FoxyOS 18.1: Trivia's questions.
     "lib/trivia.lua",
+    -- FoxyOS 18.2: the Radio Broadcaster, and the Radio app.
+    "radio_broadcaster.lua",
+    "radio.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -422,6 +425,7 @@ local ROLE_PROGRAMS = {
     -- FoxyOS 17: the Music Library and the radios, and what plays them.
     music = "music_server.lua",
     musicplayer = "music_player.lua",
+    radio = "radio_broadcaster.lua",
 }
 
 function update.roleProgram(role)
@@ -440,12 +444,15 @@ local ROLE_EXTRA_FILES = {
         -- FoxyOS 16: Yap!, by Foxy.
         "yap.lua",
         -- FoxyOS 17: FoxyCloud and Music, by Foxy.
-        "foxycloud.lua", "music.lua" },
+        "foxycloud.lua", "music.lua",
+        -- FoxyOS 18.2: Radio, by Foxy.
+        "radio.lua" },
     -- FoxyOS 17: streaming DFPWM from the Cloud Servers to speakers.
     music = { "lib/music.lua" },
     -- FoxyOS 18: the Pocket Desktop, and the music it plays on a speaker.
     pumpe = { "lib/desktop.lua", "lib/music.lua" },
     musicplayer = { "lib/music.lua" },
+    radio = { "lib/music.lua" },
     ccgcasino = { "lib/music.lua" },
     -- FoxyOS 18.1: Trivia, and the questions it asks with no internet.
     ccgserver = { "lib/trivia.lua" },

@@ -188,15 +188,32 @@ local blindAccept = net.autoUpdate(config, "pumpe", "/pumpe", bankClient, {
 assert(blindAccept and depotRan,
     "and accepting still reaches the depot when the internet cannot be read")
 
--- A device with nobody in front of it -------------------------------------------
--- Servers and kiosks pass no confirm and must keep updating themselves.
+-- A device that used to update on its own ---------------------------------------
+-- FoxyOS 18.2: every device asks now, on its own screen -- at start-up the
+-- whole screen, for a minute; while it runs, a banner. No deletes the
+-- download, and a release said no to is not fetched again for half an hour.
 
 http.get = realGet
+local askedWith, answerNext = nil, false
+package.loaded["lib.ui"] = { askUpdate = function(_, info, opts)
+    askedWith = { info = info, opts = opts }
+    return answerNext
+end }
+term = { current = function() return {} end }
+-- The depot section above pretended an installer was there; this has none.
+fs.exists = function(path) return files[path] ~= nil or directories[path] == true end
 files, depotRan = {}, false
-local unattended = net.autoUpdate(config, "bank", "/pumpe", nil,
-    { force = true })
-assert(unattended, "an unattended role still installs on its own")
-assert(files["/pumpe/bank_server.lua"] == nil or true)
+assert(not net.autoUpdate(config, "bank", "/pumpe", nil, { force = true }),
+    "said no to")
+assert(askedWith and askedWith.opts.timeout == 60 and not askedWith.opts.banner,
+    "asked on the whole screen at start-up, for a minute")
+assert(askedWith.info.version == "9.9.9")
+assert(files["/pumpe/.self_update/bank_server.lua"] == nil and files["/pumpe/bank_server.lua"] == nil,
+    "and what came down is deleted")
+assert(net.declined["9.9.9"], "not fetched again for a while")
+answerNext = true
+local unattended = net.autoUpdate(config, "bank", "/pumpe", nil, { force = true })
+assert(unattended, "yes installs: " .. tostring(net.lastUpdateError))
 
 -- Current, and missing a file its role installs (11.1): an unattended device
 -- fetches just that file and restarts; a phone is not asked anything.

@@ -295,6 +295,9 @@ local found, why = nil, nil
 if updater and type(updater.check) == "function" then
 found, why = updater.check({
 config = config, role = role, root = root,
+
+
+repair = options.asked_by_default or nil,
 requiredPaths = options.requiredPaths,
 optionalPaths = options.optionalPaths,
 manifestUrl = elsewhere and options.manifestUrl or nil,
@@ -310,6 +313,17 @@ return false
 end
 if not found and elsewhere then
 net.lastUpdateError = why
+return false
+end
+
+if not found and options.asked_by_default then
+net.lastUpdateError = why
+return depotUpdate(config, role, root, client)
+end
+
+
+local declinedUntil = found and net.declined[tostring(found.version)]
+if declinedUntil and not options.force and util.nowMs() < declinedUntil then
 return false
 end
 if not found then
@@ -350,6 +364,7 @@ end
 local askedOk, wanted = pcall(options.confirm, found)
 if not askedOk or not wanted then
 if stages then updater.discard(root) end
+net.declined[tostring(found.version)] = util.nowMs() + 30 * 60 * 1000
 return false
 end
 if stages then
@@ -409,8 +424,33 @@ if elsewhere then return false end
 return depotUpdate(config, role, root, client)
 end
 
+
+
+
+
+net.declined = {}
+function net.askUpdate(found, options)
+local okUi, ui = pcall(require, "lib.ui")
+if not okUi or type(ui) ~= "table" or type(ui.askUpdate) ~= "function" then return true end
+local target = options.target or (type(term) == "table" and type(term.current) == "function"
+and term.current()) or nil
+if not target then return true end
+local size = tonumber(found.bytes)
+return ui.askUpdate(target, { word = "FOXY", title = found.label or "FoxyOS",
+version = found.version, what = size and (math.ceil(size / 1024) .. " KiB, downloaded")
+or "Downloaded" },
+{ banner = not options.force, timeout = options.force and 60 or 600 })
+end
+
 function net.autoUpdate(config, role, root, client, options)
 options = options or {}
+if options.confirm == nil then
+local asked = {}
+for key, value in pairs(options) do asked[key] = value end
+asked.confirm = function(found) return net.askUpdate(found, asked) end
+asked.asked_by_default = true
+options = asked
+end
 local done = autoUpdateOnce(config, role, root, client, options)
 if done then return done end
 

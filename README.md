@@ -4,7 +4,7 @@
 
 Every computer in it runs FoxyOS. The phone is the **Pocket**; on a standing computer it becomes the **Pocket Desktop**. Everything is touch-first, and a keyboard works too.
 
-> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. See [`CHANGELOG.md`](CHANGELOG.md).
+> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contents
 
@@ -65,6 +65,7 @@ Everything updates itself from this repository from then on. When a release says
 | Pocket (`pumpe.lua`) | Advanced Pocket Computer + wireless modem, or an Advanced Computer for the Pocket Desktop | The phone, and on a computer the desktop and the shop till |
 | Music Server (`music_server.lua`) | Advanced Computer + modem | The Music Library and the radio stations |
 | Music Player (`music_player.lua`) | Advanced Computer + modem + speakers (a monitor if you like) | Plays the library and the radios for the person signed in |
+| Radio Broadcaster (`radio_broadcaster.lua`) | Advanced Computer + modem | A company's own radio station, on a frequency of its own |
 | CCG Server (`ccg_server.lua`) | Advanced Computer + modem | Deals every casino table's games |
 | CCG Casino (`ccg_casino.lua`) | Advanced Computer + Ender modem + Advanced Monitor + speakers | A casino table a company runs |
 | CCG Home (`ccg_home.lua`) | Advanced Computer + Ender modem + Advanced Monitor | Free arcade games at home, with a Pocket as the controller |
@@ -133,6 +134,7 @@ After a minute untouched the Pocket shows its lock screen. Before two minutes a 
 - **Yap!**: a feed of 140-character posts, private chats behind your PIN that vanish a day after they're read, and **Yap Map**, where friends in GPS range are listed with their coordinates.
 - **FoxyCloud**: your Foxy Account, your plan, and your files on every device: notes, text, MIDI, songs, anything dropped on the screen. Share any file with a six-letter code.
 - **Music**: the remote for your Music Players, uploads, and FoxyMusic+.
+- **Radio**: the dial and your Favorites; what you tune plays on your Music Player.
 - **Company**, **Shop**, **INVT**, **Internet** and **Website Crafter** are covered in their own sections below.
 
 ---
@@ -218,11 +220,24 @@ Everybody listening hears the same moment. After each song comes a break: a host
 
 **Giveaways.** When a giveaway clip plays, Now Playing shows **GIVEAWAY! Call 482-7316** with a countdown. A call costs 50, and every call is another entry. When the lines close, one caller wins a random 100 to 500, paid by the Bank.
 
-### Music Players and the Music app
+### Music Players, the Music app and the Radio app
 
-A **Music Player** is a computer with speakers that you sign in to once with your Foxy name and PIN. Its screen has **Now Playing**, **Library**, **Radio** and **Upload** (drop a song on the screen or pick one from a disk), and a monitor beside it shows what's on from across the room.
+A **Music Player** is a computer with speakers that you sign in to once with your Foxy name and PIN. Its screen has **Now Playing**, **Library**, **Radio** (the dial and Favorites, compact, scrolling) and **Upload** (drop a song on the screen or pick one from a disk), and a monitor beside it shows what's on from across the room.
 
-The **Music** app on every Pocket is the remote: pick a player, then play, queue, tune in, pause, skip and set the volume. It uploads songs from the Pocket, from its screen or from FoxyCloud, and its **Upload → FoxyMusic+** joins the plan. A library song counts against your day when it starts; radios never count.
+The **Music** app on every Pocket is the remote: pick a player, then play, queue, pause, skip and set the volume. It uploads songs from the Pocket, from its screen or from FoxyCloud, and its **Upload → FoxyMusic+** joins the plan. A library song counts against your day when it starts; radios never count.
+
+The **Radio** app is the dial: 87.5 to 108.0, with a slider, **< >** for a tenth and **<< >>** for a whole one. Between stations is static. Land on a station and it shows, and your Music Player starts playing it. **Favorites** has the State Radios, today's **Featured** station, and the Radio+ stations you saved.
+
+### Radio Broadcasters
+
+A company's own station, run from an Advanced Computer with a modem (Easy Deployment → **Radio Broadcaster**, signed in by the company's owner). It has a frequency of its own and is on no list: listeners find it on the dial or hear it advertised.
+
+- **On Air**: what is playing, who is listening, the last ad break's pay, **SKIP** and **LOOP**.
+- **Playlist** and **Add**: songs, host **breaks**, **ad breaks** (up to four ads) and **giveaways** with a prize, in the order they play.
+- **Station**: name, colour, frequency, **Radio+**, and Company Money (with the owner's PIN).
+- **Ad breaks** pay the company **25 a listening account**, at most once every 10 minutes. Giveaways are paid out of Company Money.
+- Without Radio+ a station is on the air only while its broadcaster is on, and static once its playlist runs out.
+- **Radio+** (100 every 15 days, from Company Money): round-the-clock play on its own, adverts on the State Radios, a chance to be **Featured**, saveable by listeners, and **Quick Upload**: drop a `.dfpwm` on the broadcaster and it plays next, once, and is gone.
 
 ### Offline Listening
 
@@ -244,8 +259,8 @@ Only **giveaways** wait for the Bank, because the Bank pays the prize. The Bank 
 
 - **Sell**: the till.
 - **Products**: what every till and the online store sell.
-- **Store**: the online store, its pickup points and its phone number.
-- **Deals**: a store-wide sale, free delivery, and discount codes.
+- **Store**: the online store, its pickup points, its phone number, and its sales and discount codes.
+- **Money**: **Company Money**, the company's own account. Till sales, store orders, its CCG Casinos and its radio's ad breaks go in; CCG wins, giveaways and Radio+ come out. **PAY OUT** pays anybody any amount with your PIN; **PUT IN** adds your own money.
 
 **Delivery Mode** lists every parcel out for delivery across your companies.
 
@@ -306,8 +321,8 @@ Organisers use the **Event Kiosk**: create events and ticket types, set the sale
 - **Running it.** **My Casino** lets the owner run the table on **Auto** or deal it themselves, and move casino money in and out. The table's own computer has the same controls (not the money) behind the owner's PIN, and locks after a minute untouched.
 - **Trivia** is all or nothing. Your first answer is your stake; each right answer makes the pot 1.5x and a wrong one loses it. **TAKE** it between questions. Ten in a row is paid out for you. **Trivia mode** skips the wheel and asks question after question, on one topic or all of them. Questions come from [Open Trivia DB](https://opentdb.com) when the CCG Server has HTTP, from 108 built-in ones when it does not, and from your company's own: write them in **My Casino → TRIVIA → Our questions**, or drop a `.txt` on the table's computer with one per line, `Question | right | wrong | wrong | wrong`, and `# Topic` lines between.
 - **Music.** **MIDI** files, or **DFPWM** from the Music Library (a song on repeat or a live radio, with FoxyCloud+).
-- **The money stays at the Bank.** Wagers are held there, and winnings sit in **Holding** for a day before reaching the **Bet Wallet**.
-- **Losses.** A table that pays out more than it has borrows from the Bank, up to a limit, and pays the Bank back before it shows profit.
+- **The money stays at the Bank.** Wagers are held there, and winnings sit in **Holding** for a day before reaching the **Bet Wallet**. What the tables win and lose is the company's **Company Money**.
+- **Losses.** A table that pays out more than its company has borrows from the Bank, up to a limit, and pays the Bank back before it shows profit.
 
 **CCG Home** needs no server and no Bank. Press **HOME MODE**, type the six-digit code into **CCG → Home** on your Pocket, and the Pocket becomes the controller. It has **Snake**, **Meteors**, **Simon** and **2048**, plus games from the **Game Browser** (the App Server ships **Brick Breaker**). Games are published from Dev Mode, and `brickbreaker.lua` shows how to write one.
 
@@ -380,14 +395,14 @@ Back up `bank_data_v5.dat` beside the Core's program: it is the economy.
 
 A computer that already has a program offers **OPEN** or **REINSTALL**. Local `config.lua` settings and data files are kept, and only the Bank ever gets the government key.
 
-To start a program by hand: `/pumpe/installer.lua --boot <name>`. The names are `pumpe`, `bank`, `vault`, `tpbank`, `admin`, `apps`, `cloud`, `anchor`, `music`, `musicplayer`, `ccgserver`, `ccgcasino`, `ccghome`, `event`, `border`, `delivery` and `internet`.
+To start a program by hand: `/pumpe/installer.lua --boot <name>`. The names are `pumpe`, `bank`, `vault`, `tpbank`, `admin`, `apps`, `cloud`, `anchor`, `music`, `musicplayer`, `ccgserver`, `ccgcasino`, `ccghome`, `radio`, `event`, `border`, `delivery` and `internet`.
 
 ### Updates
 
 Every device updates itself from the public manifest, downloading only the files its own role needs. Each download is staged, checked by size and checksum, and swapped in all at once or not at all, and local settings are kept.
 
-- **Servers and kiosks** update unattended, under the **FOXY** screen.
-- **The Pocket downloads first, then asks**: the release's name, what changed, and **Install** or **Cancel & Delete**. **Settings → Updates** has Check now and Automatic.
+- **Every device downloads first, then asks**: **Install** or **Cancel & Delete**, at start-up on the whole screen and while running as a banner. Nobody answering within a minute at start-up (ten minutes while running) counts as no, so a server restarting unattended boots what it has; a release said no to is not downloaded again for half an hour. **Easy Deployment** asks too, before it installs anything.
+- **The Pocket** shows the release's name and what changed. **Settings → Updates** has Check now.
 - **Prioritize Updates** lets a full Pocket take apps off to fit a release, and puts them back afterwards.
 - **Beta Updates**: any device can sign up for betas, numbered halfway to the release they precede (FoxyOS 15 Beta is 14.5). Betas have a manifest of their own under `beta/`.
 - **Apps** update themselves every ten minutes on the Home Screen.
@@ -409,6 +424,8 @@ Computers in this world have 50 MB each. A Pocket's update peaks under 1 MB and 
 | `ccg_trivia_multiplier`, `ccg_trivia_max_streak` | 1.5, 10 | Trivia's pot per right answer, and the streak that pays out |
 | `ccg_trivia_online` | true | Questions from Open Trivia DB when the CCG Server has HTTP |
 | `ccg_console_lock_seconds` | 60 | When a CCG Casino's own screen locks |
+| `radio_plus_price`, `radio_plus_days` | 100, 15 | Radio+, out of Company Money |
+| `radio_ad_pay`, `radio_ad_minutes` | 25, 10 | What an ad break earns per listener, and how often one can |
 | `session_ttl_ms` | 12 hours | How long a sign-in lasts |
 | `foxymusic_plus_price`, `foxymusic_plus_days` | 100, 5 | FoxyMusic+ |
 | `music_offline_bytes` | 16 MB | Offline Listening room per Music Player |
@@ -504,4 +521,4 @@ QA_CHECKLIST.md            what to try in a real world after a release
 
 ---
 
-**FoxyOS 18.1**, release `18.1.0`.
+**FoxyOS 18.2**, release `18.2.0`.

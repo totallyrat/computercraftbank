@@ -1,5 +1,60 @@
 # Changelog
 
+## 18.2.0
+
+FoxyOS 18.2: the Radio Broadcaster, Radio+, the Radio app and Company Money.
+Update the Bank (Core and Vault) first, then the Music Server, then Music
+Players, CCG Casinos and Pockets. Every device now asks before it installs
+an update: somebody has to press Install on each one, the Bank included.
+
+**Radio Broadcasters.** Anybody with a company can run a radio station: an
+Advanced Computer with a modem, set up in Easy Deployment (Radio
+Broadcaster). It starts with a radio tower sending out rings in the
+station's colour, RADIO with the tower as its A, and one last ring that
+takes the screen. A station is on a frequency of its own, 87.5 to 108.0,
+and on no list: listeners find it on the dial, or hear about it. The
+broadcaster decides everything: a playlist of songs, host breaks, ad
+breaks and giveaways with their prize, which plays down in order (or loops),
+skip, its name, colour and frequency. With nothing queued and no Radio+, it
+is static; and without Radio+ it is on the air only while its broadcaster
+computer is on.
+
+**Ad breaks earn Company Money.** An ad break pays the station's company 25
+for every account listening, once every 10 minutes at most per station.
+Each account counts once however many players it has, and the company's
+owner never counts. A station's giveaways are paid out of its Company Money,
+which holds the prize from when the lines open until the draw.
+
+**Radio+.** The company's subscription, not a person's: 100 every 15 days
+out of Company Money, started on the broadcaster's Station page. The
+station plays round the clock on its own, from songs, hosts and ads you pick
+or the whole library; it is advertised on the State Radios; one Radio+
+station a day is Featured in everybody's Favorites; listeners can save it;
+and a .dfpwm dropped on the broadcaster goes straight into the playlist
+(Quick Upload), plays once and is never kept.
+
+**The Radio app.** Radio left the Music app for an app of its own, by Foxy.
+Dial: the frequency in big numbers, a slider and < > (a tenth) << >> (a
+whole one). Between stations is static; landing on one shows it and your
+Music Player starts playing it. Favorites: the State Radios, today's
+Featured station and the Radio+ stations you saved. A Music Player's own
+Radio tab is the same, compact, scrolling when it does not fit.
+
+**Company Money.** A company's own account at the Bank, in the Company app's
+new Money tab. Till sales, store orders, CCG Casino results and ad breaks
+go into it rather than to the owner, and it pays CCG wins, radio giveaways
+and Radio+. The owner pays out any amount to anybody, themselves included,
+with their PIN, or puts money in. A CCG Casino's balance became its
+company's Company Money. Discounts moved into the Store tab to make room.
+
+**Every update asks.** Every device downloads a release and asks Install or
+Cancel & Delete before anything changes: at start-up on the whole screen,
+for a minute; while it runs, as a banner across the top. Nobody answering
+counts as no for now, so a server restarting with nobody there boots what
+it has, and a release said no to is not downloaded again for half an hour.
+Easy Deployment asks too, after downloading and before installing. The
+Pocket's "Install automatically" is gone.
+
 ## 18.1.0
 
 FoxyOS 18.1: Trivia at the CCG Casino, and controls on the CCG Casino's own

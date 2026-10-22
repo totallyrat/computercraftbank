@@ -104,6 +104,7 @@ local seen = h.run(phone, {
     end,
 })
 assert(seen.rebooted, "installed, it restarts into the Pocket")
+assert(seen.asked == 1, "FoxyOS 18.2: asked first, once it had downloaded")
 local config = assertInstalled(phone, "pumpe", "pumpe.lua")
 assert(config.government_key == "CLIENT-NO-GOVERNMENT-ACCESS",
     "a phone never carries the government key")
@@ -170,6 +171,16 @@ for _, refused in ipairs({ "bank", "service" }) do
         "--install " .. refused .. " installs nothing")
 end
 
+-- FoxyOS 18.2: Cancel and delete. Nothing is installed and nothing that came
+-- down is left on the disk.
+local declined = fresh()
+declined.answer = "cancel"
+local saidNo = h.run(declined, { key("enter"), { "terminate" } })
+assert(saidNo.asked == 1 and not saidNo.rebooted, "asked, and not restarted")
+assert(declined.disk["startup.lua"] == h.installer and not declined.disk["pumpe/pumpe.lua"],
+    "nothing installed")
+noLeftovers(declined.disk)
+
 -- Typing on the first screen starts a search with what was typed.
 local function firstResult(query)
     local found
@@ -190,7 +201,8 @@ end
 assert(firstResult("ccg") == "CCG Casino")
 assert(firstResult("shop") == "Pocket", "FoxyOS 13: a shop's till is a Pocket")
 assert(firstResult("casino") == "CCG Casino", "keywords count")
-assert(firstResult("radio") == "Music Server", "FoxyOS 17: music")
+assert(firstResult("music") == "Music Server", "FoxyOS 17: music")
+assert(firstResult("radio") == "Radio Broadcaster", "FoxyOS 18.2: a station of your own")
 assert(firstResult("web") == "Internet Server")
 assert(firstResult("gps") == "GPS Anchor")
 assert(firstResult("bank") == "Bank Server")

@@ -5,7 +5,7 @@
 --
 -- Ana has no Music Player yet: the app says how to get one, and still lets
 -- her browse the library and upload a song dropped on her Pocket. Then a
--- Music Player is hers: she tunes it to a radio in the middle of a giveaway,
+-- Music Player is hers: it is tuned to a radio in the middle of a giveaway,
 -- Now Playing shows the number, and she calls in from there. Last, a song
 -- kept in her FoxyCloud goes into the library, and she joins FoxyMusic+ from
 -- the Upload tab and cancels it again.
@@ -110,11 +110,11 @@ phone.push(script.actions, function(seen)
     local frame = phone.last(seen)
     assert(phone.has(frame, "Ana's Den"), "her player")
     assert(phone.has(frame, "Nothing playing"))
-    return "tab:radio"
-end, function(seen)
-    local frame = phone.last(seen)
-    assert(phone.has(frame, "Foxy FM") and phone.has(frame, "GIVEAWAY! " .. r.number))
-    return "radio:" .. r.radio_id
+    assert(phone.has(frame, "the Radio app"), "FoxyOS 18.2: stations are in the Radio app")
+    -- Tuned from the Radio app (host_radio_app_test), while this is open.
+    assert(as(PLAYER_ID, net.ask, MUSIC_ID, config.music_protocol, "MUSIC_CONTROL",
+        { player_token = hello.player_token, command = "radio", radio_id = r.radio_id }, 3))
+    return "__tick"
 end, function(seen)
     local frame = phone.last(seen)
     assert(phone.has(frame, "Foxy FM  LIVE"), "tuned in")

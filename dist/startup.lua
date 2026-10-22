@@ -14,7 +14,7 @@
 
 
 
-local INSTALLER_VERSION = "18.1.0"
+local INSTALLER_VERSION = "18.2.0"
 local MANIFEST_URL =
 "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -126,7 +126,8 @@ about = "Serves the apps every Pocket can download.",
 words = "apps store browser server",
 extra = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
-"brickbreaker.lua", "invt.lua", "yap.lua", "foxycloud.lua", "music.lua" } },
+"brickbreaker.lua", "invt.lua", "yap.lua", "foxycloud.lua", "music.lua",
+"radio.lua" } },
 { id = "internet", name = "Internet Server", file = "internet_server.lua",
 detail = "Hosts the web",
 about = "Serves the websites and domains of the web.",
@@ -147,6 +148,12 @@ words = "music songs radio dfpwm library server", extra = { "lib/music.lua" } },
 detail = "Plays music through speakers",
 about = "Plays the Music Library and the radios. Sign in, add a speaker.",
 words = "music player speaker songs radio dfpwm", extra = { "lib/music.lua" } },
+
+{ id = "radio", name = "Radio Broadcaster", file = "radio_broadcaster.lua",
+detail = "Your company's radio station",
+about = "Runs one company's station on its own frequency. Earns from ad breaks.",
+words = "radio broadcaster station frequency fm dj ads company",
+extra = { "lib/music.lua" } },
 
 
 { id = "tax", name = "Tax Controller", file = "tax_controller.lua",
@@ -634,7 +641,40 @@ end
 
 
 
-local function install(program, root, manifest)
+
+
+
+
+local function askInstall(program, manifest, total, timeout)
+local width, height = target.getSize()
+clear()
+header("EASY DEPLOYMENT", "Downloaded")
+center(5, "Install " .. program.name .. "?", theme.ink)
+center(7, "FoxyOS v" .. tostring(manifest.version) .. "  "
+.. math.ceil((total or 0) / 1024) .. " KiB", theme.muted)
+if timeout then center(9, "No answer in " .. timeout .. "s: not now", theme.muted) end
+local buttons = {}
+button(buttons, "install", 2, height - 5, width - 2, 2, "INSTALL", theme.accent, colors.black)
+button(buttons, "cancel", 2, height - 2, width - 2, 2, "CANCEL AND DELETE", theme.panel)
+local timer = timeout and os.startTimer(timeout)
+while true do
+local event = { os.pullEvent() }
+if event[1] == "timer" and event[2] == timer then return false end
+if event[1] == "terminate" then return false end
+if event[1] == "mouse_click" or event[1] == "monitor_touch" then
+for _, item in ipairs(buttons) do
+if event[3] >= item.x1 and event[3] <= item.x2 and event[4] >= item.y1
+and event[4] <= item.y2 then
+return item.id == "install"
+end
+end
+elseif event[1] == "key" and enterKey(event[2]) then
+return true
+end
+end
+end
+
+local function install(program, root, manifest, timeout)
 local entries, total = {}, 0
 for _, path in ipairs(filesFor(program)) do
 local entry = manifest.byPath[path]
@@ -682,6 +722,10 @@ progress(program, nil, done, total, #entries, #entries)
 return true
 end)
 if not fetched then return nil, fetchError end
+if not askInstall(program, manifest, total, timeout) then
+if fs.exists(staging) then fs.delete(staging) end
+return nil, "cancelled"
+end
 
 local moved = {}
 local ok, err = pcall(function()
@@ -1071,6 +1115,10 @@ message("error", "RELEASE UNREACHABLE", manifestError, 2.2)
 return
 end
 local ok, err = install(program, INSTALL_ROOT, manifest)
+if err == "cancelled" then
+message("warning", "NOT INSTALLED", "The download was deleted", 1.2)
+return
+end
 if not ok then
 message("error", "INSTALL FAILED", err, 2.4)
 return
@@ -1110,7 +1158,7 @@ if manifest then
 updateSelf(manifest)
 if (newerVersion(manifest.version, installedVersion(root)) and not program.byCore)
 or not fs.exists(fs.combine(root, program.file)) then
-if install(program, root, manifest) then
+if install(program, root, manifest, 60) then
 message("success", "UPDATED TO v" .. manifest.version,
 "Restarting " .. program.name, 0.6)
 os.reboot()
@@ -1138,7 +1186,7 @@ if mode == "--auto" then
 local program = programById(modeProgram)
 local manifest = program and httpReady() and readManifest()
 if manifest and newerVersion(manifest.version, installedVersion(homeDir())) then
-if install(program, homeDir(), manifest) then
+if install(program, homeDir(), manifest, 60) then
 os.reboot()
 return true
 end

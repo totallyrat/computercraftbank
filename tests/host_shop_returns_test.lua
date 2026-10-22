@@ -47,6 +47,18 @@ end
 -- A store and its terminals ----------------------------------------------------------
 
 local ana = bank.register("Ana Fox", "1234")
+
+-- FoxyOS 18.2: a store's money is its company's Company Money, not its
+-- owner's account. What Ana's store has, wherever a test asks.
+local function storeMoney()
+    local total = 0
+    for _, company in pairs(bank.state.companies) do
+        if company.owner_account_id == ana.id then
+            total = total + (company.money and company.money.balance or 0)
+        end
+    end
+    return total
+end
 local kit = bank.register("Kit Wolf", "5678")
 bank.fund(kit, 1000)
 
@@ -107,9 +119,9 @@ bank.request("SHOP_SETUP", till({ return_days = 7 }))
 
 -- No cancelling at a store that does not take it ------------------------------------
 
-local anaBefore, kitBefore = bank.balanceOf(ana), bank.balanceOf(kit)
+local anaBefore, kitBefore = storeMoney(), bank.balanceOf(kit)
 local firm = buy()
-assert(bank.balanceOf(ana) == anaBefore + 25,
+assert(storeMoney() == anaBefore + 25,
     "without cancelling, the store is paid at once")
 assert(view(firm.order_id).cancellable == false)
 rejected(bank.request, "NOT_CANCELLABLE", "SHOP_CANCEL",
@@ -118,10 +130,10 @@ rejected(bank.request, "NOT_CANCELLABLE", "SHOP_CANCEL",
 -- Cancelling ----------------------------------------------------------------------
 
 bank.request("SHOP_SETUP", till({ cancel = true }))
-anaBefore, kitBefore = bank.balanceOf(ana), bank.balanceOf(kit)
+anaBefore, kitBefore = storeMoney(), bank.balanceOf(kit)
 local soft = buy()
 assert(bank.balanceOf(kit) == kitBefore - 25, "the buyer pays at checkout")
-assert(bank.balanceOf(ana) == anaBefore,
+assert(storeMoney() == anaBefore,
     "but a cancellable order's money waits until it is confirmed")
 assert(bank.request("SHOP_STATE", till()).held == 25, "the kiosk can see it waiting")
 local shown = view(soft.order_id)
@@ -137,7 +149,7 @@ rejected(bank.request, "NO_SUCH_ORDER", "SHOP_CANCEL",
 local cancelled = bank.request("SHOP_CANCEL", bank.as(kit, { order_id = soft.order_id }))
 assert(cancelled.refunded == 25 and cancelled.to == "Foxy")
 assert(bank.balanceOf(kit) == kitBefore, "the buyer has all of it back")
-assert(bank.balanceOf(ana) == anaBefore, "and the store never had it")
+assert(storeMoney() == anaBefore, "and the store never had it")
 assert(orders[soft.order_id].status == "cancelled")
 assert(bank.request("SHOP_STATE", till()).held == 0)
 rejected(bank.request, "ORDER_CLOSED", "SHOP_CANCEL",
@@ -145,14 +157,14 @@ rejected(bank.request, "ORDER_CLOSED", "SHOP_CANCEL",
 
 -- After two hours an order is confirmed: the store is paid, and it can only
 -- be returned now.
-anaBefore = bank.balanceOf(ana)
+anaBefore = storeMoney()
 local late = buy()
 hoursPass(1)
 core.shop.release()
-assert(bank.balanceOf(ana) == anaBefore, "not yet")
+assert(storeMoney() == anaBefore, "not yet")
 hoursPass(1.5)
 core.shop.release()
-assert(bank.balanceOf(ana) == anaBefore + 25, "confirmed, and paid out")
+assert(storeMoney() == anaBefore + 25, "confirmed, and paid out")
 assert(view(late.order_id).confirmed and not view(late.order_id).cancellable)
 rejected(bank.request, "CONFIRMED", "SHOP_CANCEL",
     bank.as(kit, { order_id = late.order_id }))
@@ -176,10 +188,10 @@ rejected(bank.request, "VAULT_BUSY", "SHOP_CANCEL",
     bank.as(kit, { order_id = stuck.order_id }))
 assert(bank.balanceOf(kit) == kitBefore, "no refund for an order still open")
 assert(core.state.shop_held[stuck.order_id], "and the money is still held")
-anaBefore = bank.balanceOf(ana)
+anaBefore = storeMoney()
 rejected(bank.request, "VAULT_BUSY", "DELIVERY_REFUND",
     depot({ order_id = firm.order_id }))
-assert(bank.balanceOf(ana) == anaBefore,
+assert(storeMoney() == anaBefore,
     "a store refund puts the owner's money back when the Vault says no")
 vault.actions.VAULT_SHOP_REFUNDED = real
 
@@ -187,11 +199,11 @@ vault.actions.VAULT_SHOP_REFUNDED = real
 
 rejected(bank.request, "NO_SUCH_ORDER", "DELIVERY_REFUND",
     rivalTill({ order_id = firm.order_id }))
-anaBefore, kitBefore = bank.balanceOf(ana), bank.balanceOf(kit)
+anaBefore, kitBefore = storeMoney(), bank.balanceOf(kit)
 local byStore = bank.request("DELIVERY_REFUND", depot({ order_id = firm.order_id,
     note = "Sold out" }))
 assert(byStore.refunded == 25)
-assert(bank.balanceOf(ana) == anaBefore - 25, "paid out already, so from the owner")
+assert(storeMoney() == anaBefore - 25, "paid out already, so from the owner")
 assert(bank.balanceOf(kit) == kitBefore + 25)
 assert(orders[firm.order_id].status == "cancelled"
     and orders[firm.order_id].note == "Sold out")
@@ -200,11 +212,15 @@ assert(orders[firm.order_id].status == "cancelled"
 local poor = buy({ })
 hoursPass(3)
 core.shop.release()
-core.state.accounts[ana.id].balance = 1
+for _, company in pairs(core.state.companies) do
+    if company.owner_account_id == ana.id and company.money then company.money.balance = 1 end
+end
 rejected(bank.request, "STORE_SHORT", "DELIVERY_REFUND",
     depot({ order_id = poor.order_id }))
 assert(orders[poor.order_id].status == "open", "and the order is left alone")
-core.state.accounts[ana.id].balance = 1000
+for _, company in pairs(core.state.companies) do
+    if company.owner_account_id == ana.id and company.money then company.money.balance = 1000 end
+end
 
 -- Returns ---------------------------------------------------------------------------
 
@@ -240,9 +256,9 @@ assert(sawReturn and not sawOpenAfter, "open orders, then returns, then the rest
 -- Only this store can refund it, and only once.
 rejected(bank.request, "NO_SUCH_ORDER", "DELIVERY_REFUND",
     rivalTill({ order_id = poor.order_id, why = "return" }))
-anaBefore, kitBefore = bank.balanceOf(ana), bank.balanceOf(kit)
+anaBefore, kitBefore = storeMoney(), bank.balanceOf(kit)
 bank.request("DELIVERY_REFUND", depot({ order_id = poor.order_id, why = "return" }))
-assert(bank.balanceOf(ana) == anaBefore - 25 and bank.balanceOf(kit) == kitBefore + 25)
+assert(storeMoney() == anaBefore - 25 and bank.balanceOf(kit) == kitBefore + 25)
 assert(view(poor.order_id).return_request.status == "refunded")
 rejected(bank.request, "NO_RETURN", "DELIVERY_REFUND",
     depot({ order_id = poor.order_id, why = "return" }))

@@ -317,11 +317,13 @@ script = phone.script()
 -- Fox Goods is second now, after Ana Two.
 phone.push(script.actions, "company:2", function(seen)
     -- FoxyOS 13: four tabs -- Sell first -- and still no More. (The till's
-    -- own More chip is drawn on the shelf, not the bar.)
+    -- own More chip is drawn on the shelf, not the bar.) FoxyOS 18.2: the
+    -- fourth is Money; sales and codes open from the Store tab.
     local frame = phone.last(seen)
-    assert(phone.has(frame, "Sell") and phone.has(frame, "Discounts"), "four tabs")
-    return "tab:discounts"
-end)
+    assert(phone.has(frame, "Sell") and phone.has(frame, "Money"),
+        "four tabs\n" .. table.concat(frame, "\n"))
+    return "tab:store"
+end, "deals")
 phone.push(script.actions, "sale", "ship", "pick:3")
 phone.push(script.inputs, "15", "40")
 phone.push(script.actions, "add", "pick:1")
@@ -342,8 +344,8 @@ phone.push(script.actions, function(seen)
     local frame = phone.last(seen)
     assert(phone.has(frame, "SHIP  off"), "switched off, and says so")
     assert(not phone.has(frame, "SPRING"), "removed")
-    return "home"
-end, "home")
+    return "back"
+end, "home", "home")
 seen = run(ana, script)
 local settings = company.shop
 assert(settings.sale == 15 and settings.free_shipping == true
@@ -357,5 +359,29 @@ for _, input in ipairs(seen.inputs) do
         assert(input.mode == "integer", input.title .. " takes a whole number")
     end
 end
+
+-- Company Money, FoxyOS 18.2: what Fox Goods has, money in, and paid out --------------
+
+bank.fund(ana, 100)
+local kitBefore = bank.balanceOf(kit)
+script = phone.script()
+phone.push(script.actions, "company:2", "tab:money", function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Company Money") and phone.has(frame, "No Radio+"),
+        table.concat(frame, "\n"))
+    return "add"
+end, function(seen)
+    assert(phone.said(seen, "Put in"), "put in")
+    assert(phone.has(phone.last(seen), "Put in Ana Fox"), "and listed")
+    return "pay"
+end, function(seen)
+    assert(phone.said(seen, "Paid Kit Wolf"))
+    return "home"
+end, "home")
+phone.push(script.inputs, "60", "Kit Wolf", "25")
+phone.push(script.pins, "1234", "1234")
+run(ana, script)
+assert(company.money.balance == 35 and bank.balanceOf(kit) == kitBefore + 25,
+    "60 in, 25 to Kit: " .. tostring(company.money.balance))
 
 print("host_company_app_test: OK")

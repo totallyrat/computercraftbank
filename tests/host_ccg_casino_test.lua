@@ -197,7 +197,7 @@ end
 local function conserved()
     local total = worldMoney() + (bank.state.ccg_house_profit or 0)
     for _, company in pairs(bank.state.companies) do
-        total = total + (company.casino and company.casino.balance or 0)
+        total = total + (company.money and company.money.balance or 0)
     end
     return total
 end

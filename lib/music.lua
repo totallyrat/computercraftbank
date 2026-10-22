@@ -190,6 +190,22 @@ function music.play(plan, speakers, options)
     return true
 end
 
+-- Static, FoxyOS 18.2: what a radio plays between stations on the dial, and
+-- on a station with nothing on. Made here, quiet, and never fetched: `ms` of
+-- it, at a third of `volume`.
+function music.static(speakers, ms, volume)
+    local total = math.floor(48 * math.max(0, tonumber(ms) or 0))
+    local made = 0
+    while made < total do
+        local count = math.min(24000, total - made)
+        local samples = {}
+        for index = 1, count do samples[index] = math.random(-24, 24) end
+        music.feed(speakers, samples, (volume or 1) / 3)
+        made = made + count
+    end
+    return true
+end
+
 -- A Music Player inside something else, FoxyOS 18: the Pocket Desktop on a
 -- computer with a speaker. Signed in once with a Pocket's session
 -- (MUSIC_HELLO), it is one of its owner's Music Players: the Music app picks
@@ -272,6 +288,17 @@ function music.engine(spec)
         end
         engine.error, engine.seq = nil, stream.seq
         local at = util.nowMs()
+        if stream.mode == "static" then
+            -- FoxyOS 18.2: nothing on this frequency, or nothing on it now.
+            engine.playing = { mode = "static", started = at }
+            parallel.waitForAny(function()
+                music.static(speakers, stream.length_ms or 5000,
+                    engine.player and engine.player.volume or 2)
+            end, function()
+                repeat os.pullEvent("music_change") until moved()
+            end)
+            return
+        end
         engine.playing = { item = stream.item, mode = stream.mode, play_no = stream.play_no,
             started = at - (stream.offset_ms or 0) }
         local finished, playError

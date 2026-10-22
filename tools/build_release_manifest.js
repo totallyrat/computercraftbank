@@ -100,6 +100,9 @@ const forwardOptionalFiles = [
   "lib/desktop.lua",
   // FoxyOS 18.1: Trivia's questions, for the CCG Server.
   "lib/trivia.lua",
+  // FoxyOS 18.2: the Radio Broadcaster, and Radio by Foxy.
+  "radio_broadcaster.lua",
+  "radio.lua",
 ];
 
 function checksum(buffer) {
@@ -237,7 +240,7 @@ const strippedFiles = [
 // size. Their headers stay: the App Server and the Pocket read them.
 const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
   "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
-  "invt.lua", "yap.lua", "foxycloud.lua", "music.lua"];
+  "invt.lua", "yap.lua", "foxycloud.lua", "music.lua", "radio.lua"];
 strippedFiles.push(...strippedApps);
 
 // FoxyOS 14.1: everything a computer downloads is in dist/, the files that

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.1.0"
+local PROGRAM_VERSION = "18.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -88,6 +88,9 @@ RELEASE.depot_files = {
 "lib/music.lua",
 "lib/desktop.lua",
 "lib/trivia.lua",
+
+"radio_broadcaster.lua",
+"radio.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -146,6 +149,9 @@ RELEASE.optional = {
 "lib/music.lua",
 "lib/desktop.lua",
 "lib/trivia.lua",
+
+"radio_broadcaster.lua",
+"radio.lua",
 }
 
 RELEASE.programs = {
@@ -178,6 +184,8 @@ cloud = "cloud_server.lua",
 
 music = "music_server.lua",
 musicplayer = "music_player.lua",
+
+radio = "radio_broadcaster.lua",
 }
 
 
@@ -213,7 +221,7 @@ if role == "apps" then
 files[#files + 1] = { path = "foxy.lua", source = "foxy.lua" }
 end
 
-if role == "music" or role == "musicplayer" or role == "ccgcasino" then
+if role == "music" or role == "musicplayer" or role == "ccgcasino" or role == "radio" then
 files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
 end
 
@@ -772,7 +780,9 @@ cap = 1500,
 
 income_days = 120,
 income = { transfer_in = true, merchant_credit = true,
-ticket_revenue = true },
+ticket_revenue = true,
+
+company_pay = true },
 }
 
 function records.push(kind, accountId, item)
@@ -1052,6 +1062,68 @@ save()
 return { credited = amount, balance = account.balance }
 end
 
+
+
+
+
+
+
+
+
+
+local companyMoney = { LOG = 60, MERGED = { casino = true, ads = true } }
+
+function companyMoney.of(company)
+if not company.money then
+company.money = { balance = util.roundMoney(company.casino
+and company.casino.balance or 0), earned = 0, paid_out = 0, reserved = 0, log = {} }
+if company.casino then company.casino.balance = nil end
+end
+company.money.log = company.money.log or {}
+company.money.reserved = company.money.reserved or 0
+return company.money
+end
+
+
+
+function companyMoney.note(company, amount, kind, label)
+local money = companyMoney.of(company)
+label = util.safeText(tostring(label or ""), 32)
+local top, today = money.log[1], util.ingameDay()
+if top and companyMoney.MERGED[kind] and top.kind == kind and top.label == label
+and top.day == today then
+top.amount = util.roundMoney(top.amount + amount)
+top.count = (top.count or 1) + 1
+return
+end
+table.insert(money.log, 1, { amount = util.roundMoney(amount), kind = kind, label = label,
+day = today, time = util.formatClock() })
+while #money.log > companyMoney.LOG do table.remove(money.log) end
+end
+
+function companyMoney.add(company, amount, kind, label)
+local money = companyMoney.of(company)
+money.balance = util.roundMoney(money.balance + amount)
+if amount > 0 then money.earned = util.roundMoney((money.earned or 0) + amount) end
+companyMoney.note(company, amount, kind, label)
+return money.balance
+end
+
+
+
+function companyMoney.free(company)
+local money = companyMoney.of(company)
+local atStake = companyMoney.atStake and company.casino and companyMoney.atStake(company) or 0
+return util.roundMoney(money.balance - money.reserved - atStake)
+end
+
+function companyMoney.take(company, amount, kind, label)
+local free = companyMoney.free(company)
+need(free >= amount, "INSUFFICIENT_FUNDS", free > 0 and ("Company Money has "
+.. util.money(free, config.currency) .. " free") or "Company Money is empty")
+return companyMoney.add(company, -amount, kind, label)
+end
+
 local function companyOwner(terminal)
 local company = terminal.company_id and state.companies[terminal.company_id] or nil
 local owner = company and state.accounts[company.owner_account_id] or nil
@@ -1059,21 +1131,17 @@ return company, owner
 end
 
 local function merchantBalance(terminal)
-local _, owner = companyOwner(terminal)
-return owner and owner.balance or terminal.balance
+local company, owner = companyOwner(terminal)
+return owner and companyMoney.of(company).balance or terminal.balance
 end
+
 
 local function creditMerchant(terminal, amount, description, payer)
 local company, owner = companyOwner(terminal)
 if owner then
-owner.balance = util.roundMoney(owner.balance + amount)
-transaction(owner, "merchant_credit", amount,
-payer and payer.name or terminal.name, description, {
-company_id = company.company_id,
-terminal_id = terminal.terminal_id,
-})
+companyMoney.add(company, amount, "sale", payer and payer.name or terminal.name)
 notification(owner, "Sale received", util.money(amount, config.currency)
-.. " via " .. terminal.name, "money")
+.. " via " .. terminal.name .. ", in Company Money", "money")
 else
 terminal.balance = util.roundMoney(terminal.balance + amount)
 end
@@ -1083,14 +1151,9 @@ end
 local function debitMerchant(terminal, amount, description, recipient)
 local company, owner = companyOwner(terminal)
 if owner then
-need(owner.balance >= amount, "INSUFFICIENT_FUNDS",
-"Merchant balance is too low")
-owner.balance = util.roundMoney(owner.balance - amount)
-transaction(owner, "merchant_debit", -amount,
-recipient and recipient.name or terminal.name, description, {
-company_id = company.company_id,
-terminal_id = terminal.terminal_id,
-})
+need(companyMoney.free(company) >= amount, "INSUFFICIENT_FUNDS",
+"Company Money is too low")
+companyMoney.add(company, -amount, "refund", recipient and recipient.name or description)
 else
 need(terminal.balance >= amount, "INSUFFICIENT_FUNDS",
 "Kiosk balance is too low")
@@ -1564,8 +1627,10 @@ end
 
 
 
+
 function phone.fromPocket(payload, orMusic)
-need(payload.app_id == nil or (orMusic and payload.app_id == "MUSIC"), "WRONG_APP",
+need(payload.app_id == nil or (orMusic and (payload.app_id == "MUSIC"
+or payload.app_id == "RADIO")), "WRONG_APP",
 "Only Messages can do that")
 end
 
@@ -1883,7 +1948,15 @@ g.status = "drawn"
 local ids = {}
 for accountId in pairs(g.entries or {}) do ids[#ids + 1] = accountId end
 table.sort(ids)
-if (g.total or 0) <= 0 or #ids == 0 then return end
+if (g.total or 0) <= 0 or #ids == 0 then
+
+local company = g.company_id and state.companies[g.company_id]
+if company then
+local money = companyMoney.of(company)
+money.reserved = util.roundMoney(math.max(0, money.reserved - (g.prize_set or 0)))
+end
+return
+end
 local pick = math.random(1, g.total)
 for _, accountId in ipairs(ids) do
 pick = pick - g.entries[accountId]
@@ -1891,12 +1964,23 @@ if pick <= 0 then
 local winner = state.accounts[accountId]
 local range = type(config.giveaway_prize) == "table" and config.giveaway_prize
 or { 100, 500 }
-local prize = math.random(math.floor(range[1] or 100), math.floor(range[2] or 500))
+local prize = g.company_id and g.prize_set
+or math.random(math.floor(range[1] or 100), math.floor(range[2] or 500))
 g.winner_id, g.prize = accountId, prize
 g.winner_name = winner and winner.name or "Somebody"
+
+
+local company = g.company_id and state.companies[g.company_id]
+if company then
+local money = companyMoney.of(company)
+money.reserved = util.roundMoney(math.max(0, money.reserved - prize))
+if winner then companyMoney.add(company, -prize, "giveaway", winner.name) end
+end
 if winner then
 winner.balance = util.roundMoney(winner.balance + prize)
+if not company then
 state.giveaway_paid = util.roundMoney((state.giveaway_paid or 0) + prize)
+end
 transaction(winner, "giveaway", prize, g.radio_name or "Radio",
 "Radio giveaway")
 notification(winner, "You won on " .. (g.radio_name or "the radio"),
@@ -1933,8 +2017,22 @@ local open = music.giveawayFor(number)
 if open then music.draw(open) end
 local seconds = math.max(30, math.min(900, math.floor(tonumber(payload.seconds)
 or tonumber(config.giveaway_seconds) or 180)))
+
+
+local company, prize
+if payload.company_id ~= nil then
+company = state.companies[tostring(payload.company_id)]
+need(company and company.status == "active", "NO_COMPANY", "That company is gone")
+prize = math.floor(tonumber(payload.prize) or 0)
+need(prize >= 1 and prize <= 1000000, "BAD_PRIZE", "Say what the prize is")
+need(companyMoney.free(company) >= prize, "INSUFFICIENT_FUNDS",
+"Company Money cannot cover that prize")
+local money = companyMoney.of(company)
+money.reserved = util.roundMoney(money.reserved + prize)
+end
 state.giveaway_seq = (state.giveaway_seq or 0) + 1
 local g = { giveaway_id = "GIVE" .. state.giveaway_seq, number = number,
+company_id = company and company.company_id or nil, prize_set = prize,
 server_id = server.server_id, radio_id = radioId,
 radio_name = phone.store()[number] and phone.store()[number].name or "Radio",
 opened_at = util.nowMs(), closes_at = util.nowMs() + seconds * 1000,
@@ -2804,8 +2902,11 @@ state.ccg_casino_codes = state.ccg_casino_codes or {}
 return state.ccg_casino_codes
 end
 
+
+
 function casinoMoney.ledger(company)
-company.casino = company.casino or { balance = 0, earned = 0, paid = 0,
+companyMoney.of(company)
+company.casino = company.casino or { earned = 0, paid = 0,
 borrowed = 0, cashed_out = 0, added = 0, rounds = 0 }
 return company.casino
 end
@@ -2826,7 +2927,7 @@ function casinoMoney.owed(ownerId)
 local owed = 0
 for _, company in pairs(state.companies) do
 if company.owner_account_id == ownerId and company.casino then
-owed = owed + math.max(0, -company.casino.balance)
+owed = owed + math.max(0, -companyMoney.of(company).balance)
 end
 end
 return util.roundMoney(owed)
@@ -2878,6 +2979,8 @@ end
 return worst
 end
 
+companyMoney.atStake = function(company) return casinoMoney.atStake(company) end
+
 
 
 function casinoMoney.worstDebt(ownerId, swapEscrow, swap)
@@ -2885,7 +2988,7 @@ local debt = 0
 for _, company in pairs(state.companies) do
 if company.owner_account_id == ownerId and company.casino then
 debt = debt + math.max(0, casinoMoney.atStake(company, swapEscrow, swap)
-- company.casino.balance)
+- companyMoney.of(company).balance)
 end
 end
 return debt
@@ -2897,23 +3000,24 @@ local tables = 0
 for _, companyId in pairs(casinoMoney.codes()) do
 if companyId == company.company_id then tables = tables + 1 end
 end
+local balance = companyMoney.of(company).balance
 return { company_id = company.company_id, name = company.name,
-balance = ledger.balance, loan = math.max(0, -ledger.balance),
+balance = balance, loan = math.max(0, -balance),
 earned = ledger.earned, paid = ledger.paid, borrowed = ledger.borrowed,
 cashed_out = ledger.cashed_out, added = ledger.added, rounds = ledger.rounds,
 tables = tables,
-free = util.roundMoney(math.max(0, ledger.balance - casinoMoney.atStake(company))) }
+free = util.roundMoney(math.max(0, companyMoney.free(company))) }
 end
 
 
 function casinoMoney.book(company, stakes, payouts, gameName)
 local ledger = casinoMoney.ledger(company)
-local before = ledger.balance
-ledger.balance = util.roundMoney(ledger.balance + stakes - payouts)
+local before = companyMoney.of(company).balance
+local after = companyMoney.add(company, stakes - payouts, "casino", gameName)
 ledger.earned = util.roundMoney(ledger.earned + stakes)
 ledger.paid = util.roundMoney(ledger.paid + payouts)
 ledger.rounds = ledger.rounds + 1
-local borrowed = util.roundMoney(math.max(0, -ledger.balance) - math.max(0, -before))
+local borrowed = util.roundMoney(math.max(0, -after) - math.max(0, -before))
 local owner = state.accounts[company.owner_account_id]
 if borrowed > 0 then
 ledger.borrowed = util.roundMoney(ledger.borrowed + borrowed)
@@ -2922,7 +3026,7 @@ notification(owner, "Casino loan", company.name .. " borrowed "
 .. util.money(borrowed, config.currency) .. " to pay a " .. gameName
 .. " win. What it earns pays it back.", "gaming")
 end
-elseif before < 0 and ledger.balance >= 0 and owner then
+elseif before < 0 and after >= 0 and owner then
 notification(owner, "Casino loan repaid", company.name
 .. " has paid back its loan and is earning again.", "gaming")
 end
@@ -3170,11 +3274,13 @@ local account = requireSpender(payload)
 need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
 local company, ledger = ownCasino(account, payload)
 local amount = validateAmount(payload.amount, math.huge)
-local free = util.roundMoney(ledger.balance - casinoMoney.atStake(company))
+local free = companyMoney.free(company)
 need(amount <= free, "INSUFFICIENT_FUNDS", free > 0
 and ("The casino has " .. util.money(free, config.currency) .. " to take out")
 or "The casino has no profit to take out")
-ledger.balance = util.roundMoney(ledger.balance - amount)
+companyMoney.add(company, -amount, "pay", account.name)
+companyMoney.of(company).paid_out = util.roundMoney((companyMoney.of(company).paid_out
+or 0) + amount)
 ledger.cashed_out = util.roundMoney(ledger.cashed_out + amount)
 account.balance = util.roundMoney(account.balance + amount)
 transaction(account, "casino_cashout", amount, company.name, "Casino profit",
@@ -3191,13 +3297,13 @@ need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
 local company, ledger = ownCasino(account, payload)
 local amount = validateAmount(payload.amount, math.huge)
 need(account.balance >= amount, "INSUFFICIENT_FUNDS", "Not enough in your account")
-local before = ledger.balance
+local before = companyMoney.of(company).balance
 account.balance = util.roundMoney(account.balance - amount)
-ledger.balance = util.roundMoney(ledger.balance + amount)
+local after = companyMoney.add(company, amount, "added", account.name)
 ledger.added = util.roundMoney(ledger.added + amount)
 transaction(account, "casino_deposit", -amount, company.name, "Money into the casino",
 { company_id = company.company_id })
-if before < 0 and ledger.balance >= 0 then
+if before < 0 and after >= 0 then
 notification(account, "Casino loan repaid", company.name
 .. " has paid back its loan.", "gaming")
 end
@@ -6404,9 +6510,7 @@ buyer_name = buyer.name,
 amount = total, release_at = confirmAt,
 }
 elseif not free then
-owner.balance = util.roundMoney((owner.balance or 0) + total)
-transaction(owner, "shop_sale", total, buyer.name,
-"Order " .. opened.order_id)
+companyMoney.add(company, total, "store", buyer.name)
 end
 notification(owner, "New order", company.name .. ": "
 .. util.money(total, config.currency) .. " from " .. buyer.name
@@ -6474,6 +6578,14 @@ local info = pair.forward("VAULT_SHOP_REFUND_CHECK",
 state.shop_held = state.shop_held or {}
 local held = state.shop_held[orderId]
 local owner = state.accounts[info.owner_account_id or ""]
+
+local company = state.companies[info.company_id or ""]
+if not company then
+for _, candidate in pairs(state.companies) do
+if candidate.owner_account_id == info.owner_account_id
+and candidate.name == info.company_name then company = candidate end
+end
+end
 if why == "cancel" then
 need(held and util.ingameMoment() < held.release_at, "CONFIRMED",
 "That order is confirmed. Return it once it arrives")
@@ -6486,6 +6598,10 @@ if held then
 state.shop_held[orderId] = nil
 elseif free then
 
+elseif company then
+need(companyMoney.free(company) >= info.total, "STORE_SHORT",
+"There is not enough in Company Money to refund this")
+companyMoney.add(company, -info.total, "refund", info.buyer_name)
 else
 need(owner and (owner.balance or 0) >= info.total, "STORE_SHORT",
 "There is not enough in the store's account to refund this")
@@ -6496,12 +6612,14 @@ local marked, result = pcall(pair.forward, "VAULT_SHOP_REFUNDED",
 if not marked then
 if held then
 state.shop_held[orderId] = held
+elseif not free and company then
+companyMoney.add(company, info.total, "refund", "Refund undone")
 elseif not free then
 owner.balance = util.roundMoney(owner.balance + info.total)
 end
 error(result, 0)
 end
-if not held and not free then
+if not held and not free and not company then
 transaction(owner, "shop_refund", -info.total, info.buyer_name,
 "Refund, order " .. orderId)
 end
@@ -6554,8 +6672,11 @@ function shop.release()
 local now, changed = util.ingameMoment(), false
 for orderId, held in pairs(state.shop_held or {}) do
 local owner = state.accounts[held.owner_account_id]
+local company = state.companies[held.company_id or ""]
 if now >= held.release_at and owner then
-if (held.amount or 0) > 0 then
+if (held.amount or 0) > 0 and company then
+companyMoney.add(company, held.amount, "store", held.buyer_name)
+elseif (held.amount or 0) > 0 then
 owner.balance = util.roundMoney((owner.balance or 0) + held.amount)
 transaction(owner, "shop_sale", held.amount, held.buyer_name,
 "Order " .. orderId)
@@ -6803,6 +6924,217 @@ terminals = terminals,
 shop_site = company.shop_site and util.copy(company.shop_site) or nil,
 phone = company.phone,
 }
+end
+
+
+
+function companyMoney.public(company)
+local money = companyMoney.of(company)
+return { company_id = company.company_id, name = company.name,
+balance = money.balance, free = math.max(0, companyMoney.free(company)),
+reserved = money.reserved, loan = math.max(0, -money.balance),
+earned = money.earned or 0, paid_out = money.paid_out or 0,
+log = util.copy(money.log), radio_plus = companyMoney.radioPlus(company) }
+end
+
+
+
+function companyMoney.owned(payload)
+need(payload.app_id == nil or payload.app_id == "COMPANY" or payload.app_id == "RADIO",
+"WRONG_APP", "Only the Company app can do that")
+local account = requireSession(payload)
+local company = state.companies[tostring(payload.company_id or "")]
+need(company and company.status == "active"
+and company.owner_account_id == account.account_id, "NOT_OWNER",
+"You do not own that company")
+return account, company
+end
+
+function actions.COMPANY_MONEY(payload)
+local _, company = companyMoney.owned(payload)
+return companyMoney.public(company)
+end
+
+
+
+function actions.COMPANY_MONEY_PAY(payload)
+local account, company = companyMoney.owned(payload)
+requireSpender(payload)
+need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+local to = accountByName(util.trim(tostring(payload.to or account.name)))
+need(to, "ACCOUNT_NOT_FOUND", "Nobody here has that name")
+need(not to.bank_closed, "ACCOUNT_CLOSED", "That account is closed")
+local amount = validateAmount(payload.amount, math.huge)
+local note = util.safeText(util.trim(tostring(payload.note or "")), 40)
+companyMoney.take(company, amount, "pay", to.name)
+local money = companyMoney.of(company)
+money.paid_out = util.roundMoney((money.paid_out or 0) + amount)
+to.balance = util.roundMoney(to.balance + amount)
+transaction(to, "company_pay", amount, company.name, note ~= "" and note
+or ("From " .. company.name), { company_id = company.company_id })
+if to ~= account then
+notification(to, company.name .. " paid you", util.money(amount, config.currency)
+.. (note ~= "" and (": " .. note) or ""), "money")
+end
+save()
+return { money = companyMoney.public(company), paid = amount, to = to.name }
+end
+
+
+function actions.COMPANY_MONEY_ADD(payload)
+local account, company = companyMoney.owned(payload)
+requireSpender(payload)
+need(verifyAccount(account, payload.pin), "BAD_PIN", "Incorrect PIN")
+local amount = validateAmount(payload.amount, math.huge)
+need(account.balance >= amount, "INSUFFICIENT_FUNDS", "Not enough in your account")
+account.balance = util.roundMoney(account.balance - amount)
+transaction(account, "company_add", -amount, company.name, "Into Company Money",
+{ company_id = company.company_id })
+companyMoney.add(company, amount, "added", account.name)
+save()
+return { money = companyMoney.public(company), balance = account.balance }
+end
+
+
+
+
+
+
+
+function companyMoney.radioPrice() return tonumber(config.radio_plus_price) or 100 end
+function companyMoney.radioDays() return tonumber(config.radio_plus_days) or 15 end
+
+function companyMoney.radioPlus(company)
+local plan = company.radio_plus
+if not plan then return nil end
+return { active = true, next_charge_day = plan.next_charge_day,
+cancelled = plan.cancelled == true, price = plan.price, every_days = plan.every_days }
+end
+
+function actions.RADIO_PLUS_START(payload)
+local _, company = companyMoney.owned(payload)
+local plan = company.radio_plus
+if plan and plan.cancelled then
+plan.cancelled = nil
+save()
+return { money = companyMoney.public(company) }
+end
+need(not plan, "ALREADY", company.name .. " already has Radio+")
+local price, days = companyMoney.radioPrice(), companyMoney.radioDays()
+companyMoney.take(company, price, "radio_plus", "Radio+")
+company.radio_plus = { since_day = util.ingameDay(), price = price, every_days = days,
+next_charge_day = util.ingameDay() + days }
+state.radio_plus_revenue = util.roundMoney((state.radio_plus_revenue or 0) + price)
+save()
+return { money = companyMoney.public(company) }
+end
+
+
+function actions.RADIO_PLUS_CANCEL(payload)
+local _, company = companyMoney.owned(payload)
+need(company.radio_plus, "NOT_ON", "There is no Radio+ to cancel")
+company.radio_plus.cancelled = true
+save()
+return { money = companyMoney.public(company) }
+end
+
+function companyMoney.renewRadio(company, today)
+local plan = company.radio_plus
+if not plan or (plan.next_charge_day or today) > today then return false end
+local owner = state.accounts[company.owner_account_id]
+if plan.cancelled or company.status ~= "active" then
+company.radio_plus = nil
+if owner then notification(owner, "Radio+ ended", company.name
+.. "'s radio is back to playing only while somebody runs it.", "subscription") end
+return true
+end
+local price = plan.price or companyMoney.radioPrice()
+if companyMoney.free(company) >= price then
+companyMoney.add(company, -price, "radio_plus", "Radio+")
+state.radio_plus_revenue = util.roundMoney((state.radio_plus_revenue or 0) + price)
+plan.next_charge_day = today + (plan.every_days or companyMoney.radioDays())
+if owner then notification(owner, "Radio+ renewed", util.money(price, config.currency)
+.. " from " .. company.name .. "'s Company Money", "subscription") end
+else
+company.radio_plus = nil
+if owner then notification(owner, "Radio+ stopped", company.name
+.. "'s Company Money could not pay for it.", "warning") end
+end
+return true
+end
+
+
+
+
+
+
+
+
+function actions.MUSIC_COMPANY(payload, sender)
+music.server(payload, sender)
+local account = requireSession(payload)
+local list = {}
+for _, company in pairs(state.companies) do
+if company.owner_account_id == account.account_id and company.status == "active" then
+list[#list + 1] = { company_id = company.company_id, name = company.name,
+radio_plus = company.radio_plus ~= nil,
+money = math.max(0, companyMoney.free(company)) }
+end
+end
+table.sort(list, function(a, b) return a.name < b.name end)
+return { account_id = account.account_id, name = account.name, companies = list }
+end
+
+
+function actions.MUSIC_RADIO_PLUS(payload, sender)
+music.server(payload, sender)
+local out = {}
+for index, id in ipairs(type(payload.company_ids) == "table" and payload.company_ids or {}) do
+if index > 200 then break end
+local company = state.companies[tostring(id)]
+if company then
+out[tostring(id)] = { radio_plus = company.status == "active"
+and company.radio_plus ~= nil, free = math.max(0, companyMoney.free(company)),
+name = company.name, active = company.status == "active" }
+end
+end
+return { companies = out }
+end
+
+
+
+
+
+function actions.MUSIC_AD_BREAK(payload, sender)
+local server = music.server(payload, sender)
+local company = state.companies[tostring(payload.company_id or "")]
+need(company and company.status == "active", "NO_COMPANY", "That company is gone")
+local radioId = util.safeText(tostring(payload.radio_id or ""), 16)
+local key = server.server_id .. ":" .. radioId
+state.ad_breaks = state.ad_breaks or {}
+local now = util.nowMs()
+local gap = (tonumber(config.radio_ad_minutes) or 10) * 60 * 1000
+if now - (state.ad_breaks[key] or 0) < gap then
+return { paid = 0, listeners = 0, too_soon = true }
+end
+local counted, seen = 0, {}
+for index, id in ipairs(type(payload.listeners) == "table" and payload.listeners or {}) do
+if index > 500 then break end
+id = tostring(id)
+local account = state.accounts[id]
+if account and not seen[id] and id ~= company.owner_account_id
+and not account.banned and not account.bank_closed then
+seen[id] = true
+counted = counted + 1
+end
+end
+if counted == 0 then return { paid = 0, listeners = 0 } end
+local pay = util.roundMoney(counted * (tonumber(config.radio_ad_pay) or 25))
+state.ad_breaks[key] = now
+companyMoney.add(company, pay, "ads", util.safeText(tostring(payload.name or "Ad breaks"), 20))
+state.radio_ads_paid = util.roundMoney((state.radio_ads_paid or 0) + pay)
+save()
+return { paid = pay, listeners = counted }
 end
 
 
@@ -7218,6 +7550,10 @@ state.last_subscription_day = today
 local changed = false
 
 pcall(appstore.chargeSubscriptions, today)
+
+for _, company in pairs(state.companies) do
+if companyMoney.renewRadio(company, today) then changed = true end
+end
 for _, account in pairs(state.accounts) do
 if cloud.renew(account, today) then changed = true end
 if music.renew(account, today) then changed = true end
@@ -8785,6 +9121,7 @@ actions = actions,
 state = state,
 cleanup = cleanupEphemeral,
 process_bet_holds = processBetHolds,
+process_subscriptions = processSubscriptions,
 sweep_ccg_escrow = sweepAbandonedEscrow,
 sweep_trivia_runs = casinoMoney.sweepRuns,
 deployment_files = deploymentFilesForRole,

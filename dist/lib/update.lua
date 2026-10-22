@@ -384,6 +384,9 @@ update.PUBLISHED_OPTIONAL = {
 "lib/desktop.lua",
 
 "lib/trivia.lua",
+
+"radio_broadcaster.lua",
+"radio.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -422,6 +425,7 @@ cloud = "cloud_server.lua",
 
 music = "music_server.lua",
 musicplayer = "music_player.lua",
+radio = "radio_broadcaster.lua",
 }
 
 function update.roleProgram(role)
@@ -440,12 +444,15 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 
 "yap.lua",
 
-"foxycloud.lua", "music.lua" },
+"foxycloud.lua", "music.lua",
+
+"radio.lua" },
 
 music = { "lib/music.lua" },
 
 pumpe = { "lib/desktop.lua", "lib/music.lua" },
 musicplayer = { "lib/music.lua" },
+radio = { "lib/music.lua" },
 ccgcasino = { "lib/music.lua" },
 
 ccgserver = { "lib/trivia.lua" },

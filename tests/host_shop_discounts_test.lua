@@ -13,6 +13,18 @@ local rejected = harness.rejected
 local bank = harness.pair()
 
 local ana = bank.register("Ana Fox", "1234")
+
+-- FoxyOS 18.2: a store's money is its company's Company Money, not its
+-- owner's account. What Ana's store has, wherever a test asks.
+local function storeMoney()
+    local total = 0
+    for _, company in pairs(bank.state.companies) do
+        if company.owner_account_id == ana.id then
+            total = total + (company.money and company.money.balance or 0)
+        end
+    end
+    return total
+end
 local kit = bank.register("Kit Wolf", "5678")
 bank.fund(kit, 1000)
 
@@ -119,7 +131,7 @@ assert(q.code_error and q.total == 23, "a code that does not work says so")
 
 -- Paying ------------------------------------------------------------------------------
 
-local kitBefore, anaBefore = bank.balanceOf(kit), bank.balanceOf(ana)
+local kitBefore, anaBefore = bank.balanceOf(kit), storeMoney()
 rejected(bank.request, "BAD_CODE", "SHOP_CHECKOUT", bank.as(kit, {
     company_id = company.company_id, pin = "5678", code = "NOPE",
     items = basket({ rug, 1 }), delivery = HOME }))
@@ -130,7 +142,7 @@ local paid = bank.request("SHOP_CHECKOUT", bank.as(kit, {
     items = basket({ rug, 1 }), delivery = HOME }))
 -- 35, 3.50 off in the sale, 5 off with the code, 5 delivery.
 assert(paid.total == 31.5, "the Core charges what it quoted: " .. paid.total)
-assert(bank.balanceOf(kit) == kitBefore - 31.5 and bank.balanceOf(ana) == anaBefore + 31.5,
+assert(bank.balanceOf(kit) == kitBefore - 31.5 and storeMoney() == anaBefore + 31.5,
     "and that is what moves")
 local mine = bank.request("SHOP_ORDERS", bank.as(kit)).orders
 local order
@@ -142,7 +154,7 @@ rejected(bank.request, "BAD_CODE", "SHOP_CHECKOUT", bank.as(kit, {
     items = basket({ rug, 1 }), delivery = HOME }))
 
 -- A code that makes it free: no money moves, and the order is still real.
-kitBefore, anaBefore = bank.balanceOf(kit), bank.balanceOf(ana)
+kitBefore, anaBefore = bank.balanceOf(kit), storeMoney()
 local kitLines, anaLines = lines(kit), lines(ana)
 -- Nobody's bank is asked for nothing: an Account ID from another bank is
 -- ignored when there is nothing to take from it.
@@ -150,7 +162,7 @@ local gift = bank.request("SHOP_CHECKOUT", bank.as(kit, {
     company_id = company.company_id, pin = "5678", code = "gift",
     bank_account_id = "12", items = basket({ lamp, 1 }), delivery = HOME }))
 assert(gift.total == 0, "everything off and free delivery is free")
-assert(bank.balanceOf(kit) == kitBefore and bank.balanceOf(ana) == anaBefore,
+assert(bank.balanceOf(kit) == kitBefore and storeMoney() == anaBefore,
     "and not a coin moves either way")
 assert(lines(kit) == kitLines and lines(ana) == anaLines,
     "nor does a line of $0 land in anybody's history")
@@ -183,21 +195,21 @@ assert(uses.FIVE.uses == 1 and uses.GIFT.uses == 1 and uses.SHIPFREE.uses == 0,
 -- A free order can be called off like any other while the store lets it,
 -- and nothing moves then either.
 bank.request("COMPANY_SHOP_SETUP", companyApp(ana, { cancel = true }))
-kitBefore, anaBefore = bank.balanceOf(kit), bank.balanceOf(ana)
+kitBefore, anaBefore = bank.balanceOf(kit), storeMoney()
 local second = bank.request("SHOP_CHECKOUT", bank.as(kit, {
     company_id = company.company_id, pin = "5678", code = "GIFT",
     items = basket({ rug, 1 }), delivery = HOME }))
 assert(second.total == 0)
 local cancelled = bank.request("SHOP_CANCEL", bank.as(kit, { order_id = second.order_id }))
 assert(cancelled.refunded == 0, "nothing to give back")
-assert(bank.balanceOf(kit) == kitBefore and bank.balanceOf(ana) == anaBefore)
+assert(bank.balanceOf(kit) == kitBefore and storeMoney() == anaBefore)
 local third = bank.request("SHOP_CHECKOUT", bank.as(kit, {
     company_id = company.company_id, pin = "5678", code = "GIFT",
     items = basket({ rug, 1 }), delivery = HOME }))
 bank.advanceDays(1)
 bank.core.shop.release()
 rejected(bank.request, "CONFIRMED", "SHOP_CANCEL", bank.as(kit, { order_id = third.order_id }))
-assert(bank.balanceOf(ana) == anaBefore, "confirmed, it pays the store nothing")
+assert(storeMoney() == anaBefore, "confirmed, it pays the store nothing")
 assert(lines(ana) == anaLines, "and writes nothing down for it")
 bank.request("COMPANY_SHOP_SETUP", companyApp(ana, { cancel = false }))
 

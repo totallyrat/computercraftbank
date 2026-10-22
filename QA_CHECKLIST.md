@@ -7,6 +7,44 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 18.2 (18.2.0)
+
+Update the Bank (Core and Vault) first, then the Music Server, then Music Players, CCG Casinos and Pockets. Every one of them asks before installing now: press **Install** on each. Nothing in 18.2 was tried in a world before release: every line below is a first run.
+
+### Every update asks
+
+- [ ] Restarting any device with a newer release out: it downloads, then shows **Install** / **Cancel & Delete** on its own screen. Cancel boots the old version. Leave it a minute: it boots the old version by itself.
+- [ ] A running server (the Music Server's dashboard, say) when a release lands: a banner across the top with **Install** and **Cancel & Delete**; taps on the banner do not reach the screen under it. After Cancel it does not ask again for half an hour.
+- [ ] A CCG Casino: the question is on the computer's own screen, not the monitor.
+- [ ] Easy Deployment: installing anything asks after the download; **CANCEL AND DELETE** leaves nothing behind.
+- [ ] Pocket → Settings → Updates: "Always asks first", no automatic switch.
+
+### Company Money
+
+- [ ] Company app → a company → **Money**: the balance, free, Radio+, and recent lines. Discounts are under **Store → Sales and codes** now.
+- [ ] Sell something at the till: it lands in Company Money (a "Till" line), not your account.
+- [ ] **PUT IN** 100 with your PIN, **PAY OUT** 20 to a friend by name: they get it, with a notification.
+- [ ] A company that ran a CCG Casino before: its casino balance is its Company Money, and My Casino → CASINO MONEY still shows it.
+
+### Radio Broadcaster
+
+- [ ] Easy Deployment → **Radio Broadcaster** on an Advanced Computer. The start: a tower sends out three rings, RADIO comes up with the tower as the A, one ring fills the screen, the colour wipes away top to bottom.
+- [ ] Set up: sign in as a company owner, pick the company, name, colour, and a frequency (98.4 shows *Free* or *Taken by ...*).
+- [ ] **On Air** says static. **ADD** a song: it plays at once on a Music Player tuned there. Queue a break, an ad break (pick up to four ads) and a giveaway (with a prize). **PLAYLIST**: > plays next, ^ v move, x removes, LOOP.
+- [ ] An ad break with a friend listening: On Air shows *Last ad break $25*; Company Money has an "Ad breaks" line. A second break within 10 minutes pays nothing (*too soon*).
+- [ ] A giveaway: the number shows on listeners' screens; a friend calls; the winner is paid out of Company Money.
+- [ ] Turn the broadcaster off for a minute: tuned players hear static (off the air).
+- [ ] **Station → GET RADIO+** with the owner's PIN: 100 out of Company Money. Now with the playlist empty it plays songs on its own, and stays on the air with the broadcaster off.
+- [ ] Radio+: drop a `.dfpwm` on the broadcaster's screen: *Queued ...*; it plays once and is gone.
+- [ ] A State Radio's Now Playing shows the Radio+ station advertised.
+
+### The Radio app and the dial
+
+- [ ] Every Pocket gets the **Radio** app by itself; the Music app has no Radio tab.
+- [ ] Radio → Dial: < > and << >>, or tap the slider. Between stations the Music Player plays quiet static; landing on a station shows its name and the player starts it.
+- [ ] A Radio+ station: **SAVE**. Favorites: State Radios, **Featured today**, and **Saved**; tapping plays; x forgets.
+- [ ] A Music Player's own **Radio** tab: the same dial and Favorites, scrolling with ^ v when they do not fit.
+
 ## FoxyOS 18.1 (18.1.0)
 
 Update the Bank first, then the CCG Server, then every CCG Casino, then Pockets. Nothing in 18.1 was tried in a world before release, and the Open Trivia DB download was never run against the real site: every line below is a first run.

@@ -2,7 +2,6 @@
 -- PUMPE APP ICON: 66666666/66600006/66606606/66606606/60006006/60066006
 -- PUMPE APP ACTION: now | Now Playing | What your Music Player is playing
 -- PUMPE APP ACTION: library | Music Library | Every song, play one
--- PUMPE APP ACTION: radio | Radio | Live stations, always free
 -- PUMPE APP ACTION: upload | Upload a song | From this Pocket or FoxyCloud
 -- PUMPE APP ACTION: plus | FoxyMusic+ | Unlimited songs, Offline Listening
 --
@@ -12,7 +11,7 @@
 --   Now      what the chosen player is playing, and the buttons for it. In
 --            a radio giveaway, the number to call -- and a button to call it
 --   Library  every song on the Music Server: play one, or add it to the queue
---   Radio    the stations, each with its own colour, live and free
+--   (Radio   FoxyOS 18.2: the stations are in the Radio app now, on a dial.)
 --   Upload   a song (DFPWM1a) from this Pocket's Downloads, dropped on its
 --            screen, or kept in FoxyCloud -- with your name on it
 --
@@ -194,7 +193,7 @@ return function(api)
                     ui.text(target, width - #total, 12, total, ui.theme.muted)
                 else
                     ui.wrappedText(target, 2, 8, player.notice or (player.paused and "Paused")
-                        or "Nothing playing. Pick a song in Library or a station in Radio.",
+                        or "Nothing playing. Pick a song in Library, or a station in the Radio app.",
                         width - 2, 3, player.notice and ui.theme.warning or ui.theme.muted)
                 end
                 if radio and radio.giveaway then
@@ -332,54 +331,6 @@ return function(api)
         end
     end
 
-    -- Radio ---------------------------------------------------------------------------------------
-
-    local function radioPage(tabs)
-        while running() do
-            local width = target.getSize()
-            local listed, err = ask("MUSIC_RADIOS")
-            if not state.players then refreshPlayers() end
-            ui.clear(target)
-            ui.header(target, "Radio", "Live, and always free", util.formatClock())
-            local scene = ui.scene(target)
-            local radios = listed and listed.radios or {}
-            local player = current()
-            for index, radio in ipairs(radios) do
-                local y = 1 + index * 3
-                if y + 1 > bottom() then break end
-                local band = colorOf(radio.color)
-                local ink = ui.inkOn(band)
-                local on = player and player.mode == "radio" and player.radio
-                    and player.radio.radio_id == radio.radio_id
-                scene:button("radio:" .. radio.radio_id, 2, y, width - 2, 2, "",
-                    { background = band })
-                ui.text(target, 3, y, ui.truncate((on and "> " or "") .. radio.name, width - 9),
-                    ink, band)
-                ui.text(target, width - 5, y, tostring(radio.listeners) .. " on", ink, band)
-                ui.text(target, 3, y + 1, ui.truncate(radio.giveaway and ("GIVEAWAY! "
-                    .. radio.giveaway.number) or radio.now and radio.now.title or "Off air",
-                    width - 4), ink, band)
-            end
-            if not listed then
-                ui.wrappedText(target, 2, 6, tostring(err or "The Music Server is not running"),
-                    width - 2, 3, ui.theme.warning)
-            elseif #radios == 0 then
-                ui.center(target, 8, "No stations yet", ui.theme.muted)
-            end
-            ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
-            local action = scene:wait({ tickRate = 3 })
-            if action == "home" or action == "__terminate"
-                or (action or ""):match("^tab:") then
-                return action
-            end
-            local radioId = action and action:match("^radio:(.+)$")
-            if radioId and not player then
-                said("error", "No Music Player", "Set one up first: a computer with a speaker", 2)
-            elseif radioId and control("radio", { radio_id = radioId }) then
-                return "tab:now"
-            end
-        end
-    end
 
     -- Uploading ---------------------------------------------------------------------------------
 
@@ -622,13 +573,10 @@ return function(api)
     ui.runTabs({
         target = target,
         list = { { id = "now", label = "Now" }, { id = "library", label = "Library",
-            short = "Songs" }, { id = "radio", label = "Radio" },
-            { id = "upload", label = "Upload", short = "Up" } },
+            short = "Songs" }, { id = "upload", label = "Upload", short = "Up" } },
         color = PINK,
-        start = (wanted == "library" or wanted == "radio" or wanted == "upload") and wanted
-            or "now",
-        pages = { now = nowPage, library = libraryPage, radio = radioPage,
-            upload = uploadPage },
+        start = (wanted == "library" or wanted == "upload") and wanted or "now",
+        pages = { now = nowPage, library = libraryPage, upload = uploadPage },
         running = running,
     })
 end

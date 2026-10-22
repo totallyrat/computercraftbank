@@ -283,6 +283,20 @@ function harness.environment(computer, script, running)
                 return table.unpack(event)
             end
         end
+        -- FoxyOS 18.2: every install asks, once it has downloaded. Answered
+        -- as the person at the computer would -- Install, unless the test
+        -- set computer.answer = "cancel" -- and counted, so a test can say it
+        -- was asked.
+        local shown = lines()
+        for row, text in ipairs(shown) do
+            if text:find("CANCEL AND DELETE", 1, true) then
+                outcome.asked = (outcome.asked or 0) + 1
+                if computer.answer == "cancel" then
+                    return "mouse_click", 1, text:find("CANCEL", 1, true), row
+                end
+                return "key", harness.keys.enter
+            end
+        end
         step = step + 1
         local entry = script[step]
         if entry == nil then error("__OUT_OF_EVENTS__", 0) end

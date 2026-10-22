@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.1.0"
+local PROGRAM_VERSION = "18.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -392,6 +392,18 @@ local function audioStep()
     shared.error = nil
     shared.seq = stream.seq
     local streamAt = util.nowMs()
+    if stream.mode == "static" then
+        -- FoxyOS 18.2: between stations on the dial, or a station with
+        -- nothing on. Asked again when it runs out, or when tuned elsewhere.
+        shared.playing = { mode = "static", station = stream.station, started = streamAt }
+        parallel.waitForAny(function()
+            music.static(speakers, stream.length_ms or 5000,
+                shared.player and shared.player.volume or 2)
+        end, function()
+            repeat os.pullEvent("music_change") until moved()
+        end)
+        return
+    end
     shared.playing = { item = stream.item, mode = stream.mode, play_no = stream.play_no,
         radio = stream.radio, started = streamAt - (stream.offset_ms or 0) }
     -- A song kept here plays from here, counted all the same.
@@ -749,39 +761,133 @@ local function libraryPage(spec)
     end
 end
 
+-- FoxyOS 18.2: the Radio app, made small. The dial on top -- a slider, a
+-- tenth or a whole one at a time -- and under it the State Radios, today's
+-- Featured station and the Radio+ stations saved on this player, all on one
+-- page that scrolls when they do not fit.
+local dial = { LOW = 875, HIGH = 1080, scroll = 0 }
+
+function dial.label(frequency)
+    return string.format("%d.%d", math.floor(frequency / 10), frequency % 10)
+end
+
+function dial.saved(stationId)
+    for index, id in ipairs(state.saved_stations or {}) do
+        if id == stationId then return index end
+    end
+end
+
 local function radioPage(spec)
     while running do
         local width = target.getSize()
-        local listed = ask("MUSIC_RADIOS", {})
-        header("Radio  live, and always free")
+        local bottom = ui.contentBottom(target)
+        local player = shared.player or {}
+        local frequency = player.frequency or state.frequency or 984
+        local tuned = ask("MUSIC_TUNE", { frequency = frequency })
+        local favorites = ask("MUSIC_FAVORITES", { saved = state.saved_stations or {} })
+        header("Radio  turn the dial")
         local scene = ui.scene(target)
-        local radios = listed and listed.radios or {}
-        for index, radio in ipairs(radios) do
-            local y = 2 + index * 2
-            if y + 1 > ui.contentBottom(target) then break end
-            local band = music.color(radio.color)
-            local on = shared.player and shared.player.mode == "radio"
-                and shared.player.radio and shared.player.radio.radio_id == radio.radio_id
-            scene:button("radio:" .. radio.radio_id, 2, y, width - 2, 2, "", { background = band })
-            ui.text(target, 3, y, ui.truncate((on and "> " or "") .. radio.name .. "  "
-                .. tostring(radio.number or ""), width - 14), ui.inkOn(band), band)
-            ui.text(target, width - 10, y, radio.listeners .. " on", ui.inkOn(band), band)
-            local line = radio.giveaway and ("GIVEAWAY! Call " .. radio.giveaway.number)
-                or radio.now and (radio.now.title .. " - " .. radio.now.artist)
-                or "Off air"
-            ui.text(target, 3, y + 1, ui.truncate(line, width - 4), ui.inkOn(band), band)
+        local found = tuned and tuned.station
+        local tint = found and music.color(found.color) or ui.theme.muted
+        local rows = {}
+        rows[#rows + 1] = function(y)
+            ui.text(target, 2, y, ui.truncate(dial.label(frequency) .. "  " .. (found
+                and (found.name .. (found.plus and "  RADIO+" or "")) or "~ static ~"), width - 5),
+                found and tint or ui.theme.muted)
         end
-        if not listed then
-            ui.center(target, 8, "The Music Server is not answering", ui.theme.warning)
-        elseif #radios == 0 then
-            ui.center(target, 8, "No radios yet", ui.theme.muted)
+        rows[#rows + 1] = function(y)
+            ui.text(target, 2, y, ui.truncate(found and (found.now and (found.now.title .. " - "
+                .. (found.now.artist or "")) or (found.on_air and "Static" or "Off the air"))
+                or "Nothing on this frequency", width - 5), ui.theme.muted)
+        end
+        rows[#rows + 1] = function(y)
+            local barW = width - 5
+            local at = math.floor((frequency - dial.LOW) / (dial.HIGH - dial.LOW) * (barW - 1) + 0.5)
+            for column = 0, barW - 1 do
+                local value = dial.LOW + math.floor(column * (dial.HIGH - dial.LOW) / (barW - 1) + 0.5)
+                scene:button("dial:" .. value, 2 + column, y, 1, 1, column == at and "|" or ".",
+                    { background = column == at and tint or ui.theme.panel, flash = false })
+            end
+        end
+        rows[#rows + 1] = function(y)
+            local each = math.floor((width - 9) / 5)
+            local buttons = { { "down10", "<<" }, { "down", "<" }, { "up", ">" }, { "up10", ">>" } }
+            if found and found.plus then
+                buttons[5] = { "save", dial.saved(found.station_id) and "SAVED" or "SAVE" }
+            end
+            for index, button in ipairs(buttons) do
+                scene:button(button[1], 2 + (index - 1) * (each + 1), y, each, 1, button[2],
+                    { background = ui.theme.panel, flash = false })
+            end
+        end
+        local function station(entry, id)
+            rows[#rows + 1] = function(y)
+                local band = music.color(entry.color)
+                local line = (entry.label and (entry.label .. " ") or "") .. entry.name .. "  "
+                    .. (entry.giveaway and ("GIVEAWAY " .. entry.giveaway.number)
+                        or entry.now and entry.now.title or "Off air")
+                scene:button(id, 2, y, width - 5, 1, "", { background = band })
+                ui.text(target, 3, y, ui.truncate(line, width - 7), ui.inkOn(band), band)
+            end
+        end
+        local function heading(text)
+            rows[#rows + 1] = function(y) ui.text(target, 2, y, text, ui.theme.muted) end
+        end
+        if favorites then
+            heading("STATE RADIOS")
+            for _, radio in ipairs(favorites.radios) do station(radio, "radio:" .. radio.radio_id) end
+            if favorites.featured then
+                heading("FEATURED TODAY")
+                station(favorites.featured, "station:" .. favorites.featured.station_id)
+            end
+            heading("SAVED")
+            for _, saved in ipairs(favorites.saved) do station(saved, "station:" .. saved.station_id) end
+        else
+            heading("The Music Server is not answering")
+        end
+        local room = bottom - 3
+        dial.scroll = math.max(0, math.min(dial.scroll, #rows - room))
+        for index = 1, math.min(room, #rows - dial.scroll) do
+            rows[dial.scroll + index](2 + index)
+        end
+        if dial.scroll > 0 then
+            scene:button("scrollup", width - 2, 3, 3, 1, "^", { background = ui.theme.panel })
+        end
+        if dial.scroll + room < #rows then
+            scene:button("scrolldown", width - 2, bottom - 1, 3, 1, "v",
+                { background = ui.theme.panel })
         end
         ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
         local action = scene:wait({ tickRate = 2 })
         if action and action:match("^tab:") then return action end
         if action == "__terminate" then return "stop" end
-        local radioId = action and action:match("^radio:(.+)$")
-        if radioId and control("radio", { radio_id = radioId }) then return "tab:now" end
+        local moves = { down10 = -10, down = -1, up = 1, up10 = 10 }
+        local dialed = tonumber(action and action:match("^dial:(%d+)$"))
+        if moves[action] or dialed then
+            local value = dialed or frequency + moves[action]
+            if value < dial.LOW then value = dial.HIGH end
+            if value > dial.HIGH then value = dial.LOW end
+            state.frequency = value
+            save()
+            control("tune", { frequency = value })
+        elseif action == "save" and found then
+            state.saved_stations = state.saved_stations or {}
+            local index = dial.saved(found.station_id)
+            if index then table.remove(state.saved_stations, index)
+            elseif #state.saved_stations < 20 then
+                state.saved_stations[#state.saved_stations + 1] = found.station_id
+            end
+            save()
+        elseif action == "scrollup" then
+            dial.scroll = math.max(0, dial.scroll - 3)
+        elseif action == "scrolldown" then
+            dial.scroll = dial.scroll + 3
+        else
+            local radioId = action and action:match("^radio:(.+)$")
+            local stationId = action and action:match("^station:(.+)$")
+            if radioId and control("radio", { radio_id = radioId }) then return "tab:now" end
+            if stationId and control("station", { station_id = stationId }) then return "tab:now" end
+        end
     end
 end
 

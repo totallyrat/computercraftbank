@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.1.0"
+local PROGRAM_VERSION = "18.2.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -250,6 +250,10 @@ function store.wanted()
     for _, upload in pairs(cache.uploads) do
         for _, piece in ipairs(upload.pieces or {}) do wanted[piece.id] = true end
     end
+    -- FoxyOS 18.2: a Radio Broadcaster's Quick Upload, until it has aired.
+    for _, clip in pairs(state.clips or {}) do
+        for _, piece in ipairs(clip.pieces or {}) do wanted[piece.id] = true end
+    end
     return wanted
 end
 
@@ -330,9 +334,9 @@ function library.remove(trackId)
     end
     state.tracks[trackId] = nil
     cache.plans[trackId] = nil
-    for _, station in pairs(state.radios) do
+    for _, r in pairs(state.radios) do
         for _, kind in ipairs(music.KINDS) do
-            local list = station[kind .. "s"] or {}
+            local list = r[kind .. "s"] or {}
             for index = #list, 1, -1 do
                 if list[index] == trackId then table.remove(list, index) end
             end
@@ -616,6 +620,8 @@ function radio.public(r, now)
             closes_in_ms = math.max(0, l.giveaway.closes_at - now) } or nil,
         winner = l.winner and { name = l.winner.name, prize = l.winner.prize } or nil,
         songs = #radio.tracksOf(r, "song"), listeners = radio.listeners(r.radio_id),
+        -- FoxyOS 18.2: a Radio+ station, advertised between what plays.
+        promo = radio.promo and radio.promo(item) or nil,
     }
 end
 
@@ -817,6 +823,9 @@ function people.publicPlayer(player, now)
             out.radio = radio.public(r, now)
             out.now = out.radio.now
         end
+    elseif out.mode == "station" and people.stationOf then
+        -- FoxyOS 18.2: a frequency on the dial, and whatever is on it.
+        people.stationOf(player, out, now)
     elseif out.mode == "library" then
         local track = state.tracks[(player.queue or {})[player.index or 1] or ""]
         out.now = library.public(track)
@@ -852,6 +861,348 @@ function people.changed(player, newTrack)
     player.notice = nil
 end
 
+-- Radio Broadcasters, FoxyOS 18.2 ------------------------------------------------------------
+-- A station is a company's, on a frequency between 87.5 and 108.0, run from
+-- its Radio Broadcaster. It is on no list: a listener finds it on the dial,
+-- or hears it advertised. The broadcaster decides what plays, item by item --
+-- songs, a host's break, an ad break, a giveaway and its prize -- in a
+-- playlist that runs down as it airs, or goes round if it loops. With
+-- nothing left to play a station is static, unless its company has Radio+:
+-- then it plays on by itself, from the songs, hosts and ads it was given (or
+-- the whole library), round the clock, and stays on air while its
+-- broadcaster is off -- which, without Radio+, takes it off air in a minute.
+
+local station = { LOW = 875, HIGH = 1080, BEAT_MS = 60000, MOST = 80, ADS_EVERY = 4 }
+state.stations = state.stations or {}
+state.clips = state.clips or {}
+
+function station.label(frequency)
+    return string.format("%d.%d", math.floor(frequency / 10), frequency % 10)
+end
+
+function station.at(frequency)
+    frequency = math.floor(tonumber(frequency) or 0)
+    for _, s in pairs(state.stations) do
+        if s.frequency == frequency then return s end
+    end
+    return nil
+end
+
+function station.auth(payload)
+    local s = state.stations[tostring(payload.station_id or "")]
+    need(s and s.token == payload.station_token, "STATION_AUTH",
+        "This Radio Broadcaster is not set up")
+    s.last_beat = util.nowMs()
+    return s
+end
+
+function station.live(s)
+    local l = live["S:" .. s.station_id]
+    if not l then
+        l = { queue = {}, recent = {}, since_ad = 0 }
+        live["S:" .. s.station_id] = l
+    end
+    return l
+end
+
+function station.onAir(s, now)
+    return s.plus == true or (now or util.nowMs()) - (s.last_beat or 0) < station.BEAT_MS
+end
+
+function station.trackItem(trackId, label)
+    local track = state.tracks[trackId or ""]
+    if not track then return nil end
+    return radio.item(trackId, label)
+end
+
+function station.clipItem(clipId)
+    local clip = state.clips[clipId or ""]
+    if not clip then return nil end
+    return { clip_id = clipId, kind = "clip", title = clip.title, artist = clip.station_name,
+        length_ms = math.max(1000, music.lengthMs(clip.size)), label = "ON AIR" }
+end
+
+-- Its own random pick, for Radio+ with an empty playlist: from what it was
+-- given of a kind, or any song in the library.
+function station.pick(s, l, kind)
+    local pool = {}
+    for _, id in ipairs((s.pools or {})[kind] or {}) do
+        if state.tracks[id] and state.tracks[id].kind == kind then pool[#pool + 1] = id end
+    end
+    if #pool == 0 and kind == "song" then pool = library.list("song") end
+    if #pool == 0 then return nil end
+    local recent = {}
+    for index, id in ipairs(l.recent[kind] or {}) do
+        if index <= math.min(#pool - 1, kind == "song" and 5 or 2) then recent[id] = true end
+    end
+    local fresh = {}
+    for _, id in ipairs(pool) do if not recent[id] then fresh[#fresh + 1] = id end end
+    if #fresh == 0 then fresh = pool end
+    return fresh[math.random(1, #fresh)]
+end
+
+-- An ad break: its ads one after another, the first saying it is a break
+-- (which is when it is paid for).
+function station.adBreak(l, ids)
+    local items = {}
+    for _, id in ipairs(ids) do
+        local item = station.trackItem(id, "ADVERTISEMENT")
+        if item and item.kind == "ad" then items[#items + 1] = item end
+    end
+    if #items == 0 then return nil end
+    items[1].ad_break = true
+    for index = 2, #items do l.queue[#l.queue + 1] = items[index] end
+    return items[1]
+end
+
+function station.nextItem(s, l)
+    if #l.queue > 0 then return table.remove(l.queue, 1) end
+    for _ = 1, station.MOST do
+        local entry = table.remove(s.playlist, 1)
+        if not entry then break end
+        if s.loop and entry.type ~= "clip" and entry.type ~= "giveaway" then
+            s.playlist[#s.playlist + 1] = entry
+        end
+        local item
+        if entry.type == "song" then
+            item = station.trackItem(entry.track_id)
+        elseif entry.type == "break" then
+            item = station.trackItem(entry.track_id, "ON AIR")
+        elseif entry.type == "ads" then
+            item = station.adBreak(l, entry.track_ids or {})
+        elseif entry.type == "giveaway" then
+            item = station.trackItem(entry.track_id, "GIVEAWAY")
+            if item then item.prize = entry.prize end
+        elseif entry.type == "clip" then
+            item = station.clipItem(entry.clip_id)
+        end
+        if item then return item end
+        -- Gone from the library, or never right: passed over.
+        if s.loop then table.remove(s.playlist) end
+    end
+    if not s.plus then return nil end
+    -- Radio+: on by itself. Ads every few songs, a host now and then.
+    local last = l.item
+    if last and last.kind == "song" then
+        l.since_ad = (l.since_ad or 0) + 1
+        if l.since_ad >= station.ADS_EVERY then
+            l.since_ad = 0
+            local first = station.pick(s, l, "ad")
+            local second = first and station.pick(s, l, "ad")
+            local item = first and station.adBreak(l, second ~= first and { first, second }
+                or { first })
+            if item then return item end
+        end
+        local host = station.pick(s, l, "host")
+        if host and math.random(1, 100) <= 50 then return station.trackItem(host, "ON AIR") end
+    end
+    local song = station.pick(s, l, "song")
+    return song and station.trackItem(song) or nil
+end
+
+-- What is on now. Off air, or nothing to play: static, looked at again in a
+-- few seconds.
+function station.now(s, now)
+    now = now or util.nowMs()
+    local l = station.live(s)
+    if not station.onAir(s, now) then
+        l.item = nil
+        return { kind = "static", length_ms = 5000, started_at = now, off_air = true }, l
+    end
+    if l.item and now - (l.item.started_at + l.item.length_ms) > 60000 then l.item = nil end
+    for _ = 1, 50 do
+        if l.item and l.item.started_at + l.item.length_ms > now then break end
+        if l.item and l.item.clip_id then station.dropClip(l.item.clip_id) end
+        local startAt = l.item and l.item.kind ~= "static"
+            and (l.item.started_at + l.item.length_ms) or now
+        local item = station.nextItem(s, l)
+        if not item then
+            l.item = { kind = "static", length_ms = 5000, started_at = now }
+            break
+        end
+        item.started_at = startAt
+        l.item = item
+        local key = item.kind
+        l.recent[key] = l.recent[key] or {}
+        table.insert(l.recent[key], 1, item.track_id or item.clip_id)
+        while #l.recent[key] > 8 do table.remove(l.recent[key]) end
+        if item.ad_break then l.wants_ad_break = item.started_at end
+        if item.kind == "giveaway" and item.prize then l.wants_giveaway = item.prize end
+        s.aired = (s.aired or 0) + 1
+    end
+    return l.item, l
+end
+
+-- A Quick Upload is played once, then gone.
+function station.dropClip(clipId)
+    local clip = state.clips[clipId]
+    if not clip then return end
+    state.clips[clipId] = nil
+    store.forget(clip.pieces)
+    save()
+end
+
+function station.plan(item)
+    if item.clip_id then
+        local clip = state.clips[item.clip_id]
+        need(clip, "NOT_FOUND", "That clip has aired")
+        return store.plan("get", clip.pieces, 7 * 60 * 1000 + item.length_ms)
+    end
+    return library.plan(item.track_id)
+end
+
+function station.listeners(s, since)
+    local list, now = {}, util.nowMs()
+    for _, player in pairs(state.players) do
+        if player.mode == "station" and player.frequency == s.frequency and not player.paused
+            and now - (player.last_seen or 0) < 15000
+            and (not since or (player.tuned_at or 0) <= since) then
+            list[#list + 1] = player.account_id
+        end
+    end
+    return list
+end
+
+-- One Radio+ station a day, shown in everybody's Favorites.
+function station.featured(now)
+    local ids = {}
+    for id, s in pairs(state.stations) do
+        if s.plus and station.onAir(s, now) then ids[#ids + 1] = id end
+    end
+    if #ids == 0 then return nil end
+    table.sort(ids, library.order)
+    return state.stations[ids[util.ingameDay() % #ids + 1]]
+end
+
+function station.public(s, now)
+    now = now or util.nowMs()
+    local item, l = station.now(s, now)
+    local static = item.kind == "static"
+    return { station_id = s.station_id, name = s.name, color = s.color,
+        frequency = s.frequency, label = station.label(s.frequency),
+        company_name = s.company_name, plus = s.plus == true, on_air = not item.off_air,
+        static = static, now = not static and radio.publicItem(item, now) or nil,
+        number = s.number, listeners = #station.listeners(s),
+        giveaway = l.giveaway and { number = l.giveaway.number,
+            closes_in_ms = math.max(0, l.giveaway.closes_at - now) } or nil,
+        winner = l.winner and { name = l.winner.name, prize = l.winner.prize } or nil,
+        featured = station.featured(now) == s or nil }
+end
+
+-- What its Radio Broadcaster sees: all of that, and the playlist.
+function station.view(s, now)
+    local view = station.public(s, now)
+    local list = {}
+    for index, entry in ipairs(s.playlist) do
+        local title
+        if entry.type == "ads" then
+            title = #(entry.track_ids or {}) .. " ads"
+        elseif entry.type == "clip" then
+            title = state.clips[entry.clip_id or ""] and state.clips[entry.clip_id].title
+                or "Uploaded clip"
+        else
+            local track = state.tracks[entry.track_id or ""]
+            title = track and (track.title .. (entry.type == "song" and (" - " .. track.artist)
+                or "")) or "(gone)"
+        end
+        list[index] = { entry_id = entry.entry_id, type = entry.type, title = title,
+            prize = entry.prize }
+    end
+    view.playlist, view.loop = list, s.loop == true
+    view.pools = util.copy(s.pools or {})
+    view.last_ad = s.last_ad
+    view.company_id = s.company_id
+    view.beat_ms = station.BEAT_MS
+    return view
+end
+
+-- Every couple of seconds: Radio+ asked of the Bank once a minute, ad breaks
+-- paid, giveaways opened and drawn.
+function station.tick()
+    local now = util.nowMs()
+    if now >= (station.plus_at or 0) and next(state.stations) then
+        station.plus_at = now + 60000
+        local ids = {}
+        for _, s in pairs(state.stations) do ids[#ids + 1] = s.company_id end
+        local answer = bankAsk("MUSIC_RADIO_PLUS", { company_ids = ids })
+        if answer then
+            for _, s in pairs(state.stations) do
+                local known = answer.companies[s.company_id]
+                s.plus = known and known.radio_plus or false
+                if known and known.active == false then s.plus = false end
+            end
+        end
+    end
+    for _, s in pairs(state.stations) do
+        if not s.number and state.server_token and now >= (s.number_at or 0) then
+            s.number_at = now + 60000
+            local answer = bankAsk("MUSIC_RADIO_NUMBER", { radio_id = s.station_id, name = s.name })
+            if answer then s.number = answer.number end
+        end
+        local _, l = station.now(s, now)
+        if l.wants_ad_break then
+            local since = l.wants_ad_break
+            l.wants_ad_break = nil
+            local paid = bankAsk("MUSIC_AD_BREAK", { company_id = s.company_id,
+                radio_id = s.station_id, name = s.name, listeners = station.listeners(s, since) })
+            if paid then
+                s.last_ad = { paid = paid.paid, listeners = paid.listeners,
+                    too_soon = paid.too_soon, time = util.formatClock() }
+            end
+        end
+        if l.wants_giveaway then
+            local prize = l.wants_giveaway
+            l.wants_giveaway = nil
+            local opened, err = bankAsk("MUSIC_GIVEAWAY_OPEN", { radio_id = s.station_id,
+                company_id = s.company_id, prize = prize,
+                seconds = tonumber(config.giveaway_seconds) or 180 })
+            if opened then
+                l.giveaway = { giveaway_id = opened.giveaway_id, number = opened.number,
+                    closes_at = now + (opened.closes_in_ms or 0) }
+            else
+                s.last_giveaway_error = tostring(err)
+                logActivity("No giveaway on " .. s.name .. ": " .. tostring(err), colors.red)
+            end
+        end
+        if l.giveaway and now >= l.giveaway.closes_at + 1000 then
+            local result = bankAsk("MUSIC_GIVEAWAY_STATE", { giveaway_id = l.giveaway.giveaway_id })
+            if result and result.status ~= "open" then
+                l.winner = { name = result.winner_name, prize = result.prize,
+                    until_ms = now + 3 * 60 * 1000 }
+                l.giveaway = nil
+            elseif not result and now > l.giveaway.closes_at + 60000 then
+                l.giveaway = nil
+            end
+        end
+        if l.winner and l.winner.until_ms <= now then l.winner = nil end
+    end
+end
+
+-- A State Radio's promo: a Radio+ station, a different one each item.
+function radio.promo(item)
+    local ids = {}
+    for id, s in pairs(state.stations) do
+        if s.plus then ids[#ids + 1] = id end
+    end
+    if #ids == 0 then return nil end
+    table.sort(ids, library.order)
+    local s = state.stations[ids[math.floor((item and item.started_at or 0) / 1000) % #ids + 1]]
+    return { name = s.name, frequency = s.frequency, label = station.label(s.frequency),
+        color = s.color }
+end
+
+function people.stationOf(player, out, now)
+    out.frequency = player.frequency
+    out.frequency_label = station.label(player.frequency or station.LOW)
+    local s = station.at(player.frequency)
+    if s then
+        out.station = station.public(s, now)
+        out.now = out.station.now
+        -- Shown the same way as a State Radio's.
+        out.radio = out.station
+    end
+end
+
 -- Actions ----------------------------------------------------------------------------------
 
 local actions = {}
@@ -884,6 +1235,264 @@ function actions.MUSIC_RADIOS()
     for _, r in pairs(state.radios) do list[#list + 1] = radio.public(r, now) end
     table.sort(list, function(a, b) return a.name:lower() < b.name:lower() end)
     return { radios = list }
+end
+
+-- FoxyOS 18.2: the dial. Whatever is on a frequency, or nothing -- which is
+-- all a listener learns about the frequencies around it.
+function actions.MUSIC_TUNE(payload)
+    local frequency = math.floor(tonumber(payload.frequency) or 0)
+    need(frequency >= station.LOW and frequency <= station.HIGH, "BAD_FREQUENCY",
+        "The dial goes from 87.5 to 108.0")
+    local s = station.at(frequency)
+    return { frequency = frequency, label = station.label(frequency),
+        station = s and station.public(s) or nil, low = station.LOW, high = station.HIGH }
+end
+
+-- The Radio app's Favorites: the State Radios, today's Featured station, and
+-- the Radio+ stations a listener saved (by id: a station can move).
+function actions.MUSIC_FAVORITES(payload)
+    local now, radios, saved = util.nowMs(), {}, {}
+    for _, r in pairs(state.radios) do radios[#radios + 1] = radio.public(r, now) end
+    table.sort(radios, function(a, b) return a.name:lower() < b.name:lower() end)
+    for index, id in ipairs(type(payload.saved) == "table" and payload.saved or {}) do
+        if index > 40 then break end
+        local s = state.stations[tostring(id)]
+        if s then saved[#saved + 1] = station.public(s, now) end
+    end
+    local featured = station.featured(now)
+    return { radios = radios, featured = featured and station.public(featured, now) or nil,
+        saved = saved, low = station.LOW, high = station.HIGH }
+end
+
+-- The Radio Broadcaster ------------------------------------------------------------------------
+
+function actions.STATION_COMPANIES(payload)
+    local answer, err, code = bankAsk("MUSIC_COMPANY", { session_token = payload.session_token })
+    need(answer, code or "BANK_OFFLINE", err or "The Bank did not answer")
+    return answer
+end
+
+function actions.STATION_REGISTER(payload)
+    local owner, err, code = bankAsk("MUSIC_COMPANY", { session_token = payload.session_token })
+    need(owner, code or "BANK_OFFLINE", err or "The Bank did not answer")
+    local company
+    for _, entry in ipairs(owner.companies or {}) do
+        if entry.company_id == payload.company_id then company = entry end
+    end
+    need(company, "NOT_YOURS", "Choose a company you own")
+    for _, other in pairs(state.stations) do
+        need(other.company_id ~= company.company_id, "HAS_STATION", company.name
+            .. " already broadcasts on " .. station.label(other.frequency))
+    end
+    local frequency = math.floor(tonumber(payload.frequency) or 0)
+    need(frequency >= station.LOW and frequency <= station.HIGH, "BAD_FREQUENCY",
+        "Choose between 87.5 and 108.0")
+    need(not station.at(frequency), "FREQUENCY_TAKEN", station.label(frequency)
+        .. " is taken: keep turning the dial")
+    state.seq.station = (state.seq.station or 0) + 1
+    local id = "B" .. state.seq.station
+    local s = { station_id = id, token = util.token("RB"), company_id = company.company_id,
+        company_name = company.name, owner_account_id = owner.account_id,
+        name = library.clean(payload.name, 20, company.name),
+        color = music.COLORS[1], frequency = frequency, playlist = {}, loop = false,
+        pools = { song = {}, host = {}, ad = {} }, plus = company.radio_plus == true,
+        created_day = util.ingameDay(), last_beat = util.nowMs(), entry_seq = 0 }
+    for _, name in ipairs(music.COLORS) do
+        if name == payload.color then s.color = name end
+    end
+    state.stations[id] = s
+    save()
+    logActivity("New station " .. s.name .. " on " .. station.label(frequency), colors.lime)
+    return { station_id = id, station_token = s.token, station = station.view(s) }
+end
+
+-- Asked every few seconds by the broadcaster, which is also what keeps a
+-- station without Radio+ on the air.
+function actions.STATION_VIEW(payload)
+    local s = station.auth(payload)
+    return { station = station.view(s) }
+end
+
+function station.entry(s, fields)
+    need(#s.playlist < station.MOST, "PLAYLIST_FULL", "That is " .. station.MOST
+        .. " things queued already")
+    s.entry_seq = (s.entry_seq or 0) + 1
+    fields.entry_id = "E" .. s.entry_seq
+    return fields
+end
+
+function station.kindOf(id, kind)
+    local track = state.tracks[tostring(id or "")]
+    need(track and track.kind == kind, "NOT_FOUND", "That is not a " .. kind
+        .. " in the Music Library")
+    return track.track_id
+end
+
+-- Everything the broadcaster changes. `op` says what.
+function actions.STATION_EDIT(payload)
+    local s = station.auth(payload)
+    local op = tostring(payload.op or "")
+    local l = station.live(s)
+    if op == "add" then
+        local kind, entry = tostring(payload.type or ""), nil
+        if kind == "song" or kind == "break" then
+            entry = { type = kind, track_id = station.kindOf(payload.track_id,
+                kind == "song" and "song" or "host") }
+        elseif kind == "ads" then
+            local ids = {}
+            for index, id in ipairs(type(payload.track_ids) == "table" and payload.track_ids or {}) do
+                if index > 4 then break end
+                ids[#ids + 1] = station.kindOf(id, "ad")
+            end
+            need(#ids > 0, "NO_ADS", "Choose at least one ad")
+            entry = { type = "ads", track_ids = ids }
+        elseif kind == "giveaway" then
+            local prize = math.floor(tonumber(payload.prize) or 0)
+            need(prize >= 1, "BAD_PRIZE", "Say what the prize is")
+            entry = { type = "giveaway", track_id = station.kindOf(payload.track_id, "giveaway"),
+                prize = prize }
+        else
+            reject("BAD_TYPE", "Add a song, a break, an ad break or a giveaway")
+        end
+        local at = tonumber(payload.at)
+        entry = station.entry(s, entry)
+        if at and at >= 1 and at <= #s.playlist then
+            table.insert(s.playlist, math.floor(at), entry)
+        else
+            s.playlist[#s.playlist + 1] = entry
+        end
+    elseif op == "remove" or op == "up" or op == "down" or op == "next" then
+        local at
+        for index, entry in ipairs(s.playlist) do
+            if entry.entry_id == payload.entry_id then at = index end
+        end
+        need(at, "NOT_FOUND", "That is not in the playlist any more")
+        local entry = table.remove(s.playlist, at)
+        if op == "remove" then
+            if entry.type == "clip" then station.dropClip(entry.clip_id) end
+        elseif op == "next" then
+            table.insert(s.playlist, 1, entry)
+        else
+            table.insert(s.playlist, math.max(1, math.min(#s.playlist + 1,
+                at + (op == "up" and -1 or 1))), entry)
+        end
+    elseif op == "clear" then
+        for _, entry in ipairs(s.playlist) do
+            if entry.type == "clip" then station.dropClip(entry.clip_id) end
+        end
+        s.playlist = {}
+    elseif op == "skip" then
+        -- Whatever is on now ends now; the next thing starts for everybody.
+        if l.item and l.item.kind ~= "static" then
+            l.item.length_ms = math.max(0, util.nowMs() - l.item.started_at)
+        end
+        l.queue = {}
+    elseif op == "loop" then
+        s.loop = payload.on == true
+    elseif op == "pool" then
+        -- Radio+'s own picks when the playlist runs out.
+        local kind = tostring(payload.kind or "")
+        need(kind == "song" or kind == "host" or kind == "ad", "BAD_TYPE", "Songs, hosts or ads")
+        local id = station.kindOf(payload.track_id, kind)
+        local pool, found = s.pools[kind], nil
+        for index, entry in ipairs(pool) do if entry == id then found = index end end
+        if found then table.remove(pool, found)
+        else
+            need(#pool < 200, "POOL_FULL", "That is plenty")
+            pool[#pool + 1] = id
+        end
+    elseif op == "rename" then
+        s.name = library.clean(payload.name, 20, s.name)
+        if s.number then bankAsk("MUSIC_RADIO_NUMBER", { radio_id = s.station_id, name = s.name }) end
+    elseif op == "color" then
+        for _, name in ipairs(music.COLORS) do
+            if name == payload.color then s.color = name end
+        end
+    elseif op == "frequency" then
+        local frequency = math.floor(tonumber(payload.frequency) or 0)
+        need(frequency >= station.LOW and frequency <= station.HIGH, "BAD_FREQUENCY",
+            "Choose between 87.5 and 108.0")
+        local holder = station.at(frequency)
+        need(not holder or holder == s, "FREQUENCY_TAKEN", station.label(frequency) .. " is taken")
+        s.frequency = frequency
+    else
+        reject("BAD_OP", "A Radio Broadcaster does not do that")
+    end
+    -- Something to play where there was nothing: it starts now, not after
+    -- the static runs out.
+    if l.item and l.item.kind == "static" and #s.playlist > 0 then l.item = nil end
+    save()
+    return { station = station.view(s) }
+end
+
+-- Songs, hosts, ads and giveaway clips to choose from.
+function actions.STATION_LIBRARY(payload)
+    station.auth(payload)
+    local kind = tostring(payload.kind or "song")
+    local list = {}
+    for _, id in ipairs(library.list(kind, payload.query)) do
+        list[#list + 1] = library.public(state.tracks[id])
+    end
+    local items, page, pages = util.page(list, tonumber(payload.page) or 1,
+        math.max(1, math.min(50, math.floor(tonumber(payload.per_page) or 20))))
+    return { tracks = items, page = page, pages = pages, total = #list }
+end
+
+-- Quick Upload, Radio+ only: a file dropped on the broadcaster goes onto the
+-- Cloud Servers and into the playlist, plays once, and is gone. Never in
+-- the library, so it can be a song, an ad or a host saying hello.
+function actions.STATION_UPLOAD_BEGIN(payload)
+    local s = station.auth(payload)
+    need(s.plus, "NEEDS_RADIO_PLUS", "Quick Upload comes with Radio+")
+    local size = math.floor(tonumber(payload.size) or 0)
+    local most = tonumber(config.music_max_bytes) or 12 * 1024 * 1024
+    need(size > 0, "BAD_SIZE", "That file is empty")
+    need(size <= most, "TOO_BIG", "A file is at most " .. util.sizeText(most))
+    state.seq.clip = (state.seq.clip or 0) + 1
+    local clipId = "Q" .. state.seq.clip
+    local pieces = store.place(clipId, 1, size)
+    local plan = store.plan("put", pieces, 60 * 1000 + #pieces * 3000)
+    local id = nextId("upload", "U")
+    cache.uploads[id] = { upload_id = id, station_id = s.station_id, clip_id = clipId,
+        pieces = pieces, ticket = plan.ticket, size = size,
+        title = library.clean(payload.title, 40, "Clip " .. clipId),
+        expires_at = util.nowMs() + plan.expires_in_ms }
+    return { upload_id = id, plan = plan }
+end
+
+function actions.STATION_UPLOAD_DONE(payload)
+    local s = station.auth(payload)
+    local upload = cache.uploads[tostring(payload.upload_id or "")]
+    need(upload and upload.station_id == s.station_id, "NOT_UPLOADING",
+        "That upload is over. Drop it again")
+    cache.uploads[upload.upload_id] = nil
+    store.tickets[upload.ticket] = nil
+    state.clips[upload.clip_id] = { clip_id = upload.clip_id, pieces = upload.pieces,
+        size = upload.size, title = upload.title, station_id = s.station_id,
+        station_name = s.name, added_at = util.nowMs() }
+    local ok, err = pcall(function()
+        s.playlist[#s.playlist + 1] = station.entry(s, { type = "clip", clip_id = upload.clip_id })
+    end)
+    if not ok then
+        station.dropClip(upload.clip_id)
+        error(err, 0)
+    end
+    local l = station.live(s)
+    if l.item and l.item.kind == "static" then l.item = nil end
+    save()
+    return { station = station.view(s) }
+end
+
+function actions.STATION_UNLINK(payload)
+    local s = station.auth(payload)
+    for _, entry in ipairs(s.playlist) do
+        if entry.type == "clip" then station.dropClip(entry.clip_id) end
+    end
+    state.stations[s.station_id] = nil
+    live["S:" .. s.station_id] = nil
+    save()
+    logActivity(s.name .. " went off the air for good", colors.orange)
+    return { unlinked = true }
 end
 
 -- What somebody may play and upload today.
@@ -986,7 +1595,21 @@ end
 function actions.MUSIC_CONTROL(payload)
     local player = people.ownPlayer(payload)
     local command = tostring(payload.command or "")
-    if command == "radio" then
+    if command == "tune" or command == "station" then
+        -- FoxyOS 18.2: a frequency on the dial, a station or static. A saved
+        -- station is tuned by its id, wherever it has moved to.
+        local frequency = math.floor(tonumber(payload.frequency) or 0)
+        if command == "station" then
+            local found = state.stations[tostring(payload.station_id or "")]
+            need(found, "NOT_FOUND", "That station is off the air for good")
+            frequency = found.frequency
+        end
+        need(frequency >= station.LOW and frequency <= station.HIGH, "BAD_FREQUENCY",
+            "The dial goes from 87.5 to 108.0")
+        player.mode, player.frequency, player.paused = "station", frequency, false
+        player.tuned_at = util.nowMs()
+        people.changed(player, true)
+    elseif command == "radio" then
         local r = state.radios[tostring(payload.radio_id or "")]
         need(r, "NOT_FOUND", "There is no such radio")
         player.mode, player.radio_id, player.paused = "radio", r.radio_id, false
@@ -1078,6 +1701,20 @@ function actions.MUSIC_STREAM(payload)
         trackId = (player.queue or {})[player.index or 1]
     end
     status.streams = status.streams + 1
+    if mode == "station" then
+        -- FoxyOS 18.2: what is on this frequency -- or static, for as long as
+        -- nothing is, asked again when it ends.
+        local s = station.at(player.frequency)
+        local item = s and station.now(s, now)
+        if not item or item.kind == "static" then
+            return { mode = "static", seq = player.seq, length_ms = item and item.length_ms
+                or 8000, offset_ms = 0, station = s and station.public(s, now) or nil }
+        end
+        local public = station.public(s, now)
+        return { mode = "radio", seq = player.seq, item = radio.publicItem(item, now),
+            offset_ms = math.max(0, now - item.started_at), plan = station.plan(item),
+            radio = public, station = public }
+    end
     if mode == "radio" then
         local r = state.radios[tostring(radioId or "")]
         need(r, "NOT_FOUND", "That radio is gone")
@@ -1786,6 +2423,8 @@ local background = { beat_at = 0, cloud_at = 0, migrate_at = 0 }
 function background.step()
     local now = util.nowMs()
     if state.server_token then pcall(radio.tick) end
+    -- FoxyOS 18.2: the Radio Broadcasters' stations.
+    if state.server_token then pcall(station.tick) end
     for id, upload in pairs(cache.uploads) do
         if upload.expires_at + 30000 <= now then
             cache.uploads[id] = nil
@@ -1915,7 +2554,7 @@ end
 if rawget(_G, "PUMPE_TEST_MODE") == "music_server" then
     admin.libraryPage, admin.radiosPage = libraryPage, radiosPage
     return { actions = actions, state = state, live = live, cache = cache,
-        library = library, radio = radio, people = people, admin = admin,
+        library = library, radio = radio, people = people, admin = admin, station = station,
         store = store, background = background, status = status,
         register = register, route = route, stop = function() running = false end }
 end

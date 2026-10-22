@@ -164,12 +164,18 @@ local function link(who, company, code)
     return bank.request("CCG_CASINO_LINK", asServer({ session_token = who.token,
         company_id = company.company_id, code = code }))
 end
-local function ledger(company) return bank.state.companies[company.company_id].casino end
+-- FoxyOS 18.2: the casino's balance is its company's Company Money; the
+-- rest is the casino's own record.
+local function ledger(company)
+    local held = bank.state.companies[company.company_id]
+    return setmetatable({ balance = held.money and held.money.balance or 0 },
+        { __index = held.casino })
+end
 local function everything()
     local total = world()
     for _, account in pairs(bank.state.accounts) do total = total + (account.balance or 0) end
     for _, company in pairs(bank.state.companies) do
-        total = total + (company.casino and company.casino.balance or 0)
+        total = total + (company.money and company.money.balance or 0)
     end
     return total
 end

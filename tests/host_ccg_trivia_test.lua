@@ -195,7 +195,7 @@ local stranger = register("Not Olive", "2222")
 local function conserved()
     local total = worldMoney() + (bank.state.ccg_house_profit or 0)
     for _, company in pairs(bank.state.companies) do
-        total = total + (company.casino and company.casino.balance or 0)
+        total = total + (company.money and company.money.balance or 0)
     end
     for _, runs in pairs(bank.state.trivia_runs or {}) do
         for _, run in pairs(runs) do total = total + run.stake end
@@ -245,7 +245,7 @@ local function nextQuestion()
     untilPhase("result")
     untilPhase("betting")
 end
-local function company() return bank.state.companies.COM9.casino or { balance = 0 } end
+local function company() return bank.state.companies.COM9.money or { balance = 0 } end
 
 -- No HTTP at all to start with: the built-in questions.
 http = nil

@@ -214,8 +214,9 @@ assert(player.shared.player.mode == "idle", "nothing queued after it")
 local live = server.radio.live(r)
 live.giveaway = { giveaway_id = "G", number = r.number, closes_at = util.nowMs() + 90000 }
 runScreen(function(state) return "tab:radio" end, function(state)
-    assert(state.display.has("Foxy FM") and state.display.has(r.number), state.display.dump())
-    assert(state.display.has("GIVEAWAY! Call " .. r.number))
+    -- FoxyOS 18.2: the dial on top, the State Radios under it.
+    assert(state.display.has("98.4") and state.display.has("STATE RADIOS"), state.display.dump())
+    assert(state.display.has("Foxy FM  GIVEAWAY " .. r.number), state.display.dump())
     return "radio:" .. r.radio_id
 end, function(state)
     assert(state.display.has("GIVEAWAY! Call " .. r.number .. " now"), state.display.dump())
@@ -235,6 +236,27 @@ screen.push(steps, { tick = true })
 as(PLAYER_ID, player.audioStep)
 assert(box.samples > before, "the radio plays")
 assert(server.state.usage[kit.id].plays == 1, "radios are free")
+
+-- FoxyOS 18.2: the dial. Between stations, static out of the speaker --
+-- made here, quiet, nothing fetched.
+runScreen(function(state) return "tab:radio" end, function(state)
+    return "up"
+end, function(state)
+    assert(state.display.has("98.5  ~ static ~"), state.display.dump())
+    stop()
+end)
+assert(server.state.players[player.shared.player.player_id].frequency == 985)
+as(PLAYER_ID, player.tickOnce)
+before = box.samples
+local loudest = 0
+local realPlay = box.playAudio
+box.playAudio = function(samples, volume)
+    for _, sample in ipairs(samples) do loudest = math.max(loudest, math.abs(sample)) end
+    return realPlay(samples, volume)
+end
+as(PLAYER_ID, player.audioStep)
+box.playAudio = realPlay
+assert(box.samples > before and loudest <= 24, "static, quietly: " .. loudest)
 
 -- Signing out from the Upload tab.
 runScreen(function() return "tab:upload" end, function(state)
