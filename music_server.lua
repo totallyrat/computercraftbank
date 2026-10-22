@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.2.0"
+local PROGRAM_VERSION = "18.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -268,6 +268,9 @@ function library.public(track)
         kind = track.kind, length_ms = music.lengthMs(track.size), size = track.size,
         uploader_name = track.uploader_name, added_day = track.added_day,
         plays = track.plays or 0,
+        -- FoxyOS 18.3: its cover, the artists it credits, and radio plays.
+        cover = track.cover, artists = library.credits and library.credits(track) or nil,
+        radio_plays = track.radio_plays or 0,
     }
 end
 
@@ -309,12 +312,15 @@ function library.add(fields)
         track_id = id, file_id = fields.file_id, size = fields.size,
         pieces = fields.pieces, version = fields.pieces and 1 or nil,
         title = library.clean(fields.title, 28, "Untitled"),
-        artist = library.clean(fields.artist, 20, "Unknown"),
+        artist = library.clean(fields.artist, 40, "Unknown"),
+        cover = util.validCover(fields.cover) and fields.cover or nil,
         kind = music.KIND_NAMES[fields.kind or ""] and fields.kind or "song",
         uploader_id = fields.uploader_id,
         uploader_name = library.clean(fields.uploader_name, 20, "Music Server"),
         added_day = util.ingameDay(), plays = 0,
     }
+    -- FoxyOS 18.3: every artist it credits has a profile from now on.
+    if library.credit then state.tracks[id].artist_ids = library.credit(state.tracks[id].artist) end
     save()
     logActivity("Added " .. state.tracks[id].title .. " by "
         .. state.tracks[id].uploader_name, colors.lime)
@@ -433,6 +439,200 @@ function library.migrate()
     bankAsk("CLOUD_MUSIC_DELETE", { file_id = old })
     logActivity("Moved " .. track.title .. " to the Music Server's own pieces", colors.cyan)
     return true
+end
+
+-- Artists, playlists, favorites, FoxyOS 18.3 ------------------------------------------
+-- An Artist Profile is somebody's own (made in Music for Artists) or made by
+-- an upload that credits a name nobody has yet -- "Ana & Kit" makes two.
+-- Either way it gathers every song that credits it, how many people heard
+-- it today, and the radios that play it. A name nobody owns can be taken as
+-- your own profile; one somebody owns cannot.
+--
+-- A playlist is anybody's: a name, a cover, up to a hundred songs, public
+-- unless its owner says not. Favorites and what you played last are kept
+-- here per listener, for the Music app's Library rows.
+
+local catalog = { MOST_LIST = 100, RECENT = 20, ROW = 12 }
+state.artists = state.artists or {}
+state.artist_names = state.artist_names or {}
+state.artist_days = state.artist_days or {}
+state.playlists = state.playlists or {}
+state.favorites = state.favorites or {}
+state.history = state.history or {}
+
+-- "Ana & Kit, Noa feat. Pia" is four artists.
+function catalog.split(text)
+    local names, seen = {}, {}
+    local spaced = " " .. tostring(text or "") .. " "
+    for _, joiner in ipairs({ " feat%. ", " ft%. ", " featuring ", " & ", " x ", " X " }) do
+        spaced = spaced:gsub(joiner, ",")
+    end
+    for part in spaced:gmatch("[^,]+") do
+        local name = util.safeText(util.trim(part), 20)
+        local key = util.normalName(name)
+        if #name >= 1 and key ~= "" and not seen[key] then
+            seen[key] = true
+            names[#names + 1] = name
+        end
+    end
+    return names
+end
+
+function catalog.named(name)
+    local id = state.artist_names[util.normalName(name)]
+    return id and state.artists[id] or nil
+end
+
+function catalog.create(name, ownerId, ownerName)
+    state.seq.artist = (state.seq.artist or 0) + 1
+    local id = "A" .. state.seq.artist
+    state.artists[id] = { artist_id = id, name = util.safeText(util.trim(name), 20),
+        bio = "", owner_account_id = ownerId, owner_name = ownerName,
+        created_day = util.ingameDay() }
+    state.artist_names[util.normalName(name)] = id
+    return state.artists[id]
+end
+
+-- The profiles a credit names, made where there are none.
+function library.credit(text)
+    local ids = {}
+    for _, name in ipairs(catalog.split(text)) do
+        local artist = catalog.named(name) or catalog.create(name)
+        ids[#ids + 1] = artist.artist_id
+    end
+    return ids
+end
+
+function library.credits(track)
+    if not track.artist_ids then track.artist_ids = library.credit(track.artist) end
+    local list = {}
+    for _, id in ipairs(track.artist_ids) do
+        local artist = state.artists[id]
+        if artist then list[#list + 1] = { artist_id = id, name = artist.name } end
+    end
+    return list
+end
+
+function catalog.tracksOf(artistId)
+    local ids = {}
+    for id, track in pairs(state.tracks) do
+        if track.kind == "song" then
+            if not track.artist_ids then track.artist_ids = library.credit(track.artist) end
+            for _, credited in ipairs(track.artist_ids) do
+                if credited == artistId then ids[#ids + 1] = id end
+            end
+        end
+    end
+    table.sort(ids, function(a, b) return library.order(b, a) end)
+    return ids
+end
+
+-- Today's listeners: everybody who heard one of its songs today, from the
+-- library or on a radio, each counted once.
+function catalog.heard(track, accountIds)
+    if not track or track.kind ~= "song" then return end
+    if not track.artist_ids then track.artist_ids = library.credit(track.artist) end
+    local today = util.ingameDay()
+    for _, artistId in ipairs(track.artist_ids) do
+        local day = state.artist_days[artistId]
+        if not day or day.day ~= today then
+            day = { day = today, accounts = {}, count = 0 }
+            state.artist_days[artistId] = day
+        end
+        for _, accountId in ipairs(accountIds) do
+            if accountId and not day.accounts[accountId] then
+                day.accounts[accountId] = true
+                day.count = day.count + 1
+            end
+        end
+    end
+end
+
+function catalog.listenersToday(artistId)
+    local day = state.artist_days[artistId]
+    return day and day.day == util.ingameDay() and day.count or 0
+end
+
+-- A song from the library, started: what its listener played last, and
+-- who heard its artists.
+function catalog.played(accountId, track)
+    local list = state.history[accountId] or {}
+    for index = #list, 1, -1 do
+        if list[index] == track.track_id then table.remove(list, index) end
+    end
+    table.insert(list, 1, track.track_id)
+    while #list > catalog.RECENT do table.remove(list) end
+    state.history[accountId] = list
+    catalog.heard(track, { accountId })
+end
+
+-- A song starting on a radio: a radio play, and everybody tuned in heard it.
+function catalog.onRadio(trackId, accountIds)
+    local track = state.tracks[trackId or ""]
+    if not track or track.kind ~= "song" then return end
+    track.radio_plays = (track.radio_plays or 0) + 1
+    catalog.heard(track, accountIds)
+end
+
+-- The radios that play an artist: State Radios with one of its songs in
+-- rotation, and Radio Broadcasters with one queued or in their Radio+ picks.
+-- A broadcaster's frequency is only told when it has Radio+: the rest are
+-- for finding.
+function catalog.radiosFor(artistId)
+    local mine = {}
+    for _, id in ipairs(catalog.tracksOf(artistId)) do mine[id] = true end
+    local list = {}
+    for _, r in pairs(state.radios) do
+        for _, id in ipairs(r.songs or {}) do
+            if mine[id] then
+                list[#list + 1] = { name = r.name, kind = "state", radio_id = r.radio_id }
+                break
+            end
+        end
+    end
+    for _, s in pairs(state.stations or {}) do
+        local found = false
+        for _, id in ipairs((s.pools or {}).song or {}) do if mine[id] then found = true end end
+        for _, entry in ipairs(s.playlist or {}) do
+            if entry.track_id and mine[entry.track_id] then found = true end
+        end
+        if found then
+            list[#list + 1] = { name = s.name, kind = "station", station_id = s.station_id,
+                frequency = s.plus and s.frequency or nil }
+        end
+    end
+    table.sort(list, function(a, b) return a.name:lower() < b.name:lower() end)
+    return list
+end
+
+function catalog.artistPublic(artist, full)
+    local songs = catalog.tracksOf(artist.artist_id)
+    local out = { artist_id = artist.artist_id, name = artist.name, bio = artist.bio,
+        cover = artist.cover, claimed = artist.owner_account_id ~= nil,
+        listeners_today = catalog.listenersToday(artist.artist_id), songs_count = #songs }
+    if full then
+        local plays, list = 0, {}
+        for _, id in ipairs(songs) do
+            plays = plays + (state.tracks[id].plays or 0) + (state.tracks[id].radio_plays or 0)
+            list[#list + 1] = library.public(state.tracks[id])
+        end
+        out.songs, out.plays, out.radios = list, plays, catalog.radiosFor(artist.artist_id)
+    end
+    return out
+end
+
+function catalog.playlistPublic(list, full)
+    local out = { playlist_id = list.playlist_id, name = list.name, cover = list.cover,
+        owner_name = list.owner_name, public = list.public ~= false,
+        songs_count = #list.tracks, plays = list.plays or 0 }
+    if full then
+        local tracks = {}
+        for _, id in ipairs(list.tracks) do
+            if state.tracks[id] then tracks[#tracks + 1] = library.public(state.tracks[id]) end
+        end
+        out.tracks = tracks
+    end
+    return out
 end
 
 -- Radios -----------------------------------------------------------------------------
@@ -582,6 +782,8 @@ function radio.now(r, now)
         end
         item.started_at = startAt
         l.item = item
+        -- FoxyOS 18.3: a radio play, heard by everybody tuned in.
+        if item.kind == "song" then catalog.onRadio(item.track_id, radio.accounts(r.radio_id)) end
         l.recent[item.kind] = l.recent[item.kind] or {}
         table.insert(l.recent[item.kind], 1, item.track_id)
         while #l.recent[item.kind] > 8 do table.remove(l.recent[item.kind]) end
@@ -593,10 +795,22 @@ end
 
 function radio.publicItem(item, now)
     if not item then return nil end
+    local track = state.tracks[item.track_id or ""]
     return { track_id = item.track_id, kind = item.kind, title = item.title,
         artist = item.artist, uploader_name = item.uploader, length_ms = item.length_ms,
         position_ms = math.max(0, math.min(item.length_ms, now - item.started_at)),
-        label = item.label }
+        label = item.label, cover = track and track.cover or nil }
+end
+
+function radio.accounts(radioId)
+    local list, now = {}, util.nowMs()
+    for _, player in pairs(state.players) do
+        if player.mode == "radio" and player.radio_id == radioId and not player.paused
+            and now - (player.last_seen or 0) < 15000 then
+            list[#list + 1] = player.account_id
+        end
+    end
+    return list
 end
 
 function radio.listeners(radioId)
@@ -615,6 +829,7 @@ function radio.public(r, now)
     local item, l = radio.now(r, now)
     return {
         radio_id = r.radio_id, name = r.name, color = r.color, number = r.number,
+        cover = r.cover,
         now = radio.publicItem(item, now), special = l.special and l.special.name or nil,
         giveaway = l.giveaway and { number = l.giveaway.number,
             closes_in_ms = math.max(0, l.giveaway.closes_at - now) } or nil,
@@ -1027,6 +1242,7 @@ function station.now(s, now)
         table.insert(l.recent[key], 1, item.track_id or item.clip_id)
         while #l.recent[key] > 8 do table.remove(l.recent[key]) end
         if item.ad_break then l.wants_ad_break = item.started_at end
+        if item.kind == "song" then catalog.onRadio(item.track_id, station.listeners(s)) end
         if item.kind == "giveaway" and item.prize then l.wants_giveaway = item.prize end
         s.aired = (s.aired or 0) + 1
     end
@@ -1078,7 +1294,7 @@ function station.public(s, now)
     now = now or util.nowMs()
     local item, l = station.now(s, now)
     local static = item.kind == "static"
-    return { station_id = s.station_id, name = s.name, color = s.color,
+    return { station_id = s.station_id, name = s.name, color = s.color, cover = s.cover,
         frequency = s.frequency, label = station.label(s.frequency),
         company_name = s.company_name, plus = s.plus == true, on_air = not item.off_air,
         static = static, now = not static and radio.publicItem(item, now) or nil,
@@ -1408,6 +1624,11 @@ function actions.STATION_EDIT(payload)
         for _, name in ipairs(music.COLORS) do
             if name == payload.color then s.color = name end
         end
+    elseif op == "cover" then
+        -- FoxyOS 18.3: the station's own cover.
+        need(payload.cover == nil or util.validCover(payload.cover), "BAD_COVER",
+            "That is not a cover")
+        s.cover = payload.cover
     elseif op == "frequency" then
         local frequency = math.floor(tonumber(payload.frequency) or 0)
         need(frequency >= station.LOW and frequency <= station.HIGH, "BAD_FREQUENCY",
@@ -1639,6 +1860,9 @@ function actions.MUSIC_CONTROL(payload)
             end
             player.mode, player.queue, player.index, player.paused = "library", queue, at, false
             people.changed(player, true)
+            -- FoxyOS 18.3: a playlist played.
+            local list = state.playlists[tostring(payload.playlist_id or "")]
+            if list then list.plays = (list.plays or 0) + 1 end
         end
     elseif command == "pause" or command == "resume" then
         need(player.mode ~= "idle", "IDLE", "Nothing is playing")
@@ -1739,6 +1963,7 @@ function actions.MUSIC_STREAM(payload)
         end
         player.counted = player.play_no
         track.plays = (track.plays or 0) + 1
+        catalog.played(player.account_id, track)
         save()
     end
     return { mode = "library", seq = player and player.seq, play_no = player and player.play_no,
@@ -1807,6 +2032,7 @@ function actions.MUSIC_UPLOAD_BEGIN(payload)
     cache.uploads[id] = { upload_id = id, account_id = who.account_id, name = who.name,
         track_id = trackId, pieces = pieces, ticket = plan.ticket, size = size,
         title = payload.title, artist = payload.artist,
+        cover = util.validCover(payload.cover) and payload.cover or nil,
         expires_at = util.nowMs() + plan.expires_in_ms }
     return { upload_id = id, plan = plan }
 end
@@ -1821,7 +2047,253 @@ function actions.MUSIC_UPLOAD_DONE(payload)
     people.spend(upload.account_id, "uploads", true)
     local track = library.add({ track_id = upload.track_id, pieces = upload.pieces,
         size = upload.size, title = upload.title, artist = upload.artist, kind = "song",
-        uploader_id = upload.account_id, uploader_name = upload.name })
+        uploader_id = upload.account_id, uploader_name = upload.name, cover = upload.cover })
+    return { track = library.public(track) }
+end
+
+-- The Music app's Library, FoxyOS 18.3 ---------------------------------------------------------
+-- In rows: New Music, Popular, Your Favorites, Radio Hits, Recently Played and
+-- Playlists -- the public ones, and yours.
+
+function catalog.songs(sorter, limit, filter)
+    local list = {}
+    for id, track in pairs(state.tracks) do
+        if track.kind == "song" and (not filter or filter(track)) then list[#list + 1] = id end
+    end
+    table.sort(list, sorter)
+    local out = {}
+    for index = 1, math.min(limit or catalog.ROW, #list) do
+        out[index] = library.public(state.tracks[list[index]])
+    end
+    return out
+end
+
+function catalog.listOf(ids)
+    local out = {}
+    for _, id in ipairs(ids or {}) do
+        if state.tracks[id] and #out < catalog.ROW * 2 then out[#out + 1] = library.public(state.tracks[id]) end
+    end
+    return out
+end
+
+function actions.MUSIC_HOME(payload)
+    local who = people.session(payload)
+    local tracks = state.tracks
+    local function newer(a, b) return library.order(b, a) end
+    local lists = {}
+    for _, list in pairs(state.playlists) do
+        if list.public ~= false or list.owner_account_id == who.account_id then
+            lists[#lists + 1] = list
+        end
+    end
+    table.sort(lists, function(a, b)
+        local mineA, mineB = a.owner_account_id == who.account_id, b.owner_account_id == who.account_id
+        if mineA ~= mineB then return mineA end
+        return library.order(b.playlist_id, a.playlist_id)
+    end)
+    local playlists = {}
+    for index = 1, math.min(#lists, catalog.ROW * 2) do
+        playlists[index] = catalog.playlistPublic(lists[index])
+    end
+    return { rows = {
+        { id = "new", title = "New Music", tracks = catalog.songs(newer) },
+        { id = "popular", title = "Popular", tracks = catalog.songs(function(a, b)
+            if (tracks[a].plays or 0) ~= (tracks[b].plays or 0) then
+                return (tracks[a].plays or 0) > (tracks[b].plays or 0)
+            end
+            return newer(a, b)
+        end) },
+        { id = "favorites", title = "Your Favorites",
+            tracks = catalog.listOf(state.favorites[who.account_id]) },
+        { id = "radio", title = "Radio Hits", tracks = catalog.songs(function(a, b)
+            return (tracks[a].radio_plays or 0) > (tracks[b].radio_plays or 0)
+        end, catalog.ROW, function(track) return (track.radio_plays or 0) > 0 end) },
+        { id = "recent", title = "Recently Played",
+            tracks = catalog.listOf(state.history[who.account_id]) },
+        { id = "playlists", title = "Playlists", playlists = playlists },
+    }, favorites = util.copy(state.favorites[who.account_id] or {}) }
+end
+
+-- A heart on Now Playing: in Your Favorites, or out again.
+function actions.MUSIC_FAVORITE(payload)
+    local who = people.session(payload)
+    local id = tostring(payload.track_id or "")
+    need(state.tracks[id] and state.tracks[id].kind == "song", "NOT_FOUND", "That song is gone")
+    local list = state.favorites[who.account_id] or {}
+    local at
+    for index, trackId in ipairs(list) do if trackId == id then at = index end end
+    local on = payload.on
+    if on == nil then on = not at end
+    if at and not on then table.remove(list, at) end
+    if on and not at then
+        table.insert(list, 1, id)
+        while #list > 200 do table.remove(list) end
+    end
+    state.favorites[who.account_id] = list
+    save()
+    return { favorite = on == true, favorites = util.copy(list) }
+end
+
+-- Playlists ----------------------------------------------------------------------------------------
+
+function actions.MUSIC_PLAYLIST(payload)
+    local who = people.session(payload)
+    local list = state.playlists[tostring(payload.playlist_id or "")]
+    need(list and (list.public ~= false or list.owner_account_id == who.account_id),
+        "NOT_FOUND", "That playlist is gone")
+    local out = catalog.playlistPublic(list, true)
+    out.mine = list.owner_account_id == who.account_id
+    return { playlist = out }
+end
+
+-- Made, or changed by whoever made it: its name, cover, songs, and whether
+-- everybody sees it (they do, unless it says otherwise).
+function actions.MUSIC_PLAYLIST_SAVE(payload)
+    local who = people.session(payload)
+    local list
+    if payload.playlist_id ~= nil then
+        list = state.playlists[tostring(payload.playlist_id)]
+        need(list and list.owner_account_id == who.account_id, "NOT_YOURS",
+            "That playlist is not yours")
+    else
+        local count = 0
+        for _, other in pairs(state.playlists) do
+            if other.owner_account_id == who.account_id then count = count + 1 end
+        end
+        need(count < 20, "TOO_MANY", "That is twenty playlists: delete one first")
+        state.seq.playlist = (state.seq.playlist or 0) + 1
+        list = { playlist_id = "L" .. state.seq.playlist, owner_account_id = who.account_id,
+            owner_name = who.name, tracks = {}, public = true, plays = 0,
+            created_day = util.ingameDay() }
+    end
+    if payload.name ~= nil then list.name = library.clean(payload.name, 24, "My playlist") end
+    list.name = list.name or "My playlist"
+    if payload.cover ~= nil then
+        need(util.validCover(payload.cover), "BAD_COVER", "That is not a cover")
+        list.cover = payload.cover
+    end
+    if type(payload.tracks) == "table" then
+        local tracks = {}
+        for _, id in ipairs(payload.tracks) do
+            id = tostring(id)
+            if state.tracks[id] and state.tracks[id].kind == "song" and #tracks < catalog.MOST_LIST then
+                tracks[#tracks + 1] = id
+            end
+        end
+        list.tracks = tracks
+    end
+    if payload.public ~= nil then list.public = payload.public == true end
+    state.playlists[list.playlist_id] = list
+    save()
+    local out = catalog.playlistPublic(list, true)
+    out.mine = true
+    return { playlist = out }
+end
+
+function actions.MUSIC_PLAYLIST_DELETE(payload)
+    local who = people.session(payload)
+    local list = state.playlists[tostring(payload.playlist_id or "")]
+    need(list and list.owner_account_id == who.account_id, "NOT_YOURS", "That playlist is not yours")
+    state.playlists[list.playlist_id] = nil
+    save()
+    return { deleted = true }
+end
+
+-- Artists -------------------------------------------------------------------------------------------
+
+function actions.MUSIC_ARTISTS(payload)
+    local wanted = util.normalName(payload.query or "")
+    local list = {}
+    for _, artist in pairs(state.artists) do
+        if wanted == "" or util.normalName(artist.name):find(wanted, 1, true) then
+            list[#list + 1] = catalog.artistPublic(artist)
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.listeners_today ~= b.listeners_today then return a.listeners_today > b.listeners_today end
+        return a.name:lower() < b.name:lower()
+    end)
+    local items, page, pages = util.page(list, tonumber(payload.page) or 1,
+        math.max(1, math.min(40, math.floor(tonumber(payload.per_page) or 20))))
+    return { artists = items, page = page, pages = pages, total = #list }
+end
+
+function actions.MUSIC_ARTIST(payload)
+    local artist = state.artists[tostring(payload.artist_id or "")]
+        or (payload.name and catalog.named(payload.name))
+    need(artist, "NOT_FOUND", "There is no such artist")
+    return { artist = catalog.artistPublic(artist, true) }
+end
+
+-- Your own profile, and the songs you have uploaded.
+function actions.MUSIC_MY_ARTIST(payload)
+    local who = people.session(payload)
+    local mine
+    for _, artist in pairs(state.artists) do
+        if artist.owner_account_id == who.account_id then mine = artist end
+    end
+    local uploads = {}
+    for id, track in pairs(state.tracks) do
+        if track.uploader_id == who.account_id then uploads[#uploads + 1] = id end
+    end
+    table.sort(uploads, function(a, b) return library.order(b, a) end)
+    local list = {}
+    for _, id in ipairs(uploads) do list[#list + 1] = library.public(state.tracks[id]) end
+    return { artist = mine and catalog.artistPublic(mine, true) or nil, uploads = list }
+end
+
+-- Making your profile, or changing it. A name a profile already has can be
+-- taken only while nobody owns it -- an upload credited it, say.
+function actions.MUSIC_ARTIST_SAVE(payload)
+    local who = people.session(payload)
+    local mine
+    for _, artist in pairs(state.artists) do
+        if artist.owner_account_id == who.account_id then mine = artist end
+    end
+    local name = util.safeText(util.trim(tostring(payload.name or (mine and mine.name) or "")), 20)
+    need(#name >= 2 and not name:find(",", 1, true), "INVALID_NAME", "Give your artist name: 2-20 letters")
+    local named = catalog.named(name)
+    need(not named or named == mine or not named.owner_account_id, "NAME_TAKEN",
+        name .. " is somebody else's profile")
+    if named and named ~= mine then
+        -- An unclaimed profile, with its songs: yours now.
+        need(not mine, "HAS_PROFILE", "You have a profile already: "
+            .. (mine and mine.name or ""))
+        named.owner_account_id, named.owner_name = who.account_id, who.name
+        mine = named
+    elseif not mine then
+        mine = catalog.create(name, who.account_id, who.name)
+    elseif util.normalName(name) ~= util.normalName(mine.name) then
+        state.artist_names[util.normalName(mine.name)] = nil
+        state.artist_names[util.normalName(name)] = mine.artist_id
+    end
+    mine.name = name
+    if payload.bio ~= nil then mine.bio = util.safeText(util.trim(tostring(payload.bio)), 120) end
+    if payload.cover ~= nil then
+        need(util.validCover(payload.cover), "BAD_COVER", "That is not a cover")
+        mine.cover = payload.cover
+    end
+    save()
+    return { artist = catalog.artistPublic(mine, true) }
+end
+
+-- A song's cover or title, changed by whoever uploaded it or an artist it
+-- credits.
+function actions.MUSIC_TRACK_EDIT(payload)
+    local who = people.session(payload)
+    local track = state.tracks[tostring(payload.track_id or "")]
+    need(track, "NOT_FOUND", "That song is gone")
+    local allowed = track.uploader_id == who.account_id
+    for _, id in ipairs(track.artist_ids or {}) do
+        if state.artists[id] and state.artists[id].owner_account_id == who.account_id then allowed = true end
+    end
+    need(allowed, "NOT_YOURS", "Only its uploader or its artist can change it")
+    if payload.cover ~= nil then
+        need(util.validCover(payload.cover), "BAD_COVER", "That is not a cover")
+        track.cover = payload.cover
+    end
+    if payload.title ~= nil then track.title = library.clean(payload.title, 28, track.title) end
+    save()
     return { track = library.public(track) }
 end
 
@@ -2251,6 +2723,8 @@ function admin.editRadio(radioId)
             { { "giveaway", "GIVEAWAY NOW", colors.yellow },
                 { "nonstop", "NON-STOP NOW", ui.theme.accent }, { "skip", "SKIP", ui.theme.panel } },
             { { "rename", "RENAME", ui.theme.panel }, { "color", "COLOUR", music.color(r.color) },
+                -- FoxyOS 18.3: its cover, on every Now Playing tuned to it.
+                { "cover", r.cover and "COVER" or "+ COVER", ui.theme.panel },
                 { "delete", "DELETE", ui.theme.danger }, { "back", "BACK", ui.theme.panel } },
         }
         for row, buttons in ipairs(rows) do
@@ -2300,6 +2774,12 @@ function admin.editRadio(radioId)
         elseif action == "color" then
             r.color = admin.pickColor(r.color)
             save()
+        elseif action == "cover" then
+            local cover = ui.iconCreator(target, r.cover, r.name, "cover")
+            if cover then
+                r.cover = cover
+                save()
+            end
         elseif action == "delete" then
             if ui.confirm(target, "DELETE RADIO", "Delete " .. r.name
                 .. "? Its tracks stay in the library.", "DELETE", "KEEP") then

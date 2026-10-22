@@ -1,5 +1,50 @@
 # Changelog
 
+## 18.3.0
+
+FoxyOS 18.3: Music for Artists, covers, playlists and a new Library. Update
+the Bank (Core and Vault) first, then the Music Server, then the App Server
+(it lists the new app), then Pockets, Music Players and Radio Broadcasters.
+Every one of them asks first: press Install on each.
+
+**Music for Artists.** A new app by Foxy, on every Pocket. Uploading left
+the Music app for it: a song from the Pocket, dropped on its screen or from
+FoxyCloud, with its title, everybody it credits ("Ana, Kit & Noa", "feat."
+and "x" work too) and a cover drawn there and then. **You** is your Artist
+Profile: a name, a line about you and a cover, and what it adds up to: your
+songs, today's listeners, plays, and the radios and stations that play you.
+**Artists** is every profile, busiest first, searchable, each in full.
+
+**Every credit is a profile.** Upload a song by somebody else and each
+artist it credits gets an Artist Profile, nobody's yet. Whoever makes a
+profile with that name first takes it, songs and all; a profile somebody
+owns cannot be taken. Daily listeners are the accounts that heard one of
+their songs that in-game day, on a Music Player or on a radio. A Radio+
+station's frequency shows on the profiles it plays; other stations show by
+name only, since they are meant to be found on the dial.
+
+**Covers.** Songs, playlists, State Radios and stations have covers: 16 by
+12 pixels, drawn like an app icon but bigger, in the Cover Creator. A song's
+uploader, or an artist it credits, can change it from Your uploads. State
+Radio covers are drawn on the Music Server's radio screen (**COVER**); a
+station's on its broadcaster's Station page.
+
+**A new Now Playing.** The cover on the left (the song's, or else the
+radio's), the title, artist and the rest on the right, and a heart that
+puts the song in Your Favorites. The Music Player's own screen shows the
+cover too.
+
+**Playlists.** Music → Library → **+**: name it, draw its cover, tick its
+songs (up to 100). Playlists are public unless you make them private, and
+show on the Playlists row. Yours can be renamed, given a new cover, refilled or
+deleted; anybody can play a public one. Up to 20 each.
+
+**The Library, in rows.** New Music, Popular, Your Favorites, Radio Hits
+(songs radios played), Recently Played and Playlists, each a row of covers
+with its own < > arrows, two across on a Pocket. ^ v or the scroll wheel
+move the page. **Search** still lists every song, sorted. FoxyMusic+ has a
+**Plus** tab of its own.
+
 ## 18.2.0
 
 FoxyOS 18.2: the Radio Broadcaster, Radio+, the Radio app and Company Money.

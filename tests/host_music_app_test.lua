@@ -1,14 +1,15 @@
--- The Music app, FoxyOS 17, on a 26x20 Pocket: the real app with the real
--- api.music (net.musicApi) and api.cloud, against a real Bank Core and Vault,
+-- The Music app, FoxyOS 17 and 18.3, on a 26x20 Pocket: the real app with
+-- the real api.music (net.musicApi), against a real Bank Core and Vault,
 -- five real Cloud Servers and a Music Server. Every draw is bounds-checked
 -- and every tap lands only on something that is on the screen.
 --
 -- Ana has no Music Player yet: the app says how to get one, and still lets
--- her browse the library and upload a song dropped on her Pocket. Then a
--- Music Player is hers: it is tuned to a radio in the middle of a giveaway,
--- Now Playing shows the number, and she calls in from there. Last, a song
--- kept in her FoxyCloud goes into the library, and she joins FoxyMusic+ from
--- the Upload tab and cancels it again.
+-- her turn the Library's rows and search every song. Then a Music Player is
+-- hers: it is tuned to a radio in the middle of a giveaway, Now Playing shows
+-- the number, and she calls in from there. She makes a playlist -- a name, a
+-- cover, its songs -- plays it, and hearts the song on Now Playing, which
+-- shows its cover. Last, FoxyMusic+ from its own tab, and cancelled again.
+-- (Uploading is in Music for Artists now: host_artists_app_test.)
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 sleep = function() end
@@ -59,38 +60,52 @@ end
 
 -- 1. No player yet ------------------------------------------------------------------------------
 
-local song = string.rep("s", 7000)
+local function cover(digit)
+    local rows = {}
+    for index = 1, 12 do rows[index] = string.rep(digit, 16) end
+    return table.concat(rows, "/")
+end
+-- Enough songs for the New Music row to need its arrows.
+local extra = {}
+for index = 1, 3 do
+    extra[index] = as(MUSIC_ID, server.library.import, { title = "Song " .. index,
+        artist = "Kit", kind = "song", uploader_name = "Foxy Records" }, string.rep("x", 3000))
+end
+server.state.tracks[trot.track_id].cover = cover("e")
+
 local script = phone.script()
 phone.push(script.actions, function(seen)
     assert(phone.has(phone.last(seen), "No Music Player yet"), "it says how to get one")
     return "tab:library"
 end, function(seen)
     local frame = phone.last(seen)
-    assert(phone.has(frame, "1 songs") and phone.has(frame, "Fox Trot - Ana"),
-        "the library, songs only")
-    assert(not phone.has(frame, "Win"), "never a giveaway clip")
-    return "play:" .. trot.track_id
+    assert(phone.has(frame, "NEW MUSIC") and phone.has(frame, "POPULAR"), "rows, like a shop's")
+    assert(phone.has(frame, "Song 3") and phone.has(frame, "Song 2")
+        and not phone.has(frame, "Song 1"), "two across, newest first")
+    return "right:new"
+end, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Song 1") and phone.has(frame, "Fox Trot"), "turned along")
+    return "pagedown"
+end, "__scrolldown", "__scrolldown", "__scrolldown", function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "PLAYLISTS") and phone.has(frame, "Make one with +"),
+        "down to the last row, with the wheel too\n" .. table.concat(frame, "\n"))
+    return "__scrollup"
+end, "pageup", "pageup", "pageup", function(seen)
+    assert(phone.has(phone.last(seen), "NEW MUSIC"))
+    return "song:new:3"
 end, function(seen)
     assert(phone.said(seen, "No Music Player"), "nothing to play it on")
-    return "tab:upload"
+    return "search"
 end, function(seen)
-    assert(phone.has(phone.last(seen), "Today: 0 of 2 uploads"))
-    return { drop = { { name = "My_Tune.dfpwm", body = song } } }
-end, function(seen)
-    assert(phone.said(seen, "In the Music Library"), "uploaded")
-    return "home"
-end)
-phone.push(script.inputs, function(seen)
-    assert(seen.inputs[#seen.inputs].initial == "My Tune", "titled from the file's name")
-    return "My Tune"
-end, "Ana Fox")
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "4 songs") and phone.has(frame, "Fox Trot - Ana"),
+        "every song, songs only")
+    assert(not phone.has(frame, "Win"), "never a giveaway clip")
+    return "back"
+end, "home")
 run(script)
-local mine
-for _, track in pairs(server.state.tracks) do
-    if track.title == "My Tune" then mine = track end
-end
-assert(mine and mine.uploader_name == "Ana Fox" and mine.size == 7000,
-    "in the library, credited to Ana")
 
 -- 2. A Music Player, a radio and a giveaway ---------------------------------------------------------
 
@@ -110,7 +125,7 @@ phone.push(script.actions, function(seen)
     local frame = phone.last(seen)
     assert(phone.has(frame, "Ana's Den"), "her player")
     assert(phone.has(frame, "Nothing playing"))
-    assert(phone.has(frame, "the Radio app"), "FoxyOS 18.2: stations are in the Radio app")
+    assert(phone.has(frame, "Pick a song in Library"))
     -- Tuned from the Radio app (host_radio_app_test), while this is open.
     assert(as(PLAYER_ID, net.ask, MUSIC_ID, config.music_protocol, "MUSIC_CONTROL",
         { player_token = hello.player_token, command = "radio", radio_id = r.radio_id }, 3))
@@ -131,44 +146,54 @@ run(script)
 assert(bank.balanceOf(ana) == balance - 50, "a call is fifty")
 assert(server.state.players.P1.mode == "radio" and server.state.players.P1.volume == 2.5)
 
--- 3. From FoxyCloud -------------------------------------------------------------------------------
+-- 3. A playlist, and a heart -------------------------------------------------------------------
 
-local cloudSong = string.rep("c", 5000)
-local saved = as(world.pocket, net.cloud.save, function(action, payload)
-    payload.app_id, payload.session_token = "CLOUD", ana.token
-    return bank.request(action, payload)
-end, { name = "Cloud Song.dfpwm" }, cloudSong, config.cloud_protocol)
-assert(saved and saved.file.kind == "audio", "a .dfpwm file in FoxyCloud is a song")
 script = phone.script()
-phone.push(script.actions, "tab:upload", "cloud", function(seen)
-    assert(phone.has(phone.last(seen), "Cloud Song.dfpwm"))
-    return "pick:1"
+phone.push(script.actions, "tab:library", "new", function(seen)
+    assert(phone.has(phone.last(seen), "Fox Trot - Ana"), "every song, to tick")
+    return "pick:" .. trot.track_id
+end, "pick:" .. extra[1].track_id, "pick:" .. extra[2].track_id, "pick:" .. extra[2].track_id,
+function(seen)
+    assert(phone.has(phone.last(seen), "2 songs"), "ticked, and one unticked")
+    return "done"
 end, function(seen)
-    assert(phone.said(seen, "In the Music Library"))
-    return "home"
-end)
-phone.push(script.inputs, "Cloud Song", "Ana Fox")
+    local frame = phone.last(seen)
+    assert(phone.said(seen, "Night Drive") and phone.has(frame, "2 songs")
+        and phone.has(frame, "0 plays") and phone.has(frame, "Public"), "made, public\n" .. table.concat(frame, "\n"))
+    return "play"
+end, function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Fox Trot") and phone.has(frame, "cover"),
+        "Now Playing, with its cover\n" .. table.concat(frame, "\n"))
+    return "heart"
+end, function(seen)
+    assert(phone.said(seen, "In Your Favorites") and phone.has(phone.last(seen), "<3 Yes"))
+    -- The Music Player starts it: Recently Played.
+    assert(as(PLAYER_ID, net.ask, MUSIC_ID, config.music_protocol, "MUSIC_STREAM",
+        { player_token = hello.player_token }, 3))
+    return "tab:library"
+end, "pagedown", "pagedown", "pagedown", "pagedown", function(seen)
+    local frame = phone.last(seen)
+    assert(phone.has(frame, "Night Dr") and phone.has(frame, "Fox Trot"),
+        "on the Playlists row, and Recently Played\n" .. table.concat(frame, "\n"))
+    return "list:L1"
+end, "edit", "public", function(seen)
+    assert(phone.has(phone.last(seen), "Private"), "hers to hide")
+    return "back"
+end, "home")
+phone.push(script.inputs, "Night Drive")
+phone.push(script.covers, cover("a"))
 run(script)
-local fromCloud
-for _, track in pairs(server.state.tracks) do
-    if track.title == "Cloud Song" then fromCloud = track end
-end
-assert(fromCloud and fromCloud.size == 5000)
--- Two uploads: the free day's worth.
-local _, _, limit = as(world.pocket, net.ask, MUSIC_ID, config.music_protocol,
-    "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Three", size = 10 }, 3)
-assert(limit == "UPLOAD_LIMIT")
+local list = server.state.playlists.L1
+assert(list and list.plays == 1 and list.cover == cover("a") and #list.tracks == 2
+    and list.tracks[1] == trot.track_id and list.public == false, "as she made it")
+assert(server.state.favorites[ana.id][1] == trot.track_id, "in her favorites")
 
 -- 4. FoxyMusic+, FoxyOS 18 ------------------------------------------------------------------------
--- Joined from the Upload tab, with her PIN: no more limits.
+-- 18.3: its own tab, joined with her PIN: no more limits.
 
 script = phone.script()
-phone.push(script.actions, "tab:upload", function(seen)
-    local frame = phone.last(seen)
-    assert(phone.has(frame, "Today: 2 of 2 uploads") and phone.has(frame, "FoxyMusic+: no limits"),
-        "the way past the limit, under it")
-    return "plus"
-end, function(seen)
+phone.push(script.actions, "tab:plus", function(seen)
     local frame = phone.last(seen)
     assert(phone.has(frame, "every 5 days") and phone.has(frame, "Offline Listening")
         and phone.has(frame, "Join for"), "what it costs and gives")
@@ -177,11 +202,6 @@ end, function(seen)
 end, function(seen)
     assert(phone.said(seen, "FoxyMusic+"))
     assert(phone.has(phone.last(seen), "Next charge day"), "hers now")
-    return "back"
-end, function(seen)
-    local frame = phone.last(seen)
-    assert(phone.has(frame, "Upload all you like") and phone.has(frame, "FoxyMusic+: yours"),
-        "the Music Server heard at once")
     return "home"
 end)
 phone.push(script.confirms, true)
@@ -189,9 +209,9 @@ phone.push(script.pins, "1234")
 balance = bank.balanceOf(ana)
 run(script)
 assert(bank.balanceOf(ana) == balance - 100, "a hundred")
-assert(as(world.pocket, net.ask, MUSIC_ID, config.music_protocol,
-    "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Three", size = 10 }, 3),
-    "a third upload today")
+local me = as(world.pocket, net.ask, MUSIC_ID, config.music_protocol, "MUSIC_ME",
+    { session_token = ana.token }, 3)
+assert(me and me.uploads_limit == nil, "the Music Server heard at once: no limit")
 
 -- Cancelled from the app's FoxyMusic+ action: it stays until the day paid for.
 script = phone.script()
@@ -199,9 +219,6 @@ phone.push(script.actions, "cancel", function(seen)
     local frame = phone.last(seen)
     assert(phone.has(frame, "Cancelled. Ends day") and phone.has(frame, "Keep FoxyMusic+"),
         "\n" .. table.concat(frame, "\n"))
-    return "back"
-end, function(seen)
-    assert(phone.has(phone.last(seen), "Upload a song"), "then the app, on Upload")
     return "home"
 end)
 phone.push(script.confirms, true)

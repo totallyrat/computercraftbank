@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.2.0"
+local PROGRAM_VERSION = "18.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -91,6 +91,8 @@ RELEASE.depot_files = {
 
 "radio_broadcaster.lua",
 "radio.lua",
+
+"artists.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -152,6 +154,8 @@ RELEASE.optional = {
 
 "radio_broadcaster.lua",
 "radio.lua",
+
+"artists.lua",
 }
 
 RELEASE.programs = {
@@ -7911,10 +7915,10 @@ KIOSK_MAIL_DELETE = { auth = "terminal" },
 
 
 
-CLOUD_FILES = { auth = "session", cloud = true, from = { "CLOUD", "MUSIC" } },
+CLOUD_FILES = { auth = "session", cloud = true, from = { "CLOUD", "MUSIC", "ARTISTS" } },
 CLOUD_PUT = { auth = "session", cloud = true, from = "CLOUD" },
 CLOUD_PUT_DONE = { auth = "session", cloud = true, from = "CLOUD" },
-CLOUD_GET = { auth = "session", from = { "CLOUD", "MUSIC" } },
+CLOUD_GET = { auth = "session", from = { "CLOUD", "MUSIC", "ARTISTS" } },
 CLOUD_RENAME = { auth = "session", from = "CLOUD" },
 CLOUD_DELETE = { auth = "session", cloud = true, from = "CLOUD" },
 CLOUD_SHARE = { auth = "session", from = "CLOUD" },

@@ -7,6 +7,32 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 18.3 (18.3.0)
+
+Update the Bank (Core and Vault) first, then the Music Server, then the App Server, then Pockets, Music Players and Radio Broadcasters. Nothing in 18.3 was tried in a world before release: every line below is a first run.
+
+### Music for Artists
+
+- [ ] After updating, the Pocket offers **Music for Artists** (by Foxy) the way it offered Radio. Music has no Upload tab any more.
+- [ ] **You → Create your profile**: name, a line, then the Cover Creator (16x12, fits a Pocket screen). The profile shows the cover with today, songs and plays beside it; **Your profile in full** scrolls with ^ v and the wheel; Edit and Cover work.
+- [ ] **Upload**: drop a `.dfpwm`, title it, credit "You & Friend", draw a cover. Then **Artists** has Friend, *From credits*. Friend makes a profile with that exact name: it is theirs, with the song. A third person trying the same name: *is somebody else's profile*.
+- [ ] Upload from FoxyCloud without a cover, then **Your uploads, covers** → give it one.
+- [ ] Free account: *Today: 2 of 2 uploads* after two, and a third is refused.
+
+### Music
+
+- [ ] **Library**: six rows with covers, two across; < > turn a row; ^ v and the scroll wheel move the page. Tapping a song plays it on your Music Player and goes to Now.
+- [ ] **Now**: cover on the left, title and artist on the right; <3 turns into *<3 Yes* and the song is on Your Favorites. On a State Radio with a cover and a song without one, the radio's cover shows.
+- [ ] **+**: name, cover, tick songs, Done: it opens, *Public*, and **> Play** plays it from the top. A friend sees it on their Playlists row; **Edit → Make it private** hides it from them.
+- [ ] Play a song a few times and listen to a radio: **Recently Played**, **Popular** and **Radio Hits** fill in; the artist's profile counts you in *today*.
+- [ ] **Plus** tab: FoxyMusic+ joins and cancels as before.
+
+### Covers elsewhere
+
+- [ ] Music Server → Radios → a radio → **+ COVER**: draw one; Pockets tuned to it show it on Now.
+- [ ] Radio Broadcaster → Station → **COVER**: the station's cover, on its listeners' Now.
+- [ ] The Music Player's own Now Playing has the cover on the left.
+
 ## FoxyOS 18.2 (18.2.0)
 
 Update the Bank (Core and Vault) first, then the Music Server, then Music Players, CCG Casinos and Pockets. Every one of them asks before installing now: press **Install** on each. Nothing in 18.2 was tried in a world before release: every line below is a first run.

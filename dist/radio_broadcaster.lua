@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.2.0"
+local PROGRAM_VERSION = "18.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -563,6 +563,7 @@ function pages.station(scene)
         { "Phone", view.number or "Not yet" },
         { "Radio+", view.plus and "Yes: on round the clock, Quick Upload, saveable"
             or "No: on while this is, static when the playlist ends" },
+        { "Cover", view.cover and "Yes: beside every Now Playing" or "None yet" },
         { "Version", PROGRAM_VERSION },
     }
     for index, line in ipairs(lines) do
@@ -570,9 +571,12 @@ function pages.station(scene)
         ui.text(target, 13, 3 + index, ui.truncate(tostring(line[2]), width - 14), ui.theme.ink)
     end
     local third = math.floor((width - 4) / 3)
-    scene:button("rename", 2, 11, third, 1, "RENAME", { background = ui.theme.panel })
-    scene:button("color", 3 + third, 11, third, 1, "COLOUR", { background = ui.theme.panel })
-    scene:button("frequency", 4 + third * 2, 11, width - 3 - third * 2, 1, "FREQUENCY",
+    -- FoxyOS 18.3: and its cover.
+    local quarter = math.floor((width - 5) / 4)
+    scene:button("rename", 2, 11, quarter, 1, "RENAME", { background = ui.theme.panel })
+    scene:button("color", 3 + quarter, 11, quarter, 1, "COLOUR", { background = ui.theme.panel })
+    scene:button("cover", 4 + quarter * 2, 11, quarter, 1, "COVER", { background = ui.theme.panel })
+    scene:button("frequency", 5 + quarter * 3, 11, width - 4 - quarter * 3, 1, "FREQUENCY",
         { background = ui.theme.panel })
     scene:button("plus", 2, 13, width - 2, 2, view.plus and "RADIO+: MANAGE"
         or ("GET RADIO+  " .. util.money(tonumber(config.radio_plus_price) or 100, config.currency)
@@ -685,6 +689,9 @@ function act.press(action)
     elseif action == "color" then
         local color = setup.pickColor(view.color)
         if color and shared.edit("color", { color = color }) then device.color = color save() end
+    elseif action == "cover" then
+        local cover = ui.iconCreator(target, view.cover, view.name, "cover")
+        if cover then shared.edit("cover", { cover = cover }) end
     elseif action == "frequency" then
         local frequency = setup.pickFrequency(view.frequency, view.station_id)
         if frequency then shared.edit("frequency", { frequency = frequency }) end

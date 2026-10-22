@@ -29,7 +29,8 @@ end
 function phone.script()
     -- `more` is what the More page is answered with (12.0): a tap on More
     -- takes the next entry, "tab:<id>" or an extra's id.
-    return { actions = {}, inputs = {}, pins = {}, confirms = {}, more = {} }
+    -- `covers` (18.3) answers the Cover Creator: a cover, or nil for Cancel.
+    return { actions = {}, inputs = {}, pins = {}, confirms = {}, more = {}, covers = {} }
 end
 
 function phone.push(queue, ...)
@@ -78,6 +79,18 @@ function phone.run(options)
     function ui.card(_, x, y, width, height) box("card", x, y, width, height) end
     -- FoxyOS 17: FoxyCloud's upload and download bars.
     function ui.progress(_, x, y, width) box("progress", x, y, width, 1) end
+    -- FoxyOS 18.3: covers, bounds-checked, and the Cover Creator, scripted.
+    ui.COVER_WIDTH, ui.COVER_HEIGHT = realUi.COVER_WIDTH, realUi.COVER_HEIGHT
+    function ui.cover(_, x, y, cover)
+        box("cover", x, y, ui.COVER_WIDTH, ui.COVER_HEIGHT)
+        draw(cover and "cover" or "no cover")
+    end
+    function ui.iconCreator(_, icon, title, kind)
+        draw("creator:" .. tostring(kind) .. ":" .. tostring(title))
+        local entry = take(script.covers, "Cover Creator: " .. tostring(title))
+        if entry == false then return nil end
+        return entry
+    end
     function ui.truncate(value, maximum)
         return tostring(value or ""):sub(1, math.max(0, maximum))
     end

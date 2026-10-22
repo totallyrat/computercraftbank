@@ -562,6 +562,11 @@ idleTimer = scheduleIdleTimer()
 elseif timer and event[1] == "timer" and event[2] == timer then
 if handleIdle() then return finish("__idle") end
 return finish("__tick")
+elseif event[1] == "mouse_scroll" and options.scroll then
+
+if handleIdle() then return finish("__idle") end
+recordActivity()
+return finish(event[2] > 0 and "__scrolldown" or "__scrollup")
 elseif event[1] == "mouse_drag" and options.drag then
 
 
@@ -630,11 +635,12 @@ end
 return string.char(128 + code), fore, back
 end
 
-function ui.icon(target, x, y, icon)
+
+function ui.icon(target, x, y, icon, cellsWide, cellsHigh)
 target = surface(target)
 local rows = ui.iconRows(icon)
-for cellY = 0, ui.ICON_HEIGHT - 1 do
-for cellX = 0, ui.ICON_WIDTH - 1 do
+for cellY = 0, (cellsHigh or ui.ICON_HEIGHT) - 1 do
+for cellX = 0, (cellsWide or ui.ICON_WIDTH) - 1 do
 local pixels = {}
 for dy = 1, 3 do
 local row = rows[cellY * 3 + dy] or ""
@@ -678,6 +684,28 @@ ui.icon(target, x, y, icon)
 end
 
 
+
+ui.COVER_WIDTH, ui.COVER_HEIGHT = 8, 4
+ui.COVER_NONE = (function()
+local rows = {}
+for y = 1, 12 do
+local row = {}
+for x = 1, 16 do
+local note = (x >= 7 and x <= 8 and y >= 3 and y <= 9) or (x >= 9 and x <= 11 and y == 3)
+or (x >= 5 and x <= 8 and y >= 8 and y <= 10)
+row[x] = note and "8" or "7"
+end
+rows[y] = table.concat(row)
+end
+return table.concat(rows, "/")
+end)()
+
+function ui.cover(target, x, y, cover)
+ui.icon(target, x, y, util.validCover(cover) and cover or ui.COVER_NONE,
+ui.COVER_WIDTH, ui.COVER_HEIGHT)
+end
+
+
 function ui.iconEdge(icon)
 local rows, counts, best = ui.iconRows(icon), {}, nil
 for _, row in ipairs(rows) do
@@ -697,43 +725,52 @@ end
 
 
 
-function ui.iconCreator(target, icon, title)
+
+function ui.iconCreator(target, icon, title, kind)
 target = surface(target)
-local start = util.validIcon(icon) and ui.iconRows(icon) or nil
+local cover = kind == "cover"
+local wide, high = cover and 16 or 8, cover and 12 or 6
+local valid = cover and util.validCover or util.validIcon
+local start = valid(icon) and ui.iconRows(icon) or nil
 local pixels = {}
-for y = 1, 6 do
+for y = 1, high do
 pixels[y] = {}
-for x = 1, 8 do pixels[y][x] = start and start[y]:sub(x, x) or "b" end
+for x = 1, wide do pixels[y][x] = start and start[y]:sub(x, x) or (cover and "f" or "b") end
 end
 local pen = "0"
 local function painted()
 local rows = {}
-for y = 1, 6 do rows[y] = table.concat(pixels[y]) end
+for y = 1, high do rows[y] = table.concat(pixels[y]) end
 return table.concat(rows, "/")
 end
 while true do
 local width, height = target.getSize()
-local pixelWidth = width >= 40 and 3 or 2
-local pixelHeight = height >= 19 and 2 or 1
+local pixelWidth = cover and (width >= 64 and 3 or width >= 44 and 2 or 1)
+or (width >= 40 and 3 or 2)
+local pixelHeight = cover and (height >= 31 and 2 or 1) or (height >= 19 and 2 or 1)
 local left, top = 2, 4
 ui.clear(target)
-ui.header(target, "Icon Creator", ui.truncate(title or "Your app", width - 3),
-util.formatClock())
+ui.header(target, cover and "Cover" or "Icon Creator", ui.truncate(title
+or "Your app", width - 3), util.formatClock())
 local scene = ui.scene(target)
-for y = 1, 6 do
-for x = 1, 8 do
+for y = 1, high do
+for x = 1, wide do
 local cellX = left + (x - 1) * pixelWidth
 local cellY = top + (y - 1) * pixelHeight
 ui.fill(target, cellX, cellY, pixelWidth, pixelHeight, ui.hexColor(pixels[y][x]))
 scene:hotspot("px:" .. x .. ":" .. y, cellX, cellY, pixelWidth, pixelHeight)
 end
 end
-local side = left + 8 * pixelWidth + 2
+local side = left + wide * pixelWidth + (cover and 1 or 2)
+local realW, realH = cover and ui.COVER_WIDTH or ui.ICON_WIDTH,
+cover and ui.COVER_HEIGHT or ui.ICON_HEIGHT
+if side + realW - 1 <= width then
 ui.text(target, side, top, "Real", ui.theme.muted)
-ui.icon(target, side, top + 1, painted())
-ui.text(target, side, top + 4, "Pen", ui.theme.muted)
-ui.fill(target, side, top + 5, 4, 1, ui.hexColor(pen))
-local paletteY = top + 6 * pixelHeight + (pixelHeight > 1 and 0 or 1)
+ui.icon(target, side, top + 1, painted(), realW, realH)
+ui.text(target, side, top + realH + 2, "Pen", ui.theme.muted)
+ui.fill(target, side, top + realH + 3, 4, 1, ui.hexColor(pen))
+end
+local paletteY = top + high * pixelHeight + (pixelHeight > 1 and 0 or (cover and 0 or 1))
 local swatch = math.max(1, math.floor((width - 2) / 8))
 for index = 1, 16 do
 local digit = ICON_HEX:sub(index, index)
@@ -756,7 +793,7 @@ keys = keyBindings({ enter = "done", escape = "cancel" }) })
 if action == "done" then return painted() end
 if action == "cancel" or action == "__terminate" then return nil end
 if action == "fill" then
-for y = 1, 6 do for x = 1, 8 do pixels[y][x] = pen end end
+for y = 1, high do for x = 1, wide do pixels[y][x] = pen end end
 end
 local chosen = action and action:match("^pen:(%x)$")
 if chosen then pen = chosen end

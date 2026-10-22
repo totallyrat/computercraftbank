@@ -25,6 +25,7 @@ local PROGRAMS = {
     "invt.lua", "yap.lua", "ccg_home.lua", "ccg_casino.lua", "foxycloud.lua",
     "cloud_server.lua", "music_server.lua", "music_player.lua", "music.lua", "lib/music.lua",
     "lib/desktop.lua", "lib/trivia.lua", "radio_broadcaster.lua", "radio.lua",
+    "artists.lua",
 }
 
 local function readLines(path)

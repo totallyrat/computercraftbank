@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.2.0"
+local PROGRAM_VERSION = "18.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -7391,13 +7391,15 @@ app_id = entry.app_id,
 
 
 
-music = (entry.app_id == "MUSIC" or entry.app_id == "RADIO") and net.musicApi
+music = (entry.app_id == "MUSIC" or entry.app_id == "RADIO"
+or entry.app_id == "ARTISTS") and net.musicApi
 and net.musicApi(config,
 function() return sessionToken end, offline, function()
 local where = request("MUSIC_WHERE", {}, true)
 return where and where.computer_id or nil
 end, desk.musicServer) or nil,
-cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC") and net.cloud
+cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC"
+or entry.app_id == "ARTISTS") and net.cloud
 and net.cloud.api
 and net.cloud.api(function(action, payload)
 local scoped = {}
@@ -7933,7 +7935,8 @@ end
 beta.APP_FILES = { FOXY = "foxy.lua", MAIL = "foxmail.lua", COMPANY = "company.lua",
 SHOP = "shop.lua", NET = "internet.lua", WC = "wc.lua", INVT = "invt.lua",
 BUCK = "buckapp.lua", REVO = "revolution.lua", YAP = "yap.lua",
-CLOUD = "foxycloud.lua", MUSIC = "music.lua", RADIO = "radio.lua" }
+CLOUD = "foxycloud.lua", MUSIC = "music.lua", RADIO = "radio.lua",
+ARTISTS = "artists.lua" }
 
 
 
@@ -8701,7 +8704,7 @@ if not installedApp(appId) then missing[appId] = true end
 end
 device.included = type(device.included) == "table" and device.included or {}
 local wanted = {}
-for _, appId in ipairs({ "YAP", "CLOUD", "MUSIC", "RADIO" }) do
+for _, appId in ipairs({ "YAP", "CLOUD", "MUSIC", "RADIO", "ARTISTS" }) do
 if not device.included[appId] and installedApp(appId) then
 device.included[appId] = true
 saveDevice()

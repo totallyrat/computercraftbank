@@ -103,6 +103,8 @@ const forwardOptionalFiles = [
   // FoxyOS 18.2: the Radio Broadcaster, and Radio by Foxy.
   "radio_broadcaster.lua",
   "radio.lua",
+  // FoxyOS 18.3: Music for Artists.
+  "artists.lua",
 ];
 
 function checksum(buffer) {
@@ -240,7 +242,8 @@ const strippedFiles = [
 // size. Their headers stay: the App Server and the Pocket read them.
 const strippedApps = ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
   "internet.lua", "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua",
-  "invt.lua", "yap.lua", "foxycloud.lua", "music.lua", "radio.lua"];
+  "invt.lua", "yap.lua", "foxycloud.lua", "music.lua", "radio.lua",
+  "artists.lua"];
 strippedFiles.push(...strippedApps);
 
 // FoxyOS 14.1: everything a computer downloads is in dist/, the files that

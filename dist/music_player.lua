@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.2.0"
+local PROGRAM_VERSION = "18.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -539,10 +539,15 @@ local function nowPage(spec)
             y = 6
         end
         if now then
-            if now.label then ui.center(target, y, now.label, colors.yellow) end
-            ui.center(target, y + 1, ui.truncate(now.title, width - 4), ui.theme.ink)
-            ui.center(target, y + 2, ui.truncate(now.artist .. (now.uploader_name
-                and ("  (by " .. now.uploader_name .. ")") or ""), width - 4), ui.theme.muted)
+            -- FoxyOS 18.3: the cover on the left -- the song's, or the radio's
+            -- -- and what it is beside it.
+            ui.cover(target, 3, y, now.cover or (player.radio and player.radio.cover))
+            local x = 4 + ui.COVER_WIDTH + 1
+            if now.label then ui.text(target, x, y, ui.truncate(now.label, width - x),
+                colors.yellow) end
+            ui.text(target, x, y + 1, ui.truncate(now.title, width - x), ui.theme.ink)
+            ui.text(target, x, y + 2, ui.truncate(now.artist .. (now.uploader_name
+                and ("  (by " .. now.uploader_name .. ")") or ""), width - x), ui.theme.muted)
             local position = shared.playing and (util.nowMs() - shared.playing.started)
                 or now.position_ms or 0
             position = math.max(0, math.min(now.length_ms or 0, position))

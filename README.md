@@ -4,7 +4,7 @@
 
 Every computer in it runs FoxyOS. The phone is the **Pocket**; on a standing computer it becomes the **Pocket Desktop**. Everything is touch-first, and a keyboard works too.
 
-> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. See [`CHANGELOG.md`](CHANGELOG.md).
+> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. **18.3** brings **Music for Artists**, Artist Profiles, **covers**, **playlists** and a Library in rows. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contents
 
@@ -133,7 +133,8 @@ After a minute untouched the Pocket shows its lock screen. Before two minutes a 
 - **FoxMail**: an address at `foxy.com` for everybody, company domains with up to five addresses, and mail from apps and organisers.
 - **Yap!**: a feed of 140-character posts, private chats behind your PIN that vanish a day after they're read, and **Yap Map**, where friends in GPS range are listed with their coordinates.
 - **FoxyCloud**: your Foxy Account, your plan, and your files on every device: notes, text, MIDI, songs, anything dropped on the screen. Share any file with a six-letter code.
-- **Music**: the remote for your Music Players, uploads, and FoxyMusic+.
+- **Music**: the remote for your Music Players, the Library in rows, playlists, favorites, and FoxyMusic+.
+- **Music for Artists**: your Artist Profile, uploading songs with their covers, and every artist in the library.
 - **Radio**: the dial and your Favorites; what you tune plays on your Music Player.
 - **Company**, **Shop**, **INVT**, **Internet** and **Website Crafter** are covered in their own sections below.
 
@@ -224,7 +225,11 @@ Everybody listening hears the same moment. After each song comes a break: a host
 
 A **Music Player** is a computer with speakers that you sign in to once with your Foxy name and PIN. Its screen has **Now Playing**, **Library**, **Radio** (the dial and Favorites, compact, scrolling) and **Upload** (drop a song on the screen or pick one from a disk), and a monitor beside it shows what's on from across the room.
 
-The **Music** app on every Pocket is the remote: pick a player, then play, queue, pause, skip and set the volume. It uploads songs from the Pocket, from its screen or from FoxyCloud, and its **Upload → FoxyMusic+** joins the plan. A library song counts against your day when it starts; radios never count.
+The **Music** app on every Pocket is the remote: pick a player, then play, queue, pause, skip and set the volume. **Now** shows the cover on the left and the song beside it, with a heart for Your Favorites. **Library** is rows of covers (New Music, Popular, Your Favorites, Radio Hits, Recently Played, Playlists), each turned with its own **< >**, the page with **^ v** or the scroll wheel; **+** makes a playlist (name, cover, songs; public unless you say not) and **Search** lists every song. **Plus** joins FoxyMusic+. A library song counts against your day when it starts; radios never count.
+
+**Music for Artists** is where songs are uploaded: from the Pocket, dropped on its screen or from FoxyCloud, with the artists it credits and a cover. Every credited artist gets an **Artist Profile**; make yours under **You** (a profile nobody owns yet, made by a credit, becomes yours with its songs). A profile shows its songs, today's listeners, plays and the radios that play them. **Artists** lists them all.
+
+**Covers** are 16x12 pixels, drawn in the Cover Creator: songs, playlists, State Radios (the Music Server's **COVER** button) and stations (the broadcaster's Station page).
 
 The **Radio** app is the dial: 87.5 to 108.0, with a slider, **< >** for a tenth and **<< >>** for a whole one. Between stations is static. Land on a station and it shows, and your Music Player starts playing it. **Favorites** has the State Radios, today's **Featured** station, and the Radio+ stations you saved.
 
@@ -521,4 +526,4 @@ QA_CHECKLIST.md            what to try in a real world after a release
 
 ---
 
-**FoxyOS 18.2**, release `18.2.0`.
+**FoxyOS 18.3**, release `18.3.0`.

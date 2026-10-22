@@ -129,6 +129,17 @@ as(MUSIC_ID, server.station.tick)
 run(radio.shared.refresh)
 assert(radio.shared.view.plus)
 
+-- FoxyOS 18.3: a cover for the station, drawn on its Station page.
+local drawn = string.rep(string.rep("e", 16) .. "/", 11) .. string.rep("e", 16)
+local creator = ui.iconCreator
+ui.iconCreator = function(_, _, _, kind)
+    assert(kind == "cover", "the Cover Creator, not the Icon Creator")
+    return drawn
+end
+screenOnce({ "cover" })
+ui.iconCreator = creator
+assert(s.cover == drawn and radio.shared.view.cover == drawn, "the station's cover")
+
 -- Quick Upload.
 local dropped = { getName = function() return "Hello Fox Town.dfpwm" end,
     readAll = function() return string.rep("h", 6000) end, close = function() end }

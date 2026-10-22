@@ -14,7 +14,7 @@
 --   installer.lua --boot <program>   update if the release is newer, then start
 --   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local INSTALLER_VERSION = "18.2.0"
+local INSTALLER_VERSION = "18.3.0"
 local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -127,7 +127,7 @@ local PROGRAMS = {
       extra = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
           "internet.lua", "shop.lua", "foxmail.lua", "company.lua",
           "brickbreaker.lua", "invt.lua", "yap.lua", "foxycloud.lua", "music.lua",
-          "radio.lua" } },
+          "radio.lua", "artists.lua" } },
     { id = "internet", name = "Internet Server", file = "internet_server.lua",
       detail = "Hosts the web",
       about = "Serves the websites and domains of the web.",

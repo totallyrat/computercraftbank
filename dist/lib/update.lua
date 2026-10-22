@@ -387,6 +387,8 @@ update.PUBLISHED_OPTIONAL = {
 
 "radio_broadcaster.lua",
 "radio.lua",
+
+"artists.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -446,7 +448,7 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 
 "foxycloud.lua", "music.lua",
 
-"radio.lua" },
+"radio.lua", "artists.lua" },
 
 music = { "lib/music.lua" },
 

@@ -387,6 +387,8 @@ update.PUBLISHED_OPTIONAL = {
     -- FoxyOS 18.2: the Radio Broadcaster, and the Radio app.
     "radio_broadcaster.lua",
     "radio.lua",
+    -- FoxyOS 18.3: Music for Artists.
+    "artists.lua",
 }
 
 local COMMON_ROLE_FILES = {
@@ -445,8 +447,8 @@ local ROLE_EXTRA_FILES = {
         "yap.lua",
         -- FoxyOS 17: FoxyCloud and Music, by Foxy.
         "foxycloud.lua", "music.lua",
-        -- FoxyOS 18.2: Radio, by Foxy.
-        "radio.lua" },
+        -- FoxyOS 18.2: Radio, by Foxy. 18.3: Music for Artists.
+        "radio.lua", "artists.lua" },
     -- FoxyOS 17: streaming DFPWM from the Cloud Servers to speakers.
     music = { "lib/music.lua" },
     -- FoxyOS 18: the Pocket Desktop, and the music it plays on a speaker.

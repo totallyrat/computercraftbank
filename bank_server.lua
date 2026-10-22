@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.2.0"
+local PROGRAM_VERSION = "18.3.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -91,6 +91,8 @@ RELEASE.depot_files = {
     -- FoxyOS 18.2: the Radio Broadcaster, and the Radio app by Foxy.
     "radio_broadcaster.lua",
     "radio.lua",
+    -- FoxyOS 18.3: Music for Artists, by Foxy.
+    "artists.lua",
 }
 RELEASE.depot_set = {}
 for _, path in ipairs(RELEASE.depot_files) do RELEASE.depot_set[path] = true end
@@ -152,6 +154,8 @@ RELEASE.optional = {
     -- FoxyOS 18.2: the Radio Broadcaster, and the Radio app by Foxy.
     "radio_broadcaster.lua",
     "radio.lua",
+    -- FoxyOS 18.3: Music for Artists, by Foxy.
+    "artists.lua",
 }
 
 RELEASE.programs = {
@@ -7911,10 +7915,10 @@ pair.routes = {
     -- FoxyCloud, 16.3. The directory is the Vault's; the plan that sizes it
     -- is the Core's and goes down with each request ("cloud"). Only the phone
     -- itself and the FoxyCloud app may ask: no other app reads your files.
-    CLOUD_FILES = { auth = "session", cloud = true, from = { "CLOUD", "MUSIC" } },
+    CLOUD_FILES = { auth = "session", cloud = true, from = { "CLOUD", "MUSIC", "ARTISTS" } },
     CLOUD_PUT = { auth = "session", cloud = true, from = "CLOUD" },
     CLOUD_PUT_DONE = { auth = "session", cloud = true, from = "CLOUD" },
-    CLOUD_GET = { auth = "session", from = { "CLOUD", "MUSIC" } },
+    CLOUD_GET = { auth = "session", from = { "CLOUD", "MUSIC", "ARTISTS" } },
     CLOUD_RENAME = { auth = "session", from = "CLOUD" },
     CLOUD_DELETE = { auth = "session", cloud = true, from = "CLOUD" },
     CLOUD_SHARE = { auth = "session", from = "CLOUD" },
