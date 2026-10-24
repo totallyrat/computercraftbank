@@ -2,11 +2,11 @@
 
 
 return {
-version = "18.4.0",
+version = "18.4.1",
 
 
 
-release_name = "FoxyOS 18.4",
+release_name = "FoxyOS 18.4.1",
 protocol = "PUMPE_BANK_V5",
 
 
@@ -138,7 +138,10 @@ government_key = "Government1234",
 
 
 
-config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY", cloud_chunk_size = 6000 },
+config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY", cloud_chunk_size = 6000,
+
+
+max_apps_installed = 12 },
 
 
 
@@ -240,7 +243,9 @@ app_protocol = "PUMPE_APPS_V1",
 app_hostname = "APP_SERVER",
 app_chunk_size = 6000,
 max_app_bytes = 96 * 1024,
-max_apps_installed = 12,
+
+
+max_apps_installed = 30,
 
 
 clock_source = "ingame",

@@ -2,11 +2,11 @@
 -- Copy this file with the rest of the project to each ComputerCraft computer.
 
 return {
-    version = "18.4.0",
+    version = "18.4.1",
     -- What this release is called. The version orders releases and this
     -- names them: "10.0 Pre" is not a number, and 9.5.0 is not a name. An
     -- update replaces it rather than preserving it like a local setting.
-    release_name = "FoxyOS 18.4",
+    release_name = "FoxyOS 18.4.1",
     protocol = "PUMPE_BANK_V5",
     -- Shop, 11.0. In in-game time, like the rest of the Shop: a Minecraft
     -- day is twenty real minutes, so two hours is about a minute and forty
@@ -138,7 +138,10 @@ return {
     -- forever.
     -- FoxyOS 17: a Cloud Server piece is 16 KB, the size a speaker plays at
     -- once, where it was 6000.
-    config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY", cloud_chunk_size = 6000 },
+    config_resets = { government_key = "CHANGE-ME-GOVERNMENT-KEY", cloud_chunk_size = 6000,
+        -- FoxyOS 18.4.1: twelve apps, from 8.3, was too few once Foxy brought
+        -- seven of its own.
+        max_apps_installed = 12 },
 
     -- Foxy. The new bank inside the PUMPE: sub-accounts you can split money
     -- into, and Foxy Cash, an instant friends-only transfer with a flat fee
@@ -240,7 +243,9 @@ return {
     app_hostname = "APP_SERVER",
     app_chunk_size = 6000,
     max_app_bytes = 96 * 1024,
-    max_apps_installed = 12,
+    -- How many apps a Pocket holds. FoxyOS 18.4.1: thirty; the Home Screen
+    -- pages, and an app is at most max_app_bytes.
+    max_apps_installed = 30,
 
     -- All event dates use the Minecraft/ComputerCraft in-game day.
     clock_source = "ingame",

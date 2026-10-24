@@ -297,7 +297,8 @@ found, why = updater.check({
 config = config, role = role, root = root,
 
 
-repair = options.asked_by_default or nil,
+
+repair = options.repair or options.asked_by_default or nil,
 requiredPaths = options.requiredPaths,
 optionalPaths = options.optionalPaths,
 manifestUrl = elsewhere and options.manifestUrl or nil,
@@ -361,7 +362,10 @@ end
 
 
 
-local askedOk, wanted = pcall(options.confirm, found)
+
+
+local askedOk, wanted = true, true
+if not found.repair then askedOk, wanted = pcall(options.confirm, found) end
 if not askedOk or not wanted then
 if stages then updater.discard(root) end
 net.declined[tostring(found.version)] = util.nowMs() + 30 * 60 * 1000

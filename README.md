@@ -417,6 +417,7 @@ Every device updates itself from the public manifest, downloading only the files
 - **Every device downloads first, then asks**: **Install** or **Cancel & Delete**, at start-up on the whole screen and while running as a banner, with a countdown. Since 18.3.1, nobody answering within **30 seconds** installs it, so devices keep themselves up to date; **Cancel & Delete** is the way to say no, and a release said no to is not downloaded again for half an hour. **Easy Deployment** asks too: an update it finds at start-up counts down the same way, a first install waits for an answer.
 - **The circles**: every device plays the Pocket's circles in its own colour while a release downloads, and for a few seconds once it is installed (a Pocket for fifteen).
 - **The Pocket** shows the release's name and what changed. **Settings → Updates** has Check now.
+- **What each device needs** is in the release itself (`roles` in the manifest, since 18.4.1), so a file added to a role reaches devices whose updater predates it. A Pocket also fetches any missing file at start-up and on **Check now**, without asking.
 - **Prioritize Updates** lets a full Pocket take apps off to fit a release, and puts them back afterwards.
 - **Beta Updates**: any device can sign up for betas, numbered halfway to the release they precede (FoxyOS 15 Beta is 14.5). Betas have a manifest of their own under `beta/`.
 - **Apps** update themselves every ten minutes on the Home Screen.
@@ -535,4 +536,4 @@ QA_CHECKLIST.md            what to try in a real world after a release
 
 ---
 
-**FoxyOS 18.4**, release `18.4.0`.
+**FoxyOS 18.4.1**, release `18.4.1`.

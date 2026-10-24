@@ -188,4 +188,51 @@ steps = {}
 screen.push(steps, "done")
 assert(creator(steps, painted) == painted, "it starts from the icon it was given")
 
+-- FoxyOS 18.4.1: two colours in each 2x3 block, which is all a screen can
+-- draw there. A third painted into a block wins its pixel; the block's other
+-- pixels take the most common of the rest -- on the canvas, so what was seen
+-- is what is saved.
+local function blocksOk(picture, wide, high)
+    local rows = ui.iconRows(picture)
+    for blockY = 0, high / 3 - 1 do
+        for blockX = 0, wide / 2 - 1 do
+            local seen, count = {}, 0
+            for dy = 1, 3 do
+                for dx = 1, 2 do
+                    local pixel = rows[blockY * 3 + dy]:sub(blockX * 2 + dx, blockX * 2 + dx)
+                    if not seen[pixel] then seen[pixel], count = true, count + 1 end
+                end
+            end
+            if count > 2 then return false end
+        end
+    end
+    return true
+end
+local function coverCreator(steps, start)
+    local display = screen.terminal(26, 20)
+    local real, state = screen.install({ display = display, steps = steps })
+    local result = real.iconCreator(display, start, "My Song", "cover")
+    assert(#state.steps == 0, #state.steps .. " steps left over")
+    return result, display
+end
+steps = {}
+screen.push(steps, function(state)
+    assert(state.display.has("2 colours per 2x3 block"), state.display.dump())
+    return "pen:e"
+end, "px:1:1", "pen:4", "px:2:1", "pen:5", "px:12:12", "done")
+local drawn = coverCreator(steps)
+local coverRows = ui.iconRows(drawn)
+assert(util.validCover(drawn) and coverRows[1]:sub(1, 2) == "f4",
+    "a third colour in a block: the red gave way to the black around it, " .. coverRows[1])
+assert(coverRows[12]:sub(12, 12) == "5", "two colours in a block: nothing changes")
+assert(blocksOk(drawn, 12, 12))
+-- A cover from before, with three colours in a block, is made drawable as it opens.
+local busy = {}
+for y = 1, 12 do busy[y] = string.rep(tostring((y - 1) % 3), 12) end
+steps = {}
+screen.push(steps, "done")
+assert(not blocksOk(table.concat(busy, "/"), 12, 12), "three colours in every block")
+local opened = coverCreator(steps, table.concat(busy, "/"))
+assert(blocksOk(opened, 12, 12), "every block down to two colours")
+
 print("host_icons_test: OK")

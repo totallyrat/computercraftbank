@@ -745,6 +745,44 @@ function ui.iconCreator(target, icon, title, kind)
         for y = 1, high do rows[y] = table.concat(pixels[y]) end
         return table.concat(rows, "/")
     end
+    -- FoxyOS 18.4.1: a screen draws two colours in each block of 2x3 pixels,
+    -- no more, so a third in a block came out as something else once it was
+    -- saved. The canvas keeps to it as you paint: the colour just painted
+    -- stays, and the block's other pixels take the most common colour of the
+    -- rest. What you see is what gets saved.
+    local function keepTwo(blockX, blockY, keep)
+        local spots, counts, order = {}, {}, {}
+        for dy = 1, 3 do
+            for dx = 1, 2 do
+                local x, y = blockX * 2 + dx, blockY * 3 + dy
+                if pixels[y] and pixels[y][x] then
+                    local pixel = pixels[y][x]
+                    spots[#spots + 1] = { x = x, y = y }
+                    if not counts[pixel] then
+                        counts[pixel] = 0
+                        order[#order + 1] = pixel
+                    end
+                    counts[pixel] = counts[pixel] + 1
+                end
+            end
+        end
+        if #order <= 2 then return end
+        if not keep then
+            table.sort(order, function(a, b) return counts[a] > counts[b] end)
+            keep = order[1]
+        end
+        local other
+        for _, pixel in ipairs(order) do
+            if pixel ~= keep and (not other or counts[pixel] > counts[other]) then other = pixel end
+        end
+        for _, spot in ipairs(spots) do
+            local pixel = pixels[spot.y][spot.x]
+            if pixel ~= keep and pixel ~= other then pixels[spot.y][spot.x] = other end
+        end
+    end
+    for blockY = 0, math.ceil(high / 3) - 1 do
+        for blockX = 0, math.ceil(wide / 2) - 1 do keepTwo(blockX, blockY) end
+    end
     while true do
         local width, height = target.getSize()
         local pixelWidth = cover and (width >= 64 and 4 or 2) or (width >= 40 and 3 or 2)
@@ -784,6 +822,10 @@ function ui.iconCreator(target, icon, title, kind)
             end
             scene:hotspot("pen:" .. digit, x, y, swatch, 1)
         end
+        if paletteY + 2 < height then
+            ui.text(target, 2, paletteY + 2, ui.truncate("2 colours per 2x3 block", width - 2),
+                ui.theme.muted)
+        end
         local third = math.floor((width - 4) / 3)
         scene:button("cancel", 2, height, third, 1, "Cancel", { background = ui.theme.panel })
         scene:button("fill", 3 + third, height, third, 1, "Fill", { background = ui.theme.panel })
@@ -799,7 +841,11 @@ function ui.iconCreator(target, icon, title, kind)
         local chosen = action and action:match("^pen:(%x)$")
         if chosen then pen = chosen end
         local x, y = (action or ""):match("^px:(%d+):(%d+)$")
-        if x then pixels[tonumber(y)][tonumber(x)] = pen end
+        if x then
+            x, y = tonumber(x), tonumber(y)
+            pixels[y][x] = pen
+            keepTwo(math.floor((x - 1) / 2), math.floor((y - 1) / 3), pen)
+        end
     end
 end
 

@@ -5,14 +5,17 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.4.0"
+local PROGRAM_VERSION = "18.4.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
 local ui = require("lib.ui")
 local music = require("lib.music")
--- FoxyOS 18.4: the Music app's screens, the same as on a Pocket.
-local musicui = require("lib.musicui")
+-- FoxyOS 18.4: the Music app's screens, the same as on a Pocket. 18.4.1: a
+-- player updated to 18.4.0 by an older updater never got this file and could
+-- not start; without it, it starts anyway and fetches it (net.autoUpdate).
+local musicuiFound, musicui = pcall(require, "lib.musicui")
+if not musicuiFound then musicui = nil end
 
 -- The Music Player, FoxyOS 17: a computer with speakers that plays the Music
 -- Library and the radios. Somebody signs in on it once, with their Foxy
@@ -1103,6 +1106,14 @@ end
 -- FoxyOS 18.4: the Music app's tabs -- Music, Search, Me -- and the Radio
 -- tab of its own. What is playing is along the top: Now Playing is a tap away.
 local function screenLoop()
+    while running and not musicui do
+        header("Finishing the update")
+        ui.wrappedText(target, 2, 5, "Part of FoxyOS " .. tostring(config.version)
+            .. " is not on this Music Player yet. It is being fetched, and the player"
+            .. " restarts when it is here.", select(1, target.getSize()) - 2, 4, ui.theme.muted)
+        sleep(5)
+    end
+    if not running then return end
     local app
     app = musicui.new({
         ui = ui, util = util, colors = colors, target = target, accent = ui.theme.accent,

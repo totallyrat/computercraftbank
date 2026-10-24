@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.4.0"
+local PROGRAM_VERSION = "18.4.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -5724,6 +5724,9 @@ local function checkForUpdate(force, betaOnly)
             force = force or nil,
             programVersion = force and not url and PROGRAM_VERSION or nil,
             confirm = confirmUpdate,
+            -- FoxyOS 18.4.1: at start-up and on Check now, fetch any file this
+            -- release should have put here and did not.
+            repair = force and not url or nil,
             target = target,
             -- FoxyOS 14: the circles, not FOXY, while a release comes down.
             updating = ui.pocketUpdating,
@@ -7624,9 +7627,11 @@ local function keepApp(app, body)
     if not fs.exists(appsDir) then fs.makeDir(appsDir) end
     local path = appPath(app.app_id)
     local fresh = path .. ".new"
-    local roomy = pcall(util.writeFile, fresh, body)
+    local roomy, roomError = pcall(util.writeFile, fresh, body)
     pcall(fs.delete, fresh)
-    if not roomy or not pcall(util.writeFile, path, body) then return false end
+    if not roomy then return false, roomError end
+    local written, writeError = pcall(util.writeFile, path, body)
+    if not written then return false, writeError end
     local record = {
         app_id = app.app_id, name = app.name, version = app.version,
         author = app.author, description = app.description,
@@ -7741,10 +7746,12 @@ end
 -- A bar that fills as the chunks land, then a tick that draws itself.
 local function installApp(app)
     local width, height = target.getSize()
-    if #installed.list >= (tonumber(config.max_apps_installed) or 12)
-        and not installedApp(app.app_id) then
-        ui.message(target, "warning", "No room for it",
-            "Remove an app first", 1.8)
+    -- FoxyOS 18.4.1: this is how many apps, not how much space -- it used to
+    -- say "No room", and a Pocket with plenty of space was told it was full.
+    local most = tonumber(config.max_apps_installed) or 30
+    if #installed.list >= most and not installedApp(app.app_id) then
+        ui.message(target, "warning", most .. " apps is the most",
+            "Remove an app to add another", 2)
         return false
     end
     ui.clear(target)
@@ -7766,9 +7773,17 @@ local function installApp(app)
         end
         return false
     end
-    if not keepApp(app, body) then
-        ui.message(target, "error", "No room on this Pocket",
-            "Remove something first", 1.8)
+    local kept, keepError = keepApp(app, body)
+    if not kept then
+        -- Full only when it is: anything else says what went wrong.
+        local free = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT) or nil
+        if free and free < #body + 8192 then
+            ui.message(target, "error", "No room on this Pocket",
+                "Remove something first", 1.8)
+        else
+            ui.message(target, "error", "Could not save it", ui.truncate(tostring(keepError
+                or "The file could not be written"), 60), 2.4)
+        end
         return false
     end
     -- On a beta, an app it ships comes from the beta, not the App Server.
@@ -8720,7 +8735,7 @@ local function ensureFoxy()
     end
     if next(missing) == nil and #wanted == 0 then return end
     local listed = storeRequest("APP_LIST", {}, true)
-    local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
+    local room = (tonumber(config.max_apps_installed) or 30) - #installed.list
     for _, app in ipairs(listed and listed.apps or {}) do
         -- Foxy is how this phone sees its money, so it always goes in.
         -- FoxMail waits quietly for a free slot rather than saying "no room"

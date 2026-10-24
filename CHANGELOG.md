@@ -1,5 +1,32 @@
 # Changelog
 
+## 18.4.1
+
+FoxyOS 18.4.1 fixes what 18.4.0 got wrong. Every device installs it by
+itself after 30 seconds. A Music Player stuck on an error since 18.4.0 needs
+restarting once (hold Ctrl+R); it then updates on its own.
+
+**The new Music app now opens.** The 18.4.0 update was installed by each
+device's 18.3.1 updater, whose list of a Pocket's and a Music Player's files
+had no lib/musicui.lua -- so it never came, the Music app said to update to
+18.4, and Music Players stopped at start-up. 18.4.1 brings it. Releases now
+also say which files each kind of device needs, so a file added later reaches
+devices whose updater has never heard of it; a Pocket also fetches anything
+missing when it starts and on Settings > Updates > Check now, without asking;
+and a Music Player missing it says so and fetches it instead of stopping.
+
+**Up to 30 apps.** "No room for it" was never about space: a Pocket held 12
+apps at most, a number from 8.3, and Foxy now brings seven of its own. It
+holds 30 now, and says so when it is full; "No room on this Pocket" only when
+the disk really is full, and otherwise what went wrong.
+
+**Covers draw as they were painted.** A screen can draw two colours in each
+2x3 block of pixels. The Cover Creator let you paint three, and the third
+came out as something else once the cover was saved. It now keeps to two as
+you paint -- the colour you paint stays, the block's other pixels take the
+most common of the rest -- so what you see is what you get. Icons too. Covers
+you made already look the same as before; redraw any that look off.
+
 ## 18.4.0
 
 FoxyOS 18.4: a new Music app, on Pockets and Music Players alike, genres,

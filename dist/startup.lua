@@ -14,7 +14,7 @@
 
 
 
-local INSTALLER_VERSION = "18.4.0"
+local INSTALLER_VERSION = "18.4.1"
 local MANIFEST_URL =
 "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"

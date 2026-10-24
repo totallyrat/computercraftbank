@@ -239,6 +239,12 @@ assert(not net.autoUpdate(config, "bank", "/pumpe", nil, { force = true,
     confirm = function() bothered = true return true end }))
 assert(not bothered and files[fs.combine("/pumpe", lost)] == nil,
     "an asked-first device is not asked about a repair")
+-- FoxyOS 18.4.1: one that asks for repairs (a Pocket at start-up) gets them,
+-- and is not asked: it is the release it already has, made whole.
+assert(net.autoUpdate(config, "bank", "/pumpe", nil, { force = true, repair = true,
+    confirm = function() bothered = true return false end }))
+assert(not bothered and files[fs.combine("/pumpe", lost)] == bodies[lost],
+    "the missing file, fetched without a question")
 loadfile = realLoadfile
 
 print("host_update_prompt_test: OK")

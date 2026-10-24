@@ -205,6 +205,25 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel,
     for _, path in ipairs(optional and optionalPaths or {}) do
         optional[path] = true
     end
+    -- FoxyOS 18.4.1: the release says which files each role installs
+    -- beyond its program and the common ones. Whatever it names is a file
+    -- this updater knows, even one added after it was written -- which is
+    -- how a Pocket came to be on 18.4.0 without lib/musicui.lua.
+    local roles = {}
+    if type(manifest.roles) == "table" then
+        for role, paths in pairs(manifest.roles) do
+            if type(role) == "string" and type(paths) == "table" then
+                local list = {}
+                for _, path in ipairs(paths) do
+                    if type(path) == "string" and safeRelativePath(path) then
+                        list[#list + 1] = path
+                        if optional then optional[path] = true end
+                    end
+                end
+                roles[string.lower(role)] = list
+            end
+        end
+    end
     local seen, files = {}, {}
     for _, rawFile in ipairs(manifest.files) do
         local file, err = readEntry(rawFile, required, seen)
@@ -237,6 +256,7 @@ function update.validateManifest(manifest, expectedPaths, expectedChannel,
         notes = tostring(manifest.notes or ""),
         changes = readChanges(manifest.changes),
         files = files,
+        roles = roles,
     }
 end
 
@@ -462,6 +482,17 @@ local ROLE_EXTRA_FILES = {
     ccgserver = { "lib/trivia.lua" },
 }
 
+-- The files a role installs besides its program and the common ones, by
+-- role: what a release publishes as its `roles` (FoxyOS 18.4.1).
+function update.roleExtras()
+    local out = {}
+    for role in pairs(ROLE_PROGRAMS) do
+        out[role] = {}
+        for _, path in ipairs(ROLE_EXTRA_FILES[role] or {}) do out[role][#out[role] + 1] = path end
+    end
+    return out
+end
+
 -- Every path a role installs, including its own copy of Easy Deployment.
 function update.rolePaths(role)
     local program = update.roleProgram(role)
@@ -483,6 +514,11 @@ end
 function update.filesForRole(manifest, role)
     local wanted = {}
     for _, path in ipairs(update.rolePaths(role) or {}) do wanted[path] = true end
+    -- FoxyOS 18.4.1: and whatever the release itself says this role needs.
+    for _, path in ipairs(update.roleProgram(role) and type(manifest.roles) == "table"
+        and manifest.roles[string.lower(tostring(role))] or {}) do
+        wanted[path] = true
+    end
     local files, total = {}, 0
     for _, file in ipairs(manifest.files) do
         if wanted[file.path] then

@@ -653,4 +653,28 @@ assert(freed and recovered, "freeing room lets the update proceed")
 fs.getFreeSpace = nil
 loadfile = realLoadfile
 
+-- FoxyOS 18.4.1: a file a release adds to a role reaches devices whose
+-- updater never heard of it, because the release says so itself. 18.4.0 put
+-- lib/musicui.lua on Pockets with an updater from 18.3.1, and it never came.
+do
+    local function entry(path)
+        return { path = path, source = path, size = 3, checksum = "0000abcd" }
+    end
+    local raw = { schema = 1, channel = "stable", version = "99.0.0", files = {},
+        optional_files = { entry("pumpe.lua"), entry("lib/brand_new.lua") } }
+    local known = { "pumpe.lua" }
+    local without = assert(update.validateManifest(raw, nil, "stable", known))
+    local function has(manifest, path)
+        for _, file in ipairs((update.filesForRole(manifest, "pumpe"))) do
+            if file.path == path then return true end
+        end
+        return false
+    end
+    assert(not has(without, "lib/brand_new.lua"), "an updater skips what it does not know")
+    raw.roles = { pumpe = { "lib/brand_new.lua" }, ["../evil"] = { "../x.lua" } }
+    local with = assert(update.validateManifest(raw, nil, "stable", known))
+    assert(has(with, "lib/brand_new.lua"), "unless the release names it for the role")
+    assert(not has(with, "../x.lua"))
+end
+
 print("host_update_test: OK")

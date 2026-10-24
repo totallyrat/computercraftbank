@@ -7,6 +7,13 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 18.4.1 (18.4.1)
+
+- [ ] A Pocket that said "needs the FoxyOS 18.4 update" in Music: after 18.4.1 installs itself, Music opens with its Music, Search and Me tabs.
+- [ ] A Music Player stopped with an error since 18.4.0: hold Ctrl+R; it downloads 18.4.1 (circles, 30-second countdown) and starts on the new screens.
+- [ ] Install a 13th app: it installs. At 30 apps: *30 apps is the most*.
+- [ ] Cover Creator: paint three colours into one 2x3 block (two pixels across, three down): one of them changes on the canvas straight away; Done, and the cover looks exactly like the canvas.
+
 ## FoxyOS 18.4 (18.4.0)
 
 Update the Bank (Core and Vault) first, then the Music Server, then the App Server, then Pockets and Music Players. On 18.3.1 they install it by themselves after 30 seconds. Nothing in 18.4 was tried in a world before release: every line below is a first run.

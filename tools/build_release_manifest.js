@@ -295,6 +295,22 @@ const describe = (relativePath) => {
   };
 };
 
+// FoxyOS 18.4.1: which files each role installs besides its program and the
+// common ones -- lib/update.lua's ROLE_EXTRA_FILES, published so an updater
+// from before a file was added still fetches it. host_release_manifest_test
+// holds this to the Lua list.
+const roleExtras = {
+  apps: ["foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua", "internet.lua",
+    "shop.lua", "foxmail.lua", "company.lua", "brickbreaker.lua", "invt.lua",
+    "yap.lua", "foxycloud.lua", "music.lua", "radio.lua", "artists.lua"],
+  music: ["lib/music.lua"],
+  pumpe: ["lib/desktop.lua", "lib/music.lua", "lib/musicui.lua"],
+  musicplayer: ["lib/music.lua", "lib/musicui.lua"],
+  radio: ["lib/music.lua"],
+  ccgcasino: ["lib/music.lua"],
+  ccgserver: ["lib/trivia.lua"],
+};
+
 const manifest = {
   schema: 1,
   channel: betaBuild ? "beta" : "stable",
@@ -305,6 +321,7 @@ const manifest = {
   files: releaseFiles.map(describe),
   extra_files: extraReleaseFiles.map(describe),
   optional_files: forwardOptionalFiles.map(describe),
+  roles: roleExtras,
 };
 
 fs.writeFileSync(

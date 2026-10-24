@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.4.0"
+local PROGRAM_VERSION = "18.4.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -5724,6 +5724,9 @@ return net.autoUpdate(config, "pumpe", ROOT, client, {
 force = force or nil,
 programVersion = force and not url and PROGRAM_VERSION or nil,
 confirm = confirmUpdate,
+
+
+repair = force and not url or nil,
 target = target,
 
 updating = ui.pocketUpdating,
@@ -7624,9 +7627,11 @@ local function keepApp(app, body)
 if not fs.exists(appsDir) then fs.makeDir(appsDir) end
 local path = appPath(app.app_id)
 local fresh = path .. ".new"
-local roomy = pcall(util.writeFile, fresh, body)
+local roomy, roomError = pcall(util.writeFile, fresh, body)
 pcall(fs.delete, fresh)
-if not roomy or not pcall(util.writeFile, path, body) then return false end
+if not roomy then return false, roomError end
+local written, writeError = pcall(util.writeFile, path, body)
+if not written then return false, writeError end
 local record = {
 app_id = app.app_id, name = app.name, version = app.version,
 author = app.author, description = app.description,
@@ -7741,10 +7746,12 @@ end
 
 local function installApp(app)
 local width, height = target.getSize()
-if #installed.list >= (tonumber(config.max_apps_installed) or 12)
-and not installedApp(app.app_id) then
-ui.message(target, "warning", "No room for it",
-"Remove an app first", 1.8)
+
+
+local most = tonumber(config.max_apps_installed) or 30
+if #installed.list >= most and not installedApp(app.app_id) then
+ui.message(target, "warning", most .. " apps is the most",
+"Remove an app to add another", 2)
 return false
 end
 ui.clear(target)
@@ -7766,9 +7773,17 @@ ui.message(target, "error", "Download stopped", err, 1.8)
 end
 return false
 end
-if not keepApp(app, body) then
+local kept, keepError = keepApp(app, body)
+if not kept then
+
+local free = type(fs.getFreeSpace) == "function" and fs.getFreeSpace(ROOT) or nil
+if free and free < #body + 8192 then
 ui.message(target, "error", "No room on this Pocket",
 "Remove something first", 1.8)
+else
+ui.message(target, "error", "Could not save it", ui.truncate(tostring(keepError
+or "The file could not be written"), 60), 2.4)
+end
 return false
 end
 
@@ -8720,7 +8735,7 @@ if not device.included[appId] then wanted[#wanted + 1] = appId end
 end
 if next(missing) == nil and #wanted == 0 then return end
 local listed = storeRequest("APP_LIST", {}, true)
-local room = (tonumber(config.max_apps_installed) or 12) - #installed.list
+local room = (tonumber(config.max_apps_installed) or 30) - #installed.list
 for _, app in ipairs(listed and listed.apps or {}) do
 
 

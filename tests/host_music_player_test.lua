@@ -277,4 +277,18 @@ end, "signout", "yes")
 assert(player.state.player_token == nil and next(server.state.players) == nil)
 assert(#steps == 0, #steps .. " scripted steps never used")
 
+-- FoxyOS 18.4.1: a Music Player updated by an older updater had no
+-- lib/musicui.lua and could not start. Now it starts, says so, and the update
+-- check fetches the file.
+package.loaded["lib.musicui"] = nil
+package.preload["lib.musicui"] = function() error("module 'lib.musicui' not found", 0) end
+local broken = world.attach(PLAYER_ID + 1, "music_player.lua", "PLAYER_ONLY", "music_player")
+package.preload["lib.musicui"] = nil
+local realSleep = sleep
+sleep = function() broken.stop() end
+as(PLAYER_ID + 1, broken.screenLoop)
+sleep = realSleep
+assert(computer.has("Finishing the update"), "it starts, and says what it is waiting for\n"
+    .. computer.dump())
+
 io.write("host_music_player_test: OK\n")

@@ -349,8 +349,14 @@ return function(api)
 
     -- The app ------------------------------------------------------------------------------------
 
-    if not music or not api.musicui then
+    if not music then
         said("error", "Music", "This Pocket needs the FoxyOS 18.4 update", 2)
+        return
+    end
+    -- FoxyOS 18.4.1: an update from 18.3.1 left lib/musicui.lua behind.
+    if not api.musicui then
+        said("error", "Music", "Part of FoxyOS is missing: Settings > Updates > Check now"
+            .. " fetches it", 3)
         return
     end
     local app = musicui.new({

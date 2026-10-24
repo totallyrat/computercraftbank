@@ -222,4 +222,28 @@ if betaHandle then
     end
 end
 
+-- FoxyOS 18.4.1: the manifest says which files each role installs besides its
+-- program, and says what lib/update.lua says -- the list an updater from
+-- before a file was added learns it from.
+do
+    fs = fs or { combine = function(a, b) return a .. "/" .. b end,
+        exists = function() return false end }
+    textutils = textutils or {}
+    package.path = "../?.lua;" .. package.path
+    local update = require("lib.update")
+    local body = readFile("../release_manifest.json")
+    local section = assert(body:match('"roles":%s*(%b{})'), "the manifest has no roles")
+    local published = {}
+    for role, list in section:gmatch('"([%w_]+)":%s*(%b[])') do
+        published[role] = {}
+        for path in list:gmatch('"([^"]+)"') do published[role][#published[role] + 1] = path end
+    end
+    for role, extras in pairs(update.roleExtras()) do
+        local mine = table.concat(extras, ",")
+        local theirs = table.concat(published[role] or {}, ",")
+        assert(mine == theirs, "roles." .. role .. " in the manifest is " .. theirs
+            .. ", lib/update.lua says " .. mine .. ": update roleExtras in the builder")
+    end
+end
+
 print("host_release_manifest_test: OK")

@@ -296,8 +296,9 @@ local function autoUpdateOnce(config, role, root, client, options)
             found, why = updater.check({
                 config = config, role = role, root = root,
                 -- FoxyOS 18.2: a device that used to update unattended still
-                -- fetches the files its role lacks -- asking first now.
-                repair = options.asked_by_default or nil,
+                -- fetches the files its role lacks. FoxyOS 18.4.1: a Pocket
+                -- does too, when it asks for it (options.repair).
+                repair = options.repair or options.asked_by_default or nil,
                 requiredPaths = options.requiredPaths,
                 optionalPaths = options.optionalPaths,
                 manifestUrl = elsewhere and options.manifestUrl or nil,
@@ -361,7 +362,10 @@ local function autoUpdateOnce(config, role, root, client, options)
         -- A crash while asking is not a yes. Wrapped so a broken screen
         -- cannot take the device down, and so the answer it failed to give
         -- throws the download away rather than installing it.
-        local askedOk, wanted = pcall(options.confirm, found)
+        -- FoxyOS 18.4.1: a repair is not a release -- only files this one
+        -- already says the device should have -- so it is not asked about.
+        local askedOk, wanted = true, true
+        if not found.repair then askedOk, wanted = pcall(options.confirm, found) end
         if not askedOk or not wanted then
             if stages then updater.discard(root) end
             net.declined[tostring(found.version)] = util.nowMs() + 30 * 60 * 1000
