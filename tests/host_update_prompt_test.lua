@@ -190,8 +190,9 @@ assert(blindAccept and depotRan,
 
 -- A device that used to update on its own ---------------------------------------
 -- FoxyOS 18.2: every device asks now, on its own screen -- at start-up the
--- whole screen, for a minute; while it runs, a banner. No deletes the
--- download, and a release said no to is not fetched again for half an hour.
+-- whole screen; while it runs, a banner. No deletes the download, and a
+-- release said no to is not fetched again for half an hour. FoxyOS 18.3.1:
+-- thirty seconds to say no, and nobody answering is a yes.
 
 http.get = realGet
 local askedWith, answerNext = nil, false
@@ -205,8 +206,8 @@ fs.exists = function(path) return files[path] ~= nil or directories[path] == tru
 files, depotRan = {}, false
 assert(not net.autoUpdate(config, "bank", "/pumpe", nil, { force = true }),
     "said no to")
-assert(askedWith and askedWith.opts.timeout == 60 and not askedWith.opts.banner,
-    "asked on the whole screen at start-up, for a minute")
+assert(askedWith and askedWith.opts.auto == 30 and not askedWith.opts.banner,
+    "asked on the whole screen at start-up, thirty seconds to say no")
 assert(askedWith.info.version == "9.9.9")
 assert(files["/pumpe/.self_update/bank_server.lua"] == nil and files["/pumpe/bank_server.lua"] == nil,
     "and what came down is deleted")

@@ -1545,32 +1545,12 @@ function ui.updateFrame(target, fraction, lit, note)
     if filled > 0 then ui.fill(target, 1, height, filled, 1, ui.theme.panel) end
 end
 
--- Runs `work(progress)` with the screen up, FOXY blinking twice a second
--- while it runs. `progress(fraction, note)` moves the bar. Returns what
--- `work` returned.
+-- Runs `work(progress)` with the screen up. `progress(fraction, note)` moves
+-- the bar. Returns what `work` returned. FoxyOS 18.3.1: every device plays
+-- the Pocket's circles while a release comes down (ui.pocketUpdating, below),
+-- where it used to blink FOXY.
 function ui.updating(target, work, note)
-    local fraction, lit = 0, true
-    local function draw() ui.updateFrame(target, fraction, lit, note) end
-    local function progress(value, text)
-        fraction = util.clamp(tonumber(value) or 0, 0, 1)
-        if text then note = text end
-        draw()
-    end
-    local results = { n = 0 }
-    local function run() results = table.pack(work(progress)) end
-    draw()
-    if type(parallel) == "table" and type(parallel.waitForAny) == "function" then
-        parallel.waitForAny(run, function()
-            while true do
-                sleep(0.5)
-                lit = not lit
-                draw()
-            end
-        end)
-    else
-        run()
-    end
-    return table.unpack(results, 1, results.n)
+    return ui.pocketUpdating(target, work, note)
 end
 
 -- The question, once a release is down. It rises from the bottom of the
@@ -1578,7 +1558,9 @@ end
 -- two buttons, one over the other. `info` is { title, version, what }.
 -- True installs it; false throws the download away.
 -- `timeout`, FoxyOS 18.2: seconds before nobody answering counts as Cancel.
-function ui.updateReady(target, info, timeout)
+-- `auto`, FoxyOS 18.3.1: seconds before nobody answering counts as Install,
+-- counted down on the screen. Cancel is the one way to say no.
+function ui.updateReady(target, info, timeout, auto)
     target = surface(target)
     local width, height = target.getSize()
     local wordTop = updateWordTop(height)
@@ -1601,14 +1583,21 @@ function ui.updateReady(target, info, timeout)
     line(height - 8, info.title or "FoxyOS", ui.theme.ink)
     line(height - 7, "Version " .. tostring(info.version or "?"), ui.theme.muted)
     line(height - 6, info.what, ui.theme.muted)
-    local deadline = tonumber(timeout) and util.nowMs() + tonumber(timeout) * 1000
+    local installAt = tonumber(auto) and util.nowMs() + tonumber(auto) * 1000
+    local deadline = not installAt and tonumber(timeout) and util.nowMs() + tonumber(timeout) * 1000
     while true do
+        if installAt then
+            local left = math.max(0, math.ceil((installAt - util.nowMs()) / 1000))
+            if height - 5 >= panelTop then ui.fill(target, 1, height - 5, width, 1, ui.theme.panel) end
+            line(height - 5, "Installing by itself in " .. left .. "s", ui.theme.accent)
+            if left <= 0 then return true end
+        end
         local scene = ui.scene(target)
         scene:button("install", 2, height - 4, width - 2, 2, "Install",
             { background = ui.theme.accent, foreground = ui.theme.accentInk })
         scene:button("cancel", 2, height - 1, width - 2, 2, "Cancel & Delete",
             { background = ui.theme.background, foreground = ui.theme.ink })
-        local action = scene:wait({ tickRate = deadline and 1 or nil })
+        local action = scene:wait({ tickRate = (deadline or installAt) and 1 or nil })
         if action == "install" then return true end
         if action == "cancel" or action == "__terminate" then return false end
         if deadline and util.nowMs() >= deadline then return false end
@@ -1619,17 +1608,24 @@ end
 -- nothing else on the screen yet -- it is ui.updateReady, the whole screen;
 -- a check while the device is running is a banner over whatever it shows,
 -- answered there, so neither takes the other's taps. Nobody answering by
--- opts.timeout is a no for now: a server is not held up for somebody who is
--- not there. True to install.
+-- opts.timeout is a no for now. FoxyOS 18.3.1: with opts.auto it is a yes --
+-- updates install by themselves again, after that many seconds to say no.
+-- True to install.
 function ui.askUpdate(target, info, opts)
     target = surface(target)
     opts = opts or {}
-    if not opts.banner then return ui.updateReady(target, info, opts.timeout) end
+    if not opts.banner then return ui.updateReady(target, info, opts.timeout, opts.auto) end
     local answer
+    local installAt = tonumber(opts.auto) and util.nowMs() + tonumber(opts.auto) * 1000
+    local function body()
+        if not installAt then return "Downloaded. Install it now?" end
+        return "Installing in " .. math.max(0, math.ceil((installAt - util.nowMs()) / 1000))
+            .. "s unless you cancel"
+    end
     local function draw(where, drop)
         return ui.topBanner(where, {
             title = tostring(info.title or "FoxyOS") .. " " .. tostring(info.version or ""),
-            body = "Downloaded. Install it now?", color = ui.theme.accent,
+            body = body(), color = ui.theme.accent,
             buttons = { { id = "install", label = "Install", color = ui.theme.success },
                 { id = "cancel", label = "Cancel & Delete", color = ui.theme.panel } },
         }, drop)
@@ -1641,9 +1637,16 @@ function ui.askUpdate(target, info, opts)
             answer = id == "install"
             ui.setOverlay(nil)
         end })
-    local deadline = util.nowMs() + (tonumber(opts.timeout) or 600) * 1000
-    while answer == nil and util.nowMs() < deadline do sleep(0.5) end
-    if answer == nil then ui.setOverlay(nil) end
+    local deadline = installAt or util.nowMs() + (tonumber(opts.timeout) or 600) * 1000
+    while answer == nil and util.nowMs() < deadline do
+        sleep(0.5)
+        -- The countdown, kept current on top of whatever is under it.
+        if answer == nil and installAt then pcall(draw, target, 1) end
+    end
+    if answer == nil then
+        ui.setOverlay(nil)
+        return installAt ~= nil
+    end
     return answer == true
 end
 
@@ -1652,6 +1655,7 @@ end
 -- screen, then black opens the same way over it -- three times -- and
 -- POCKET lands on black, then what it runs on. The same circles play while
 -- a Pocket downloads a release, and for fifteen seconds while it installs.
+-- FoxyOS 18.3.1: and on every other device too, in its own main colour.
 
 -- One circle opening from the middle, in `color`, over whatever is there.
 -- `after()`, when given, draws on top of every frame.
@@ -1714,7 +1718,8 @@ local function pocketBar(target, fraction)
     if filled > 0 then ui.fill(target, 1, height, filled, 1, ui.theme.panel) end
 end
 
--- ui.updating for a Pocket: circles while `work(progress)` downloads.
+-- ui.updating for a Pocket -- and, FoxyOS 18.3.1, for everything: circles
+-- while `work(progress)` downloads.
 function ui.pocketUpdating(target, work)
     target = surface(target)
     local fraction = 0

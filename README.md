@@ -4,7 +4,7 @@
 
 Every computer in it runs FoxyOS. The phone is the **Pocket**; on a standing computer it becomes the **Pocket Desktop**. Everything is touch-first, and a keyboard works too.
 
-> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. **18.3** brings **Music for Artists**, Artist Profiles, **covers**, **playlists** and a Library in rows. See [`CHANGELOG.md`](CHANGELOG.md).
+> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. **18.3** brings **Music for Artists**, Artist Profiles, **covers**, **playlists** and a Library in rows; **18.3.1** brings automatic updates back, with 30 seconds to say no, and the Pocket's circles on every device. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contents
 
@@ -406,7 +406,8 @@ To start a program by hand: `/pumpe/installer.lua --boot <name>`. The names are 
 
 Every device updates itself from the public manifest, downloading only the files its own role needs. Each download is staged, checked by size and checksum, and swapped in all at once or not at all, and local settings are kept.
 
-- **Every device downloads first, then asks**: **Install** or **Cancel & Delete**, at start-up on the whole screen and while running as a banner. Nobody answering within a minute at start-up (ten minutes while running) counts as no, so a server restarting unattended boots what it has; a release said no to is not downloaded again for half an hour. **Easy Deployment** asks too, before it installs anything.
+- **Every device downloads first, then asks**: **Install** or **Cancel & Delete**, at start-up on the whole screen and while running as a banner, with a countdown. Since 18.3.1, nobody answering within **30 seconds** installs it, so devices keep themselves up to date; **Cancel & Delete** is the way to say no, and a release said no to is not downloaded again for half an hour. **Easy Deployment** asks too: an update it finds at start-up counts down the same way, a first install waits for an answer.
+- **The circles**: every device plays the Pocket's circles in its own colour while a release downloads, and for a few seconds once it is installed (a Pocket for fifteen).
 - **The Pocket** shows the release's name and what changed. **Settings → Updates** has Check now.
 - **Prioritize Updates** lets a full Pocket take apps off to fit a release, and puts them back afterwards.
 - **Beta Updates**: any device can sign up for betas, numbered halfway to the release they precede (FoxyOS 15 Beta is 14.5). Betas have a manifest of their own under `beta/`.
@@ -526,4 +527,4 @@ QA_CHECKLIST.md            what to try in a real world after a release
 
 ---
 
-**FoxyOS 18.3**, release `18.3.0`.
+**FoxyOS 18.3.1**, release `18.3.1`.

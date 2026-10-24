@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.3.1"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -28,6 +28,7 @@ update_mode = "ask",
 })
 if device.onboarding_complete == nil then device.onboarding_complete = false end
 if device.modem_on == nil then device.modem_on = true end
+
 
 
 
@@ -5692,6 +5693,7 @@ end
 
 
 
+
 local function confirmUpdate(found)
 if updateDeferred == found.version then return false end
 local size = tonumber(found.bytes)
@@ -5700,7 +5702,7 @@ word = "POCKET",
 title = found.label or "FoxyOS",
 version = found.version,
 what = "For this Pocket" .. (size and ("  " .. math.ceil(size / 1024) .. " KiB") or ""),
-})
+}, nil, net.AUTO_INSTALL or 30)
 if wanted then return true end
 updateDeferred = found.version
 return false
@@ -5747,7 +5749,8 @@ util.formatClock())
 ui.card(target, 2, 5, width - 2, 4, ui.theme.accent)
 ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
 ui.theme.panel)
-ui.text(target, 4, 6, "Always asks first", ui.theme.ink, ui.theme.panel)
+ui.text(target, 4, 6, ui.truncate("Auto: " .. (net.AUTO_INSTALL or 30)
+.. "s to say no", width - 6), ui.theme.ink, ui.theme.panel)
 ui.text(target, 4, 7, ui.truncate(device.modem_on == false
 and "Modem off: not looking" or (updateDeferred
 and ("v" .. updateDeferred .. " is waiting")

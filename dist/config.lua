@@ -2,11 +2,11 @@
 
 
 return {
-version = "18.3.0",
+version = "18.3.1",
 
 
 
-release_name = "FoxyOS 18.3",
+release_name = "FoxyOS 18.3.1",
 protocol = "PUMPE_BANK_V5",
 
 

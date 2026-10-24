@@ -14,7 +14,7 @@
 
 
 
-local INSTALLER_VERSION = "18.3.0"
+local INSTALLER_VERSION = "18.3.1"
 local MANIFEST_URL =
 "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -568,6 +568,7 @@ end
 
 
 
+
 local downloading = { lit = true, fraction = 0, note = "" }
 local function downloadFrame()
 local width, height = target.getSize()
@@ -619,6 +620,16 @@ end
 
 
 
+function downloading.installed()
+downloading.fraction = 1
+for _ = 1, 3 do
+downloading.wipe(theme.accent)
+downloading.wipe(colors.black)
+end
+end
+
+
+
 local function blinking(work)
 if type(parallel) ~= "table" or type(parallel.waitForAny) ~= "function" then
 return work()
@@ -645,21 +656,34 @@ end
 
 
 
-local function askInstall(program, manifest, total, timeout)
+
+local function askInstall(program, manifest, total, auto)
 local width, height = target.getSize()
 clear()
 header("EASY DEPLOYMENT", "Downloaded")
 center(5, "Install " .. program.name .. "?", theme.ink)
 center(7, "FoxyOS v" .. tostring(manifest.version) .. "  "
 .. math.ceil((total or 0) / 1024) .. " KiB", theme.muted)
-if timeout then center(9, "No answer in " .. timeout .. "s: not now", theme.muted) end
 local buttons = {}
 button(buttons, "install", 2, height - 5, width - 2, 2, "INSTALL", theme.accent, colors.black)
 button(buttons, "cancel", 2, height - 2, width - 2, 2, "CANCEL AND DELETE", theme.panel)
-local timer = timeout and os.startTimer(timeout)
+local left = auto
+local function countdown()
+if left then
+fill(1, 9, width, 1, theme.background)
+center(9, "Installing by itself in " .. left .. "s", theme.accent)
+end
+end
+countdown()
+local timer = left and os.startTimer(1)
 while true do
 local event = { os.pullEvent() }
-if event[1] == "timer" and event[2] == timer then return false end
+if event[1] == "timer" and event[2] == timer then
+left = left - 1
+if left <= 0 then return true end
+countdown()
+timer = os.startTimer(1)
+end
 if event[1] == "terminate" then return false end
 if event[1] == "mouse_click" or event[1] == "monitor_touch" then
 for _, item in ipairs(buttons) do
@@ -693,8 +717,8 @@ for _, stale in ipairs({ staging, backup }) do
 if fs.exists(stale) then fs.delete(stale) end
 end
 downloading.lit = true
-downloading.circles = program.id == "pumpe"
-if downloading.circles then clear() end
+downloading.circles = true
+clear()
 local fetched, fetchError = blinking(function()
 local done = 0
 for index, entry in ipairs(entries) do
@@ -1158,7 +1182,8 @@ if manifest then
 updateSelf(manifest)
 if (newerVersion(manifest.version, installedVersion(root)) and not program.byCore)
 or not fs.exists(fs.combine(root, program.file)) then
-if install(program, root, manifest, 60) then
+if install(program, root, manifest, 30) then
+downloading.installed()
 message("success", "UPDATED TO v" .. manifest.version,
 "Restarting " .. program.name, 0.6)
 os.reboot()
@@ -1186,7 +1211,8 @@ if mode == "--auto" then
 local program = programById(modeProgram)
 local manifest = program and httpReady() and readManifest()
 if manifest and newerVersion(manifest.version, installedVersion(homeDir())) then
-if install(program, homeDir(), manifest, 60) then
+if install(program, homeDir(), manifest, 30) then
+downloading.installed()
 os.reboot()
 return true
 end

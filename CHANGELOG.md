@@ -1,5 +1,26 @@
 # Changelog
 
+## 18.3.1
+
+FoxyOS 18.3.1: updates install by themselves again, and every device plays
+the Pocket's circles while it updates. Nothing else changes. Update the Bank
+(Core and Vault) first, then everything else; this is the last update that
+needs somebody to press Install on each device.
+
+**Auto-updates are back, with time to say no.** When a release is down,
+every device still asks -- the whole screen at start-up, a banner while it
+runs -- but now with a countdown: nobody pressing anything for 30 seconds
+installs it. **Cancel & Delete** is still a no, and a release said no to is
+not asked about again for half an hour. Pockets too, betas included for a
+Pocket signed up to them. An update found at start-up by Easy Deployment
+counts down the same way; a first install from Easy Deployment still waits
+for its answer.
+
+**The circles, everywhere.** Every device now plays the Pocket's circles in
+its own main colour while a release comes down, where it used to blink FOXY,
+and a few seconds of them once it is installed (a Pocket keeps its fifteen).
+Easy Deployment plays them for every program it installs.
+
 ## 18.3.0
 
 FoxyOS 18.3: Music for Artists, covers, playlists and a new Library. Update

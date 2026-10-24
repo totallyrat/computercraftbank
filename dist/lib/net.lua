@@ -428,7 +428,11 @@ end
 
 
 
+
+
+
 net.declined = {}
+net.AUTO_INSTALL, net.INSTALL_SECONDS = 30, 4
 function net.askUpdate(found, options)
 local okUi, ui = pcall(require, "lib.ui")
 if not okUi or type(ui) ~= "table" or type(ui.askUpdate) ~= "function" then return true end
@@ -439,7 +443,7 @@ local size = tonumber(found.bytes)
 return ui.askUpdate(target, { word = "FOXY", title = found.label or "FoxyOS",
 version = found.version, what = size and (math.ceil(size / 1024) .. " KiB, downloaded")
 or "Downloaded" },
-{ banner = not options.force, timeout = options.force and 60 or 600 })
+{ banner = not options.force, auto = net.AUTO_INSTALL })
 end
 
 function net.autoUpdate(config, role, root, client, options)
@@ -449,6 +453,19 @@ local asked = {}
 for key, value in pairs(options) do asked[key] = value end
 asked.confirm = function(found) return net.askUpdate(found, asked) end
 asked.asked_by_default = true
+
+
+
+asked.onInstalled = asked.onInstalled or function()
+local okUi, ui = pcall(require, "lib.ui")
+local target = asked.target or net.updateTarget
+or (type(term) == "table" and type(term.current) == "function"
+and term.current()) or nil
+if okUi and type(ui) == "table" and type(ui.pocketInstalling) == "function"
+and target and asked.screen ~= false then
+ui.pocketInstalling(target, net.INSTALL_SECONDS)
+end
+end
 options = asked
 end
 local done = autoUpdateOnce(config, role, root, client, options)
