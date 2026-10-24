@@ -5,12 +5,14 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
 local ui = require("lib.ui")
 local music = require("lib.music")
+-- FoxyOS 18.4: the Music app's screens, the same as on a Pocket.
+local musicui = require("lib.musicui")
 
 -- The Music Player, FoxyOS 17: a computer with speakers that plays the Music
 -- Library and the radios. Somebody signs in on it once, with their Foxy
@@ -521,14 +523,18 @@ local function header(subtitle)
     ui.header(target, "MUSIC PLAYER", subtitle, util.formatClock())
 end
 
-local function nowPage(spec)
+-- FoxyOS 18.4: opened from the top of every page, with the artist a tap from
+-- their profile and a heart for Favorites.
+local function nowPage(app)
     while running do
         local here = shared.here ~= nil
         local player = here and kept.view() or shared.player or {}
         local now = player.now
         local width = target.getSize()
-        header((state.owner_name or "") .. (player.label and ("  " .. player.label) or ""))
+        ui.clear(target)
         local scene = ui.scene(target)
+        app:chrome(scene, "Now Playing", { back = true, subtitle = ui.truncate((state.owner_name
+            or "") .. (player.label and ("  " .. player.label) or ""), math.max(1, width - 20)) })
         local y = 5
         if player.radio then
             local band = music.color(player.radio.color)
@@ -548,6 +554,13 @@ local function nowPage(spec)
             ui.text(target, x, y + 1, ui.truncate(now.title, width - x), ui.theme.ink)
             ui.text(target, x, y + 2, ui.truncate(now.artist .. (now.uploader_name
                 and ("  (by " .. now.uploader_name .. ")") or ""), width - x), ui.theme.muted)
+            scene:hotspot("by:now", x, y + 2, width - x, 1)
+            if now.kind == "song" and now.track_id and not player.radio and not here then
+                local loved = app:loved(now.track_id)
+                scene:button("heart", x, y + 3, 8, 1, loved and "<3 YES" or "<3", {
+                    background = loved and ui.theme.accent or ui.theme.panel,
+                    foreground = loved and ui.inkOn(ui.theme.accent) or ui.theme.accent })
+            end
             local position = shared.playing and (util.nowMs() - shared.playing.started)
                 or now.position_ms or 0
             position = math.max(0, math.min(now.length_ms or 0, position))
@@ -601,11 +614,20 @@ local function nowPage(spec)
         if shared.error then footer = tostring(shared.error) end
         ui.text(target, 2, 14, ui.truncate(footer, width - 2), (#speakers == 0
             or shared.error) and ui.theme.warning or ui.theme.muted)
-        ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
-        local action = scene:wait({ tickRate = 1 })
-        if action and action:match("^tab:") then return action end
+        local action = scene:wait({ tickRate = 1, scroll = true })
+        if action == "back" or musicui.leaving(action) then return action end
         if action == "__terminate" then return "stop" end
         local step = (action == "louder" and 0.5) or (action == "quieter" and -0.5) or nil
+        if action == "by:now" and now then
+            local result = app:credits(now)
+            if musicui.leaving(result) then return result end
+            action = nil
+        elseif action == "heart" and now then
+            app:heart(now)
+            action = nil
+        elseif action == "now" then
+            action = nil
+        end
         if step and here then
             state.volume = math.max(0, math.min(3, volume + step))
             save()
@@ -641,7 +663,9 @@ local function keptPage(page, per)
     return { tracks = items, total = #kept.list(), page = actual, pages = pages, kept = true }
 end
 
-local function libraryPage(spec)
+-- FoxyOS 18.4: every song as a list, and the songs downloaded here -- from
+-- Me, and the Music tab itself while the Music Server is off.
+local function libraryPage(app)
     local listed = nil
     while running do
         local width = target.getSize()
@@ -656,9 +680,11 @@ local function libraryPage(spec)
             listed = ask("MUSIC_LIBRARY", { query = view.query, sort = view.sort,
                 page = view.page, per_page = per })
         end
-        header((offline and "Downloaded" or "Music Library")
-            .. (listed and ("  " .. listed.total .. " songs") or ""))
+        ui.clear(target)
         local scene = ui.scene(target)
+        app:chrome(scene, offline and "Downloaded" or "Music Library", {
+            back = not shared.server_down, tab = shared.server_down and "music" or nil,
+            subtitle = listed and (listed.total .. " songs") or nil })
         if shared.server_down then
             ui.fill(target, 2, 4, width - 2, 1, ui.theme.warning)
             ui.text(target, 3, 4, ui.truncate("The Music Server is off: songs kept here",
@@ -717,10 +743,17 @@ local function libraryPage(spec)
                 scene:button("next", width - 5, bottom, 5, 1, ">", { background = ui.theme.panel })
             end
         end
-        ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
-        local action = scene:wait({ tickRate = 5 })
-        if action and action:match("^tab:") then return action end
+        local action = scene:wait({ tickRate = 5, scroll = true })
+        if action == "back" or musicui.leaving(action) then return action end
         if action == "__terminate" then return "stop" end
+        if action == "now" then
+            local result = nowPage(app)
+            if musicui.leaving(result) then return result end
+        elseif action == "__scrolldown" and listed and listed.pages > view.page then
+            action = "next"
+        elseif action == "__scrollup" and view.page > 1 then
+            action = "prev"
+        end
         local sort = action and action:match("^sort:(.+)$")
         local playId = action and action:match("^play:(.+)$")
         local addId = action and action:match("^add:(.+)$")
@@ -750,12 +783,11 @@ local function libraryPage(spec)
                     .. " Server at least every " .. OFFLINE_DAYS .. " days")
             else
                 kept.play(playId, queue)
-                return "tab:now"
             end
         elseif playId then
             local queue = {}
             for _, track in ipairs(listed.tracks) do queue[#queue + 1] = track.track_id end
-            if control("play", { track_id = playId, queue = queue }) then return "tab:now" end
+            control("play", { track_id = playId, queue = queue })
         elseif addId then
             if control("add", { track_id = addId }) then
                 say("success", "QUEUED", "Up next after this one")
@@ -782,7 +814,7 @@ function dial.saved(stationId)
     end
 end
 
-local function radioPage(spec)
+local function radioPage(app)
     while running do
         local width = target.getSize()
         local bottom = ui.contentBottom(target)
@@ -790,8 +822,9 @@ local function radioPage(spec)
         local frequency = player.frequency or state.frequency or 984
         local tuned = ask("MUSIC_TUNE", { frequency = frequency })
         local favorites = ask("MUSIC_FAVORITES", { saved = state.saved_stations or {} })
-        header("Radio  turn the dial")
+        ui.clear(target)
         local scene = ui.scene(target)
+        app:chrome(scene, "Radio", { tab = "radio", subtitle = "Turn the dial" })
         local found = tuned and tuned.station
         local tint = found and music.color(found.color) or ui.theme.muted
         local rows = {}
@@ -862,10 +895,15 @@ local function radioPage(spec)
             scene:button("scrolldown", width - 2, bottom - 1, 3, 1, "v",
                 { background = ui.theme.panel })
         end
-        ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
-        local action = scene:wait({ tickRate = 2 })
-        if action and action:match("^tab:") then return action end
+        local action = scene:wait({ tickRate = 2, scroll = true })
+        if musicui.leaving(action) then return action end
         if action == "__terminate" then return "stop" end
+        if action == "__scrollup" then action = "scrollup" end
+        if action == "__scrolldown" then action = "scrolldown" end
+        if action == "now" then
+            local result = nowPage(app)
+            if musicui.leaving(result) then return result end
+        end
         local moves = { down10 = -10, down = -1, up = 1, up10 = 10 }
         local dialed = tonumber(action and action:match("^dial:(%d+)$"))
         if moves[action] or dialed then
@@ -890,9 +928,48 @@ local function radioPage(spec)
         else
             local radioId = action and action:match("^radio:(.+)$")
             local stationId = action and action:match("^station:(.+)$")
-            if radioId and control("radio", { radio_id = radioId }) then return "tab:now" end
-            if stationId and control("station", { station_id = stationId }) then return "tab:now" end
+            if radioId then control("radio", { radio_id = radioId }) end
+            if stationId then control("station", { station_id = stationId }) end
         end
+    end
+end
+
+-- FoxyOS 18.4: every song has a genre -- one there is, or a new one.
+local function chooseGenre()
+    local listed = ask("MUSIC_GENRES", {})
+    local genres, page = listed and listed.genres or {}, 1
+    while running do
+        local width, height = target.getSize()
+        header("Its genre")
+        local scene = ui.scene(target)
+        local per = math.max(1, height - 8)
+        local items, actual, pages = util.page(genres, page, per)
+        page = actual
+        for index, genre in ipairs(items) do
+            local y = 4 + index
+            scene:hotspot("genre:" .. genre.name, 1, y, width, 1)
+            ui.text(target, 2, y, ui.truncate(genre.name, width - 14), ui.theme.ink)
+            ui.text(target, width - 10, y, genre.songs .. " songs", ui.theme.muted)
+        end
+        if #genres == 0 then ui.text(target, 2, 5, "No genres yet: make the first", ui.theme.muted) end
+        scene:button("new", 2, height - 1, 14, 1, "NEW GENRE", { background = ui.theme.accent,
+            foreground = ui.inkOn(ui.theme.accent) })
+        if pages > 1 then
+            scene:button("more", 18, height - 1, 8, 1, page .. "/" .. pages,
+                { background = ui.theme.panel })
+        end
+        scene:button("cancel", width - 9, height - 1, 9, 1, "CANCEL", { background = ui.theme.panel })
+        local action = scene:wait({ scroll = true })
+        if action == "cancel" or action == "__terminate" then return nil end
+        if action == "more" or action == "__scrolldown" then page = page % pages + 1 end
+        if action == "__scrollup" then page = math.max(1, page - 1) end
+        if action == "new" then
+            local typed = ui.input(target, "NEW GENRE", { maxLength = 16, minLength = 2,
+                hint = "Lo-fi, Sea Shanty, Redstone Rock..." })
+            if typed and #util.trim(typed) >= 2 then return util.trim(typed) end
+        end
+        local picked = action and action:match("^genre:(.+)$")
+        if picked then return picked end
     end
 end
 
@@ -901,12 +978,15 @@ local function uploadBody(name, body)
     local title = ui.input(target, "SONG TITLE", { initial = music.titleFrom(name),
         maxLength = 28 })
     if not title or util.trim(title) == "" then return end
-    local artist = ui.input(target, "ARTIST", { maxLength = 20 })
+    local artist = ui.input(target, "ARTIST", { maxLength = 40,
+        hint = "Ana, Kit & Noa: a profile each" })
     if not artist or util.trim(artist) == "" then return end
+    local genre = chooseGenre()
+    if not genre then return end
     header("Uploading " .. title)
     local width = target.getSize()
     local began, err = ask("MUSIC_UPLOAD_BEGIN", { title = title, artist = artist,
-        size = #body }, 8)
+        size = #body, genre = genre }, 8)
     if not began then
         say("error", "NOT UPLOADED", err)
         return
@@ -941,13 +1021,29 @@ local function diskSongs()
     return found
 end
 
-local function uploadPage(spec)
+-- Signing out: this Music Player stops being anybody's.
+local function signOut()
+    if not ui.confirm(target, "SIGN OUT", "This Music Player stops being yours and goes"
+        .. " quiet. Songs downloaded on it go too.", "SIGN OUT", "STAY") then return nil end
+    ask("MUSIC_BYE", {})
+    kept.clear()
+    shared.here = nil
+    state.player_token, state.owner_name = nil, nil
+    save()
+    running = false
+    changed()
+    return "stop"
+end
+
+-- FoxyOS 18.4: from Me.
+local function uploadPage(app)
     local me
     while running do
         local width = target.getSize()
         me = me or ask("MUSIC_ME", {})
-        header("Upload a song")
+        ui.clear(target)
         local scene = ui.scene(target)
+        app:chrome(scene, "Upload a song", { back = true })
         ui.wrappedText(target, 2, 5, "Drop a .dfpwm file on this screen to put it in the"
             .. " Music Library, with your name on it. Songs are DFPWM1a.", width - 2, 3,
             ui.theme.ink)
@@ -971,13 +1067,13 @@ local function uploadPage(spec)
             scene:button("disk:" .. index, 2, 12 + index, width - 2, 1, path,
                 { background = ui.theme.panel })
         end
-        local bottom = ui.contentBottom(target)
-        scene:button("signout", width - 12, bottom, 12, 1, "SIGN OUT",
-            { background = ui.theme.danger, foreground = colors.white })
-        ui.tabBar(scene, target, spec.list, spec.active, nil, { home = false })
         local action = scene:wait({ files = true, tickRate = 5 })
-        if action and action:match("^tab:") then return action end
+        if action == "back" or musicui.leaving(action) then return action end
         if action == "__terminate" then return "stop" end
+        if action == "now" then
+            local result = nowPage(app)
+            if musicui.leaving(result) then return result end
+        end
         local diskIndex = tonumber(action and action:match("^disk:(%d+)$"))
         if action == "__files" then
             local ok, files = pcall(function() return scene.dropped.getFiles() end)
@@ -998,34 +1094,65 @@ local function uploadPage(spec)
             if file then file.close() end
             uploadBody(songs[diskIndex], body)
             me = nil
-        elseif action == "signout" then
-            if ui.confirm(target, "SIGN OUT", "This Music Player stops being yours and goes"
-                .. " quiet. Songs downloaded on it go too.", "SIGN OUT", "STAY") then
-                ask("MUSIC_BYE", {})
-                kept.clear()
-                shared.here = nil
-                state.player_token, state.owner_name = nil, nil
-                save()
-                running = false
-                changed()
-                return "stop"
-            end
         elseif action == "__tick" then
             me = nil
         end
     end
 end
 
+-- FoxyOS 18.4: the Music app's tabs -- Music, Search, Me -- and the Radio
+-- tab of its own. What is playing is along the top: Now Playing is a tap away.
 local function screenLoop()
-    ui.runTabs({
-        target = target, title = "MUSIC PLAYER",
-        list = { { id = "now", label = "Now Playing", short = "Now" },
-            { id = "library", label = "Library", short = "Lib" },
-            { id = "radio", label = "Radio" }, { id = "upload", label = "Upload", short = "Up" } },
-        pages = { now = nowPage, library = libraryPage, radio = radioPage,
-            upload = uploadPage },
+    local app
+    app = musicui.new({
+        ui = ui, util = util, colors = colors, target = target, accent = ui.theme.accent,
         running = function() return running end,
+        ask = function(action, payload) return ask(action, payload) end,
+        nowPage = nowPage,
+        current = function()
+            local player = shared.here and kept.view() or shared.player
+            local now = player and player.now
+            if not now then
+                return { where = shared.server_down and "The Music Server is off"
+                    or "Nothing playing" }
+            end
+            return { title = now.title, artist = now.artist, paused = player.paused }
+        end,
+        play = function(trackId, queue, playlistId)
+            return control("play", { track_id = trackId, queue = queue,
+                playlist_id = playlistId }) ~= nil
+        end,
+        -- + queues a song; v keeps one here (FoxyMusic+), * is one kept.
+        marks = function(track)
+            local list = { { key = "add", label = "+" } }
+            local canKeep = not shared.server_down and shared.player and shared.player.offline
+            if canKeep or kept.get(track.track_id) then
+                list[#list + 1] = { key = "keep", label = kept.get(track.track_id) and "*" or "v" }
+            end
+            return list
+        end,
+        mark = function(key, track)
+            if key == "add" then
+                if control("add", { track_id = track.track_id }) then
+                    say("success", "QUEUED", track.title .. " is up next")
+                end
+            elseif kept.get(track.track_id) then
+                if ui.confirm(target, "REMOVE DOWNLOAD", track.title .. " stays in the library.",
+                    "REMOVE", "KEEP") then kept.remove(track.track_id) end
+            else
+                download(track.track_id)
+            end
+        end,
+        meButtons = {
+            { id = "downloads", label = "Every song, and downloads", run = libraryPage },
+            { id = "upload", label = "Upload a song", run = uploadPage },
+            { id = "signout", label = "Sign out", run = function() return signOut() end },
+        },
+        tabs = { { id = "radio", label = "Radio", page = radioPage } },
+        offline = function() return shared.server_down end,
+        offlinePage = libraryPage,
     })
+    app:run("music")
     running = false
 end
 

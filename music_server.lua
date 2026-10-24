@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -271,6 +271,8 @@ function library.public(track)
         -- FoxyOS 18.3: its cover, the artists it credits, and radio plays.
         cover = track.cover, artists = library.credits and library.credits(track) or nil,
         radio_plays = track.radio_plays or 0,
+        -- FoxyOS 18.4: its genre.
+        genre_id = track.genre, genre = library.genreName and library.genreName(track) or nil,
     }
 end
 
@@ -307,6 +309,8 @@ end
 
 -- A finished upload becomes a track: credited to whoever sent it.
 function library.add(fields)
+    -- FoxyOS 18.4: its genre, made if it is new -- before anything is kept.
+    local genre = fields.genre and library.genre and library.genre(fields.genre) or nil
     local id = fields.track_id or nextId("track", "T")
     state.tracks[id] = {
         track_id = id, file_id = fields.file_id, size = fields.size,
@@ -321,6 +325,7 @@ function library.add(fields)
     }
     -- FoxyOS 18.3: every artist it credits has a profile from now on.
     if library.credit then state.tracks[id].artist_ids = library.credit(state.tracks[id].artist) end
+    state.tracks[id].genre = genre
     save()
     logActivity("Added " .. state.tracks[id].title .. " by "
         .. state.tracks[id].uploader_name, colors.lime)
@@ -564,6 +569,9 @@ function catalog.played(accountId, track)
     while #list > catalog.RECENT do table.remove(list) end
     state.history[accountId] = list
     catalog.heard(track, { accountId })
+    -- FoxyOS 18.4: for Replayed and the charts.
+    catalog.replay(accountId, track.track_id)
+    catalog.countPlay(track.track_id)
 end
 
 -- A song starting on a radio: a radio play, and everybody tuned in heard it.
@@ -572,6 +580,7 @@ function catalog.onRadio(trackId, accountIds)
     if not track or track.kind ~= "song" then return end
     track.radio_plays = (track.radio_plays or 0) + 1
     catalog.heard(track, accountIds)
+    catalog.countPlay(trackId)
 end
 
 -- The radios that play an artist: State Radios with one of its songs in
@@ -633,6 +642,272 @@ function catalog.playlistPublic(list, full)
         out.tracks = tracks
     end
     return out
+end
+
+-- Genres, charts and mixes, FoxyOS 18.4 -------------------------------------------------------
+-- Every song has a genre, chosen when it is uploaded or made up then. Each
+-- genre has a mix: fifteen of its songs, chosen afresh every in-game day
+-- when it has more. Top Songs and Top Artists are worked out once a day,
+-- from the last seven days' plays. Replayed is what each listener plays
+-- most.
+--
+-- Covers went square in 18.4 (12x12): the 16x12 ones from 18.3 were wiped
+-- once, everywhere, to be drawn again.
+
+state.genres = state.genres or {}
+state.genre_names = state.genre_names or {}
+state.day_plays = state.day_plays or {}
+state.replays = state.replays or {}
+catalog.MIX, catalog.CHART, catalog.WEEK = 15, 15, 7
+
+if state.cover_size ~= 12 then
+    for _, list in ipairs({ state.tracks, state.playlists, state.artists, state.radios,
+        state.stations or {} }) do
+        for _, item in pairs(list) do item.cover = nil end
+    end
+    state.cover_size = 12
+    save()
+end
+
+function catalog.genreNamed(name)
+    local id = state.genre_names[util.normalName(name or "")]
+    return id and state.genres[id] or nil
+end
+
+-- The genre by that name, made if there is none: 2 to 16 letters.
+function library.genre(name)
+    local clean = util.safeText(util.trim(tostring(name or "")), 16)
+    need(#clean >= 2, "BAD_GENRE", "Give it a genre: 2-16 letters")
+    local found = catalog.genreNamed(clean)
+    if found then return found.genre_id end
+    state.seq.genre = (state.seq.genre or 0) + 1
+    local id = "G" .. state.seq.genre
+    state.genres[id] = { genre_id = id, name = clean, created_day = util.ingameDay() }
+    state.genre_names[util.normalName(clean)] = id
+    return id
+end
+
+function library.genreName(track)
+    local genre = state.genres[track.genre or ""]
+    return genre and genre.name or nil
+end
+
+function catalog.genreSongs(genreId)
+    local ids = {}
+    for id, track in pairs(state.tracks) do
+        if track.kind == "song" and track.genre == genreId then ids[#ids + 1] = id end
+    end
+    table.sort(ids, function(a, b) return library.order(b, a) end)
+    return ids
+end
+
+function catalog.genrePublic(genre)
+    return { genre_id = genre.genre_id, name = genre.name,
+        songs = #catalog.genreSongs(genre.genre_id) }
+end
+
+-- A number from some text, the same every time.
+function catalog.dayHash(text)
+    local hash = 5381
+    for index = 1, #text do hash = (hash * 33 + text:byte(index)) % 2147483647 end
+    return hash
+end
+
+-- The same order all day, a different one the next: a shuffle seeded by the
+-- day (and `salt`), over the ids in their library order.
+function catalog.shuffled(ids, salt)
+    local list = util.copy(ids)
+    table.sort(list, library.order)
+    local seed = catalog.dayHash(tostring(util.ingameDay()) .. ":" .. tostring(salt)) % 2147483646 + 1
+    for index = #list, 2, -1 do
+        seed = (seed * 48271) % 2147483647
+        local other = seed % index + 1
+        list[index], list[other] = list[other], list[index]
+    end
+    return list
+end
+
+-- A song started, on a Music Player or a radio: today's count, kept a week.
+function catalog.countPlay(trackId)
+    local today = util.ingameDay()
+    local day = state.day_plays[tostring(today)] or {}
+    day[trackId] = (day[trackId] or 0) + 1
+    state.day_plays[tostring(today)] = day
+    for key in pairs(state.day_plays) do
+        if (tonumber(key) or 0) <= today - catalog.WEEK then state.day_plays[key] = nil end
+    end
+end
+
+function catalog.weekPlays()
+    local counts = {}
+    for _, day in pairs(state.day_plays) do
+        for id, count in pairs(day) do counts[id] = (counts[id] or 0) + count end
+    end
+    return counts
+end
+
+-- Today's charts: worked out the first time they are asked for each day,
+-- and again while they have nothing in them.
+function catalog.charts()
+    local today = util.ingameDay()
+    local kept = state.charts
+    if kept and kept.day == today and #kept.songs > 0 then return kept end
+    local week = catalog.weekPlays()
+    local function score(id)
+        local track = state.tracks[id]
+        return (week[id] or 0) * 1000 + (track.plays or 0) + (track.radio_plays or 0)
+    end
+    local songs = {}
+    for id, track in pairs(state.tracks) do
+        if track.kind == "song" and score(id) > 0 then songs[#songs + 1] = id end
+    end
+    table.sort(songs, function(a, b)
+        if score(a) ~= score(b) then return score(a) > score(b) end
+        return library.order(b, a)
+    end)
+    -- Top Artists: each artist's week, and the song of theirs played most.
+    local artists, best = {}, {}
+    for _, id in ipairs(songs) do
+        for _, artistId in ipairs(state.tracks[id].artist_ids or {}) do
+            if state.artists[artistId] then
+                artists[artistId] = (artists[artistId] or 0) + score(id)
+                best[artistId] = best[artistId] or id
+            end
+        end
+    end
+    local ranked = {}
+    for artistId in pairs(artists) do ranked[#ranked + 1] = artistId end
+    table.sort(ranked, function(a, b)
+        if artists[a] ~= artists[b] then return artists[a] > artists[b] end
+        return state.artists[a].name:lower() < state.artists[b].name:lower()
+    end)
+    local artistSongs, used = {}, {}
+    for _, artistId in ipairs(ranked) do
+        if #artistSongs >= catalog.CHART then break end
+        if not used[best[artistId]] then
+            used[best[artistId]] = true
+            artistSongs[#artistSongs + 1] = best[artistId]
+        end
+    end
+    while #songs > catalog.CHART do table.remove(songs) end
+    while #ranked > catalog.CHART do table.remove(ranked) end
+    state.charts = { day = today, songs = songs, artists = ranked, artist_songs = artistSongs }
+    save()
+    return state.charts
+end
+
+-- A genre's mix: every song in it, or fifteen of them chosen for today.
+function catalog.mix(genreId)
+    local list = catalog.shuffled(catalog.genreSongs(genreId), genreId)
+    while #list > catalog.MIX do table.remove(list) end
+    return list
+end
+
+-- Covers for what Foxy makes: a picture, in two colours, 12x12.
+catalog.ART = {
+    chart = { "............", "............", ".........##.", ".........##.",
+        "......##.##.", "......##.##.", "...##.##.##.", "...##.##.##.", "...##.##.##.",
+        "............", ".##########.", "............" },
+    star = { "............", ".....##.....", ".....##.....", "....####....", ".##########.",
+        "..########..", "...######...", "...######...", "..###..###..", "..##....##..",
+        "............", "............" },
+    note = { "............", "....#######.", "....#######.", "....#.....#.", "....#.....#.",
+        "....#.....#.", "..###...###.", ".####..####.", ".####..####.", "..##....##..",
+        "............", "............" },
+}
+catalog.MIX_COLORS = { "e", "1", "4", "5", "d", "9", "3", "b", "a", "2", "6", "c" }
+
+function catalog.art(name, back, fore)
+    local rows = {}
+    for index, row in ipairs(catalog.ART[name]) do
+        rows[index] = row:gsub("%.", back):gsub("#", fore)
+    end
+    return table.concat(rows, "/")
+end
+
+-- The playlists Foxy makes, by id: "TOP:SONGS", "TOP:ARTISTS", "MIX:<genre>".
+function catalog.auto(id)
+    id = tostring(id or "")
+    local charts = (id == "TOP:SONGS" or id == "TOP:ARTISTS") and catalog.charts() or nil
+    local list
+    if id == "TOP:SONGS" then
+        list = { name = "Top Songs", about = "The most played this week, new every day",
+            tracks = charts.songs, cover = catalog.art("chart", "6", "0") }
+    elseif id == "TOP:ARTISTS" then
+        list = { name = "Top Artists", about = "The week's biggest artists, a song each",
+            tracks = charts.artist_songs, cover = catalog.art("star", "a", "4") }
+    else
+        local genreId = id:match("^MIX:(.+)$")
+        local genre = genreId and state.genres[genreId]
+        if not genre then return nil end
+        local color = catalog.MIX_COLORS[catalog.dayHash(genre.genre_id) % #catalog.MIX_COLORS + 1]
+        list = { name = genre.name .. " Mix", about = "Fifteen " .. genre.name
+            .. " songs, mixed again every day", tracks = catalog.mix(genreId),
+            cover = catalog.art("note", color, "0"), genre_id = genreId }
+    end
+    list.playlist_id, list.owner_name, list.auto, list.public, list.plays =
+        id, "Foxy", true, true, (state.auto_plays or {})[id] or 0
+    return list
+end
+
+function catalog.autoPublic(id, full)
+    local list = catalog.auto(id)
+    if not list then return nil end
+    local out = { playlist_id = list.playlist_id, name = list.name, cover = list.cover,
+        owner_name = list.owner_name, public = true, auto = true, about = list.about,
+        songs_count = #list.tracks, plays = list.plays, genre_id = list.genre_id }
+    if full then
+        out.tracks = {}
+        for _, trackId in ipairs(list.tracks) do
+            if state.tracks[trackId] then out.tracks[#out.tracks + 1] = library.public(state.tracks[trackId]) end
+        end
+    end
+    return out
+end
+
+-- Every genre's mix that has songs, the biggest genres first.
+function catalog.mixes()
+    local genres = {}
+    for _, genre in pairs(state.genres) do
+        local count = #catalog.genreSongs(genre.genre_id)
+        if count > 0 then genres[#genres + 1] = { genre = genre, count = count } end
+    end
+    table.sort(genres, function(a, b)
+        if a.count ~= b.count then return a.count > b.count end
+        return a.genre.name:lower() < b.genre.name:lower()
+    end)
+    local out = {}
+    for _, entry in ipairs(genres) do out[#out + 1] = catalog.autoPublic("MIX:" .. entry.genre.genre_id) end
+    return out
+end
+
+-- What somebody plays over and over: their own counts, the top hundred kept.
+function catalog.replayed(accountId)
+    local counts = state.replays[accountId] or {}
+    local ids = {}
+    for id, count in pairs(counts) do
+        if count >= 2 and state.tracks[id] then ids[#ids + 1] = id end
+    end
+    table.sort(ids, function(a, b)
+        if counts[a] ~= counts[b] then return counts[a] > counts[b] end
+        return library.order(b, a)
+    end)
+    return ids
+end
+
+function catalog.replay(accountId, trackId)
+    local counts = state.replays[accountId] or {}
+    counts[trackId] = (counts[trackId] or 0) + 1
+    local size = 0
+    for _ in pairs(counts) do size = size + 1 end
+    if size > 100 then
+        local least, lowest
+        for id, count in pairs(counts) do
+            if id ~= trackId and (not lowest or count < lowest) then least, lowest = id, count end
+        end
+        if least then counts[least] = nil end
+    end
+    state.replays[accountId] = counts
 end
 
 -- Radios -----------------------------------------------------------------------------
@@ -1860,9 +2135,13 @@ function actions.MUSIC_CONTROL(payload)
             end
             player.mode, player.queue, player.index, player.paused = "library", queue, at, false
             people.changed(player, true)
-            -- FoxyOS 18.3: a playlist played.
+            -- FoxyOS 18.3: a playlist played. 18.4: or one of Foxy's.
             local list = state.playlists[tostring(payload.playlist_id or "")]
             if list then list.plays = (list.plays or 0) + 1 end
+            if catalog.auto(payload.playlist_id) then
+                state.auto_plays = state.auto_plays or {}
+                state.auto_plays[payload.playlist_id] = (state.auto_plays[payload.playlist_id] or 0) + 1
+            end
         end
     elseif command == "pause" or command == "resume" then
         need(player.mode ~= "idle", "IDLE", "Nothing is playing")
@@ -2025,13 +2304,16 @@ function actions.MUSIC_UPLOAD_BEGIN(payload)
     need(size > 0, "BAD_SIZE", "That song is empty")
     need(size <= most, "TOO_BIG", "A song is at most " .. util.sizeText(most))
     people.spend(who.account_id, "uploads", false)
+    -- FoxyOS 18.4: every song has a genre.
+    local genre = util.safeText(util.trim(tostring(payload.genre or "")), 16)
+    need(#genre >= 2, "BAD_GENRE", "Choose a genre for it (2-16 letters)")
     local trackId = nextId("track", "T")
     local pieces = store.place(trackId, 1, size)
     local plan = store.plan("put", pieces, 60 * 1000 + #pieces * 3000)
     local id = nextId("upload", "U")
     cache.uploads[id] = { upload_id = id, account_id = who.account_id, name = who.name,
         track_id = trackId, pieces = pieces, ticket = plan.ticket, size = size,
-        title = payload.title, artist = payload.artist,
+        title = payload.title, artist = payload.artist, genre = genre,
         cover = util.validCover(payload.cover) and payload.cover or nil,
         expires_at = util.nowMs() + plan.expires_in_ms }
     return { upload_id = id, plan = plan }
@@ -2047,7 +2329,8 @@ function actions.MUSIC_UPLOAD_DONE(payload)
     people.spend(upload.account_id, "uploads", true)
     local track = library.add({ track_id = upload.track_id, pieces = upload.pieces,
         size = upload.size, title = upload.title, artist = upload.artist, kind = "song",
-        uploader_id = upload.account_id, uploader_name = upload.name, cover = upload.cover })
+        uploader_id = upload.account_id, uploader_name = upload.name, cover = upload.cover,
+        genre = upload.genre })
     return { track = library.public(track) }
 end
 
@@ -2077,14 +2360,13 @@ function catalog.listOf(ids)
 end
 
 function actions.MUSIC_HOME(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local tracks = state.tracks
     local function newer(a, b) return library.order(b, a) end
+    -- Everybody's public playlists, yours first.
     local lists = {}
     for _, list in pairs(state.playlists) do
-        if list.public ~= false or list.owner_account_id == who.account_id then
-            lists[#lists + 1] = list
-        end
+        if list.public ~= false then lists[#lists + 1] = list end
     end
     table.sort(lists, function(a, b)
         local mineA, mineB = a.owner_account_id == who.account_id, b.owner_account_id == who.account_id
@@ -2095,28 +2377,125 @@ function actions.MUSIC_HOME(payload)
     for index = 1, math.min(#lists, catalog.ROW * 2) do
         playlists[index] = catalog.playlistPublic(lists[index])
     end
+    local charts = {}
+    for _, id in ipairs({ "TOP:SONGS", "TOP:ARTISTS" }) do
+        local list = catalog.autoPublic(id)
+        if list and list.songs_count > 0 then charts[#charts + 1] = list end
+    end
+    -- FoxyOS 18.4: yours first -- what you played, loved and keep playing --
+    -- then everybody's, then the playlists.
+    local replayed = catalog.replayed(who.account_id)
     return { rows = {
+        { id = "recent", title = "Recently Played", personal = true,
+            tracks = catalog.listOf(state.history[who.account_id]) },
+        { id = "favorites", title = "Favorites", personal = true,
+            tracks = catalog.listOf(state.favorites[who.account_id]) },
+        { id = "replayed", title = "Replayed", personal = true, tracks = catalog.listOf(replayed) },
         { id = "new", title = "New Music", tracks = catalog.songs(newer) },
         { id = "popular", title = "Popular", tracks = catalog.songs(function(a, b)
             if (tracks[a].plays or 0) ~= (tracks[b].plays or 0) then
                 return (tracks[a].plays or 0) > (tracks[b].plays or 0)
             end
             return newer(a, b)
-        end) },
-        { id = "favorites", title = "Your Favorites",
-            tracks = catalog.listOf(state.favorites[who.account_id]) },
+        end, catalog.ROW, function(track) return (track.plays or 0) > 0 end) },
         { id = "radio", title = "Radio Hits", tracks = catalog.songs(function(a, b)
             return (tracks[a].radio_plays or 0) > (tracks[b].radio_plays or 0)
         end, catalog.ROW, function(track) return (track.radio_plays or 0) > 0 end) },
-        { id = "recent", title = "Recently Played",
-            tracks = catalog.listOf(state.history[who.account_id]) },
+        { id = "charts", title = "Charts", playlists = charts },
+        { id = "mixes", title = "Mixes", playlists = catalog.mixes() },
         { id = "playlists", title = "Playlists", playlists = playlists },
     }, favorites = util.copy(state.favorites[who.account_id] or {}) }
 end
 
+-- Genres and search, FoxyOS 18.4 ------------------------------------------------------------------
+
+function actions.MUSIC_GENRES()
+    local list = {}
+    for _, genre in pairs(state.genres) do list[#list + 1] = catalog.genrePublic(genre) end
+    table.sort(list, function(a, b)
+        if a.songs ~= b.songs then return a.songs > b.songs end
+        return a.name:lower() < b.name:lower()
+    end)
+    return { genres = list }
+end
+
+-- One genre: every song in it, newest first, and today's mix.
+function actions.MUSIC_GENRE(payload)
+    local genre = state.genres[tostring(payload.genre_id or "")]
+        or (payload.name and catalog.genreNamed(payload.name))
+    need(genre, "NOT_FOUND", "There is no such genre")
+    local songs = {}
+    for _, id in ipairs(catalog.genreSongs(genre.genre_id)) do
+        songs[#songs + 1] = library.public(state.tracks[id])
+    end
+    return { genre = catalog.genrePublic(genre), tracks = songs,
+        mix = #songs > 0 and catalog.autoPublic("MIX:" .. genre.genre_id) or nil }
+end
+
+-- Artists, songs and genres with every word typed in them somewhere.
+function actions.MUSIC_SEARCH(payload)
+    local wanted = util.normalName(payload.query or "")
+    need(wanted ~= "", "BAD_QUERY", "Type something to search for")
+    local artists, genres = {}, {}
+    for _, artist in pairs(state.artists) do
+        if util.normalName(artist.name):find(wanted, 1, true) then
+            artists[#artists + 1] = catalog.artistPublic(artist)
+        end
+    end
+    table.sort(artists, function(a, b)
+        if a.listeners_today ~= b.listeners_today then return a.listeners_today > b.listeners_today end
+        return a.name:lower() < b.name:lower()
+    end)
+    while #artists > 10 do table.remove(artists) end
+    for _, genre in pairs(state.genres) do
+        if util.normalName(genre.name):find(wanted, 1, true) then
+            genres[#genres + 1] = catalog.genrePublic(genre)
+        end
+    end
+    table.sort(genres, function(a, b) return a.name:lower() < b.name:lower() end)
+    -- A song by its title, its artists or its genre: not whoever uploaded it.
+    local ids = {}
+    for id, track in pairs(state.tracks) do
+        local hay = string.lower(tostring(track.title) .. " " .. tostring(track.artist) .. " "
+            .. tostring(library.genreName(track) or ""))
+        if track.kind == "song" and hay:find(wanted, 1, true) then ids[#ids + 1] = id end
+    end
+    table.sort(ids, function(a, b)
+        local pa, pb = state.tracks[a].plays or 0, state.tracks[b].plays or 0
+        if pa ~= pb then return pa > pb end
+        return library.order(b, a)
+    end)
+    local songs = {}
+    for index = 1, math.min(30, #ids) do songs[index] = library.public(state.tracks[ids[index]]) end
+    return { artists = artists, genres = genres, tracks = songs, total_tracks = #ids }
+end
+
+-- The Me tab: your plan and today, your Artist Profile if you have one, and
+-- every playlist of yours, private ones too.
+function actions.MUSIC_PROFILE(payload)
+    local who = people.caller(payload)
+    people.allowance(who.account_id, true)
+    local mine
+    for _, artist in pairs(state.artists) do
+        if artist.owner_account_id == who.account_id then mine = artist end
+    end
+    local lists = {}
+    for _, list in pairs(state.playlists) do
+        if list.owner_account_id == who.account_id then lists[#lists + 1] = list end
+    end
+    table.sort(lists, function(a, b) return library.order(b.playlist_id, a.playlist_id) end)
+    local playlists = {}
+    for index, list in ipairs(lists) do playlists[index] = catalog.playlistPublic(list) end
+    local played = 0
+    for _, count in pairs(state.replays[who.account_id] or {}) do played = played + count end
+    return { me = people.me(who.account_id, who.name), name = who.name,
+        artist = mine and catalog.artistPublic(mine) or nil, playlists = playlists,
+        favorites = #(state.favorites[who.account_id] or {}), played = played }
+end
+
 -- A heart on Now Playing: in Your Favorites, or out again.
 function actions.MUSIC_FAVORITE(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local id = tostring(payload.track_id or "")
     need(state.tracks[id] and state.tracks[id].kind == "song", "NOT_FOUND", "That song is gone")
     local list = state.favorites[who.account_id] or {}
@@ -2137,7 +2516,10 @@ end
 -- Playlists ----------------------------------------------------------------------------------------
 
 function actions.MUSIC_PLAYLIST(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
+    -- FoxyOS 18.4: Top Songs, Top Artists and the mixes, made by Foxy.
+    local auto = catalog.autoPublic(payload.playlist_id, true)
+    if auto then return { playlist = auto } end
     local list = state.playlists[tostring(payload.playlist_id or "")]
     need(list and (list.public ~= false or list.owner_account_id == who.account_id),
         "NOT_FOUND", "That playlist is gone")
@@ -2149,7 +2531,7 @@ end
 -- Made, or changed by whoever made it: its name, cover, songs, and whether
 -- everybody sees it (they do, unless it says otherwise).
 function actions.MUSIC_PLAYLIST_SAVE(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local list
     if payload.playlist_id ~= nil then
         list = state.playlists[tostring(payload.playlist_id)]
@@ -2191,7 +2573,7 @@ function actions.MUSIC_PLAYLIST_SAVE(payload)
 end
 
 function actions.MUSIC_PLAYLIST_DELETE(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local list = state.playlists[tostring(payload.playlist_id or "")]
     need(list and list.owner_account_id == who.account_id, "NOT_YOURS", "That playlist is not yours")
     state.playlists[list.playlist_id] = nil
@@ -2227,7 +2609,7 @@ end
 
 -- Your own profile, and the songs you have uploaded.
 function actions.MUSIC_MY_ARTIST(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local mine
     for _, artist in pairs(state.artists) do
         if artist.owner_account_id == who.account_id then mine = artist end
@@ -2245,7 +2627,7 @@ end
 -- Making your profile, or changing it. A name a profile already has can be
 -- taken only while nobody owns it -- an upload credited it, say.
 function actions.MUSIC_ARTIST_SAVE(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local mine
     for _, artist in pairs(state.artists) do
         if artist.owner_account_id == who.account_id then mine = artist end
@@ -2280,7 +2662,7 @@ end
 -- A song's cover or title, changed by whoever uploaded it or an artist it
 -- credits.
 function actions.MUSIC_TRACK_EDIT(payload)
-    local who = people.session(payload)
+    local who = people.caller(payload)
     local track = state.tracks[tostring(payload.track_id or "")]
     need(track, "NOT_FOUND", "That song is gone")
     local allowed = track.uploader_id == who.account_id
@@ -2293,6 +2675,8 @@ function actions.MUSIC_TRACK_EDIT(payload)
         track.cover = payload.cover
     end
     if payload.title ~= nil then track.title = library.clean(payload.title, 28, track.title) end
+    -- FoxyOS 18.4: its genre, for a song from before genres too.
+    if payload.genre ~= nil then track.genre = library.genre(payload.genre) end
     save()
     return { track = library.public(track) }
 end
@@ -2375,6 +2759,8 @@ function admin.importBodies(bodies)
         local artist = ui.input(target, "ARTIST", { initial = "", maxLength = 20 })
         if not artist then break end
         local kind = admin.chooseKind("song")
+        local genre = kind == "song" and admin.chooseGenre(nil) or nil
+        if kind == "song" and not genre then break end
         local credit = ui.input(target, "CREDIT", { initial = state.credit or "Music Server",
             maxLength = 20, hint = "Whose name is on the track" })
         if not credit then break end
@@ -2382,7 +2768,7 @@ function admin.importBodies(bodies)
         admin.header("UPLOADING", title)
         local width = target.getSize()
         local track, err = library.import({ title = title, artist = artist, kind = kind,
-            uploader_name = credit }, entry.body, function(done, total)
+            uploader_name = credit, genre = genre }, entry.body, function(done, total)
                 ui.progress(target, 4, 8, width - 6, done, total, ui.theme.accent,
                     ui.theme.panel)
             end)
@@ -2461,6 +2847,41 @@ function admin.dropped(handle)
     admin.importBodies(bodies)
 end
 
+-- FoxyOS 18.4: a song's genre -- one there is, or a new one. Returns its
+-- name, or nil when it was left alone.
+function admin.chooseGenre(current)
+    local page = 1
+    while running do
+        admin.header("GENRE", current and ("Now " .. current) or "Every song has one")
+        local scene = ui.scene(target)
+        local bottom = ui.contentBottom(target)
+        local names = {}
+        for _, genre in pairs(state.genres) do names[#names + 1] = genre.name end
+        table.sort(names, function(a, b) return a:lower() < b:lower() end)
+        page = admin.rows(scene, 5, bottom, names, page, function(name, y, width)
+            ui.text(target, 2, y, ui.truncate(name, width - 14), name == current
+                and ui.theme.accent or ui.theme.ink)
+            ui.text(target, width - 10, y, #catalog.genreSongs(state.genre_names[
+                util.normalName(name)]) .. " songs", ui.theme.muted)
+        end)
+        local width = target.getSize()
+        scene:button("new", 2, bottom + 1, 14, 1, "NEW GENRE", { background = ui.theme.accent,
+            foreground = ui.inkOn(ui.theme.accent) })
+        scene:button("back", width - 9, bottom + 1, 9, 1, "BACK", { background = ui.theme.panel })
+        local action = scene:wait()
+        if action == "back" or action == "__terminate" then return nil end
+        if action == "page:prev" then page = page - 1 end
+        if action == "page:next" then page = page + 1 end
+        if action == "new" then
+            local name = ui.input(target, "NEW GENRE", { maxLength = 16, minLength = 2,
+                hint = "Lo-fi, Sea Shanty, Redstone Rock..." })
+            if name and #util.trim(name) >= 2 then return util.trim(name) end
+        end
+        local name = action and action:match("^row:(.+)$")
+        if name then return name end
+    end
+end
+
 function admin.chooseKind(current)
     while true do
         admin.header("WHAT KIND OF TRACK", "Listeners only ever see songs")
@@ -2503,30 +2924,50 @@ function admin.editTrack(trackId)
             { "BY        " .. tostring(track.uploader_name) .. ", day "
                 .. tostring(track.added_day) },
             { "PLAYS     " .. tostring(track.plays or 0) },
+            { "GENRE     " .. (library.genreName(track) or (track.kind == "song"
+                and "None yet: GENRE" or "-")) },
             { "RADIOS    " .. (#on > 0 and table.concat(on, ", ") or "None"), ui.theme.muted },
         }
         for index, line in ipairs(lines) do
             ui.text(target, 2, 4 + index, ui.truncate(line[1], width - 2), line[2] or ui.theme.ink)
         end
         local scene = ui.scene(target)
-        local third = math.floor((width - 4) / 3)
-        scene:button("title", 2, 12, third, 2, "TITLE", { background = ui.theme.panel })
-        scene:button("artist", 3 + third, 12, third, 2, "ARTIST", { background = ui.theme.panel })
-        scene:button("kind", 4 + third * 2, 12, width - 4 - third * 2, 2, "KIND",
-            { background = ui.theme.panel })
-        scene:button("radios", 2, 15, third, 2, "RADIOS", { background = ui.theme.accent,
-            foreground = ui.inkOn(ui.theme.accent) })
-        scene:button("delete", 3 + third, 15, third, 2, "DELETE",
-            { background = ui.theme.danger, foreground = colors.white })
-        scene:button("back", 4 + third * 2, 15, width - 4 - third * 2, 2, "BACK",
-            { background = ui.theme.panel })
+        -- FoxyOS 18.4: its cover and its genre, for songs brought in here.
+        local quarter = math.floor((width - 5) / 4)
+        local rows = { { { "title", "TITLE" }, { "artist", "ARTIST" }, { "kind", "KIND" },
+            { "genre", "GENRE" } }, { { "cover", track.cover and "COVER" or "+ COVER" },
+            { "radios", "RADIOS" }, { "delete", "DELETE" }, { "back", "BACK" } } }
+        for row, buttons in ipairs(rows) do
+            for index, button in ipairs(buttons) do
+                local x = 2 + (index - 1) * (quarter + 1)
+                local back = button[1] == "radios" and ui.theme.accent
+                    or button[1] == "delete" and ui.theme.danger or ui.theme.panel
+                scene:button(button[1], x, 10 + row * 3, index == 4 and width - x or quarter, 2,
+                    button[2], { background = back, foreground = button[1] == "delete"
+                        and colors.white or ui.inkOn(back) })
+            end
+        end
         local action = scene:wait({ tickRate = 1 })
         if action == "back" or action == "__terminate" then return end
         if action == "title" or action == "artist" then
             local value = ui.input(target, string.upper(action), { initial = track[action],
-                maxLength = action == "title" and 28 or 20 })
+                maxLength = action == "title" and 28 or 40 })
             if value and util.trim(value) ~= "" then
-                track[action] = library.clean(value, action == "title" and 28 or 20, track[action])
+                track[action] = library.clean(value, action == "title" and 28 or 40, track[action])
+                -- FoxyOS 18.4: a new credit is a new set of Artist Profiles.
+                if action == "artist" then track.artist_ids = library.credit(track.artist) end
+                save()
+            end
+        elseif action == "cover" then
+            local cover = ui.iconCreator(target, track.cover, track.title, "cover")
+            if cover then
+                track.cover = cover
+                save()
+            end
+        elseif action == "genre" then
+            local genre = admin.chooseGenre(library.genreName(track))
+            if genre then
+                track.genre = library.genre(genre)
                 save()
             end
         elseif action == "kind" then
@@ -3036,7 +3477,8 @@ if rawget(_G, "PUMPE_TEST_MODE") == "music_server" then
     return { actions = actions, state = state, live = live, cache = cache,
         library = library, radio = radio, people = people, admin = admin, station = station,
         store = store, background = background, status = status,
-        register = register, route = route, stop = function() running = false end }
+        register = register, route = route, stop = function() running = false end,
+        catalog = catalog, save = save }
 end
 
 if type(ui.useMainColor) == "function" then ui.useMainColor(ROOT) end

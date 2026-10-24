@@ -96,6 +96,8 @@ const forwardOptionalFiles = [
   "music_player.lua",
   "music.lua",
   "lib/music.lua",
+  // FoxyOS 18.4: the Music app's screens, shared with the Music Player.
+  "lib/musicui.lua",
   // FoxyOS 18: the Pocket Desktop.
   "lib/desktop.lua",
   // FoxyOS 18.1: Trivia's questions, for the CCG Server.

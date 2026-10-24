@@ -635,7 +635,7 @@ function ui.iconCell(pixels)
     return string.char(128 + code), fore, back
 end
 
--- `cellsWide`, `cellsHigh`, FoxyOS 18.3: a cover is drawn the same way, 8x4.
+-- `cellsWide`, `cellsHigh`, FoxyOS 18.3: a cover is drawn the same way, 6x4.
 function ui.icon(target, x, y, icon, cellsWide, cellsHigh)
     target = surface(target)
     local rows = ui.iconRows(icon)
@@ -683,16 +683,17 @@ function ui.iconFramed(target, x, y, icon, frame, back)
     ui.icon(target, x, y, icon)
 end
 
--- Covers, FoxyOS 18.3: songs, radios and playlists. 16x12 pixels, 8x4 cells.
--- Nothing drawn yet is a grey square with a note in it.
-ui.COVER_WIDTH, ui.COVER_HEIGHT = 8, 4
+-- Covers, FoxyOS 18.3: songs, radios and playlists. FoxyOS 18.4: square --
+-- 12x12 pixels, 6x4 cells, each cell's six pixels as near square as the
+-- screen draws them. Nothing drawn yet is a grey square with a note in it.
+ui.COVER_WIDTH, ui.COVER_HEIGHT = 6, 4
 ui.COVER_NONE = (function()
     local rows = {}
     for y = 1, 12 do
         local row = {}
-        for x = 1, 16 do
-            local note = (x >= 7 and x <= 8 and y >= 3 and y <= 9) or (x >= 9 and x <= 11 and y == 3)
-                or (x >= 5 and x <= 8 and y >= 8 and y <= 10)
+        for x = 1, 12 do
+            local note = (x >= 6 and x <= 7 and y >= 3 and y <= 9) or (x >= 8 and x <= 9 and y == 3)
+                or (x >= 4 and x <= 7 and y >= 8 and y <= 10)
             row[x] = note and "8" or "7"
         end
         rows[y] = table.concat(row)
@@ -725,11 +726,12 @@ end
 -- colour, then the pixels -- or drag across them; Fill paints every one.
 -- Beside the canvas is the icon at its real size, as the Home Screen draws
 -- it. Returns the icon, or nil when it was cancelled.
--- FoxyOS 18.3: `kind` "cover" paints a cover instead: 16x12, the same way.
+-- FoxyOS 18.3: `kind` "cover" paints a cover instead. FoxyOS 18.4: 12x12, each
+-- pixel two cells wide so the canvas is square too.
 function ui.iconCreator(target, icon, title, kind)
     target = surface(target)
     local cover = kind == "cover"
-    local wide, high = cover and 16 or 8, cover and 12 or 6
+    local wide, high = cover and 12 or 8, cover and 12 or 6
     local valid = cover and util.validCover or util.validIcon
     local start = valid(icon) and ui.iconRows(icon) or nil
     local pixels = {}
@@ -745,8 +747,7 @@ function ui.iconCreator(target, icon, title, kind)
     end
     while true do
         local width, height = target.getSize()
-        local pixelWidth = cover and (width >= 64 and 3 or width >= 44 and 2 or 1)
-            or (width >= 40 and 3 or 2)
+        local pixelWidth = cover and (width >= 64 and 4 or 2) or (width >= 40 and 3 or 2)
         local pixelHeight = cover and (height >= 31 and 2 or 1) or (height >= 19 and 2 or 1)
         local left, top = 2, 4
         ui.clear(target)

@@ -127,7 +127,8 @@ local function stop() error("STOP_TEST", 0) end
 
 -- Free: nothing to download, and nothing downloaded.
 assert(player.shared.player.offline == false)
-runScreen("tab:library", function(state)
+-- FoxyOS 18.4: every song as a list, and downloads, are under Me.
+runScreen("tab:me", "downloads", function(state)
     assert(state.display.has("Trot") and not state.display.has("Downloaded"),
         state.display.dump())
     stop()
@@ -145,12 +146,13 @@ assert(as(world.pocket, net.ask, MUSIC_ID, config.music_protocol, "MUSIC_ME",
 as(PLAYER_ID, player.tickOnce)
 assert(player.shared.player.offline and player.state.offline_day == util.ingameDay())
 
-runScreen("tab:library", "keep:" .. trot.track_id, function(state)
+runScreen("tab:me", "downloads", "keep:" .. trot.track_id, function(state)
     assert(state.display.has("Downloaded"), "a list of what is kept\n" .. state.display.dump())
     return "keep:" .. howl.track_id
 end, "sort:kept", function(state)
-    assert(state.display.has("Downloaded  2 songs") and state.display.has("Trot")
-        and state.display.has("Howl") and not state.display.has("Jive"), state.display.dump())
+    assert(state.display.has("Downloaded") and state.display.has("2 songs")
+        and state.display.has("Trot") and state.display.has("Howl")
+        and not state.display.has("Jive"), state.display.dump())
     stop()
 end)
 local disk = world.disks["music_player" .. PLAYER_ID]
@@ -180,12 +182,13 @@ world.lose[bank.core_id] = 1e9
 for _ = 1, 3 do as(PLAYER_ID, player.tickOnce) end
 assert(player.shared.server_down, "three ticks unanswered")
 
-runScreen("tab:library", function(state)
+-- The Music tab is what is kept, while the Music Server is off.
+runScreen(function(state)
     assert(state.display.has("The Music Server is off: songs kept here")
-        and state.display.has("Downloaded  2 songs"), state.display.dump())
+        and state.display.has("Downloaded") and state.display.has("2 songs"), state.display.dump())
     assert(not state.display.has("SEARCH"), "only what is kept")
     return "play:" .. howl.track_id
-end, function(state)
+end, "now", function(state)
     assert(state.display.has("OFFLINE") and state.display.has("Howl"), state.display.dump())
     stop()
 end)
@@ -199,7 +202,7 @@ assert(box.samples == 7000 * 8, "Howl, from this computer alone")
 assert(player.shared.here.queue[player.shared.here.index] == trot.track_id, "then Trot")
 
 -- Pause and next are this screen's own while the Music Server is off.
-runScreen("pause", function(state)
+runScreen("now", "pause", function(state)
     assert(player.shared.here.paused and state.display.has("PLAY"), state.display.dump())
     return "resume"
 end, "next", function(state)
@@ -251,7 +254,7 @@ assert(player.shared.here == nil and player.shared.player.mode == "radio")
 musicNode.up = false
 for _ = 1, 3 do as(PLAYER_ID, player.tickOnce) end
 player.state.offline_day = util.ingameDay() - 11
-runScreen("tab:library", "play:" .. trot.track_id, function(state)
+runScreen("play:" .. trot.track_id, function(state)
     assert(player.shared.here == nil, "not played")
     stop()
 end)
@@ -265,12 +268,12 @@ config.music_offline_bytes = 20000
 local _, full, fullCode = as(PLAYER_ID, player.kept.download, jive.track_id)
 assert(fullCode == "FULL" and full:find("Remove some", 1, true))
 config.music_offline_bytes = nil
--- Removed from the Library tab.
-runScreen("tab:library", "sort:kept", "keep:" .. howl.track_id, function(state)
+-- Removed from the list under Me.
+runScreen("tab:me", "downloads", "sort:kept", "keep:" .. howl.track_id, function(state)
     assert(state.display.has("REMOVE DOWNLOAD"), state.display.dump())
     return "yes"
 end, function(state)
-    assert(state.display.has("Downloaded  1 songs"), state.display.dump())
+    assert(state.display.has("Downloaded") and state.display.has("1 songs"), state.display.dump())
     stop()
 end)
 assert(not disk.files[root .. "/offline/" .. howl.track_id .. ".dfpwm"])

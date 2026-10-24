@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -7398,8 +7398,12 @@ function() return sessionToken end, offline, function()
 local where = request("MUSIC_WHERE", {}, true)
 return where and where.computer_id or nil
 end, desk.musicServer) or nil,
-cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC"
-or entry.app_id == "ARTISTS") and net.cloud
+
+musicui = entry.app_id == "MUSIC" and (function()
+local found, lib = pcall(require, "lib.musicui")
+return found and lib or nil
+end)() or nil,
+cloud = (entry.app_id == "CLOUD" or entry.app_id == "ARTISTS") and net.cloud
 and net.cloud.api
 and net.cloud.api(function(action, payload)
 local scoped = {}

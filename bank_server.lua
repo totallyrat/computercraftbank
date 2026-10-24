@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -86,6 +86,7 @@ RELEASE.depot_files = {
     "music_player.lua",
     "music.lua",
     "lib/music.lua",
+    "lib/musicui.lua",
     "lib/desktop.lua",
     "lib/trivia.lua",
     -- FoxyOS 18.2: the Radio Broadcaster, and the Radio app by Foxy.
@@ -149,6 +150,7 @@ RELEASE.optional = {
     "music_player.lua",
     "music.lua",
     "lib/music.lua",
+    "lib/musicui.lua",
     "lib/desktop.lua",
     "lib/trivia.lua",
     -- FoxyOS 18.2: the Radio Broadcaster, and the Radio app by Foxy.
@@ -232,6 +234,10 @@ local function deploymentFilesForRole(role)
     if role == "pumpe" then
         files[#files + 1] = { path = "lib/desktop.lua", source = "lib/desktop.lua" }
         files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
+    end
+    -- FoxyOS 18.4: the Music app's screens, on a Pocket and a Music Player.
+    if role == "pumpe" or role == "musicplayer" then
+        files[#files + 1] = { path = "lib/musicui.lua", source = "lib/musicui.lua" }
     end
     -- FoxyOS 18.1: a CCG Server asks Trivia's built-in questions.
     if role == "ccgserver" then

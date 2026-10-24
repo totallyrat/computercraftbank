@@ -14,7 +14,7 @@
 
 
 
-local INSTALLER_VERSION = "18.3.0"
+local INSTALLER_VERSION = "18.4.0"
 local MANIFEST_URL =
 "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -60,7 +60,7 @@ about = "Money, friends, tickets and travel papers, all in one pocket computer."
 
 words = "phone pocket foxy money wallet apps shop store till pos checkout"
 .. " sell pay kiosk desktop",
-extra = { "lib/desktop.lua", "lib/music.lua" } },
+extra = { "lib/desktop.lua", "lib/music.lua", "lib/musicui.lua" } },
 
 
 { id = "service", name = "Service Kiosk", file = "service_kiosk.lua",
@@ -147,7 +147,8 @@ words = "music songs radio dfpwm library server", extra = { "lib/music.lua" } },
 { id = "musicplayer", name = "Music Player", file = "music_player.lua",
 detail = "Plays music through speakers",
 about = "Plays the Music Library and the radios. Sign in, add a speaker.",
-words = "music player speaker songs radio dfpwm", extra = { "lib/music.lua" } },
+words = "music player speaker songs radio dfpwm",
+extra = { "lib/music.lua", "lib/musicui.lua" } },
 
 { id = "radio", name = "Radio Broadcaster", file = "radio_broadcaster.lua",
 detail = "Your company's radio station",

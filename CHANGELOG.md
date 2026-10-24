@@ -1,5 +1,53 @@
 # Changelog
 
+## 18.4.0
+
+FoxyOS 18.4: a new Music app, on Pockets and Music Players alike, genres,
+mixes and charts, and square covers. Update the Bank (Core and Vault) first,
+then the Music Server, then the App Server, then Pockets and Music Players.
+Every one of them asks first: press Install on each.
+
+**A new Music app.** Three tabs in a bar of their own along the bottom --
+**Music**, **Search** and **Me** -- and what is playing along the top: tap it
+for Now Playing, where you also choose which Music Player plays. Every page
+scrolls with the scroll wheel. Apps no longer have to use the standard tab
+bar; Music is the first that does not.
+
+**Music** is yours first -- Recently Played, Favorites and Replayed (what you
+play again and again) -- then New Music, Popular, Radio Hits, the Charts,
+the Mixes and everybody's playlists, each a row of covers turned with its
+< >. Scroll on and every song in the library follows. **Search** has a box
+on top and, under it, every genre (tap one for its songs and its mix) and
+every artist. **Me** is your plan, your Artist Profile if you have one, and
+every playlist of yours, private ones too; **+ New playlist** is here now.
+
+**Artists live in Music.** Every profile is found on Search, or by tapping
+an artist's name on a song: in a list, under a cover, or on Now Playing.
+Music for Artists keeps **You** and **Upload**, and its Artists tab became
+**Songs**.
+
+**Genres.** Every song now gets a genre when it is uploaded: one there is,
+or a new one made there and then. Songs from before have none until their
+uploader or artist gives them one (Music for Artists → Songs), or the Music
+Server's operator does (a track → GENRE).
+
+**Made by Foxy, every day.** **Top Songs** (the most played this week) and
+**Top Artists** (the week's biggest artists, a song each) are worked out
+once an in-game day. Every genre has a **Mix**: fifteen of its songs,
+picked and shuffled afresh each day when it has more.
+
+**Square covers.** Covers are 12x12 now, square on the screen. The 16x12
+covers from 18.3 are wiped once when the Music Server updates. Draw them
+again in Music for Artists → Songs (your uploads, and any song that credits
+your profile, the Music Server's too), on the Music Server's track and radio
+screens, and on a broadcaster's Station page.
+
+**The Music Player** shows the same Music, Search and Me as a Pocket, with
+its Radio tab beside them. Every song as a list and Offline Listening's
+downloads are under **Me** (and on the Music tab while the Music Server is
+off), with **Upload a song** and **Sign out**. Its uploads ask for a genre
+too.
+
 ## 18.3.0
 
 FoxyOS 18.3: Music for Artists, covers, playlists and a new Library. Update

@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 -- Stamped by tools/build_release_manifest.js. A program running beside a
 -- config.lua from a different release means a partial install.
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -7398,8 +7398,12 @@ local function runInstalledApp(entry, wantedAction)
                 local where = request("MUSIC_WHERE", {}, true)
                 return where and where.computer_id or nil
             end, desk.musicServer) or nil,
-        cloud = (entry.app_id == "CLOUD" or entry.app_id == "MUSIC"
-            or entry.app_id == "ARTISTS") and net.cloud
+        -- FoxyOS 18.4: the Music app's screens, shared with the Music Player.
+        musicui = entry.app_id == "MUSIC" and (function()
+            local found, lib = pcall(require, "lib.musicui")
+            return found and lib or nil
+        end)() or nil,
+        cloud = (entry.app_id == "CLOUD" or entry.app_id == "ARTISTS") and net.cloud
             and net.cloud.api
             and net.cloud.api(function(action, payload)
                 local scoped = {}

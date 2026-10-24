@@ -128,7 +128,7 @@ assert(must("MUSIC_LIBRARY", { sort = "title" }).tracks[1].title == "Den Beat")
 
 local function upload(who, title, body)
     local began, err, code = ask("MUSIC_UPLOAD_BEGIN", { session_token = who.token,
-        title = title, artist = who.name, size = #body })
+        title = title, artist = who.name, size = #body, genre = "Pop" })
     if not began then return nil, err, code end
     assert(as(POCKET, music.upload, began.plan, body, config.cloud_protocol))
     return must("MUSIC_UPLOAD_DONE", { session_token = who.token,
@@ -144,7 +144,7 @@ refused("TOO_BIG", "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "H
 refused("SIGN_IN", "MUSIC_UPLOAD_BEGIN", { title = "Nobody", size = 10 })
 -- An upload that is someone else's cannot be finished by them.
 local began = must("MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Mine",
-    size = 10 })
+    size = 10, genre = "Pop" })
 refused("NOT_UPLOADING", "MUSIC_UPLOAD_DONE", { session_token = kit.token,
     upload_id = began.upload_id })
 

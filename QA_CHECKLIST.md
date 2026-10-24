@@ -7,6 +7,38 @@ Run this after installing into a ComputerCraft world.
 - [ ] Bank Server has an open wireless or Ender modem.
 - [ ] **Both Bank Servers have a wired modem, joined by networking cable, with both modems right-clicked so they light up.** A Bank is two computers since 9.3 and they will not pair over the air.
 
+## FoxyOS 18.4 (18.4.0)
+
+Update the Bank (Core and Vault) first, then the Music Server, then the App Server, then Pockets and Music Players. Nothing in 18.4 was tried in a world before release: every line below is a first run.
+
+### Music (Pocket)
+
+- [ ] The bar along the bottom: **Music**, **Search**, **Me**, the one you are on lit. The top row says what is playing (or *No Music Player*); tapping it opens Now Playing. **<** at the top left leaves the app.
+- [ ] **Music**: a new listener sees a line about filling the top. Rows of covers, three across; **< >** turn a row; the scroll wheel moves the page, down to **EVERY SONG**. **+** on a song queues it.
+- [ ] Play songs, heart one, play one twice: **Recently Played**, **Favorites** and **Replayed** appear on top.
+- [ ] Tap an artist's name (in a list, under a cover, on Now Playing): their profile. A song crediting two artists asks which.
+- [ ] **Search**: the genres and the artists; a genre opens its songs and **> Play the mix**; typing finds artists, genres and songs.
+- [ ] **Me**: your plan, **+ New playlist** (name, cover, songs), your playlists as covers; a playlist's **Edit** makes it private; **FoxyMusic+** joins and cancels.
+- [ ] **Now Playing**: **On <player> v** changes the Music Player; the radio giveaway's **Call** still works.
+
+### Genres, mixes and charts
+
+- [ ] Upload in Music for Artists: after the artists, the genre (pick one or **+ A new genre**). It shows on Search with a count.
+- [ ] A genre with more than fifteen songs: its Mix has fifteen, the same all day and different the next in-game day.
+- [ ] After some plays, the next day: **Charts** has Top Songs and Top Artists.
+
+### Covers
+
+- [ ] After the Music Server updates, every old cover is gone (grey note squares).
+- [ ] Music for Artists → **Songs**: your uploads and songs that credit your profile (the Music Server's too); **+ A cover** (12x12, square) and **+ A genre**.
+- [ ] Music Server → Library → a track: **+ COVER** and **GENRE**; changing **ARTIST** to "A & B" gives B a profile.
+
+### Music Player
+
+- [ ] Its screen: **Music**, **Search**, **Me**, **Radio** along the bottom, what is playing along the top; tap it for Now Playing (with the heart and the artist's name to tap).
+- [ ] **Me → Every song, and downloads**: the list, with **v** to keep a song (FoxyMusic+). With the Music Server off, the Music tab is the downloaded songs.
+- [ ] **Me → Upload a song**: drop a `.dfpwm`; title, artist, genre. **Me → Sign out** asks first.
+
 ## FoxyOS 18.3 (18.3.0)
 
 Update the Bank (Core and Vault) first, then the Music Server, then the App Server, then Pockets, Music Players and Radio Broadcasters. Nothing in 18.3 was tried in a world before release: every line below is a first run.

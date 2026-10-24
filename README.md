@@ -4,7 +4,7 @@
 
 Every computer in it runs FoxyOS. The phone is the **Pocket**; on a standing computer it becomes the **Pocket Desktop**. Everything is touch-first, and a keyboard works too.
 
-> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. **18.3** brings **Music for Artists**, Artist Profiles, **covers**, **playlists** and a Library in rows. See [`CHANGELOG.md`](CHANGELOG.md).
+> **FoxyOS 18** brings **FoxyMusic+** and **Offline Listening**, a Music Server that keeps playing when the Bank is down, the **Pocket Desktop**, and a new way to set up a Pocket, with a guide that runs on the Home Screen itself. **18.1** adds **Trivia** to the CCG Casino, all or nothing, and the casino table's controls on its own computer. **18.2** brings the **Radio Broadcaster**, **Radio+**, the **Radio** app and **Company Money**, and every update now asks first. **18.3** brings **Music for Artists**, Artist Profiles, **covers**, **playlists** and a Library in rows. **18.4** rebuilds **Music** around **Music**, **Search** and **Me**, on Pockets and Music Players, with **genres**, daily **mixes** and **charts**, and square covers. See [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Contents
 
@@ -133,8 +133,8 @@ After a minute untouched the Pocket shows its lock screen. Before two minutes a 
 - **FoxMail**: an address at `foxy.com` for everybody, company domains with up to five addresses, and mail from apps and organisers.
 - **Yap!**: a feed of 140-character posts, private chats behind your PIN that vanish a day after they're read, and **Yap Map**, where friends in GPS range are listed with their coordinates.
 - **FoxyCloud**: your Foxy Account, your plan, and your files on every device: notes, text, MIDI, songs, anything dropped on the screen. Share any file with a six-letter code.
-- **Music**: the remote for your Music Players, the Library in rows, playlists, favorites, and FoxyMusic+.
-- **Music for Artists**: your Artist Profile, uploading songs with their covers, and every artist in the library.
+- **Music**: Music, Search and Me: your rows and everybody's, genres and their mixes, every artist, your playlists, and FoxyMusic+. Tap what's playing for Now Playing.
+- **Music for Artists**: your Artist Profile, uploading songs (with a genre), and your songs' covers and genres.
 - **Radio**: the dial and your Favorites; what you tune plays on your Music Player.
 - **Company**, **Shop**, **INVT**, **Internet** and **Website Crafter** are covered in their own sections below.
 
@@ -223,13 +223,21 @@ Everybody listening hears the same moment. After each song comes a break: a host
 
 ### Music Players, the Music app and the Radio app
 
-A **Music Player** is a computer with speakers that you sign in to once with your Foxy name and PIN. Its screen has **Now Playing**, **Library**, **Radio** (the dial and Favorites, compact, scrolling) and **Upload** (drop a song on the screen or pick one from a disk), and a monitor beside it shows what's on from across the room.
+A **Music Player** is a computer with speakers that you sign in to once with your Foxy name and PIN. Its screen has the Music app's **Music**, **Search** and **Me**, plus **Radio** (the dial and Favorites, compact, scrolling); what's playing is along the top, a tap from Now Playing. Under **Me** are every song as a list with Offline Listening's downloads, **Upload a song** (drop one on the screen or pick one from a disk) and **Sign out**. A monitor beside it shows what's on from across the room.
 
-The **Music** app on every Pocket is the remote: pick a player, then play, queue, pause, skip and set the volume. **Now** shows the cover on the left and the song beside it, with a heart for Your Favorites. **Library** is rows of covers (New Music, Popular, Your Favorites, Radio Hits, Recently Played, Playlists), each turned with its own **< >**, the page with **^ v** or the scroll wheel; **+** makes a playlist (name, cover, songs; public unless you say not) and **Search** lists every song. **Plus** joins FoxyMusic+. A library song counts against your day when it starts; radios never count.
+The **Music** app on every Pocket has three tabs in a bar of its own, and what's playing along the top: tap it for **Now Playing** (the cover on the left, the song beside it, a heart for Favorites, the buttons, and which Music Player plays). Every page scrolls with the scroll wheel.
 
-**Music for Artists** is where songs are uploaded: from the Pocket, dropped on its screen or from FoxyCloud, with the artists it credits and a cover. Every credited artist gets an **Artist Profile**; make yours under **You** (a profile nobody owns yet, made by a credit, becomes yours with its songs). A profile shows its songs, today's listeners, plays and the radios that play them. **Artists** lists them all.
+- **Music**: Recently Played, Favorites and Replayed first, then New Music, Popular, Radio Hits, **Charts** (Top Songs, Top Artists), **Mixes** and everybody's playlists, each a row of covers turned with its own **< >**; scroll on for every song. **+** beside a song queues it.
+- **Search**: a box on top, then every genre (its songs and its mix) and every artist.
+- **Me**: your plan, your Artist Profile, **+ New playlist** (name, cover, songs; public unless you say not) and all your playlists. **FoxyMusic+** joins and cancels here.
 
-**Covers** are 16x12 pixels, drawn in the Cover Creator: songs, playlists, State Radios (the Music Server's **COVER** button) and stations (the broadcaster's Station page).
+Tap an artist's name on any song for their profile. A library song counts against your day when it starts; radios never count.
+
+**Genres, mixes and charts.** Every song has a genre, chosen or made when it's uploaded. Each genre has a **Mix** of fifteen of its songs, picked again every in-game day. **Top Songs** and **Top Artists** are worked out once a day from the week's plays.
+
+**Music for Artists** is where songs are uploaded: from the Pocket, dropped on its screen or from FoxyCloud, with the artists it credits, a genre and, if you like, a cover. Every credited artist gets an **Artist Profile**; make yours under **You** (a profile nobody owns yet, made by a credit, becomes yours with its songs). A profile shows its songs, today's listeners, plays and the radios that play them; everybody finds it in the Music app. **Songs** lists your uploads and every song that credits you, the Music Server's too, to give each a cover or a genre.
+
+**Covers** are 12x12 pixels, square, drawn in the Cover Creator: songs (Music for Artists → Songs, or the Music Server's track screen), playlists, State Radios (the Music Server's **COVER** button) and stations (the broadcaster's Station page). The 16x12 covers of 18.3 were wiped by the 18.4 update.
 
 The **Radio** app is the dial: 87.5 to 108.0, with a slider, **< >** for a tenth and **<< >>** for a whole one. Between stations is static. Land on a station and it shows, and your Music Player starts playing it. **Favorites** has the State Radios, today's **Featured** station, and the Radio+ stations you saved.
 
@@ -377,7 +385,7 @@ end
 | `api.screens()` | Customer monitors on a standing computer |
 | `api.desktop.kiosk(on)` | On the Pocket Desktop, the whole screen until it lets go |
 
-**Layout.** Use `ui.runTabs{}` and `ui.tabBar()` for an app made of tabs: a floating bar along the bottom on a Pocket, a sidebar on the Pocket Desktop, automatically. **Settings → App Settings** lists every permission an app has asked for. `apps/README.md` has the full contract.
+**Layout.** `ui.runTabs{}` and `ui.tabBar()` give an app made of tabs a floating bar along the bottom on a Pocket and a sidebar on the Pocket Desktop, automatically. Since FoxyOS 18.4 an app doesn't have to use them: Music draws a bar of its own (`lib/musicui.lua`). **Settings → App Settings** lists every permission an app has asked for. `apps/README.md` has the full contract.
 
 ---
 
@@ -526,4 +534,4 @@ QA_CHECKLIST.md            what to try in a real world after a release
 
 ---
 
-**FoxyOS 18.3**, release `18.3.0`.
+**FoxyOS 18.4**, release `18.4.0`.

@@ -129,8 +129,8 @@ as(MUSIC_ID, server.station.tick)
 run(radio.shared.refresh)
 assert(radio.shared.view.plus)
 
--- FoxyOS 18.3: a cover for the station, drawn on its Station page.
-local drawn = string.rep(string.rep("e", 16) .. "/", 11) .. string.rep("e", 16)
+-- FoxyOS 18.3: a cover for the station, drawn on its Station page. 18.4: square.
+local drawn = string.rep(string.rep("e", 12) .. "/", 11) .. string.rep("e", 12)
 local creator = ui.iconCreator
 ui.iconCreator = function(_, _, _, kind)
     assert(kind == "cover", "the Cover Creator, not the Icon Creator")

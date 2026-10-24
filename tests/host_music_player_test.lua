@@ -183,7 +183,8 @@ assert(server.state.players.P1.label == "Kit's Den" and server.state.players.P1.
 as(PLAYER_ID, player.tickOnce)
 assert(player.shared.player.mode == "idle")
 
--- The Library tab: tap a song, and Now Playing has it.
+-- FoxyOS 18.4: the Music tab, as on a Pocket. Tap a song; what is playing
+-- is along the top, and a tap there is Now Playing.
 local function runScreen(...)
     screen.push(steps, ...)
     local ok, err = pcall(as, PLAYER_ID, player.screenLoop)
@@ -191,15 +192,21 @@ local function runScreen(...)
 end
 local function stop() error("STOP_TEST", 0) end
 runScreen(function(state)
-    assert(state.display.has("Nothing playing"), "\n" .. state.display.dump())
-    assert(state.display.has("Volume"))
-    return "tab:library"
+    assert(state.display.has("Nothing playing") and state.display.has("NEW MUSIC")
+        and state.display.has("Search") and state.display.has("Radio"), "\n" .. state.display.dump())
+    return "now"
+end, function(state)
+    assert(state.display.has("Volume"), state.display.dump())
+    return "back"
 end, function(state)
     assert(state.display.has("Trot") and state.display.has("Howl"), state.display.dump())
-    assert(state.display.has("by Foxy Records"), state.display.dump())
-    return "play:" .. trot.track_id
+    return "tile:new:2"
 end, function(state)
-    assert(state.display.has("Trot") and state.display.has("PAUSE"), state.display.dump())
+    assert(state.display.has("> Trot - Foxy"), "playing, along the top\n" .. state.display.dump())
+    return "now"
+end, function(state)
+    assert(state.display.has("Trot") and state.display.has("PAUSE")
+        and state.display.has("(by Foxy Records)"), state.display.dump())
     stop()
 end)
 assert(player.shared.player.mode == "library")
@@ -218,7 +225,7 @@ runScreen(function(state) return "tab:radio" end, function(state)
     assert(state.display.has("98.4") and state.display.has("STATE RADIOS"), state.display.dump())
     assert(state.display.has("Foxy FM  GIVEAWAY " .. r.number), state.display.dump())
     return "radio:" .. r.radio_id
-end, function(state)
+end, "now", function(state)
     assert(state.display.has("GIVEAWAY! Call " .. r.number .. " now"), state.display.dump())
     assert(state.display.has("Foxy FM") and state.display.has("LIVE"))
     stop()
@@ -258,12 +265,15 @@ as(PLAYER_ID, player.audioStep)
 box.playAudio = realPlay
 assert(box.samples > before and loudest <= 24, "static, quietly: " .. loudest)
 
--- Signing out from the Upload tab.
-runScreen(function() return "tab:upload" end, function(state)
+-- Uploading, from Me; and signing out.
+runScreen(function() return "tab:me" end, function(state)
+    assert(state.display.has("Kit Wolf") and state.display.has("YOUR PLAYLISTS"), state.display.dump())
+    return "upload"
+end, function(state)
     assert(state.display.has("Drop a .dfpwm file"), state.display.dump())
     assert(state.display.has("Today: 0 of 2 uploads"))
-    return "signout"
-end, "yes")
+    return "back"
+end, "signout", "yes")
 assert(player.state.player_token == nil and next(server.state.players) == nil)
 assert(#steps == 0, #steps .. " scripted steps never used")
 

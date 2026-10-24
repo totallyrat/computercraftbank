@@ -1,8 +1,13 @@
 -- PUMPE APP: Music for Artists
 -- PUMPE APP ICON: 66666666/66f66f66/6f0ff0f6/6ff00ff6/66ffff66/66666666
 -- PUMPE APP ACTION: profile | Your Artist Profile | Your songs and listeners
--- PUMPE APP ACTION: upload | Upload a song | With a cover, credited
--- PUMPE APP ACTION: artists | Artists | Every artist in the Music Library
+-- PUMPE APP ACTION: upload | Upload a song | Credited, with a genre
+-- PUMPE APP ACTION: songs | Your songs | Their covers and genres
+
+
+
+
+
 
 
 
@@ -21,7 +26,6 @@ return function(api)
 local ui, util, target, colors = api.ui, api.util, api.target, api.colors
 local music, cloud = api.music, api.cloud
 local PINK = colors.pink
-local state = { query = "" }
 
 local function running() return api.running() end
 local function ask(action, payload) return music.ask(action, payload or {}) end
@@ -184,6 +188,50 @@ local base = tostring(name or ""):match("([^/\\]+)$") or ""
 return util.trim((base:gsub("%.[Dd][Ff][Pp][Ww][Mm]$", ""):gsub("_+", " "))):sub(1, 28)
 end
 
+
+local function chooseGenre(current)
+local listed = ask("MUSIC_GENRES")
+local genres = listed and listed.genres or {}
+local page = 1
+while running() do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Genre", current and ("Now " .. current) or "Every song has one",
+util.formatClock())
+local scene = ui.scene(target)
+scene:button("new", 2, 4, width - 2, 1, "+ A new genre", { background = PINK,
+foreground = colors.black })
+local per = math.max(1, height - 7)
+local items, actual, pages = util.page(genres, page, per)
+page = actual
+for index, genre in ipairs(items) do
+local y = 5 + index
+local count = genre.songs .. " songs"
+scene:hotspot("genre:" .. genre.name, 1, y, width, 1)
+ui.text(target, 2, y, ui.truncate(genre.name, width - #count - 3), genre.name
+== current and PINK or ui.theme.ink)
+ui.text(target, width - #count + 1, y, count, ui.theme.muted)
+end
+if #genres == 0 then ui.text(target, 2, 6, "None yet: make the first", ui.theme.muted) end
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+if pages > 1 then
+scene:button("more", width - 6, height, 6, 1, page .. "/" .. pages,
+{ background = ui.theme.panel })
+end
+local action = scene:wait({ scroll = true })
+if action == "back" or action == "__terminate" then return nil end
+if action == "more" or action == "__scrolldown" then page = page % pages + 1 end
+if action == "__scrollup" then page = math.max(1, page - 1) end
+if action == "new" then
+local typed = ui.input(target, "New genre", { hint = "Lo-fi, Sea Shanty...",
+maxLength = 16, minLength = 2, allowSpace = true, mode = "text" })
+if typed and #util.trim(typed) >= 2 then return util.trim(typed) end
+end
+local picked = action and action:match("^genre:(.+)$")
+if picked then return picked end
+end
+end
+
 local function upload(name, body)
 local title = ui.input(target, "Song title", { initial = titleFrom(name), maxLength = 28,
 allowSpace = true, mode = "text" })
@@ -193,13 +241,15 @@ local artist = ui.input(target, "Artists", { initial = mine and mine.artist
 and mine.artist.name or "", hint = "Ana, Kit & Noa: a profile each", maxLength = 40,
 allowSpace = true, mode = "text" })
 if not artist or util.trim(artist) == "" then return end
+local genre = chooseGenre(nil)
+if not genre then return end
 local cover
-if ui.confirm(target, "A cover?", "Draw one now, or leave it for later.", "Draw it",
+if ui.confirm(target, "A cover?", "Draw one now, or later from Songs.", "Draw it",
 "Later") then
 cover = ui.iconCreator(target, nil, title, "cover")
 end
 local began, err = ask("MUSIC_UPLOAD_BEGIN", { title = title, artist = artist,
-size = #body, cover = cover })
+size = #body, cover = cover, genre = genre })
 if not began then
 said("error", "Not uploaded", err, 2)
 return
@@ -282,20 +332,6 @@ local body, loadError = cloud.load(songs[index].file_id)
 if body then upload(songs[index].name, body) else said("error", "Cannot open it", loadError) end
 end
 
-
-local function uploads()
-local mine = ask("MUSIC_MY_ARTIST")
-local list = mine and mine.uploads or {}
-local names = {}
-for _, track in ipairs(list) do names[#names + 1] = track.title .. " - " .. track.artist end
-local index = pick("Your uploads", names, "Nothing uploaded yet.")
-if not index then return end
-local cover = ui.iconCreator(target, list[index].cover, list[index].title, "cover")
-if not cover then return end
-local edited, err = ask("MUSIC_TRACK_EDIT", { track_id = list[index].track_id, cover = cover })
-if edited then said("success", "New cover", edited.track.title, 1) else said("error", "No", err) end
-end
-
 local function uploadPage(tabs)
 local me
 while running() do
@@ -310,10 +346,8 @@ scene:button("pocket", 2, 7, width - 2, 2, "From this Pocket", {
 background = PINK, foreground = colors.black })
 scene:button("cloud", 2, 10, width - 2, 2, "From FoxyCloud", {
 background = colors.lightBlue, foreground = colors.black })
-scene:button("mine", 2, 13, width - 2, 1, "Your uploads, covers", {
-background = ui.theme.panel })
 if me then
-ui.wrappedText(target, 2, 15, me.uploads_limit and ("Today: " .. me.uploads .. " of "
+ui.wrappedText(target, 2, 13, me.uploads_limit and ("Today: " .. me.uploads .. " of "
 .. me.uploads_limit .. " uploads. FoxyMusic+ (Music app) for no limit")
 or "Upload all you like", width - 2, 2, ui.theme.muted)
 end
@@ -324,7 +358,6 @@ return action
 end
 if action == "pocket" then fromPocket() me = nil
 elseif action == "cloud" then fromCloud() me = nil
-elseif action == "mine" then uploads()
 elseif action == "__files" then
 local ok, files = pcall(function() return scene.dropped.getFiles() end)
 for _, handle in ipairs(ok and files or {}) do
@@ -341,73 +374,119 @@ end
 
 
 
-local function artistsPage(tabs)
+
+
+local function songsOf(mine)
+local list, seen = {}, {}
+for _, track in ipairs(mine and mine.artist and mine.artist.songs or {}) do
+seen[track.track_id] = true
+list[#list + 1] = track
+end
+for _, track in ipairs(mine and mine.uploads or {}) do
+if not seen[track.track_id] then list[#list + 1] = track end
+end
+return list
+end
+
+local function editSong(track)
+while running() do
+local width, height = target.getSize()
+ui.clear(target)
+ui.header(target, "Your song", ui.truncate(track.title, width - 3), util.formatClock())
+local scene = ui.scene(target)
+ui.cover(target, 2, 4, track.cover)
+local right = 2 + ui.COVER_WIDTH + 1
+ui.text(target, right, 4, ui.truncate(track.title, width - right), ui.theme.ink)
+ui.text(target, right, 5, ui.truncate(track.artist, width - right), ui.theme.muted)
+ui.text(target, right, 6, ui.truncate(track.genre or "No genre", width - right),
+track.genre and PINK or ui.theme.warning)
+ui.text(target, right, 7, ui.truncate((track.plays or 0) .. " plays", width - right),
+ui.theme.muted)
+scene:button("cover", 2, 9, width - 2, 2, track.cover and "New cover" or "+ A cover",
+{ background = PINK, foreground = colors.black })
+scene:button("genre", 2, 12, width - 2, 2, track.genre and "Change genre"
+or "+ A genre", { background = ui.theme.panel })
+scene:button("back", 1, height, 8, 1, "< Back", { background = ui.theme.panel })
+local action = scene:wait()
+if action == "back" or action == "__terminate" then return end
+local payload = { track_id = track.track_id }
+if action == "cover" then
+payload.cover = ui.iconCreator(target, track.cover, track.title, "cover")
+elseif action == "genre" then
+payload.genre = chooseGenre(track.genre)
+end
+if payload.cover or payload.genre then
+local edited, err = ask("MUSIC_TRACK_EDIT", payload)
+if edited then
+track = edited.track
+said("success", payload.cover and "New cover" or "Genre: " .. track.genre,
+track.title, 1)
+else
+said("error", "Not changed", err, 2)
+end
+end
+end
+end
+
+local function songsPage(tabs)
 local page = 1
 while running() do
-local listed, err = ask("MUSIC_ARTISTS", { query = state.query, page = page,
-per_page = math.max(1, math.floor((bottom() - 5) / 2)) })
+local mine, err = ask("MUSIC_MY_ARTIST")
+local list = songsOf(mine)
 local width = target.getSize()
 ui.clear(target)
-ui.header(target, "Artists", listed and (listed.total .. " in the library")
-or "Not answering", util.formatClock())
+ui.header(target, "Your songs", mine and (#list .. " songs") or "Not answering",
+util.formatClock())
 local scene = ui.scene(target)
-scene:button("search", 2, 4, width - 2, 1, state.query ~= "" and ("Search: "
-.. state.query) or "Search", { background = ui.theme.panel })
-if listed then
-page = listed.page
-for index, artist in ipairs(listed.artists) do
-local y = 4 + index * 2
-scene:button("artist:" .. artist.artist_id, 2, y, width - 2, 1, "",
-{ background = ui.theme.panel })
-local count = artist.listeners_today .. " today"
-ui.text(target, 3, y, ui.truncate(artist.name, width - #count - 5), ui.theme.ink,
-ui.theme.panel)
-ui.text(target, width - #count, y, count, PINK, ui.theme.panel)
-end
-if listed.pages > 1 then
-scene:button("more", width - 6, bottom(), 6, 1, page .. "/" .. listed.pages,
-{ background = ui.theme.panel })
-end
-if #listed.artists == 0 then
-ui.wrappedText(target, 2, 6, "Nobody yet: upload a song and credit them.",
-width - 2, 2, ui.theme.muted)
-end
-else
-ui.wrappedText(target, 2, 6, tostring(err or "The Music Server is not running"),
+if not mine then
+ui.wrappedText(target, 2, 5, tostring(err or "The Music Server is not running"),
 width - 2, 3, ui.theme.warning)
 end
+local per = math.max(1, bottom() - 4)
+local items, actual, pages = util.page(list, page, per)
+page = actual
+for index, track in ipairs(items) do
+local y = 3 + index
+local mark = not track.cover and "no cover" or not track.genre and "no genre" or ""
+scene:hotspot("song:" .. track.track_id, 1, y, width, 1)
+ui.text(target, 2, y, ui.truncate(track.title, width - #mark - 3), ui.theme.ink)
+if mark ~= "" then ui.text(target, width - #mark + 1, y, mark, ui.theme.warning) end
+end
+if mine and #list == 0 then
+ui.wrappedText(target, 2, 5, "Nothing yet. Upload a song, or make your profile:"
+.. " songs that credit you are yours to give a cover.", width - 2, 4,
+ui.theme.muted)
+end
+if pages > 1 then
+scene:button("more", width - 6, bottom(), 6, 1, page .. "/" .. pages,
+{ background = ui.theme.panel })
+end
 ui.tabBar(scene, target, tabs.list, tabs.active, tabs.color)
-local action = scene:wait()
+local action = scene:wait({ scroll = true })
 if action == "home" or action == "__terminate" or (action or ""):match("^tab:") then
 return action
 end
-if action == "search" then
-state.query = ui.input(target, "Search artists", { initial = state.query,
-maxLength = 20, minLength = 0, allowSpace = true }) or state.query
-page = 1
-elseif action == "more" then
-page = page % listed.pages + 1
-end
-local id = action and action:match("^artist:(.+)$")
-if id then
-local full = ask("MUSIC_ARTIST", { artist_id = id })
-if full then profileView(full.artist, false) end
+if action == "more" or action == "__scrolldown" then page = page % pages + 1 end
+if action == "__scrollup" then page = math.max(1, page - 1) end
+local id = action and action:match("^song:(.+)$")
+for _, track in ipairs(list) do
+if track.track_id == id then editSong(track) end
 end
 end
 end
 
 if not music then
-said("error", "Music for Artists", "This Pocket needs the FoxyOS 18.3 update", 2)
+said("error", "Music for Artists", "This Pocket needs the FoxyOS 18.4 update", 2)
 return
 end
 local wanted = type(api.action) == "function" and api.action() or nil
 ui.runTabs({
 target = target,
 list = { { id = "profile", label = "You" }, { id = "upload", label = "Upload" },
-{ id = "artists", label = "Artists" } },
+{ id = "songs", label = "Songs" } },
 color = PINK,
-start = (wanted == "upload" or wanted == "artists") and wanted or "profile",
-pages = { profile = profilePage, upload = uploadPage, artists = artistsPage },
+start = (wanted == "upload" or wanted == "songs") and wanted or "profile",
+pages = { profile = profilePage, upload = uploadPage, songs = songsPage },
 running = running,
 })
 end

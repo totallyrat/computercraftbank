@@ -80,7 +80,7 @@ local expectedForward = { "gps_anchor.lua", "admin_terminal.lua",
     -- FoxyOS 17: FoxyCloud, by Foxy.
     "foxycloud.lua",
     -- FoxyOS 17: music.
-    "music_server.lua", "music_player.lua", "music.lua", "lib/music.lua", "lib/desktop.lua", "lib/trivia.lua",
+    "music_server.lua", "music_player.lua", "music.lua", "lib/music.lua", "lib/musicui.lua", "lib/desktop.lua", "lib/trivia.lua",
     "radio_broadcaster.lua", "radio.lua", "artists.lua" }
 
 local function verify(section, expected, label)

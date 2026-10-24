@@ -380,6 +380,8 @@ update.PUBLISHED_OPTIONAL = {
     "music_player.lua",
     "music.lua",
     "lib/music.lua",
+    -- FoxyOS 18.4: the Music app's screens, on Pockets and Music Players.
+    "lib/musicui.lua",
     -- FoxyOS 18: the Pocket Desktop.
     "lib/desktop.lua",
     -- FoxyOS 18.1: Trivia's questions.
@@ -452,8 +454,8 @@ local ROLE_EXTRA_FILES = {
     -- FoxyOS 17: streaming DFPWM from the Cloud Servers to speakers.
     music = { "lib/music.lua" },
     -- FoxyOS 18: the Pocket Desktop, and the music it plays on a speaker.
-    pumpe = { "lib/desktop.lua", "lib/music.lua" },
-    musicplayer = { "lib/music.lua" },
+    pumpe = { "lib/desktop.lua", "lib/music.lua", "lib/musicui.lua" },
+    musicplayer = { "lib/music.lua", "lib/musicui.lua" },
     radio = { "lib/music.lua" },
     ccgcasino = { "lib/music.lua" },
     -- FoxyOS 18.1: Trivia, and the questions it asks with no internet.

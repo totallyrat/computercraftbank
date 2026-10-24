@@ -464,12 +464,12 @@ function util.validIcon(icon)
 end
 
 -- FoxyOS 18.3: a cover -- a song's, a radio's, a playlist's -- is drawn the
--- way an icon is, bigger: 16x12 pixels, 8x4 cells.
+-- way an icon is, bigger. FoxyOS 18.4: square, 12x12 pixels, 6x4 cells.
 function util.validCover(cover)
-    if type(cover) ~= "string" or #cover ~= 16 * 12 + 11 then return false end
+    if type(cover) ~= "string" or #cover ~= 12 * 12 + 11 then return false end
     local rows = 0
     for row in (cover .. "/"):gmatch("([^/]*)/") do
-        if not row:match("^[0-9a-f]+$") or #row ~= 16 then return false end
+        if not row:match("^[0-9a-f]+$") or #row ~= 12 then return false end
         rows = rows + 1
     end
     return rows == 12

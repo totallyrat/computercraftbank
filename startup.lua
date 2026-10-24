@@ -14,7 +14,7 @@
 --   installer.lua --boot <program>   update if the release is newer, then start
 --   installer.lua --auto <program>   update if the release is newer (lib/net)
 
-local INSTALLER_VERSION = "18.3.0"
+local INSTALLER_VERSION = "18.4.0"
 local MANIFEST_URL =
     "https://raw.githubusercontent.com/totallyrat/computercraftbank/main/release_manifest.json"
 local INSTALL_ROOT = "/pumpe"
@@ -60,7 +60,7 @@ local PROGRAMS = {
       -- FoxyOS 18: and there, the Pocket Desktop, which plays music too.
       words = "phone pocket foxy money wallet apps shop store till pos checkout"
           .. " sell pay kiosk desktop",
-      extra = { "lib/desktop.lua", "lib/music.lua" } },
+      extra = { "lib/desktop.lua", "lib/music.lua", "lib/musicui.lua" } },
     -- FoxyOS 13: merged into the Company app. Still bootable, so a kiosk
     -- that updates can say so and offer to become a Pocket.
     { id = "service", name = "Service Kiosk", file = "service_kiosk.lua",
@@ -147,7 +147,8 @@ local PROGRAMS = {
     { id = "musicplayer", name = "Music Player", file = "music_player.lua",
       detail = "Plays music through speakers",
       about = "Plays the Music Library and the radios. Sign in, add a speaker.",
-      words = "music player speaker songs radio dfpwm", extra = { "lib/music.lua" } },
+      words = "music player speaker songs radio dfpwm",
+      extra = { "lib/music.lua", "lib/musicui.lua" } },
     -- FoxyOS 18.2: a company's radio station, on a frequency of its own.
     { id = "radio", name = "Radio Broadcaster", file = "radio_broadcaster.lua",
       detail = "Your company's radio station",

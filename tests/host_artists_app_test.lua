@@ -1,14 +1,15 @@
--- Music for Artists, FoxyOS 18.3, on a 26x20 Pocket: the real app with the
--- real api.music and api.cloud, against a real Bank Core and Vault, five real
--- Cloud Servers and the Music Server. Every draw is bounds-checked and every
--- tap lands only on something that is on the screen.
+-- Music for Artists, FoxyOS 18.3 and 18.4, on a 26x20 Pocket: the real app
+-- with the real api.music and api.cloud, against a real Bank Core and Vault,
+-- five real Cloud Servers and the Music Server. Every draw is bounds-checked
+-- and every tap lands only on something that is on the screen.
 --
--- An upload has already credited "Ana Fox". Ana makes her Artist Profile --
--- a name, a line, a cover -- and the song comes with it; she changes the
--- cover from her profile. She uploads a song dropped on her Pocket, credits
--- Kit too and draws it a cover, then one from FoxyCloud without a cover, and
--- gives that one a cover from Your uploads. That is the free day's two. Kit
--- has a profile now, from the credit: Artists finds it, searched or not.
+-- The Music Server brought in a song crediting "Ana Fox". Ana makes her
+-- Artist Profile -- a name, a line, a cover -- and the song comes with it;
+-- she changes the cover from her profile. She uploads a song dropped on her
+-- Pocket, credits Kit too, makes it a genre and draws it a cover, then one
+-- from FoxyCloud in the same genre without a cover. That is the free day's
+-- two. On Songs she gives the FoxyCloud one a cover, and the Music Server's
+-- song -- hers by its credit -- a cover and a genre.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 sleep = function() end
@@ -35,8 +36,14 @@ local trot = as(MUSIC_ID, server.library.import, { title = "Fox Trot", artist = 
 
 local function cover(digit)
     local rows = {}
-    for index = 1, 12 do rows[index] = string.rep(digit, 16) end
+    for index = 1, 12 do rows[index] = string.rep(digit, 12) end
     return table.concat(rows, "/")
+end
+
+local function cloudId()
+    for id, track in pairs(server.state.tracks) do
+        if track.title == "Cloud Song" then return id end
+    end
 end
 
 local function run(script, wanted)
@@ -99,66 +106,66 @@ phone.push(script.actions, "tab:upload", function(seen)
     assert(phone.has(phone.last(seen), "Today: 0 of 2 uploads"))
     return { drop = { { name = "My_Tune.dfpwm", body = string.rep("s", 7000) } } }
 end, function(seen)
+    assert(phone.has(phone.last(seen), "None yet: make the first"), "no genres yet")
+    return "new"
+end, function(seen)
     assert(phone.said(seen, "In the Music Library"), "uploaded")
     return "cloud"
 end, function(seen)
     assert(phone.has(phone.last(seen), "Cloud Song.dfpwm"))
     return "pick:1"
 end, function(seen)
+    assert(phone.has(phone.last(seen), "Synthwave"), "the genre she made")
+    return "genre:Synthwave"
+end, function(seen)
     assert(phone.has(phone.last(seen), "Today: 2 of 2 uploads"), "the free day's two")
-    return "mine"
+    return "tab:songs"
 end, function(seen)
     local frame = phone.last(seen)
-    assert(phone.has(frame, "Cloud Song - Ana Fox") and phone.has(frame, "My Tune - Ana Fox"),
-        "her uploads\n" .. table.concat(frame, "\n"))
-    return "pick:1"
+    assert(phone.has(frame, "Cloud Song") and phone.has(frame, "My Tune")
+        and phone.has(frame, "Fox Trot") and phone.has(frame, "no cover"),
+        "her uploads, and the song that credits her\n" .. table.concat(frame, "\n"))
+    return "song:" .. cloudId()
+end, function(seen)
+    assert(phone.has(phone.last(seen), "Synthwave"), "its genre")
+    return "cover"
 end, function(seen)
     assert(phone.said(seen, "New cover"))
-    return "home"
-end)
+    return "back"
+end, "song:" .. trot.track_id, "cover", function(seen)
+    assert(phone.has(phone.last(seen), "No genre"), "from before genres")
+    return "genre"
+end, "new", function(seen)
+    assert(phone.said(seen, "Genre: Lo-fi"))
+    return "back"
+end, "home")
 phone.push(script.inputs, function(seen)
     assert(seen.inputs[#seen.inputs].initial == "My Tune", "titled from the file's name")
     return "My Tune"
 end, function(seen)
     assert(seen.inputs[#seen.inputs].initial == "Ana Fox", "her artist name, offered")
     return "Ana Fox & Kit"
-end, "Cloud Song", "Ana Fox")
+end, "Synthwave", "Cloud Song", "Ana Fox", "Lo-fi")
 phone.push(script.confirms, true, false)
-phone.push(script.covers, cover("b"), cover("c"))
+phone.push(script.covers, cover("b"), cover("c"), cover("d"))
 run(script)
 local tune, cloudTrack
 for _, track in pairs(server.state.tracks) do
     if track.title == "My Tune" then tune = track end
     if track.title == "Cloud Song" then cloudTrack = track end
 end
+local synth = server.state.genre_names["synthwave"]
 assert(tune and tune.cover == cover("b") and tune.uploader_name == "Ana Fox"
-    and #tune.artist_ids == 2, "credited to two, with its cover")
-assert(cloudTrack and cloudTrack.size == 5000 and cloudTrack.cover == cover("c"),
-    "from FoxyCloud, its cover drawn later")
+    and #tune.artist_ids == 2 and tune.genre == synth, "credited to two, with a genre and a cover")
+assert(cloudTrack and cloudTrack.size == 5000 and cloudTrack.cover == cover("c")
+    and cloudTrack.genre == synth, "from FoxyCloud, its cover drawn later")
+local fromServer = server.state.tracks[trot.track_id]
+assert(fromServer.cover == cover("d") and fromServer.genre == server.state.genre_names["lo-fi"],
+    "the Music Server's song, covered by its artist")
 local _, _, limit = as(world.pocket, net.ask, MUSIC_ID, config.music_protocol,
     "MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Three", size = 10 }, 3)
 assert(limit == "UPLOAD_LIMIT")
-
--- 3. Artists -------------------------------------------------------------------------------------
-
 local kit = server.state.artists[server.state.artist_names["kit"]]
-assert(kit and not kit.owner_account_id, "Kit, from the credit")
-script = phone.script()
-phone.push(script.actions, function(seen)
-    local frame = phone.last(seen)
-    assert(phone.has(frame, "2 in the library") and phone.has(frame, "Kit"))
-    return "artist:" .. kit.artist_id
-end, function(seen)
-    local frame = phone.last(seen)
-    assert(phone.has(frame, "From credits") and phone.has(frame, "My Tune  0 plays")
-        and not phone.has(frame, "Edit"), "Kit's, not hers to change")
-    return "back"
-end, "search", function(seen)
-    local frame = phone.last(seen)
-    assert(phone.has(frame, "1 in the library") and phone.has(frame, "Search: kit"))
-    return "home"
-end)
-phone.push(script.inputs, "kit")
-run(script, "artists")
+assert(kit and not kit.owner_account_id, "Kit, from the credit: found in the Music app now")
 
 io.write("host_artists_app_test: OK\n")

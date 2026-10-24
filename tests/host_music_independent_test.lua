@@ -131,7 +131,7 @@ refused("BANK_OFFLINE", "MUSIC_ME", { session_token = "SESSION_NEVER_SEEN" })
 -- Uploads go in.
 local body = string.rep("u", 7000)
 local began = must("MUSIC_UPLOAD_BEGIN", { session_token = ana.token, title = "Offline",
-    artist = "Ana", size = #body })
+    artist = "Ana", size = #body, genre = "Pop" })
 assert(as(POCKET, music.upload, began.plan, body, config.cloud_protocol))
 local added = must("MUSIC_UPLOAD_DONE", { session_token = ana.token,
     upload_id = began.upload_id }).track

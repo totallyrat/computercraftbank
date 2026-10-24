@@ -71,6 +71,10 @@ end, function(state)
         "the title comes from the file's name\n" .. state.display.dump())
     return { key = keys.enter }
 end, screen.typed("Ana"), "kind:song", function(state)
+    -- FoxyOS 18.4: a song's genre, new or not.
+    assert(state.display.has("GENRE") and state.display.has("NEW GENRE"), state.display.dump())
+    return "new"
+end, screen.typed("Lo-fi"), function(state)
     assert(state.display.has("CREDIT") and state.display.has("Music Server"))
     return { key = keys.backspace }
 end, backspaces(11), screen.typed("Foxy Records"), function(state)
@@ -91,6 +95,7 @@ end)
 local trot, clip = server.state.tracks.T1, server.state.tracks.T2
 assert(trot.title == "Fox Trot" and trot.artist == "Ana" and trot.kind == "song"
     and trot.uploader_name == "Foxy Records" and trot.size == 9000)
+assert(server.state.genres[trot.genre].name == "Lo-fi" and clip.genre == nil, "songs have a genre")
 assert(clip.kind == "giveaway" and clip.title == "contest")
 
 -- A radio, its songs, its clip and a giveaway.
@@ -139,5 +144,27 @@ local opened
 for _, giveaway in pairs(bank.state.giveaways) do opened = giveaway end
 assert(opened and opened.status == "open" and opened.number == r.number
     and opened.radio_name == "Foxy FM", "open at the Bank")
+
+-- FoxyOS 18.4: a cover and a genre for a track brought in here, and a new
+-- credit makes its Artist Profiles.
+local drawn = string.rep(string.rep("b", 12) .. "/", 11) .. string.rep("b", 12)
+local creator = ui.iconCreator
+ui.iconCreator = function(_, _, _, kind)
+    assert(kind == "cover", "the Cover Creator")
+    return drawn
+end
+run("tab:library", "row:T1", function(state)
+    assert(state.display.has("GENRE     Lo-fi") and state.display.has("+ COVER"),
+        state.display.dump())
+    return "cover"
+end, "genre", "new", screen.typed("Chillhop"), "artist", backspaces(3), screen.typed("Ana & Kit"),
+function(state)
+    assert(state.display.has("GENRE     Chillhop") and state.display.has("ARTIST    Ana & Kit"),
+        state.display.dump())
+    stopHere()
+end)
+ui.iconCreator = creator
+assert(trot.cover == drawn and server.state.genres[trot.genre].name == "Chillhop")
+assert(#trot.artist_ids == 2 and server.state.artist_names["kit"], "Kit has a profile now")
 
 io.write("host_music_server_screen_test: OK\n")

@@ -466,10 +466,10 @@ end
 
 
 function util.validCover(cover)
-if type(cover) ~= "string" or #cover ~= 16 * 12 + 11 then return false end
+if type(cover) ~= "string" or #cover ~= 12 * 12 + 11 then return false end
 local rows = 0
 for row in (cover .. "/"):gmatch("([^/]*)/") do
-if not row:match("^[0-9a-f]+$") or #row ~= 16 then return false end
+if not row:match("^[0-9a-f]+$") or #row ~= 12 then return false end
 rows = rows + 1
 end
 return rows == 12

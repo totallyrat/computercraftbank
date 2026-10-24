@@ -427,12 +427,17 @@ assert(update.installPath("startup.lua") == "installer.lua",
     "startup.lua is published under that name but installed as installer.lua")
 
 local rolePaths = update.rolePaths("pumpe")
--- FoxyOS 18: and the Pocket Desktop, with the music it plays.
-assert(#rolePaths == 9, "a role installs its program, Easy Deployment and libs")
+-- FoxyOS 18: and the Pocket Desktop, with the music it plays. 18.4: and the
+-- Music app's screens.
+assert(#rolePaths == 10, "a role installs its program, Easy Deployment and libs")
 local wanted = {}
 for _, path in ipairs(rolePaths) do wanted[path] = true end
 assert(wanted["pumpe.lua"] and wanted["lib/ui.lua"] and wanted["startup.lua"])
 assert(wanted["lib/desktop.lua"] and wanted["lib/music.lua"], "the Pocket Desktop's files")
+assert(wanted["lib/musicui.lua"], "the Music app's screens")
+local playerPaths = {}
+for _, path in ipairs(update.rolePaths("musicplayer")) do playerPaths[path] = true end
+assert(playerPaths["lib/musicui.lua"] and playerPaths["lib/music.lua"], "and the Music Player's")
 assert(not wanted["bank_server.lua"], "a PUMPE never downloads the Bank")
 assert(not wanted["ccg.lua"], "a PUMPE never downloads another role's program")
 assert(not wanted["lib/trivia.lua"], "nor Trivia's questions")

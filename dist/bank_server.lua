@@ -5,7 +5,7 @@ package.path = package.path .. ";" .. fs.combine(ROOT, "?.lua")
 
 
 
-local PROGRAM_VERSION = "18.3.0"
+local PROGRAM_VERSION = "18.4.0"
 local config = require("config")
 local util = require("lib.util")
 local net = require("lib.net")
@@ -86,6 +86,7 @@ RELEASE.depot_files = {
 "music_player.lua",
 "music.lua",
 "lib/music.lua",
+"lib/musicui.lua",
 "lib/desktop.lua",
 "lib/trivia.lua",
 
@@ -149,6 +150,7 @@ RELEASE.optional = {
 "music_player.lua",
 "music.lua",
 "lib/music.lua",
+"lib/musicui.lua",
 "lib/desktop.lua",
 "lib/trivia.lua",
 
@@ -232,6 +234,10 @@ end
 if role == "pumpe" then
 files[#files + 1] = { path = "lib/desktop.lua", source = "lib/desktop.lua" }
 files[#files + 1] = { path = "lib/music.lua", source = "lib/music.lua" }
+end
+
+if role == "pumpe" or role == "musicplayer" then
+files[#files + 1] = { path = "lib/musicui.lua", source = "lib/musicui.lua" }
 end
 
 if role == "ccgserver" then

@@ -381,6 +381,8 @@ update.PUBLISHED_OPTIONAL = {
 "music.lua",
 "lib/music.lua",
 
+"lib/musicui.lua",
+
 "lib/desktop.lua",
 
 "lib/trivia.lua",
@@ -452,8 +454,8 @@ apps = { "foxy.lua", "buckapp.lua", "revolution.lua", "wc.lua",
 
 music = { "lib/music.lua" },
 
-pumpe = { "lib/desktop.lua", "lib/music.lua" },
-musicplayer = { "lib/music.lua" },
+pumpe = { "lib/desktop.lua", "lib/music.lua", "lib/musicui.lua" },
+musicplayer = { "lib/music.lua", "lib/musicui.lua" },
 radio = { "lib/music.lua" },
 ccgcasino = { "lib/music.lua" },
 
