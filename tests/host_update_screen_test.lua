@@ -2,9 +2,10 @@
 -- screen that remembers colours.
 --
 -- While a release comes down: FOXY in the middle, blinking, and a thin grey
--- bar along the bottom row, side to side. When a device asks before
--- installing, the question rises under FOXY: the release, its version, what
--- it is, and Install over Cancel & Delete.
+-- bar along the bottom row, side to side. FoxyOS 18.3.1: every device plays
+-- the Pocket's circles instead. When a device asks before installing, the
+-- question rises under FOXY: the release, its version, what it is, Install
+-- over Cancel & Delete -- and, 18.3.1, how long until it installs itself.
 
 package.path = "../?.lua;../?/init.lua;" .. package.path
 local screen = dofile("screen_harness.lua")
@@ -38,8 +39,8 @@ assert(#orangeRows() == 0, "FOXY blinks: off")
 ui.updateFrame(display, 1, true)
 assert(display.count(20, GREY) == 26, "a full bar reaches side to side")
 
--- ui.updating: the work runs with the screen up, and FOXY blinks while it
--- does. A stand-in for parallel runs the blinker between the work's steps.
+-- ui.updating: the work runs with the screen up, and the circles go round
+-- while it does. A stand-in for parallel runs them between the work's steps.
 local realParallel, realSleep = parallel, sleep
 sleep = function() coroutine.yield() end
 parallel = { waitForAny = function(work, blink)
@@ -62,8 +63,10 @@ local a, b = ui.updating(display, function(progress)
 end, "FoxyOS 12")
 parallel, sleep = realParallel, realSleep
 assert(a == true and b == "12.1.0", "what the work returned comes back")
-assert(blinked[1] ~= blinked[2], "FOXY blinked while it ran")
-assert(display.count(20, GREY) == 26)
+assert(blinked[1] ~= blinked[2], "the circles moved while it ran")
+for y = 1, 20 do
+    assert(display.count(y, BLACK) == 26, "and it ends on black, ready for the question")
+end
 
 -- The question ---------------------------------------------------------------------------
 
@@ -100,5 +103,19 @@ assert(#orangeRows() == 5 and display.count(19, GREY) == 10)
 screen.push(steps, "install")
 assert(ui.updateReady(display, { title = "FoxyOS 12", version = "12.1.0",
     what = "Service Kiosk" }))
+
+-- FoxyOS 18.3.1: thirty seconds to say no, counted down; then it installs.
+screen.push(steps, function()
+    assert(display.has("Installing by itself in 30s"), display.dump())
+    return "cancel"
+end)
+assert(ui.updateReady(display, { title = "FoxyOS 18", version = "18.3.1",
+    what = "Service Kiosk" }, nil, 30) == false, "Cancel & Delete is still a no")
+assert(ui.updateReady(display, { title = "FoxyOS 18", version = "18.3.1",
+    what = "Service Kiosk" }, nil, 0) == true, "and nobody answering is a yes")
+assert(#state.steps == 0)
+-- The banner over a running server, the same.
+assert(ui.askUpdate(display, { title = "FoxyOS 18", version = "18.3.1" },
+    { banner = true, auto = 0 }) == true, "a banner nobody answers installs too")
 
 print("host_update_screen_test: OK")

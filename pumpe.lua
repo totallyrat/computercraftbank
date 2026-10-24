@@ -35,6 +35,7 @@ if device.modem_on == nil then device.modem_on = true end
 -- carrying it is asked from now on instead of sitting on an old release.
 -- FoxyOS 18.2: every update asks first, on every device. "Install
 -- automatically" is gone; a Pocket that had it asks from now on.
+-- FoxyOS 18.3.1: and nobody saying no within thirty seconds is a yes.
 device.update_mode = "ask"
 device.reminders = device.reminders or {}
 device.shortcuts = device.shortcuts or {}
@@ -5691,7 +5692,8 @@ local function updateInstalled()
 end
 
 -- Handed to net.autoUpdate once the release is down. False deletes it.
--- A beta is always asked about, whatever the setting says.
+-- FoxyOS 18.3.1: thirty seconds to say no (net.AUTO_INSTALL), then it installs
+-- by itself -- a beta too, once this Pocket has signed up for them.
 local function confirmUpdate(found)
     if updateDeferred == found.version then return false end
     local size = tonumber(found.bytes)
@@ -5700,7 +5702,7 @@ local function confirmUpdate(found)
         title = found.label or "FoxyOS",
         version = found.version,
         what = "For this Pocket" .. (size and ("  " .. math.ceil(size / 1024) .. " KiB") or ""),
-    })
+    }, nil, net.AUTO_INSTALL or 30)
     if wanted then return true end
     updateDeferred = found.version
     return false
@@ -5747,7 +5749,8 @@ local function updatesScreen()
         ui.card(target, 2, 5, width - 2, 4, ui.theme.accent)
         ui.text(target, 4, 5, "WHEN A RELEASE LANDS", ui.theme.muted,
             ui.theme.panel)
-        ui.text(target, 4, 6, "Always asks first", ui.theme.ink, ui.theme.panel)
+        ui.text(target, 4, 6, ui.truncate("Auto: " .. (net.AUTO_INSTALL or 30)
+            .. "s to say no", width - 6), ui.theme.ink, ui.theme.panel)
         ui.text(target, 4, 7, ui.truncate(device.modem_on == false
             and "Modem off: not looking" or (updateDeferred
                 and ("v" .. updateDeferred .. " is waiting")

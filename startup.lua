@@ -569,6 +569,7 @@ end
 -- FoxyOS 12: the download screen every device shows -- FOXY blinking in the
 -- middle, and a thin bar along the bottom row, side to side, grey on black.
 -- FoxyOS 14: installing the Pocket plays the Pocket's own circles instead.
+-- FoxyOS 18.3.1: and so does every other device, in its own colour.
 local downloading = { lit = true, fraction = 0, note = "" }
 local function downloadFrame()
     local width, height = target.getSize()
@@ -618,6 +619,16 @@ function downloading.wipe(color)
     end
 end
 
+-- FoxyOS 18.3.1: a few rounds of circles once an update is in, the bar full,
+-- the way a Pocket installs.
+function downloading.installed()
+    downloading.fraction = 1
+    for _ = 1, 3 do
+        downloading.wipe(theme.accent)
+        downloading.wipe(colors.black)
+    end
+end
+
 -- Runs `work` with FOXY blinking twice a second -- or, for the Pocket, its
 -- circles going round -- where the computer can run two things at once.
 local function blinking(work)
@@ -643,24 +654,37 @@ end
 -- Downloads a program's files into `root`, checks every one against the
 -- release, then puts them all in place together or none at all.
 -- FoxyOS 18.2: asked every time, once it is downloaded and before anything
--- is put in place. Cancel and delete throws the download away. `timeout`, at
--- start-up, is how long nobody answering waits before it counts as no: a
--- computer starting with nobody there boots what it already has.
-local function askInstall(program, manifest, total, timeout)
+-- is put in place. Cancel and delete throws the download away.
+-- FoxyOS 18.3.1: `auto`, for an update at start-up, is how many seconds there
+-- are to say no: nobody answering installs it, counted down on the screen.
+-- A first install from Easy Deployment waits for its answer.
+local function askInstall(program, manifest, total, auto)
     local width, height = target.getSize()
     clear()
     header("EASY DEPLOYMENT", "Downloaded")
     center(5, "Install " .. program.name .. "?", theme.ink)
     center(7, "FoxyOS v" .. tostring(manifest.version) .. "  "
         .. math.ceil((total or 0) / 1024) .. " KiB", theme.muted)
-    if timeout then center(9, "No answer in " .. timeout .. "s: not now", theme.muted) end
     local buttons = {}
     button(buttons, "install", 2, height - 5, width - 2, 2, "INSTALL", theme.accent, colors.black)
     button(buttons, "cancel", 2, height - 2, width - 2, 2, "CANCEL AND DELETE", theme.panel)
-    local timer = timeout and os.startTimer(timeout)
+    local left = auto
+    local function countdown()
+        if left then
+            fill(1, 9, width, 1, theme.background)
+            center(9, "Installing by itself in " .. left .. "s", theme.accent)
+        end
+    end
+    countdown()
+    local timer = left and os.startTimer(1)
     while true do
         local event = { os.pullEvent() }
-        if event[1] == "timer" and event[2] == timer then return false end
+        if event[1] == "timer" and event[2] == timer then
+            left = left - 1
+            if left <= 0 then return true end
+            countdown()
+            timer = os.startTimer(1)
+        end
         if event[1] == "terminate" then return false end
         if event[1] == "mouse_click" or event[1] == "monitor_touch" then
             for _, item in ipairs(buttons) do
@@ -694,8 +718,8 @@ local function install(program, root, manifest, timeout)
         if fs.exists(stale) then fs.delete(stale) end
     end
     downloading.lit = true
-    downloading.circles = program.id == "pumpe"
-    if downloading.circles then clear() end
+    downloading.circles = true
+    clear()
     local fetched, fetchError = blinking(function()
         local done = 0
         for index, entry in ipairs(entries) do
@@ -1159,7 +1183,8 @@ local function bootProgram(program)
         updateSelf(manifest)
         if (newerVersion(manifest.version, installedVersion(root)) and not program.byCore)
             or not fs.exists(fs.combine(root, program.file)) then
-            if install(program, root, manifest, 60) then
+            if install(program, root, manifest, 30) then
+                downloading.installed()
                 message("success", "UPDATED TO v" .. manifest.version,
                     "Restarting " .. program.name, 0.6)
                 os.reboot()
@@ -1187,7 +1212,8 @@ if mode == "--auto" then
     local program = programById(modeProgram)
     local manifest = program and httpReady() and readManifest()
     if manifest and newerVersion(manifest.version, installedVersion(homeDir())) then
-        if install(program, homeDir(), manifest, 60) then
+        if install(program, homeDir(), manifest, 30) then
+            downloading.installed()
             os.reboot()
             return true
         end

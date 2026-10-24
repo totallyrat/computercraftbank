@@ -26,8 +26,8 @@
     {
       "path": "pumpe.lua",
       "source": "dist/pumpe.lua",
-      "size": 303971,
-      "checksum": "a90e31bd"
+      "size": 304060,
+      "checksum": "ec40416d"
     },
     {
       "path": "service_kiosk.lua",
@@ -50,8 +50,8 @@
     {
       "path": "startup.lua",
       "source": "dist/startup.lua",
-      "size": 39116,
-      "checksum": "f41ddda0"
+      "size": 39423,
+      "checksum": "d02c2cc7"
     },
     {
       "path": "launcher.lua",
@@ -68,14 +68,14 @@
     {
       "path": "lib/net.lua",
       "source": "dist/lib/net.lua",
-      "size": 18569,
-      "checksum": "db44e9f0"
+      "size": 19014,
+      "checksum": "e5255713"
     },
     {
       "path": "lib/ui.lua",
       "source": "dist/lib/ui.lua",
-      "size": 65098,
-      "checksum": "e2d07a40"
+      "size": 65381,
+      "checksum": "e49f6285"
     },
     {
       "path": "lib/update.lua",

@@ -5,7 +5,8 @@
 FoxyOS 18.4: a new Music app, on Pockets and Music Players alike, genres,
 mixes and charts, and square covers. Update the Bank (Core and Vault) first,
 then the Music Server, then the App Server, then Pockets and Music Players.
-Every one of them asks first: press Install on each.
+A device on 18.3.1 installs it by itself after 30 seconds unless somebody
+presses Cancel & Delete; one still on 18.3.0 needs Install pressed.
 
 **A new Music app.** Three tabs in a bar of their own along the bottom --
 **Music**, **Search** and **Me** -- and what is playing along the top: tap it
@@ -47,6 +48,26 @@ its Radio tab beside them. Every song as a list and Offline Listening's
 downloads are under **Me** (and on the Music tab while the Music Server is
 off), with **Upload a song** and **Sign out**. Its uploads ask for a genre
 too.
+## 18.3.1
+
+FoxyOS 18.3.1: updates install by themselves again, and every device plays
+the Pocket's circles while it updates. Nothing else changes. Update the Bank
+(Core and Vault) first, then everything else; this is the last update that
+needs somebody to press Install on each device.
+
+**Auto-updates are back, with time to say no.** When a release is down,
+every device still asks -- the whole screen at start-up, a banner while it
+runs -- but now with a countdown: nobody pressing anything for 30 seconds
+installs it. **Cancel & Delete** is still a no, and a release said no to is
+not asked about again for half an hour. Pockets too, betas included for a
+Pocket signed up to them. An update found at start-up by Easy Deployment
+counts down the same way; a first install from Easy Deployment still waits
+for its answer.
+
+**The circles, everywhere.** Every device now plays the Pocket's circles in
+its own main colour while a release comes down, where it used to blink FOXY,
+and a few seconds of them once it is installed (a Pocket keeps its fifteen).
+Easy Deployment plays them for every program it installs.
 
 ## 18.3.0
 

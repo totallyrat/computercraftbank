@@ -551,9 +551,10 @@ assert(written["/apps/notes.lua"] == nil, "the file on this computer is left as 
 -- Updates ------------------------------------------------------------------------
 
 -- 9.5: a phone asks before it replaces itself. FoxyOS 18.2: always -- there
--- is no automatic any more, on a Pocket or anywhere.
+-- is no automatic any more, on a Pocket or anywhere. FoxyOS 18.3.1: it asks,
+-- and installs by itself if nobody says no in thirty seconds.
 assert(drew("WHEN A RELEASE LANDS"))
-assert(drew("Always asks first"), "asking is what every device does")
+assert(drew("Auto: 30s to say no"), "what every device does")
 assert(not pressed("Install automatically") and not pressed("Ask me instead"),
     "and there is no switch to turn it off")
 -- FoxyOS 15.2: Prioritize Updates, on until turned off, remembered on the

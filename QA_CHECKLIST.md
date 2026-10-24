@@ -9,7 +9,7 @@ Run this after installing into a ComputerCraft world.
 
 ## FoxyOS 18.4 (18.4.0)
 
-Update the Bank (Core and Vault) first, then the Music Server, then the App Server, then Pockets and Music Players. Nothing in 18.4 was tried in a world before release: every line below is a first run.
+Update the Bank (Core and Vault) first, then the Music Server, then the App Server, then Pockets and Music Players. On 18.3.1 they install it by themselves after 30 seconds. Nothing in 18.4 was tried in a world before release: every line below is a first run.
 
 ### Music (Pocket)
 
@@ -38,6 +38,14 @@ Update the Bank (Core and Vault) first, then the Music Server, then the App Serv
 - [ ] Its screen: **Music**, **Search**, **Me**, **Radio** along the bottom, what is playing along the top; tap it for Now Playing (with the heart and the artist's name to tap).
 - [ ] **Me → Every song, and downloads**: the list, with **v** to keep a song (FoxyMusic+). With the Music Server off, the Music tab is the downloaded songs.
 - [ ] **Me → Upload a song**: drop a `.dfpwm`; title, artist, genre. **Me → Sign out** asks first.
+## FoxyOS 18.3.1 (18.3.1)
+
+Devices on 18.3.0 still need **Install** pressed for this one; after it, updates install by themselves. Nothing here was tried in a world before release.
+
+- [ ] A server running when a release lands (the Music Server, say): the banner says *Installing in 30s unless you cancel* and counts down; leave it and it installs and restarts. **Cancel & Delete** keeps the old version, and it does not ask again for half an hour.
+- [ ] Restart a device with a newer release out: the circles in its own colour while it downloads, then the question with *Installing by itself in 30s*; leave it and it installs, with a few rounds of circles, and restarts.
+- [ ] A Pocket: the same countdown under POCKET; Cancel & Delete keeps it until **Settings → Updates → Check now**. Settings says *Auto: 30s to say no*.
+- [ ] Easy Deployment, installing a new program: the circles while it downloads, and the question waits for an answer (no countdown).
 
 ## FoxyOS 18.3 (18.3.0)
 
